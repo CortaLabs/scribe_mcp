@@ -1,0 +1,409 @@
+---
+type: implementation_spec
+spec_id: SPEC-GEN-001
+component: generate_doc_templates.py
+issue_id: BUG-001-infrastructure-gap
+priority: P0
+estimated_effort: 2-3 hours
+dependencies:
+  - ProjectRegistry.record_doc_update exists (confirmed in shared/project_registry.py:227-234)
+  - baseline_hashes tracking infrastructure exists (confirmed)
+related_specs:
+  - SPEC-SET-001 (set_project hash comparison logic)
+created_by: ResearchAgent-I-GenTemplates
+created_at: 2026-01-05
+---
+
+# SPEC-GEN-001: ProjectRegistry Integration for Template Baseline Tracking
+
+## Problem Statement
+
+`generate_doc_templates.py` creates documentation templates but does **NOT** call `ProjectRegistry.record_doc_update()` to record baseline hashes. This causes BUG-001 in `set_project.py`, which cannot distinguish between:
+- **Pristine templates** (newly created, never modified) → should show "NEW PROJECT CREATED"
+- **Modified documents** (templates that have been worked on) → should show "PROJECT ACTIVATED"
+
+The infrastructure exists but is not wired up. This spec defines the exact integration required.
+
+---
+
+## Current State
+
+### File
+`tools/generate_doc_templates.py`
+
+### Lines: 221-223 (Template Write Block)
+```python
+# LINE 221
+if force_overwrite or not path.exists():
+    await asyncio.to_thread(_write_template, path, rendered, force_overwrite)
+    written.append(str(path))
+# LINE 224
+else:
+```
+
+### What's Missing
+After the template is written (line 222), there is **ZERO** integration with ProjectRegistry to record the baseline hash. The `written` list is appended (line 223) without any hash tracking.
+
+### Current Imports (Lines 1-18)
+```python
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Tuple
+
+from scribe_mcp import server as server_module
+from scribe_mcp.config.settings import settings
+from scribe_mcp.tools.project_utils import slugify_project_name
+from scribe_mcp.server import app
+from scribe_mcp.template_engine import Jinja2TemplateEngine, TemplateEngineError
+from scribe_mcp.templates import TEMPLATE_FILENAMES, load_templates, substitution_context
+from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
+from scribe_mcp.shared.logging_utils import ProjectResolutionError
+```
+
+**Missing**: `hashlib` and `ProjectRegistry`
+
+---
+
+## Proposed Integration
+
+### Required Import Additions (After Line 8)
+
+**Location**: Add after line 8 (`from pathlib import Path`)
+
+```python
+import hashlib
+from scribe_mcp.shared.project_registry import ProjectRegistry
+```
+
+**Rationale**: Follows existing pattern in other tools (manage_docs.py line 35, set_project.py line 22)
+
+### Module-Level Registry Instance (After Line 39)
+
+**Location**: Add after line 39 (`_GENERATE_DOC_TEMPLATES_HELPER = _GenerateDocTemplatesHelper()`)
+
+```python
+_PROJECT_REGISTRY = ProjectRegistry()
+```
+
+**Rationale**: Matches pattern from manage_docs.py (line 40) and set_project.py
+
+### Hash Recording Integration (After Line 222)
+
+**Location**: Insert between line 222 (write) and line 223 (append to written list)
+
+**Template Code (NOT actual implementation)**:
+```python
+# LINE 222 (existing)
+await asyncio.to_thread(_write_template, path, rendered, force_overwrite)
+
+# NEW INTEGRATION (insert here)
+# Record baseline hash for doc lifecycle tracking
+try:
+    content_hash = hashlib.sha256(rendered.encode('utf-8')).hexdigest()
+    _PROJECT_REGISTRY.record_doc_update(
+        project_name,
+        doc=key,  # "architecture", "phase_plan", "checklist", "progress_log", etc.
+        action="template_created",
+        before_hash=None,  # New template, no prior state
+        after_hash=content_hash,
+    )
+except Exception:
+    # Best-effort: Don't fail template generation if registry update fails
+    # Matches manage_docs.py error handling pattern (line 1350)
+    pass
+
+# LINE 223 (existing)
+written.append(str(path))
+```
+
+---
+
+## Integration Details
+
+### Hash Computation
+- **Algorithm**: SHA256 (matches manage_docs pattern)
+- **Content**: `rendered` variable (the template content after Jinja2/legacy rendering)
+- **Encoding**: UTF-8 (standard for text content)
+- **Method**: `hashlib.sha256(rendered.encode('utf-8')).hexdigest()`
+
+### ProjectRegistry.record_doc_update() Parameters
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `project_name` | `project_name` (from function arg) | Current project context |
+| `doc` | `key` (loop variable) | Document type: "architecture", "phase_plan", etc. |
+| `action` | `"template_created"` | Semantic action for audit trail |
+| `before_hash` | `None` | New template has no prior state |
+| `after_hash` | `content_hash` | SHA256 of rendered template |
+
+### Registry Behavior (from shared/project_registry.py:227-234)
+
+**Line 229**: `if doc not in baseline_map and before_hash:`
+- For new templates, `before_hash=None`, so this condition is **False**
+- **BUT** line 231-232 will still set `current_map[doc] = after_hash`
+
+**Actually, we need to check the logic more carefully:**
+
+Looking at project_registry.py lines 227-234:
+```python
+baseline_map = docs_meta.get("baseline_hashes") or {}
+current_map = docs_meta.get("current_hashes") or {}
+if doc not in baseline_map and before_hash:
+    baseline_map[doc] = before_hash
+if after_hash:
+    current_map[doc] = after_hash
+```
+
+**For templates (`before_hash=None`, `after_hash=content_hash`)**:
+- Line 229: Condition is False (before_hash is None)
+- **Problem**: baseline_map is NOT set!
+
+**CORRECTED UNDERSTANDING**:
+The current ProjectRegistry logic has a bug for this use case. We need:
+
+```python
+# Correct logic for new templates
+if doc not in baseline_map:
+    if before_hash:
+        baseline_map[doc] = before_hash
+    elif after_hash:
+        baseline_map[doc] = after_hash  # First write sets baseline
+```
+
+**OR** we should pass `before_hash=after_hash` for new templates to set baseline correctly.
+
+**DECISION**: Use `before_hash=content_hash, after_hash=content_hash` for new templates to ensure baseline is set correctly with current ProjectRegistry logic.
+
+### Updated Integration Code
+
+```python
+# Record baseline hash for doc lifecycle tracking
+try:
+    content_hash = hashlib.sha256(rendered.encode('utf-8')).hexdigest()
+    _PROJECT_REGISTRY.record_doc_update(
+        project_name,
+        doc=key,
+        action="template_created",
+        before_hash=content_hash,  # Set baseline on creation
+        after_hash=content_hash,   # Same value = pristine state
+    )
+except Exception:
+    pass  # Best-effort: Don't fail template generation
+```
+
+**Rationale**: Setting both before_hash and after_hash to the same value creates the semantic "pristine template" state that set_project can detect.
+
+---
+
+## Error Handling Policy
+
+**Pattern**: Best-effort (matches manage_docs.py line 1350)
+
+```python
+try:
+    # Registry update
+except Exception:
+    pass  # Silent failure acceptable
+```
+
+**Rationale**:
+- Template generation is primary operation
+- Registry tracking is metadata (nice-to-have, not critical)
+- Failure to record hash should NOT block template creation
+- Matches established pattern across all tools using ProjectRegistry
+
+**When to use best-effort**:
+- ✅ Metadata/tracking operations (this case)
+- ❌ Core data writes (would require proper error handling)
+
+---
+
+## Testing Requirements
+
+### Unit Test 1: Baseline Hash Recording
+```python
+async def test_gen_001_baseline_hash_recorded():
+    """
+    SPEC-GEN-001: Verify baseline_hashes populated after template creation.
+    """
+    from scribe_mcp.shared.project_registry import ProjectRegistry
+
+    registry = ProjectRegistry()
+    project_name = "test_gen_001_hashes"
+
+    # Generate templates
+    result = await generate_doc_templates(project_name=project_name)
+    assert result["ok"] == True
+
+    # Verify registry has baseline hashes for core docs
+    project_info = registry.get_project(project_name)
+    assert project_info is not None
+
+    docs_meta = project_info.meta.get("docs", {})
+    baseline_hashes = docs_meta.get("baseline_hashes", {})
+    current_hashes = docs_meta.get("current_hashes", {})
+
+    # Core docs should have hashes
+    core_docs = ["architecture", "phase_plan", "checklist"]
+    for doc in core_docs:
+        assert doc in baseline_hashes, f"{doc} missing from baseline_hashes"
+        assert doc in current_hashes, f"{doc} missing from current_hashes"
+        assert baseline_hashes[doc] == current_hashes[doc], f"{doc} baseline != current (should be equal for pristine templates)"
+```
+
+### Unit Test 2: Hash Comparison for set_project
+```python
+async def test_gen_001_set_project_new_detection():
+    """
+    SPEC-GEN-001: Verify set_project can detect new vs existing via hash comparison.
+    """
+    project_name = "test_gen_001_detection"
+
+    # Create project - should be "new"
+    result1 = await set_project(name=project_name)
+    assert result1["is_new"] == True
+
+    # Call again immediately - docs still pristine, should still be "new"
+    result2 = await set_project(name=project_name)
+    assert result2["is_new"] == True  # Hashes match = pristine
+
+    # Modify a document
+    await manage_docs(
+        action="replace_section",
+        doc="architecture",
+        section="problem_statement",
+        content="## Problem Statement\nModified content\n"
+    )
+
+    # Call set_project again - docs modified, should be "existing"
+    result3 = await set_project(name=project_name)
+    assert result3["is_new"] == False  # Hashes don't match = modified
+```
+
+### Integration Test: BUG-001 Regression
+```python
+async def test_gen_001_bug_001_fixed():
+    """
+    SPEC-GEN-001: Verify BUG-001 (empty log treated as new) is fixed.
+
+    With hash comparison, empty logs after rotation should still show as "existing"
+    because docs have been modified.
+    """
+    project_name = "test_gen_001_bug_001"
+
+    # Create and use project
+    await set_project(name=project_name)
+    await append_entry(message="Test entry", project=project_name)
+
+    # Rotate log (creates empty PROGRESS_LOG.md)
+    await rotate_log(project=project_name, confirm=True)
+
+    # Call set_project - should be "existing" (docs modified)
+    result = await set_project(name=project_name)
+    assert result["is_new"] == False
+    assert "inventory" in result
+```
+
+---
+
+## Success Criteria
+
+- [ ] Imports added: `hashlib` and `ProjectRegistry`
+- [ ] Module-level `_PROJECT_REGISTRY` instance created
+- [ ] Hash recording code inserted after line 222
+- [ ] All unit tests pass (baseline hash recording)
+- [ ] Integration tests pass (set_project detection)
+- [ ] BUG-001 regression test passes
+- [ ] No errors in template generation flow
+- [ ] Best-effort error handling verified (registry failures don't block templates)
+
+---
+
+## Migration Considerations
+
+### Existing Projects Without Hashes
+
+**Problem**: Projects created before this fix won't have baseline_hashes.
+
+**Solution** (for set_project.py):
+```python
+# Fallback logic
+if baseline_hashes:
+    # Use hash comparison (new behavior)
+    is_new = all(baseline == current for baseline, current in zip(...))
+else:
+    # Fallback to file existence check (legacy behavior)
+    is_new = not progress_log_path.exists()
+```
+
+**Recommendation**: Phase 6 should include a migration tool to backfill hashes for existing projects.
+
+---
+
+## Rollback Plan
+
+If integration causes issues:
+
+1. **Immediate**: Comment out try/except block (lines after 222)
+2. **Verification**: Confirm templates still generate correctly
+3. **Investigation**: Check ProjectRegistry error logs
+4. **Fix**: Address root cause, redeploy
+
+**Risk Level**: Low (best-effort error handling prevents cascade failures)
+
+---
+
+## Implementation Checklist
+
+**Phase 1: Code Changes**
+- [ ] Add imports (hashlib, ProjectRegistry)
+- [ ] Add module-level _PROJECT_REGISTRY instance
+- [ ] Insert hash recording code after line 222
+- [ ] Verify indentation and syntax
+
+**Phase 2: Testing**
+- [ ] Run unit tests (baseline hash recording)
+- [ ] Run integration tests (set_project detection)
+- [ ] Run BUG-001 regression test
+- [ ] Manual smoke test (create project, verify hashes in DB)
+
+**Phase 3: Verification**
+- [ ] Check SQLite DB: baseline_hashes populated
+- [ ] Check SQLite DB: current_hashes populated
+- [ ] Verify baseline == current for pristine templates
+- [ ] Verify set_project shows "NEW" for pristine templates
+- [ ] Verify set_project shows "EXISTING" after doc modification
+
+**Phase 4: Documentation**
+- [ ] Update CHANGELOG.md
+- [ ] Update BUG-001 status to "fixed"
+- [ ] Document hash comparison logic in set_project
+- [ ] Add migration notes for existing projects
+
+---
+
+## Related Specifications
+
+- **SPEC-SET-001**: set_project hash comparison logic (depends on this spec)
+- **BUG-001**: Empty log treated as new project (fixed by this spec)
+
+---
+
+## Notes
+
+- This spec is **READ-ONLY DOCUMENTATION** from Wave 2 audit
+- Actual implementation happens in Phase 6
+- Integration point is surgical (3 lines of code + 2 imports)
+- Error handling follows established best-effort pattern
+- Hash comparison architecture enables correct project state detection
+
+---
+
+**Audit Sign-off**: ResearchAgent-I-GenTemplates, 2026-01-05
+**Review Required**: Yes (before Phase 6 implementation)
+**Complexity**: Low (simple integration, existing infrastructure)
+**Risk**: Low (best-effort error handling, no breaking changes)

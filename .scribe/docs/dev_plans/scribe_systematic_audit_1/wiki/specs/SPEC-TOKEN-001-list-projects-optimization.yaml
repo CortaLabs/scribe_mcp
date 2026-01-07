@@ -1,0 +1,374 @@
+spec_id: SPEC-TOKEN-001
+title: list_projects Token Optimization
+version: 1.0.0
+created: 2026-01-05
+author: ResearchAgent-Phase5-TokenAnalyzer
+status: draft
+priority: critical
+
+# ============================================================================
+# PROBLEM STATEMENT
+# ============================================================================
+
+problem:
+  description: |
+    list_projects has highest token count among tested tools (774 total across all modes)
+    and is called 20-30 times per day, resulting in 4,080-6,120 daily token consumption.
+
+  bloat_analysis:
+    readable_mode:
+      total_tokens: 204
+      bloat_structural: 40  # Box drawing, table borders (20%)
+      bloat_metadata: 35    # Page info, filter status (17%)
+      bloat_safety: 20      # Tips and suggestions (10%)
+      bloat_duplication: 15 # Repeated values (7%)
+      core_information: 94  # Actual data (46%)
+
+    structured_mode:
+      total_tokens: 285
+      issue: "Verbose JSON keys, unnecessary fields, absolute paths"
+
+    compact_mode:
+      total_tokens: 285
+      bug: "BUG-COMPACT-001: Returns identical output to structured mode"
+
+  critical_bugs:
+    - id: BUG-COMPACT-001
+      severity: high
+      description: "Compact mode not implemented - returns identical JSON to structured"
+      impact: "54% token reduction potential unavailable to users"
+
+# ============================================================================
+# REDUCTION TARGETS
+# ============================================================================
+
+targets:
+  readable_mode:
+    current: 204
+    target: 115
+    reduction_tokens: 89
+    reduction_percent: 44
+
+  structured_mode:
+    current: 285
+    target: 160
+    reduction_tokens: 125
+    reduction_percent: 44
+
+  compact_mode:
+    current: 285
+    target: 130
+    reduction_tokens: 155
+    reduction_percent: 54
+
+  daily_impact:
+    calls_per_day: 25  # Conservative mid-range estimate
+    current_cost: 5100  # 204 tokens × 25 calls (readable mode)
+    optimized_cost: 2875  # 115 tokens × 25 calls
+    daily_savings: 2225  # tokens/day
+    annual_savings: 812125  # tokens/year
+
+# ============================================================================
+# IMPLEMENTATION SPECIFICATION
+# ============================================================================
+
+implementation:
+
+  # PHASE 1: Readable Mode Refinement
+  readable_mode:
+    changes:
+      - action: remove
+        target: box_drawing
+        description: "Remove ╔══╗ characters from header and footer"
+        token_savings: 25
+
+      - action: remove
+        target: table_borders
+        description: "Remove ────── separator lines"
+        token_savings: 15
+
+      - action: remove
+        target: tips_footer
+        description: "Remove '💡 Tip: Add filter=...' suggestion line"
+        token_savings: 20
+
+      - action: compress
+        target: page_status
+        description: "Compress '📄 Page 1 of 37 | Use page=2...' to 'Page 1/37'"
+        token_savings: 15
+
+      - action: compress
+        target: filter_status
+        description: "Compress '🔍 Filter: none | Sort: None (desc)' to 'filter: none'"
+        token_savings: 14
+
+    preserve:
+      - "Emoji header (📋) - information dense identifier"
+      - "Table alignment and structure"
+      - "Column headers (NAME, STATUS, ENTRIES, ACTIVITY)"
+      - "Project count summary (3/109)"
+
+    before_example: |
+      ╔══════════════════════════════════════════════════════════╗
+      ║ 📋 PROJECTS - 109 total (Page 1 of 37, showing 3)         ║
+      ╚══════════════════════════════════════════════════════════╝
+
+      NAME                          STATUS        ENTRIES  LAST ACTIVITY
+      ──────────────────────────────────────────────────────────────────────
+        append-entry-edge-test      planning           1  never
+        append_query_modularization planning         176  never
+        bugs                        planning           2  never
+
+      📄 Page 1 of 37 | Use page=2 to see more
+      🔍 Filter: none | Sort: None (desc)
+      💡 Tip: Add filter="scribe" to narrow results, or filter="exact_name" to see details
+
+    after_example: |
+      📋 Projects (3/109, page 1/37)
+
+      NAME                          STATUS    ENTRIES  ACTIVITY
+      append-entry-edge-test        planning        1  never
+      append_query_modularization   planning      176  never
+      bugs                          planning        2  never
+
+      Page 1/37 | filter: none
+
+    file_modified: tools/list_projects.py
+    function_modified: _format_readable()
+
+  # PHASE 2: Compact Mode Implementation
+  compact_mode:
+    bug_fix: BUG-COMPACT-001
+    description: "Implement true compact mode with abbreviated JSON keys"
+
+    changes:
+      - action: abbreviate
+        target: json_keys
+        mappings:
+          projects: p
+          name: n
+          status: s
+          entries: e
+          activity: a
+          total_available: tot
+          pagination: pg
+          page: i
+          page_size: sz
+          has_next: nx
+          has_prev: pv
+
+      - action: remove
+        target: unnecessary_fields
+        fields:
+          - ok  # Assume success
+          - root  # Not needed for listing
+          - progress_log  # Not needed for listing
+          - active_project  # Known from context
+          - recent_projects  # Not requested
+          - reminders  # Empty array
+          - context_safety  # Internal metadata
+
+      - action: optimize
+        target: null_values
+        description: "Use null instead of string 'never' for null activity"
+
+    before_example: |
+      {"ok":true,"projects":[{"name":"append-entry-edge-test","root":"/home/austin/projects/MCP_SPINE/scribe_mcp/tmp/append_entry_edge","progress_log":"/home/austin/projects/MCP_SPINE/scribe_mcp/tmp/append_entry_edge/docs/dev_plans/append_entry_edge_test/PROGRESS_LOG.md"},{"name":"append_query_modularization","root":"/home/austin/projects/MCP_SPINE/scribe_mcp","progress_log":"/home/austin/projects/MCP_SPINE/scribe_mcp/docs/dev_plans/append_query_modularization/PROGRESS_LOG.md"},{"name":"bugs","root":"/home/austin/projects/MCP_SPINE/scribe_mcp","progress_log":"/home/austin/projects/MCP_SPINE/scribe_mcp/docs/dev_plans/bugs/PROGRESS_LOG.md"}],"count":3,"pagination":{"page":1,"page_size":3,"total_count":109,"has_next":true,"has_prev":false},"total_available":109,"filtered":true,"active_project":"scribe_systematic_audit_1_phase5_tool_output","context_safety":{"estimated_tokens":190,"pagination_used":true,"filtered":true},"recent_projects":["scribe_systematic_audit_1_phase5_tool_output","scribe_systematic_audit_1","scribe_tool_output_refinement","scribe_mcp","scribe_sentinel_concurrency_v1"],"reminders":[]}
+
+    after_example: |
+      {"p":[{"n":"append-entry-edge-test","s":"planning","e":1,"a":null},{"n":"append_query_modularization","s":"planning","e":176,"a":null},{"n":"bugs","s":"planning","e":2,"a":null}],"tot":109,"pg":{"i":1,"sz":3,"nx":true,"pv":false}}
+
+    file_modified: tools/list_projects.py
+    function_modified: _format_compact()
+
+  # PHASE 3: Structured Mode Optimization
+  structured_mode:
+    description: "Middle ground - readable keys but remove unnecessary fields"
+
+    changes:
+      - action: remove
+        target: unnecessary_fields
+        fields:
+          - ok  # Assume success
+          - root  # Not needed for listing
+          - progress_log  # Not needed for listing
+          - active_project  # Known from context
+          - recent_projects  # Not requested unless specifically needed
+          - reminders  # Empty array
+          - context_safety  # Internal metadata
+
+    before_example: |
+      {"ok":true,"projects":[{"name":"append-entry-edge-test","root":"...","progress_log":"..."}...],"count":3,"pagination":{...},"total_available":109,"filtered":true,"active_project":"...","context_safety":{...},"recent_projects":[...],"reminders":[]}
+
+    after_example: |
+      {"projects":[{"name":"append-entry-edge-test","status":"planning","entries":1}...],"total":109,"pagination":{"page":1,"size":3,"has_next":true}}
+
+    file_modified: tools/list_projects.py
+    function_modified: _format_structured()
+
+# ============================================================================
+# CONFIGURATION INTEGRATION
+# ============================================================================
+
+configuration:
+  file: .scribe/config/scribe.yaml
+  section: display.list_projects
+
+  options:
+    verbosity:
+      type: integer
+      default: 1
+      values:
+        0: minimal  # Compact mode optimizations
+        1: standard  # Readable mode refinements (default)
+        2: verbose  # Current behavior
+
+    show_tips:
+      type: boolean
+      default: false
+      description: "Show usage tips in footer"
+
+    box_drawing:
+      type: boolean
+      default: false
+      description: "Use box drawing characters in headers"
+
+    default_format:
+      type: string
+      default: "readable"
+      values: [readable, structured, compact]
+
+  example_config: |
+    display:
+      verbosity: 1
+      list_projects:
+        show_tips: false
+        box_drawing: false
+        default_format: "readable"
+
+# ============================================================================
+# TESTING REQUIREMENTS
+# ============================================================================
+
+tests:
+  unit_tests:
+    - test_readable_mode_refinement:
+        description: "Verify readable output matches refined format"
+        assertions:
+          - "No box drawing characters present"
+          - "No tip footer present"
+          - "Token count < 120"
+          - "All project names present"
+          - "All metadata (status, entries, activity) present"
+
+    - test_compact_mode_implementation:
+        description: "Verify compact mode uses abbreviated keys"
+        assertions:
+          - "JSON keys are abbreviated (p, n, s, e, a)"
+          - "No unnecessary fields (ok, root, progress_log, etc.)"
+          - "Token count < 135"
+          - "All core data preserved"
+          - "Valid JSON structure"
+
+    - test_structured_mode_optimization:
+        description: "Verify structured mode removes bloat but keeps readable keys"
+        assertions:
+          - "Readable JSON keys (projects, name, status)"
+          - "No unnecessary fields removed"
+          - "Token count < 165"
+          - "All core data preserved"
+
+  integration_tests:
+    - test_format_parameter_routing:
+        description: "Verify format parameter correctly routes to each mode"
+        scenarios:
+          - format: readable
+            expected_output: "Refined readable table"
+          - format: structured
+            expected_output: "Optimized structured JSON"
+          - format: compact
+            expected_output: "Abbreviated compact JSON"
+
+    - test_pagination:
+        description: "Verify pagination works across all formats"
+        scenarios:
+          - page: 1
+            expected: "First 3 projects"
+          - page: 2
+            expected: "Next 3 projects"
+          - page: 100
+            expected: "Error or empty if out of range"
+
+    - test_filtering:
+        description: "Verify filter parameter works across all formats"
+        scenarios:
+          - filter: "scribe"
+            expected: "Only projects matching 'scribe'"
+          - filter: "exact_project_name"
+            expected: "Single project details"
+
+  regression_tests:
+    - test_backward_compatibility:
+        description: "Verify existing workflows still function"
+        scenarios:
+          - "CLI invocation: scribe --list-projects"
+          - "MCP tool call with no parameters"
+          - "MCP tool call with format=readable"
+
+  performance_tests:
+    - test_token_reduction:
+        description: "Verify token reduction targets achieved"
+        assertions:
+          - "Readable mode: < 120 tokens"
+          - "Structured mode: < 165 tokens"
+          - "Compact mode: < 135 tokens"
+
+# ============================================================================
+# VERIFICATION CRITERIA
+# ============================================================================
+
+success_criteria:
+  - criterion: token_reduction
+    target: "40-45% reduction in all modes"
+    measurement: "tiktoken cl100k_base encoding"
+
+  - criterion: information_preservation
+    target: "100% core data retained"
+    verification: "All project names, status, entries, activity present"
+
+  - criterion: readability_maintained
+    target: "Readable mode still human-friendly"
+    verification: "Manual review confirms clarity"
+
+  - criterion: compact_mode_fixed
+    target: "BUG-COMPACT-001 resolved"
+    verification: "Compact != Structured, abbreviated keys present"
+
+  - criterion: configuration_works
+    target: "Verbosity levels produce expected output"
+    verification: "Config changes affect output correctly"
+
+# ============================================================================
+# IMPLEMENTATION NOTES
+# ============================================================================
+
+notes:
+  - "CRITICAL: This is refinement, NOT truncation - all data must be preserved"
+  - "Compact mode must be truly compact, not just structured with different flag"
+  - "Readable mode optimizations should improve, not degrade, human readability"
+  - "Consider adding verbosity=0 for ultra-minimal output in automated workflows"
+  - "Team B (FormatValidator) should verify format parameter implementation after fix"
+
+# ============================================================================
+# CROSS-REFERENCES
+# ============================================================================
+
+cross_references:
+  bugs:
+    - BUG-COMPACT-001
+  teams:
+    - Team B (FormatValidator) - format parameter validation
+  deliverables:
+    - wiki/analysis/token_measurement_report.md
+    - wiki/analysis/bloat_categorization_detailed.md
+    - wiki/analysis/high_frequency_tool_optimization.md

@@ -102,29 +102,38 @@ async def resolve_logging_context(
                         f.write(f"project_name from DB: {project_name}\n")
                     if project_name:
                         # Try database registry first (projects may not have JSON config files)
-                        import sqlite3
-                        from scribe_mcp.config.settings import settings
+                        # CRITICAL FIX: Use backend._fetchone() instead of sqlite3.connect()
+                        # to avoid connection isolation in WAL mode (Bug Fix #3)
                         try:
-                            with sqlite3.connect(settings.sqlite_path) as conn:
-                                conn.row_factory = sqlite3.Row
-                                row = conn.execute(
-                                    "SELECT name, repo_root, progress_log_path FROM scribe_projects WHERE name = ?",
-                                    (project_name,)
-                                ).fetchone()
-                                if row:
-                                    session_project = {
-                                        "name": row["name"],
-                                        "root": row["repo_root"],
-                                        "progress_log": row["progress_log_path"],
-                                    }
-                                    with open(debug_log, "a") as f:
-                                        f.write(f"session_project from scribe_projects table: {session_project.get('name')}\n")
-                                else:
-                                    # Fallback to JSON config files for legacy projects
-                                    from scribe_mcp.tools.project_utils import load_project_config
-                                    session_project = load_project_config(project_name)
-                                    with open(debug_log, "a") as f:
-                                        f.write(f"session_project from config: {session_project.get('name') if session_project else None}\n")
+                            row = await backend._fetchone(
+                                "SELECT name, repo_root, progress_log_path, docs_json FROM scribe_projects WHERE name = ?",
+                                (project_name,)
+                            )
+                            if row:
+                                session_project = {
+                                    "name": row["name"],
+                                    "root": row["repo_root"],
+                                    "progress_log": row["progress_log_path"],
+                                }
+
+                                # Parse and add docs field from docs_json column
+                                if row["docs_json"]:
+                                    try:
+                                        session_project["docs"] = json.loads(row["docs_json"])
+                                    except (json.JSONDecodeError, TypeError) as e:
+                                        # Log warning but don't fail - fallback to state.json will work
+                                        import logging
+                                        logger = logging.getLogger(__name__)
+                                        logger.warning(f"Failed to parse docs_json for {row['name']}: {e}")
+
+                                with open(debug_log, "a") as f:
+                                    f.write(f"session_project from scribe_projects table: {session_project.get('name')}\n")
+                            else:
+                                # Fallback to JSON config files for legacy projects
+                                from scribe_mcp.tools.project_utils import load_project_config
+                                session_project = load_project_config(project_name)
+                                with open(debug_log, "a") as f:
+                                    f.write(f"session_project from config: {session_project.get('name') if session_project else None}\n")
                         except Exception as e:
                             with open(debug_log, "a") as f:
                                 f.write(f"ERROR querying scribe_projects: {e}\n")

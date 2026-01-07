@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "created_timestamp": "2025-10-24 11:35:00 UTC",
-  "last_updated": "2026-01-03T12:19:29.150810 UTC",
+  "last_updated": "2026-01-04T06:02:59.130783 UTC",
   "projects": {
     "enhanced-rotation-test": {
       "created_timestamp": "2025-10-24T12:05:59.361388 UTC",
@@ -959,6 +959,25 @@
       },
       "rotation_ids": [
         "51f0ce66-fd5e-494b-ab15-e12517ff19d2"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "scribe_tool_output_refinement": {
+      "created_timestamp": "2026-01-04T06:02:59.112764 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-04 06:02:59 UTC",
+      "hash_chain": {
+        "root_hash": "dd07d391e753e254cc64421aeddaf080f73609c4fcc67a0e15272a9459c273b1",
+        "current_sequence": 1,
+        "last_hash": "dd07d391e753e254cc64421aeddaf080f73609c4fcc67a0e15272a9459c273b1"
+      },
+      "rotation_ids": [
+        "39decf1e-7bd8-40ba-a962-88f504957106"
       ],
       "log_stats": {},
       "settings": {

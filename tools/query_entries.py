@@ -1205,6 +1205,8 @@ async def query_entries(
         if emoji:
             search_result["search_emoji"] = emoji
 
+        if context.reminders:
+            search_result["reminders"] = list(context.reminders)
         # Route through formatter for readable/structured/compact output
         return await default_formatter.finalize_tool_response(
             data=search_result,

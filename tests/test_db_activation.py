@@ -421,14 +421,15 @@ async def test_backward_compatibility_flags_off(storage, reminder_engine):
     )
     assert cooldown_check, "Reminder should be in cooldown after recording"
 
-    # Verify legacy infrastructure doesn't break
-    # (File-based code still exists in ReminderEngine for fallback)
-    assert hasattr(reminder_engine, '_cooldown_cache_path'), "Legacy file infrastructure should exist"
+    # Verify DB backend is integrated
+    # (File-based code has been removed, DB is now the primary backend)
+    assert hasattr(reminder_engine, 'storage'), "DB storage backend should be injected"
+    assert reminder_engine.storage is not None, "Storage backend should be initialized"
 
     print(f"✅ Backward compatibility validated:")
     print(f"   - DB infrastructure works: PASS")
     print(f"   - ReminderEngine functional: PASS")
-    print(f"   - Legacy infrastructure intact: PASS")
+    print(f"   - DB backend integrated: PASS")
     print(f"   - No regressions: PASS")
 
 

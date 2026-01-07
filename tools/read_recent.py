@@ -345,6 +345,8 @@ async def read_recent(
                         "messages": healing_messages,
                         "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
                     }
+                if context.reminders:
+                    response["reminders"] = list(context.reminders)
                 return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
                     response, format, "read_recent"
                 )
@@ -387,6 +389,8 @@ async def read_recent(
                     page_size=page_size
                 )
 
+            if context.reminders:
+                response["reminders"] = list(context.reminders)
             return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
                 response, format, "read_recent"
             )
@@ -443,6 +447,8 @@ async def read_recent(
                 "messages": healing_messages,
                 "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
             }
+        if context.reminders:
+            response["reminders"] = list(context.reminders)
         return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
             response, format, "read_recent"
         )
@@ -485,6 +491,8 @@ async def read_recent(
             page_size=page_size
         )
 
+    if context.reminders:
+        response["reminders"] = list(context.reminders)
     return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
         response, format, "read_recent"
     )

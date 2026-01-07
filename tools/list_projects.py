@@ -14,6 +14,7 @@ from scribe_mcp.utils.context_safety import ContextManager
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_utils import detect_project_state
 
 
 MINIMAL_FIELDS = ("name", "root", "progress_log")
@@ -35,7 +36,52 @@ COMPACT_FIELD_MAP = {
     "description": "desc",
     "tags": "tg",
     "meta": "m",
+    # SITREP-related fields (Phase 4.3)
+    "state": "st",
+    "sitrep_message": "sm",
+    "entry_count": "ec",
 }
+
+# State icons for readable format
+STATE_ICONS = {
+    "NEW": "🆕",
+    "EXISTING_LEGACY": "📋",
+    "UNCHANGED": "✓",
+    "MODIFIED": "✏️"
+}
+
+
+def _compute_summary_stats(projects: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Compute summary statistics for project states.
+
+    Args:
+        projects: List of project dicts with 'state' field
+
+    Returns:
+        Dict with state breakdown:
+        {
+            "total_projects": 47,
+            "NEW": 5,
+            "EXISTING_LEGACY": 3,
+            "UNCHANGED": 20,
+            "MODIFIED": 19
+        }
+    """
+    stats = {
+        "total_projects": len(projects),
+        "NEW": 0,
+        "EXISTING_LEGACY": 0,
+        "UNCHANGED": 0,
+        "MODIFIED": 0
+    }
+
+    for project in projects:
+        state = project.get("state", "UNKNOWN")
+        if state in stats:
+            stats[state] += 1
+
+    return stats
 
 
 class _ListProjectsHelper(LoggingToolMixin):
@@ -52,12 +98,12 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
     Gather document information for a project (for detail view).
 
     Args:
-        project: Project dict with name, root, progress_log
+        project: Project dict with name, root, progress_log, meta (with docs.flags)
 
     Returns:
         Dict with document information:
         {
-            "architecture": {"exists": True, "lines": 1274, "modified": False},
+            "architecture": {"exists": True, "lines": 1274, "modified": True},
             "phase_plan": {"exists": True, "lines": 542, "modified": False},
             "checklist": {"exists": True, "lines": 356, "modified": False},
             "progress": {"exists": True, "entries": 298},
@@ -78,15 +124,20 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
     # Get dev plan directory
     dev_plan_dir = Path(progress_log).parent
 
+    # Extract modification flags from project meta
+    meta = project.get("meta", {})
+    docs_meta = meta.get("docs", {})
+    flags = docs_meta.get("flags", {})
+
     result = {}
 
-    # Check standard documents
+    # Check standard documents with actual modification status
     arch_file = dev_plan_dir / "ARCHITECTURE_GUIDE.md"
     if arch_file.exists():
         result["architecture"] = {
             "exists": True,
             "lines": default_formatter._get_doc_line_count(arch_file),
-            "modified": False  # TODO: Check against registry hashes if needed
+            "modified": flags.get("architecture_modified", False)
         }
 
     phase_file = dev_plan_dir / "PHASE_PLAN.md"
@@ -94,7 +145,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
         result["phase_plan"] = {
             "exists": True,
             "lines": default_formatter._get_doc_line_count(phase_file),
-            "modified": False
+            "modified": flags.get("phase_plan_modified", False)
         }
 
     checklist_file = dev_plan_dir / "CHECKLIST.md"
@@ -102,7 +153,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
         result["checklist"] = {
             "exists": True,
             "lines": default_formatter._get_doc_line_count(checklist_file),
-            "modified": False
+            "modified": flags.get("checklist_modified", False)
         }
 
     # Progress log - count entries not lines
@@ -140,7 +191,7 @@ async def list_projects(
     tags: Optional[List[str]] = None,
     order_by: Optional[str] = None,
     direction: str = "desc",
-    format: str = "structured",  # New parameter for output format
+    format: str = "readable",  # New parameter for output format
 ) -> Dict[str, Any]:
     """Return projects registered in the database or state cache with intelligent filtering.
 
@@ -248,6 +299,25 @@ async def list_projects(
         if info.tags and "tags" not in data:
             data["tags"] = info.tags
 
+    # Integrate state detection for all projects (Phase 4.3)
+    for name, data in projects_map.items():
+        # Get entry count from backend
+        entry_count = 0
+        if backend:
+            try:
+                entry_count = await backend.count_entries(name)
+            except Exception:
+                # Fallback to total_entries from registry if count_entries fails
+                entry_count = data.get("total_entries", 0)
+
+        # Detect state using Phase 4.1 infrastructure
+        state, sitrep_message = detect_project_state(data, entry_count)
+
+        # Add state information to project data
+        data["state"] = state
+        data["sitrep_message"] = sitrep_message
+        data["entry_count"] = entry_count
+
     # Convert to list and apply name/status/tag filters if provided
     projects_list = list(projects_map.values())
     if filter:
@@ -350,7 +420,9 @@ async def list_projects(
         compact=compact
     )
 
-    selected_fields = fields or list(MINIMAL_FIELDS)
+    # Include SITREP fields in default field set (Phase 4.3)
+    default_fields = list(MINIMAL_FIELDS) + ["state", "sitrep_message", "entry_count"]
+    selected_fields = fields or default_fields
 
     def _format_project(project: Dict[str, Any]) -> Dict[str, Any]:
         formatted: Dict[str, Any] = {}
@@ -391,6 +463,8 @@ async def list_projects(
                 "active_project": current_name
             }
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
+            if context.reminders:
+                response["reminders"] = list(context.reminders)
             return await default_formatter.finalize_tool_response(response, format="readable", tool_name="list_projects")
 
         elif filtered_count == 1:
@@ -417,6 +491,8 @@ async def list_projects(
                 "active_project": current_name
             }
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
+            if context.reminders:
+                response["reminders"] = list(context.reminders)
             return await default_formatter.finalize_tool_response(response, format="readable", tool_name="list_projects")
 
         else:
@@ -457,6 +533,8 @@ async def list_projects(
                 "active_project": current_name
             }
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
+            if context.reminders:
+                response["reminders"] = list(context.reminders)
             return await default_formatter.finalize_tool_response(response, format="readable", tool_name="list_projects")
 
     # For structured/compact formats, continue with existing logic
@@ -472,6 +550,9 @@ async def list_projects(
     if compact:
         context_safety["compact_mode"] = True
 
+    # Compute summary statistics for all projects (Phase 4.3)
+    summary_stats = _compute_summary_stats(context_response["items"])
+
     response = {
         "ok": True,
         "projects": formatted_projects,
@@ -486,6 +567,7 @@ async def list_projects(
             else (context.project.get("name") if context.project else None)
         ),
         "context_safety": context_safety,
+        "summary": summary_stats,  # Phase 4.3: State breakdown statistics
     }
 
     if token_check.get("warning"):

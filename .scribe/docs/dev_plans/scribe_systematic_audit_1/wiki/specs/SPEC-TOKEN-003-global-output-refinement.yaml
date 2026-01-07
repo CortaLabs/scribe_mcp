@@ -1,0 +1,507 @@
+spec_id: SPEC-TOKEN-003
+title: Global Output Refinement Strategy
+version: 1.0.0
+created: 2026-01-05
+author: ResearchAgent-Phase5-TokenAnalyzer
+status: draft
+priority: high
+
+# ============================================================================
+# PROBLEM STATEMENT
+# ============================================================================
+
+problem:
+  description: |
+    Cross-cutting bloat patterns affect ALL tools in the system, creating redundant
+    optimization work and inconsistent user experience. A global refinement strategy
+    addresses common bloat sources once, benefiting all 16+ tools simultaneously.
+
+  cross_cutting_patterns:
+    - pattern: absolute_path_proliferation
+      frequency: "Every tool returning file paths"
+      impact: "30-60 tokens per output"
+      affected_tools: 12
+
+    - pattern: verbose_json_keys
+      frequency: "All tools with structured/compact modes"
+      impact: "20-40% of JSON output size"
+      affected_tools: 16
+
+    - pattern: box_drawing_overhead
+      frequency: "All readable format tools"
+      impact: "15-30 tokens per output"
+      affected_tools: 10
+
+    - pattern: unsolicited_tips
+      frequency: "High-frequency user-facing tools"
+      impact: "15-25 tokens per tip"
+      affected_tools: 6
+
+# ============================================================================
+# GLOBAL OPTIMIZATION PRINCIPLES
+# ============================================================================
+
+principles:
+  refinement_not_truncation:
+    description: "Improve formatting and information density, never remove core data"
+    examples:
+      - "✅ Shorten '/home/user/project/file.md' to 'project/file.md'"
+      - "❌ Remove file path entirely"
+
+  preserve_information_density:
+    description: "Every token should carry meaningful information"
+    examples:
+      - "✅ Keep emoji status indicators (✅/⚠️/❌) - information dense"
+      - "❌ Remove all visual elements blindly"
+
+  configuration_driven:
+    description: "Users control verbosity levels, not hardcoded assumptions"
+    levels:
+      0: minimal   # Automated workflows, token-constrained environments
+      1: standard  # Default, balanced human + token efficiency
+      2: verbose   # Maximum detail, debugging, learning
+
+  consistency_across_tools:
+    description: "Same bloat patterns should be addressed identically across all tools"
+    example: "If list_projects removes box drawing, ALL tools should for verbosity=1"
+
+# ============================================================================
+# PATTERN 1: ABSOLUTE PATH REDUCTION
+# ============================================================================
+
+pattern_absolute_paths:
+  problem:
+    description: "Every tool returns absolute paths consuming 30-60 tokens unnecessarily"
+    example_before: "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/project/PROGRESS_LOG.md"
+    example_after: ".scribe/docs/dev_plans/project/PROGRESS_LOG.md"
+    token_savings: 35
+
+  solution:
+    strategy: "Use relative paths from known context roots"
+    context_roots:
+      - repo_root: "Assume user knows their repo root"
+      - project_root: "Assume active project known from context"
+      - scribe_root: "Assume .scribe directory location known"
+
+    implementation:
+      file: utils/path_utils.py
+      function: abbreviate_path()
+      signature: |
+        def abbreviate_path(
+            absolute_path: str,
+            context_root: str = None,
+            verbosity: int = 1
+        ) -> str:
+            """
+            Abbreviate absolute path to relative form based on verbosity.
+
+            Args:
+                absolute_path: Full absolute path
+                context_root: Known root to make path relative to
+                verbosity: 0=minimal, 1=standard, 2=verbose
+
+            Returns:
+                Abbreviated path appropriate for verbosity level
+            """
+
+      logic:
+        verbosity_0: "Filename only (PROGRESS_LOG.md)"
+        verbosity_1: "Relative from context root (.scribe/docs/.../PROGRESS_LOG.md)"
+        verbosity_2: "Full absolute path (current behavior)"
+
+  affected_tools:
+    - append_entry
+    - list_projects
+    - get_project
+    - set_project
+    - read_recent
+    - query_entries
+    - read_file
+    - manage_docs
+    - generate_doc_templates
+    - rotate_log
+
+# ============================================================================
+# PATTERN 2: VERBOSE JSON KEYS
+# ============================================================================
+
+pattern_json_keys:
+  problem:
+    description: "Structured mode uses verbose keys, compact mode doesn't exist or is broken"
+    impact: "20-40% of JSON output is key names"
+
+  solution:
+    strategy: "Define standard abbreviation mappings for compact mode"
+
+    global_abbreviations:
+      # Common metadata
+      ok: ok  # Keep as-is (2 chars already minimal)
+      status: s
+      message: msg
+      error: err
+
+      # Project fields
+      project: proj
+      projects: p
+      name: n
+      root: r
+      progress_log: log
+
+      # Pagination
+      pagination: pg
+      page: i
+      page_size: sz
+      total_count: tot
+      has_next: nx
+      has_prev: pv
+
+      # Timestamps
+      timestamp: ts
+      created_at: cr
+      updated_at: up
+      last_activity: act
+
+      # Entries
+      entries: e
+      count: c
+      results: r
+
+      # Metadata
+      metadata: meta
+      confidence: conf
+      priority: pri
+      category: cat
+
+    implementation:
+      file: utils/response.py
+      function: format_compact_json()
+      signature: |
+        def format_compact_json(
+            data: dict,
+            abbreviations: dict = None
+        ) -> str:
+            """
+            Format JSON with abbreviated keys for compact mode.
+
+            Args:
+                data: Data dictionary to format
+                abbreviations: Custom abbreviation mappings (optional)
+
+            Returns:
+                Compact JSON string with abbreviated keys
+            """
+
+  affected_tools:
+    - All 16 tools with JSON output
+
+# ============================================================================
+# PATTERN 3: BOX DRAWING OVERHEAD
+# ============================================================================
+
+pattern_box_drawing:
+  problem:
+    description: "Box drawing characters consume 15-30 tokens per output"
+    example_before: |
+      ╔══════════════════════════════════════════════════════════╗
+      ║ 📋 PROJECTS - 109 total (Page 1 of 37, showing 3)         ║
+      ╚══════════════════════════════════════════════════════════╝
+    example_after: |
+      📋 Projects (3/109, page 1/37)
+    token_savings: 25
+
+  solution:
+    strategy: "Remove box drawing at verbosity levels 0-1, keep for level 2"
+
+    implementation:
+      file: utils/response.py
+      function: format_header()
+      signature: |
+        def format_header(
+            title: str,
+            emoji: str = None,
+            metadata: str = None,
+            verbosity: int = 1,
+            box_drawing: bool = None  # Override verbosity default
+        ) -> str:
+            """
+            Format header based on verbosity level.
+
+            Args:
+                title: Header text
+                emoji: Optional emoji prefix
+                metadata: Optional metadata (count, page, etc.)
+                verbosity: 0=minimal, 1=standard, 2=verbose
+                box_drawing: Force enable/disable (overrides verbosity)
+
+            Returns:
+                Formatted header string
+            """
+
+      logic:
+        verbosity_0: "{emoji} {title}"
+        verbosity_1: "{emoji} {title} ({metadata})"
+        verbosity_2: "Box drawing with full details (current behavior)"
+
+  affected_tools:
+    - list_projects
+    - get_project
+    - read_recent
+    - query_entries
+    - read_file
+    - scribe_doctor
+    - Any tool with headers
+
+# ============================================================================
+# PATTERN 4: UNSOLICITED TIPS/SUGGESTIONS
+# ============================================================================
+
+pattern_tips:
+  problem:
+    description: "Tips and suggestions consume 15-25 tokens each, rarely used"
+    example: "💡 Tip: Add filter=\"scribe\" to narrow results, or filter=\"exact_name\" to see details"
+    token_cost: 22
+
+  solution:
+    strategy: "Make tips opt-in via configuration, default OFF"
+
+    configuration:
+      file: .scribe/config/scribe.yaml
+      option: display.show_tips
+      default: false
+
+    implementation:
+      file: utils/response.py
+      function: add_tip()
+      signature: |
+        def add_tip(
+            tip_text: str,
+            category: str = "general",
+            show_tips: bool = None  # None = use config default
+        ) -> str:
+            """
+            Conditionally add tip based on configuration.
+
+            Args:
+                tip_text: Tip content
+                category: Tip category (general, navigation, filtering, etc.)
+                show_tips: Override config (None = use config)
+
+            Returns:
+                Formatted tip or empty string
+            """
+
+  affected_tools:
+    - list_projects
+    - get_project
+    - query_entries
+    - read_recent
+    - set_project
+    - manage_docs
+
+# ============================================================================
+# CONFIGURATION SYSTEM
+# ============================================================================
+
+configuration:
+  file: .scribe/config/scribe.yaml
+  global_section: display
+
+  structure: |
+    display:
+      # Global verbosity (affects all tools)
+      verbosity: 1  # 0=minimal, 1=standard, 2=verbose
+
+      # Global display options
+      box_drawing: false
+      show_tips: false
+      use_relative_paths: true
+      timestamp_format: "short"  # short, full, none
+
+      # Per-tool overrides
+      list_projects:
+        verbosity: 1  # Override global
+        default_format: "readable"
+
+      append_entry:
+        show_file_path: true
+        filter_default_metadata: true
+
+      read_file:
+        show_metadata: true
+        show_chunks: true
+
+  implementation:
+    file: config/display_config.py
+    class: DisplayConfig
+    methods:
+      - get_verbosity(tool_name: str) -> int
+      - should_show_tips(tool_name: str) -> bool
+      - should_use_box_drawing(tool_name: str) -> bool
+      - get_path_format(tool_name: str) -> str
+      - get_timestamp_format(tool_name: str) -> str
+
+# ============================================================================
+# IMPLEMENTATION ROADMAP
+# ============================================================================
+
+implementation_phases:
+  phase_1_foundation:
+    description: "Create shared utilities and configuration system"
+    deliverables:
+      - utils/path_utils.py (abbreviate_path)
+      - utils/response.py (format_header, format_compact_json, add_tip)
+      - config/display_config.py (DisplayConfig class)
+    estimated_effort: "4-6 hours"
+
+  phase_2_high_frequency_tools:
+    description: "Apply optimizations to highest-impact tools first"
+    tools:
+      - append_entry (100 calls/day)
+      - list_projects (20 calls/day)
+      - set_project (15 calls/day)
+    estimated_effort: "6-8 hours"
+
+  phase_3_remaining_tools:
+    description: "Apply optimizations to all remaining tools"
+    tools: "12 remaining tools"
+    estimated_effort: "8-12 hours"
+
+  phase_4_testing:
+    description: "Comprehensive testing and validation"
+    test_types:
+      - Unit tests for utilities
+      - Integration tests for each tool
+      - Regression tests for workflows
+      - Token measurement validation
+    estimated_effort: "4-6 hours"
+
+  total_effort: "22-32 hours"
+
+# ============================================================================
+# IMPACT ANALYSIS
+# ============================================================================
+
+impact:
+  token_savings:
+    pattern_absolute_paths:
+      per_occurrence: 35
+      occurrences_per_day: 50  # Conservative estimate across all tools
+      daily_savings: 1750
+      annual_savings: 638750
+
+    pattern_json_keys:
+      reduction_percent: 30
+      affected_outputs_per_day: 30
+      avg_tokens_per_output: 200
+      daily_savings: 1800  # 30% of 30 × 200
+      annual_savings: 657000
+
+    pattern_box_drawing:
+      per_occurrence: 25
+      occurrences_per_day: 40
+      daily_savings: 1000
+      annual_savings: 365000
+
+    pattern_tips:
+      per_occurrence: 20
+      occurrences_per_day: 15
+      daily_savings: 300
+      annual_savings: 109500
+
+    combined_daily: 4850
+    combined_annual: 1770250  # 1.77 million tokens/year
+
+  cost_savings:
+    # At $0.01 per 1K tokens
+    per_developer_annual: 17.70
+    team_10_annual: 177.00
+    team_50_annual: 885.00
+
+  developer_experience:
+    benefits:
+      - "Cleaner, less cluttered output across all tools"
+      - "Faster visual scanning (less noise)"
+      - "Consistent formatting across entire system"
+      - "User control via configuration (not forced changes)"
+      - "Easier debugging with structured logs"
+
+# ============================================================================
+# TESTING REQUIREMENTS
+# ============================================================================
+
+tests:
+  utility_tests:
+    - test_abbreviate_path:
+        scenarios:
+          - verbosity: 0
+            input: "/home/austin/projects/MCP_SPINE/scribe_mcp/PROGRESS_LOG.md"
+            expected: "PROGRESS_LOG.md"
+          - verbosity: 1
+            input: "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/file.md"
+            expected: ".scribe/docs/project/file.md"
+          - verbosity: 2
+            input: "/absolute/path/file.md"
+            expected: "/absolute/path/file.md"
+
+    - test_format_compact_json:
+        input: {"projects": [{"name": "test", "status": "planning"}], "total_count": 1}
+        expected: '{"p":[{"n":"test","s":"planning"}],"tot":1}'
+
+  integration_tests:
+    - test_global_verbosity:
+        description: "Verify verbosity setting affects all tools consistently"
+        steps:
+          - Set verbosity=0 in config
+          - Call list_projects, append_entry, get_project
+          - Verify all outputs are minimal
+
+    - test_per_tool_overrides:
+        description: "Verify tool-specific overrides work"
+        steps:
+          - Set global verbosity=1
+          - Set list_projects.verbosity=2
+          - Verify list_projects is verbose, others are standard
+
+  regression_tests:
+    - test_information_preservation:
+        description: "Verify all core data preserved across verbosity levels"
+        assertion: "Same data extractable from verbosity 0, 1, and 2 outputs"
+
+# ============================================================================
+# VERIFICATION CRITERIA
+# ============================================================================
+
+success_criteria:
+  - criterion: pattern_elimination
+    target: "All 4 patterns addressed globally"
+    verification: "Utility functions in place, all tools using them"
+
+  - criterion: token_reduction
+    target: "30-40% average reduction across all tools"
+    measurement: "Before/after tiktoken measurements"
+
+  - criterion: configuration_works
+    target: "Verbosity levels 0/1/2 produce expected outputs"
+    verification: "Integration tests pass"
+
+  - criterion: no_data_loss
+    target: "100% information preservation"
+    verification: "Regression tests confirm data integrity"
+
+  - criterion: consistency
+    target: "Same patterns handled identically across tools"
+    verification: "Code review confirms shared utilities used"
+
+# ============================================================================
+# CROSS-REFERENCES
+# ============================================================================
+
+cross_references:
+  specs:
+    - SPEC-TOKEN-001 (list_projects - demonstrates patterns)
+    - SPEC-TOKEN-002 (append_entry - demonstrates patterns)
+  patterns:
+    - All 4 cross-cutting patterns documented in bloat_categorization_detailed.md
+  deliverables:
+    - wiki/analysis/bloat_categorization_detailed.md
+    - wiki/analysis/high_frequency_tool_optimization.md

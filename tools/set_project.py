@@ -21,6 +21,7 @@ from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionErr
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_utils import detect_project_state
 
 
 class _SetProjectHelper(LoggingToolMixin):
@@ -292,6 +293,17 @@ async def set_project(
             progress_log_path=str(resolved_log),
         )
 
+        # Parse docs_json from project_record and populate project_data meta
+        if project_record and project_record.docs_json:
+            import json
+            try:
+                docs_metadata = json.loads(project_record.docs_json)
+                project_data.setdefault("meta", {})
+                project_data["meta"]["docs"] = docs_metadata
+            except (json.JSONDecodeError, TypeError):
+                # Invalid JSON - silently ignore and continue
+                pass
+
         # Best-effort Project Registry touch for this project (SQLite-first).
         try:
             _PROJECT_REGISTRY.ensure_project(
@@ -453,10 +465,18 @@ async def set_project(
     if format == "readable":
         from scribe_mcp.utils.response import default_formatter
 
-        # Detect new vs existing project
-        progress_log_path = Path(resolved_log)
-        entry_count = await _count_log_entries(progress_log_path)
-        is_new = not progress_log_path.exists() or entry_count == 0
+        # Detect project state using hash-based logic (fixes BUG-001)
+        # Use backend.count_entries for accurate count instead of file parsing
+        if backend and project_record:
+            entry_count = await backend.count_entries(project_record)
+        else:
+            # Fallback to file-based counting if backend unavailable
+            progress_log_path = Path(resolved_log)
+            entry_count = await _count_log_entries(progress_log_path)
+
+        # Use hash-based detection instead of entry_count for state determination
+        state, sitrep_message = detect_project_state(project_data, entry_count)
+        is_new = (state == "NEW")
 
         if is_new:
             # NEW PROJECT SITREP

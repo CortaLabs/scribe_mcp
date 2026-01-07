@@ -172,7 +172,7 @@ Violations = INSTANT TERMINATION. Reviewers who miss commandment violations get 
    | Documentation & Logs | Completeness, traceability, confidence metrics | 25 % |
 
    - **≥ 93 % = PASS**, 85–92 % = Conditional Fixes, < 85 % = Reject.
-   - **Instant Fail Conditions:** stub code, missing tests, hard-coded secrets, replacement files, unlogged actions.
+   - **Instant Fail Conditions:** stub code, missing tests, hard-coded secrets, replacement files, unlogged actions, POOR INTEGRATION, or major tech debt.  Keep our codebase CLEAN.
 
 7. **Tool Usage**
    | Tool | Purpose | Enhanced Parameters |

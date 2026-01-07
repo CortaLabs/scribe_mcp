@@ -1,0 +1,160 @@
+# SPEC-SET-001: Fix BUG-001 Empty Log Detection
+
+metadata:
+  spec_id: SPEC-SET-001
+  bug_id: BUG-001
+  tool: set_project
+  severity: medium
+  complexity: trivial
+  risk: low
+  estimated_time: 30_minutes
+  phase: phase_6_modularization
+  created_by: ResearchAgent-E-SetProject
+  created_at: 2026-01-05T02:40:00Z
+
+problem:
+  description: >
+    Empty progress logs (after rotation or manual clearing) are incorrectly
+    treated as "new" projects, triggering wrong SITREP formatter and hiding
+    inventory/activity information.
+
+  root_cause: >
+    Line 461 checks `entry_count == 0` as part of new project detection.
+    This conflates "never used" with "empty after rotation" - distinct states.
+
+  file: tools/set_project.py
+  line: 461
+
+  code_before: |
+    # Lines 460-461
+    entry_count = await _count_log_entries(progress_log_path)
+    is_new = not progress_log_path.exists() or entry_count == 0
+
+solution:
+  description: >
+    Remove entry_count check from is_new boolean. File existence is the
+    canonical "has been used" signal. Entry count still needed for inventory.
+
+  code_after: |
+    # Lines 460-461
+    entry_count = await _count_log_entries(progress_log_path)  # Still needed for inventory
+    is_new = not progress_log_path.exists()
+
+  justification:
+    - File existence = canonical "has project been used" signal
+    - Entry count = content metric for inventory, not existence check
+    - Empty file ≠ new project (rotation is valid operation)
+    - Separates concerns: existence vs content analysis
+
+  side_effects:
+    breaking_changes: false
+    api_changes: false
+    behavior_changes:
+      - Empty logs now correctly show existing SITREP (was new SITREP)
+      - Inventory gathering now runs for empty logs (was skipped)
+    variables_affected:
+      - entry_count: Still computed (used at line 494 for inventory)
+      - is_new: Logic changed (no longer checks entry count)
+
+changes:
+  - file: tools/set_project.py
+    line: 461
+    type: modification
+    before: "is_new = not progress_log_path.exists() or entry_count == 0"
+    after: "is_new = not progress_log_path.exists()"
+    diff: |
+      - is_new = not progress_log_path.exists() or entry_count == 0
+      + is_new = not progress_log_path.exists()
+
+testing:
+  unit_tests:
+    - name: test_bug_001_empty_log_shows_existing_sitrep
+      description: Verify rotated/empty logs show existing SITREP
+      file: tests/test_set_project.py
+      assertions:
+        - result2["is_new"] == False
+        - "inventory" in result2
+        - "📂 PROJECT ACTIVATED" in result2["readable_content"]
+
+    - name: test_bug_001_manual_clearing
+      description: Verify manually cleared logs show existing SITREP
+      file: tests/test_set_project.py
+      assertions:
+        - result["is_new"] == False
+        - "inventory" in result
+
+  regression_tests:
+    - name: test_genuinely_new_project
+      description: Ensure truly new projects still work
+      assertions:
+        - result["is_new"] == True
+        - No inventory key (genuinely new)
+
+    - name: test_existing_with_entries
+      description: Ensure existing projects with entries still work
+      assertions:
+        - result["is_new"] == False
+        - "inventory" in result
+
+  verification_steps:
+    - Create project → verify is_new=True
+    - Add entry → rotate log → call set_project → verify is_new=False
+    - Manual clear log → call set_project → verify is_new=False
+    - Verify inventory gathering works for empty logs
+    - Verify both SITREP formatters tested
+
+implementation_notes:
+  prerequisites: []
+  dependencies: []
+  blocked_by: []
+
+  deployment:
+    - Review code change (1 line)
+    - Add unit tests (2 tests)
+    - Run full test suite
+    - Verify SITREP output manually
+    - Merge to dev branch
+
+  rollback:
+    - Revert to original line 461 if issues detected
+    - No database migrations required
+    - No state cleanup required
+
+evidence:
+  reproduction:
+    - Create project: set_project(name="test")
+    - Add entry: append_entry(message="test")
+    - Rotate: rotate_log(confirm=True)
+    - Call again: set_project(name="test")
+    - Bug: shows "NEW PROJECT CREATED" instead of "PROJECT ACTIVATED"
+
+  verification:
+    code_analysis:
+      - Line 461: Confirmed boolean includes entry_count == 0
+      - Line 494: Confirmed inventory gathering in existing branch only
+      - Lines 463-489: New SITREP path (no inventory)
+      - Lines 491-531: Existing SITREP path (with inventory)
+
+    cross_tool_search:
+      - list_projects.py: No similar pattern
+      - get_project.py: No similar pattern
+      - rotate_log.py: Uses entry count correctly (threshold, not existence)
+
+related_work:
+  unification_opportunities:
+    - DocInventoryGatherer module (DUPLICATION-002)
+    - SITREP formatting extraction (BUCKET:formatting)
+
+  future_enhancements:
+    - Add rotation metadata to SITREP output
+    - Expose archived entry counts in activity summary
+    - Track last rotation timestamp for context
+
+sign_off:
+  confirmed_by: ResearchAgent-E-SetProject
+  audit_date: 2026-01-05
+  evidence_level: high
+  fix_complexity: trivial
+  regression_risk: low
+  review_required: true
+  ready_for_implementation: true

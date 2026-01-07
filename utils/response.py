@@ -568,6 +568,481 @@ class ResponseFormatter:
         else:
             parts.append(content)
 
+        # SPECIAL FILE WARNING (SKILL.md detection) - STERN, NOT SEIZURE
+        special_file = data.get('special_file')
+        if special_file:
+            parts.append("")
+            parts.append("─" * 63)
+            parts.append(f"🚨 {special_file.get('reason', 'SPECIAL FILE DETECTED')}")
+            parts.append("─" * 63)
+            parts.append(f"Urgency: {special_file.get('urgency', 'HIGH')}")
+            parts.append(f"Type: {special_file.get('type', 'unknown')}")
+            parts.append(f"Action Required: {special_file.get('instruction', 'Read file immediately')}")
+            if special_file.get('suggested_action'):
+                parts.append(f"→ {special_file.get('suggested_action')}")
+            parts.append("─" * 63)
+
+        # STRUCTURE ANALYSIS (Python AST, Markdown headings, JS/TS functions)
+        structure = data.get('structure')
+        if structure and structure.get('ok'):
+            parts.append("")
+            parts.append("📋 File Structure:")
+            parts.append("")
+
+            file_type = structure.get('type', 'unknown')
+
+            if file_type == 'python':
+                # Python functions and classes
+                functions = structure.get('functions', [])
+                classes = structure.get('classes', [])
+                total_funcs = structure.get('total_functions', len(functions))
+                total_classes = structure.get('total_classes', len(classes))
+
+                # Get pagination params
+                pagination = data.get('structure_pagination', {})
+                page = pagination.get('page', 1)
+                page_size = pagination.get('page_size', 10)
+
+                # Check if filtering is active
+                is_filtered = structure.get('filtered', False)
+                filter_pattern = structure.get('filter_pattern')
+                filtered_func_count = structure.get('filtered_function_count', 0)
+                filtered_class_count = structure.get('filtered_class_count', 0)
+
+                if is_filtered:
+                    total_matches = filtered_func_count + filtered_class_count
+                    parts.append(f"  🔍 Filtered Results ({total_matches} matches for '{filter_pattern}'):")
+                    if filtered_class_count > 0:
+                        parts.append(f"     Classes: {filtered_class_count}")
+                    if filtered_func_count > 0:
+                        parts.append(f"     Functions: {filtered_func_count}")
+                    parts.append("")
+
+                # Helper function to format a signature
+                def format_signature(params_list, return_type=None):
+                    """Format function/method signature with types and defaults."""
+                    if not params_list:
+                        sig = "()"
+                    else:
+                        param_strs = []
+                        for p in params_list:
+                            param_str = p['name']
+                            if 'type' in p and p['type']:
+                                param_str += f": {p['type']}"
+                            if 'default' in p and p['default']:
+                                param_str += f" = {p['default']}"
+                            param_strs.append(param_str)
+                        sig = f"({', '.join(param_strs)})"
+
+                    if return_type:
+                        sig += f" -> {return_type}"
+                    return sig
+
+                if classes:
+                    # Paginate classes list ONLY if not filtered (when filtered, show all matched classes but paginate their methods)
+                    if is_filtered:
+                        paginated_classes = classes
+                        class_total_pages = 1
+                    else:
+                        class_start = (page - 1) * page_size
+                        class_end = class_start + page_size
+                        paginated_classes = classes[class_start:class_end]
+                        class_total_pages = (total_classes + page_size - 1) // page_size
+
+                    if total_classes > page_size and not is_filtered:
+                        parts.append(f"  Classes (page {page} of {class_total_pages}, showing {class_start + 1}-{min(class_end, total_classes)} of {total_classes}):")
+                    else:
+                        parts.append(f"  Classes ({total_classes} total):")
+
+                    for cls in paginated_classes:
+                        # Format class header with line range
+                        start_line = cls['line']
+                        end_line = cls.get('end_line', start_line)
+                        line_count = end_line - start_line + 1
+                        line_info = f"lines {start_line}-{end_line} ({line_count} lines)" if end_line > start_line else f"line {start_line}"
+                        parts.append(f"    • class {cls['name']} at {line_info}")
+
+                        # Show methods if available (with pagination)
+                        methods = cls.get('methods', [])
+                        method_count = cls.get('method_count', len(methods))
+                        if methods:
+                            # Paginate methods
+                            start_idx = (page - 1) * page_size
+                            end_idx = start_idx + page_size
+                            paginated_methods = methods[start_idx:end_idx]
+                            total_pages = (method_count + page_size - 1) // page_size
+
+                            # Show pagination header if multiple pages
+                            if method_count > page_size:
+                                parts.append(f"        Methods (page {page} of {total_pages}, showing {start_idx + 1}-{min(end_idx, method_count)} of {method_count}):")
+                            else:
+                                parts.append(f"        Methods ({method_count} total):")
+
+                            for method in paginated_methods:
+                                async_prefix = "async " if method.get('is_async') else ""
+                                method_params = method.get('params', [])
+                                method_return = method.get('return_type')
+                                sig = format_signature(method_params, method_return)
+
+                                # Format method line range
+                                m_start = method['line']
+                                m_end = method.get('end_line', m_start)
+                                m_count = m_end - m_start + 1
+                                m_line_info = f"{m_start}-{m_end} ({m_count})" if m_end > m_start else str(m_start)
+
+                                parts.append(f"          {async_prefix}def {method['name']}{sig} (lines {m_line_info})")
+
+                            # Navigation hint for next/previous pages
+                            if total_pages > 1:
+                                nav_hints = []
+                                if page > 1:
+                                    nav_hints.append(f"structure_page={page - 1} for previous")
+                                if page < total_pages:
+                                    nav_hints.append(f"structure_page={page + 1} for next")
+                                if nav_hints:
+                                    parts.append(f"        💡 Use {' or '.join(nav_hints)}")
+                        parts.append("")
+
+                    # Add pagination navigation for classes
+                    if class_total_pages > 1 and not is_filtered:
+                        nav_hints = []
+                        if page > 1:
+                            nav_hints.append(f"structure_page={page - 1}")
+                        if page < class_total_pages:
+                            nav_hints.append(f"structure_page={page + 1}")
+                        if nav_hints:
+                            parts.append(f"    💡 Use {' or '.join(nav_hints)} to navigate")
+                        parts.append("")
+
+                if functions:
+                    # Paginate functions list ONLY if not filtered (when filtered, show all matched functions)
+                    if is_filtered:
+                        paginated_funcs = functions
+                        func_total_pages = 1
+                    else:
+                        func_start = (page - 1) * page_size
+                        func_end = func_start + page_size
+                        paginated_funcs = functions[func_start:func_end]
+                        func_total_pages = (total_funcs + page_size - 1) // page_size
+
+                    if total_funcs > page_size and not is_filtered:
+                        parts.append(f"  Functions (page {page} of {func_total_pages}, showing {func_start + 1}-{min(func_end, total_funcs)} of {total_funcs}):")
+                    else:
+                        parts.append(f"  Functions ({total_funcs} total):")
+
+                    for func in paginated_funcs:
+                        func_params = func.get('params', [])
+                        func_return = func.get('return_type')
+
+                        # Fallback to old args format if params not available
+                        if not func_params and func.get('args'):
+                            sig = f"({', '.join(func['args'])})"
+                        else:
+                            sig = format_signature(func_params, func_return)
+
+                        # Format function line range
+                        f_start = func['line']
+                        f_end = func.get('end_line', f_start)
+                        f_count = f_end - f_start + 1
+                        f_line_info = f"lines {f_start}-{f_end} ({f_count})" if f_end > f_start else f"line {f_start}"
+
+                        async_prefix = "async " if func.get('type') == 'async_function' else ""
+                        parts.append(f"    • {async_prefix}def {func['name']}{sig} at {f_line_info}")
+
+                    # Add pagination navigation for functions
+                    if func_total_pages > 1 and not is_filtered:
+                        nav_hints = []
+                        if page > 1:
+                            nav_hints.append(f"structure_page={page - 1}")
+                        if page < func_total_pages:
+                            nav_hints.append(f"structure_page={page + 1}")
+                        if nav_hints:
+                            parts.append(f"    💡 Use {' or '.join(nav_hints)} to navigate")
+
+                if structure.get('truncated'):
+                    parts.append("")
+                    parts.append("  ⚠️  Structure truncated - use line_range/page mode for full details")
+
+            elif file_type == 'markdown':
+                # Markdown headings
+                headings = structure.get('headings', [])
+                total_headings = structure.get('total_headings', len(headings))
+
+                parts.append(f"  Headings ({total_headings} total):")
+                for heading in headings[:20]:  # Show first 20
+                    indent = "  " * heading['level']
+                    parts.append(f"    {indent}{'#' * heading['level']} {heading['text']} (line {heading['line']})")
+                if total_headings > 20:
+                    parts.append(f"    ... and {total_headings - 20} more headings")
+
+                if structure.get('truncated'):
+                    parts.append("")
+                    parts.append("  ⚠️  Structure truncated - use line_range/page mode for full details")
+
+            elif file_type in {'javascript', 'typescript'}:
+                # JavaScript/TypeScript functions and classes
+                functions = structure.get('functions', [])
+                classes = structure.get('classes', [])
+                total_funcs = structure.get('total_functions', len(functions))
+                total_classes = structure.get('total_classes', len(classes))
+
+                if classes:
+                    parts.append(f"  Classes ({total_classes} total):")
+                    for cls in classes[:10]:
+                        parts.append(f"    • {cls['name']} at line {cls['line']}")
+                    if total_classes > 10:
+                        parts.append(f"    ... and {total_classes - 10} more classes")
+                    parts.append("")
+
+                if functions:
+                    parts.append(f"  Functions ({total_funcs} total):")
+                    for func in functions[:10]:
+                        parts.append(f"    • {func['name']}() at line {func['line']}")
+                    if total_funcs > 10:
+                        parts.append(f"    ... and {total_funcs - 10} more functions")
+
+                if structure.get('truncated'):
+                    parts.append("")
+                    parts.append("  ⚠️  Structure truncated - use line_range/page mode for full details")
+
+        # DEPENDENCIES ANALYSIS (Phase 1+2: Import extraction + resolution)
+        dependencies = data.get('dependencies')
+        if dependencies and not dependencies.get('error'):
+            imports = dependencies.get('imports', [])
+            total_imports = dependencies.get('total_imports', 0)
+            truncated = dependencies.get('truncated', False)
+
+            if imports:
+                parts.append("")
+                parts.append("📦 Dependencies:")
+                parts.append("")
+
+                # Phase 2: Group imports by type for better readability
+                # Check if we have Phase 2 resolution data (import_type field exists)
+                has_resolution = any(imp.get('import_type') is not None for imp in imports)
+
+                if has_resolution:
+                    # Group imports by type
+                    from collections import defaultdict
+                    grouped = defaultdict(list)
+                    for imp in imports:
+                        import_type = imp.get('import_type', 'unresolved')
+                        grouped[import_type].append(imp)
+
+                    # Display in order: stdlib, third_party, local, unresolved
+                    display_limit_per_type = 10
+                    type_order = ['stdlib', 'third_party', 'local', 'unresolved']
+                    type_labels = {
+                        'stdlib': '📚 Standard Library',
+                        'third_party': '📦 Third-Party Packages',
+                        'local': '📁 Local Modules',
+                        'unresolved': '❓ Unresolved'
+                    }
+
+                    for import_type in type_order:
+                        type_imports = grouped.get(import_type, [])
+                        if not type_imports:
+                            continue
+
+                        parts.append(f"  {type_labels[import_type]} ({len(type_imports)}):")
+                        parts.append("")
+
+                        for imp in type_imports[:display_limit_per_type]:
+                            imp_syntax = imp.get('type')  # 'import' or 'from_import'
+                            module = imp.get('module', '')
+                            line = imp.get('line', '?')
+                            names = imp.get('names')
+                            alias = imp.get('alias')
+                            level = imp.get('level', 0)
+                            resolved_path = imp.get('resolved_path')
+                            exists = imp.get('exists')
+
+                            # Format relative imports with dots
+                            if level > 0:
+                                dots = '.' * level
+                                if module:
+                                    module_display = f"{dots}{module}"
+                                else:
+                                    module_display = dots
+                            else:
+                                module_display = module
+
+                            # Build base import statement
+                            if imp_syntax == 'import':
+                                if alias:
+                                    import_stmt = f"import {module_display} as {alias}"
+                                else:
+                                    import_stmt = f"import {module_display}"
+                            elif imp_syntax == 'from_import' and names:
+                                names_str = ', '.join(names[:5])  # Show first 5 names
+                                if len(names) > 5:
+                                    names_str += f", ... ({len(names)} total)"
+                                import_stmt = f"from {module_display} import {names_str}"
+                            else:
+                                import_stmt = f"import {module_display}"
+
+                            # Add resolution info based on type
+                            if import_type == 'stdlib':
+                                parts.append(f"    → {import_stmt} (line {line}) [stdlib]")
+                            elif import_type == 'third_party':
+                                parts.append(f"    → {import_stmt} (line {line}) [third-party]")
+                            elif import_type == 'local':
+                                if resolved_path and exists:
+                                    # Show resolved path (make it relative to workspace for readability)
+                                    parts.append(f"    → {import_stmt} (line {line})")
+                                    parts.append(f"       ✓ {resolved_path}")
+                                elif resolved_path and exists is False:
+                                    # Missing local import
+                                    parts.append(f"    → {import_stmt} (line {line})")
+                                    parts.append(f"       ✗ MISSING: {resolved_path}")
+                                else:
+                                    # Local but couldn't resolve path
+                                    parts.append(f"    → {import_stmt} (line {line}) [local - path unresolved]")
+                            else:  # unresolved
+                                parts.append(f"    → {import_stmt} (line {line}) [unresolved]")
+
+                        if len(type_imports) > display_limit_per_type:
+                            parts.append(f"       ... and {len(type_imports) - display_limit_per_type} more {import_type} imports")
+                        parts.append("")  # Blank line between groups
+
+                else:
+                    # Phase 1 fallback: No resolution data, show simple list
+                    display_limit = 20
+                    for imp in imports[:display_limit]:
+                        imp_type = imp.get('type')
+                        module = imp.get('module', '')
+                        line = imp.get('line', '?')
+                        names = imp.get('names')
+                        alias = imp.get('alias')
+                        level = imp.get('level', 0)
+
+                        # Format relative imports with dots
+                        if level > 0:
+                            dots = '.' * level
+                            if module:
+                                module_display = f"{dots}{module}"
+                            else:
+                                module_display = dots
+                        else:
+                            module_display = module
+
+                        # Format display based on import type
+                        if imp_type == 'import':
+                            if alias:
+                                parts.append(f"    → import {module_display} as {alias} (line {line})")
+                            else:
+                                parts.append(f"    → import {module_display} (line {line})")
+                        elif imp_type == 'from_import' and names:
+                            names_str = ', '.join(names[:5])  # Show first 5 names
+                            if len(names) > 5:
+                                names_str += f", ... ({len(names)} total)"
+                            parts.append(f"    → from {module_display} import {names_str} (line {line})")
+
+                    # Show truncation message if needed
+                    if total_imports > display_limit:
+                        parts.append("")
+                        parts.append(f"    ... and {total_imports - display_limit} more imports")
+
+                if truncated:
+                    parts.append("  ⚠️  Import list truncated at 100 - file may have more imports")
+
+        elif dependencies and dependencies.get('error'):
+            # Show error but don't spam output
+            parts.append("")
+            parts.append(f"📦 Dependencies: Unable to parse imports ({dependencies.get('error', 'unknown error')})")
+
+        # STATIC ANALYSIS DISCLAIMER (Phase 4: Honest framing of limitations)
+        # Show disclaimer when dependencies or impact radius are displayed
+        if (dependencies and not dependencies.get('error')) or (data.get('impact_radius') and not data.get('impact_radius', {}).get('error')):
+            parts.append("")
+            parts.append("ℹ️  Note: Dependencies shown reflect static import analysis only. Runtime dependencies, dynamic imports, and reflection patterns are not detected.")
+
+        # IMPACT RADIUS ANALYSIS (Phase 3: Reverse lookup / cross-file graphing)
+        impact_radius = data.get('impact_radius')
+        if impact_radius and not impact_radius.get('error'):
+            count = impact_radius.get('count', 0)
+            level = impact_radius.get('level', 'low')
+            importers = impact_radius.get('importers', [])
+            truncated = impact_radius.get('truncated', False)
+            perf_warning = impact_radius.get('performance_warning')
+
+            # Only show impact section if file is actually imported somewhere
+            if count > 0:
+                parts.append("")
+
+                # Impact level display with appropriate emoji
+                if level == 'high':
+                    parts.append(f"🚨 Impact Radius: This file is imported by {count} files [HIGH IMPACT]")
+                elif level == 'medium':
+                    parts.append(f"⚠️  Impact Radius: This file is imported by {count} files [MEDIUM IMPACT]")
+                else:
+                    parts.append(f"Impact Radius: This file is imported by {count} files")
+
+                parts.append("")
+
+                # Show importer list
+                if importers:
+                    parts.append("  Files that import this:")
+                    for importer in importers:
+                        parts.append(f"    • {importer}")
+
+                    # Truncation message
+                    if truncated:
+                        remaining = count - len(importers)
+                        parts.append(f"    ... and {remaining} more files")
+
+                # Performance warning if scan was slow
+                if perf_warning:
+                    parts.append("")
+                    parts.append(f"  ⚠️  {perf_warning}")
+
+        elif impact_radius and impact_radius.get('error'):
+            # Show error but don't spam output
+            parts.append("")
+            parts.append(f"Impact Radius: Unable to calculate ({impact_radius.get('error', 'unknown error')})")
+
+        # BOUNDARY VIOLATIONS (Phase 4: Forbidden import pattern detection)
+        boundary_violations = data.get('boundary_violations')
+        if boundary_violations and boundary_violations.get('enabled'):
+            violations = boundary_violations.get('violations', [])
+            if violations:
+                # Count violations by severity
+                errors = [v for v in violations if v.get('severity') == 'error']
+                warnings = [v for v in violations if v.get('severity') == 'warning']
+                infos = [v for v in violations if v.get('severity') == 'info']
+
+                # Build summary
+                parts.append("")
+                summary_parts = []
+                if errors:
+                    summary_parts.append(f"{len(errors)} error{'s' if len(errors) != 1 else ''}")
+                if warnings:
+                    summary_parts.append(f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}")
+                if infos:
+                    summary_parts.append(f"{len(infos)} info")
+
+                parts.append(f"🚫 Boundary Violations: {', '.join(summary_parts)}")
+                parts.append("")
+
+                # Sort violations by severity (errors first, then warnings, then info)
+                severity_order = {'error': 0, 'warning': 1, 'info': 2}
+                sorted_violations = sorted(violations, key=lambda v: severity_order.get(v.get('severity', 'info'), 3))
+
+                # Display each violation
+                for violation in sorted_violations:
+                    severity = violation.get('severity', 'info').upper()
+                    rule_name = violation.get('rule_name', 'Unknown Rule')
+                    violated_import = violation.get('violated_import', '?')
+                    message = violation.get('message', '')
+                    line = violation.get('line', 0)
+
+                    # Severity tag with visual distinction
+                    parts.append(f"  [{severity}] {rule_name}")
+                    parts.append(f"    → {violated_import} (line {line})")
+                    if message:
+                        parts.append(f"    {message}")
+                    parts.append("")  # Blank line between violations
+
         # METADATA AT BOTTOM
         parts.append("")  # Blank line before metadata
         parts.append("─" * 63)  # Separator line
@@ -590,6 +1065,19 @@ class ResponseFormatter:
             metadata_lines.append(f"SHA256: {scan['sha256'][:16]}...")
 
         parts.extend(metadata_lines)
+
+        # Add navigation hints if present (scan_only mode)
+        nav_hints = data.get('navigation_hints')
+        if nav_hints and mode == 'scan_only':
+            parts.append("")
+            parts.append("💡 Navigation Hints:")
+            parts.append(f"   Chunks available: {nav_hints.get('total_chunks', 0)}")
+            parts.append(f"   Suggested chunk size: {nav_hints.get('suggested_chunk_size', 1)}")
+            examples = nav_hints.get('examples', {})
+            if examples:
+                parts.append("   Quick examples:")
+                for mode_name, example in list(examples.items())[:3]:
+                    parts.append(f"     • {example}")
 
         # Add reminders if present
         reminders = data.get('reminders', [])
@@ -2141,10 +2629,13 @@ class ResponseFormatter:
         tool_name: str = ""
     ) -> Union[Dict[str, Any], "CallToolResult"]:
         """
-        CRITICAL ROUTER: Logs tool call to tool_logs, then formats response.
+        CRITICAL ROUTER: Logs tool call to JSONL and SQL, then formats response.
 
-        This method ensures complete audit trail by logging structured JSON
-        BEFORE formatting for display.
+        This method ensures complete audit trail by logging structured data to:
+        1. JSONL: .scribe/logs/TOOL_LOG.jsonl (via tool_logger.py - synchronous)
+        2. SQL: tool_calls table (via storage.record_tool_call() - async fire-and-forget)
+
+        Uses direct logging to prevent recursion (no append_entry calls).
 
         ISSUE #9962 FIX: When format="readable", we return CallToolResult with
         TextContent ONLY (no structuredContent). This forces Claude Code to
@@ -2161,26 +2652,80 @@ class ResponseFormatter:
             - format="structured"/"compact": Original data dict
             - Fallback to dict if MCP types unavailable
         """
-        # STEP 1: Log to tool_logs (audit trail) - SKIP for append_entry to avoid recursion
-        # append_entry calls finalize_tool_response, which would call append_entry again
-        if tool_name != "append_entry":
-            try:
-                from tools.append_entry import append_entry
+        # STEP 1: Log tool call directly to JSONL and SQL (no recursion)
+        # JSONL: via tool_logger.py (synchronous file write)
+        # SQL: via storage.record_tool_call() (async DB insert for analytics)
+        try:
+            from utils.tool_logger import log_tool_call
 
-                await append_entry(
-                    message=f"Tool call: {tool_name}",
-                    log_type="tool_logs",
-                    meta={
-                        "tool": tool_name,
-                        "format_requested": format,
-                        "response_data": data,
-                        "timestamp": datetime.utcnow().isoformat() + "Z"
-                    },
-                    format="structured"  # Use structured to avoid nested formatting
-                )
+            # Extract session context from server module
+            session_id = "unknown"
+            project_name = None
+            agent_id = None
+
+            try:
+                import server as server_module
+                if hasattr(server_module, "get_execution_context"):
+                    exec_context = server_module.get_execution_context()
+                    if exec_context:
+                        session_id = getattr(exec_context, 'session_id', 'unknown')
+                        # Get project name from affected_dev_projects list (first item if present)
+                        affected_projects = getattr(exec_context, 'affected_dev_projects', [])
+                        if affected_projects and len(affected_projects) > 0:
+                            project_name = affected_projects[0]
+                        # Get agent display name
+                        agent_identity = getattr(exec_context, 'agent_identity', None)
+                        if agent_identity:
+                            agent_id = getattr(agent_identity, 'display_name', None)
+            except Exception:
+                # Context extraction failed, use defaults (session_id="unknown")
+                pass
+
+            # Calculate response size for metrics
+            import json
+            response_size = len(json.dumps(data)) if isinstance(data, dict) else 0
+
+            # Log synchronously (tool_logger is sync function)
+            log_tool_call(
+                tool_name=tool_name,
+                session_id=session_id,
+                status="success" if data.get('ok', True) else "error",
+                format_requested=format,
+                project_name=project_name,
+                agent_id=agent_id,
+                error_message=data.get('error') if not data.get('ok', True) else None,
+                response_size_bytes=response_size
+            )
+
+            # STEP 1.5: Write to SQL for cross-project analytics
+            try:
+                import server as server_module
+                storage = getattr(server_module, 'storage_backend', None)
+                if storage and hasattr(storage, 'record_tool_call_sync'):
+                    import asyncio
+                    # Fire-and-forget background task with proper GC protection
+                    # Uses module-level background_tasks set to prevent garbage collection
+                    # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+                    server_module.schedule_background_task(asyncio.to_thread(
+                        storage.record_tool_call_sync,
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        duration_ms=None,  # Will add timing in future enhancement
+                        status="success" if data.get('ok', True) else "error",
+                        format_requested=format,
+                        project_name=project_name,
+                        agent_id=agent_id,
+                        error_message=data.get('error') if not data.get('ok', True) else None,
+                        response_size_bytes=response_size
+                    ))
             except Exception as e:
-                # Log failure but don't block response
-                print(f"Warning: Failed to log to tool_logs: {e}")
+                # SQL logging is optional, never block tools
+                import sys
+                print(f"Warning: SQL tool logging failed: {e}", file=sys.stderr)
+        except Exception as e:
+            # Tool logging must never block tool execution
+            import sys
+            print(f"Warning: Tool logging failed: {e}", file=sys.stderr)
 
         # STEP 2: Format based on parameter
         if format == self.FORMAT_READABLE:

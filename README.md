@@ -37,7 +37,57 @@ Structured edits are now the default path: agents express intent, the server com
 - `normalize_headers` supports ATX headers with or without space and Setext (`====` / `----`), skipping fenced code blocks. Output is canonical ATX.
 - `generate_toc` uses GitHub-style anchors (NFKD normalization, ASCII folding, emoji removal, punctuation collapse, de-duped suffixes).
 - Structural actions validate doc keys against the registry and fail hard on unknown docs (no silent redirects).
-- `read_file` tool provides repo-scoped file reads with scan/chunk/page/search modes and provenance logging.
+
+**New: `read_file` - Complete Code Intelligence System (Phase 5)**
+
+The `read_file` tool is now a comprehensive code intelligence platform for Python and Markdown files, providing SWE agents with instant codebase understanding without reading full files:
+
+**Python Intelligence:**
+- **Full Signature Extraction**: Captures complete function/method signatures with type hints, default values, and return types
+  - Example: `async def fetch_project(self, name: str) -> Optional[ProjectRecord]`
+- **Line Range Analysis**: Shows start-end lines for every class, function, and method with line counts for complexity assessment
+  - Example: `async def _initialise(self) -> None (lines 645-1121 (477))` - instantly identifies a 477-line method needing refactoring
+- **Class Structure Display**: Shows class hierarchy with first 10 methods by default, including async markers
+- **Structure Filtering**: Regex-based search to find specific classes or functions
+  - Example: `structure_filter="validate"` finds all validation functions with full signatures
+- **Structure Pagination**: Browse large classes page-by-page (default: 10 items/page)
+  - Navigate through a 62-method class: page 1 shows methods 1-10, page 2 shows 11-20, etc.
+- **Dependency Analysis**: Static import analysis with resolved paths for local modules
+
+**Markdown Intelligence:**
+- **Heading Extraction**: Complete document outline with all heading levels and line numbers
+- **Quick Navigation**: Jump directly to specific sections using extracted line numbers
+
+**Complete Workflow Example:**
+```python
+# Step 1: Find the class (scan_only mode - zero content, pure metadata)
+read_file(path="storage/sqlite.py", mode="scan_only", structure_filter="SQLiteStorage")
+# → Shows: class SQLiteStorage at lines 32-2334 (2303 lines)
+#          Methods (page 1 of 7, showing 1-10 of 62)
+
+# Step 2: Browse methods with pagination
+read_file(path="storage/sqlite.py", mode="scan_only",
+          structure_filter="SQLiteStorage", structure_page=2)
+# → Methods 11-20 with full signatures and line ranges
+#   Found: async def fetch_recent_entries(self) -> List[Dict[str, Any]] (lines 338-427 (90))
+
+# Step 3: Read exact method implementation
+read_file(path="storage/sqlite.py", mode="line_range", start_line=338, end_line=427)
+# → Full method code for analysis
+
+# Step 4: Edit with confidence
+Edit(file_path="storage/sqlite.py", old_string="...", new_string="...")
+```
+
+**Key Benefits:**
+- **Token Efficiency**: Get complete structural overview without reading full file content
+- **Instant Complexity Assessment**: Line counts reveal 477-line monsters needing refactoring
+- **Type-Aware Navigation**: Full signatures show exactly how to call each function
+- **Regex Precision**: Find all functions matching `^_validate.*|^_sanitize` in seconds
+- **Pagination for Scale**: Browse classes with 50+ methods without overwhelming output
+
+Parameters: `path`, `mode` (scan_only/chunk/page/line_range/search), `structure_filter`, `structure_page`, `structure_page_size`, `include_dependencies`, `format`
+
 - `scribe_doctor` reports repo root, config, plugin status, and vector readiness for faster diagnostics.
 - `manage_docs` now supports semantic search via `action="search"` with `search_mode="semantic"`, including doc/log separation and `doc_k`/`log_k` overrides.
 - Vector indexing now prefers registry-managed docs only; log/rotated-log files are excluded from doc indexing.

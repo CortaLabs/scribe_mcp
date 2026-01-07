@@ -21,10 +21,19 @@ from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext as 
 _reminder_engine: Optional[ReminderEngine] = None
 
 def _get_engine() -> ReminderEngine:
-    """Get or create the reminder engine instance."""
+    """Get or create the reminder engine instance with DB storage backend."""
     global _reminder_engine
     if _reminder_engine is None:
+        from scribe_mcp.storage.sqlite import SQLiteStorage
+        from scribe_mcp.config.settings import settings
+
+        # Create storage backend for DB-based cooldown tracking
+        db_path = settings.project_root / ".scribe" / "data" / "scribe.db"
+        storage = SQLiteStorage(str(db_path))
+
+        # Create engine and inject storage
         _reminder_engine = validate_and_load_engine()
+        _reminder_engine.storage = storage
     return _reminder_engine
 
 

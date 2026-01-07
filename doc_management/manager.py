@@ -725,8 +725,13 @@ def _resolve_doc_path(project: Dict[str, Any], doc_key: str) -> Path:
     if docs_dir:
         docs_dir = Path(docs_dir).parent
     else:
-        # Use conventional docs structure
-        docs_dir = project_root / "docs" / "dev_plans" / slugify_project_name(project_name)
+        # Try to use docs_dir from project configuration
+        docs_dir_str = project.get("docs_dir", "")
+        if docs_dir_str:
+            docs_dir = Path(docs_dir_str)
+        else:
+            # Final fallback to .scribe structure
+            docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / slugify_project_name(project_name)
 
     filename = {
         "architecture": "ARCHITECTURE_GUIDE.md",

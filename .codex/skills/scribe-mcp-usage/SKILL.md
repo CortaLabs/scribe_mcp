@@ -1,100 +1,38 @@
 ---
 name: scribe-mcp-usage
-description: Operate the local Scribe MCP for any ~/projects/* repo; use when registering the server, setting projects, drafting ARCH/PHASE/CHECKLIST via manage_docs, or logging work with append_entry/get_project safeguards.
+description: Operate the local Scribe MCP for any /home/carlos/projects/* repo; use when registering the server, setting projects, drafting ARCH/PHASE/CHECKLIST via manage_docs, or logging work with append_entry/get_project safeguards.
 ---
+## Required Reading
 
-## ✅ 2.1.1 Tool Usage Quick Reference (Read First)
+- Codex: read and follow `AGENTS.md`.
+- Claude Code: read and follow `CLAUDE.md`.
 
-Use this section before any edits. It defines when and how to use the new doc-lifecycle tools.
+- If confused on how to use any Scribe tools, do targeted searches of `scribe_usage.md` using the `scribe.read_file` tool
 
-- **Always set project first**: `set_project(name=..., root=/abs/path/to/repo)`. All doc actions require a project registry.
-- **Doc keys are strict**: Structural actions validate `doc` against `project["docs"]`. Unknown docs fail with `DOC_NOT_FOUND` (no healing).
-- **apply_patch (structured default)**: Use for most edits. Provide `edit` payloads (replace_range / replace_block / replace_section). Ambiguous anchors fail with line lists; code fences are ignored in replace_block.
-- **replace_range**: Use when you already have body-relative line numbers (frontmatter excluded).
-- **normalize_headers**: Run before TOC. Supports ATX with/without space and Setext (`====`/`----`). Skips fenced code blocks. Idempotent.
-- **generate_toc**: Run after normalization. Inserts/replaces `<!-- TOC:start -->`/`<!-- TOC:end -->`. Uses GitHub-style anchors (NFKD normalization, ASCII folding, emoji removal, punctuation collapse, de-duped suffixes). Idempotent.
-- **create_doc**: Create custom docs from `content` or `metadata.body`/`snippet`/`sections`. Users do **not** supply Jinja. Multiline bodies are preserved. Use `metadata.register_doc=true` only if the doc should be added to the registry (one-off docs can stay unregistered).
-- **validate_crosslinks**: Read-only diagnostics. Optional `metadata.check_anchors=true` for anchor checks. No writes, no doc_updates logs.
-- **Line numbers are body-relative**: Frontmatter does not count toward line math. `list_sections`/`list_checklist_items` return body-relative line numbers plus `body_line_offset` for mapping.
-- **read_file**: Use repo-scoped scan/chunk/page/search modes for safe reads; every read logs provenance automatically.
-- **scribe_doctor**: Use for readiness diagnostics (repo root, config paths, plugin status, vector readiness).
-- **manage_docs search (semantic)**: Use `action="search"` + `search_mode="semantic"` for doc/log semantic retrieval. Default results are doc-first with clear `content_type` labels.
-- **Semantic limits**: Default per-type limits are `vector_search_doc_k` / `vector_search_log_k`. Override with `doc_k` / `log_k` while `k` remains total.
-- **Registry-only doc indexing**: Doc embeddings are generated from registry docs only; log and rotated-log files are excluded from doc indexing.
-- **Reindex rebuild**: `scripts/reindex_vector.py --rebuild` clears the index before reindexing; `--safe` enables low-thread fallback; `--wait-for-drain` blocks until embeddings are written.
+This skill is the minimal, enforceable tool-and-logging contract. Deeper rationale belongs in wiki or code.
 
-## 🚨 COMMANDMENTS - CRITICAL RULES
- ### MCP Tool Usage Policy
-  - **ALWAYS PASS REPO ROOT WHEN USING SET_PROJECT.  USE THE WORKING DIRECTORY, WHERE WE LAUNCHED FROM**
-  - YOU ARE EXPECTED TO **APPEND_ENTRY** *DURING* IMPLEMENTATION PHASES AS WELL.   EVERY THING YOU DO MUST BE LOGGED AND **AUDIT READY**  NO EXCEPTIONS.  EVERY **3** EDITS OR LESS, YOU MUST SCRIBE WHAT YOU DID.   DO NOT LET US LOSE TRACK OF IMPLEMENTATION DETAILS.
-  - You have full access to every tool exposed by the MCP server.
-  - If a tool exists (`append_entry`, `rotate_log`, etc.), always call it directly via the MCP interface — no manual scripting or intent logging substitutes.
-  - Log your intent only after the tool call succeeds or fails.
-  - Confirmation flags (`confirm`, `dry_run`, etc.) must be passed as actual tool parameters.
+## Core Rules (Brief, Enforced)
 
+- MCP tools are mandatory: if a tool exists, call it directly via MCP; do not script substitutes.
+- Log intent only after the tool succeeds or fails.
+- Confirmation flags (e.g., `confirm`, `dry_run`) must be passed as actual tool parameters.
+- All file reads must use `read_file` (scan/search/chunk/page/line_range). Do not read file contents with `cat`/`rg`; use `rg --files` only for filename discovery.
+- For parameter discovery, use `read_file` with `mode="search"` and `query="search term"` against tool docs or sources.  This mode allows regex.  Most notably: `/docs/scribe_usage.md`.  **Always keep this document updated with changes to tools or usage**
+- If a tool call fails, fix the payload and retry; never fall back to shell reads for content.
+- Always rehydrate context when required:
+  - Project mode: `read_recent` or `query_entries` (last 5 entries minimum).
+  - Cross-project/global: `query_entries` with `search_scope="global"` or `"all_projects"`.
+  - You only need to rehydrate when unsure of next steps, on a fresh context window, or we need previous architectural decisions brought back.
+- Logging discipline:
+  - Project mode: use `append_entry` after every meaningful action (every 2-3 edits or 5 minutes). You MUST log during investigation as well.
+  - Sentinel mode (only if preconfigured): use `append_event`.
+- Reasoning block is mandatory in every `append_entry`:
+  - `why` (goal/decision point)
+  - `what` (constraints/alternatives)
+  - `how` (method/uncertainty)
+- New project workflow (Codex): call `set_project` (with repo root) then `manage_docs` to draft ARCHITECTURE_GUIDE, PHASE_PLAN, CHECKLIST before any feature code.
+- Codex agent name must be `Codex`.
 
-**CHATGPT CODEX CLI:** YOU MUST ALWAYS USE THE AGENT NAME `Codex` with scribe.  Claude code has 5 agents we can call to assist us.  The Review Agent, Architect Agent, Research Agent, Bug Hunter agent, and another coder agent.
-
-Whenever you and the human spin up a **new project**, Codex must immediately:
-- Call `set_project(<project name>)` for that project.
-- Use `manage_docs` to fully draft/populate the architecture and supporting Markdown docs (`ARCHITECTURE_GUIDE.md`, `PHASE_PLAN.md`, `CHECKLIST.md`) **before writing any feature code**.
-- Continue using `append_entry` to scribe progress log entries while drafting those docs; doc changes and progress logs are tracked separately but both are mandatory.
-
-## 🔁 Protocol Sequence
-
-> **Canonical Chain:**
-> **1 Research → 2 Architect → 3 Review → 4 Code → 5 Review**
-
-**⚠️ COMMANDMENT #0: ALWAYS CHECK PROGRESS LOG FIRST**: Before starting ANY work, ALWAYS use `read_recent` or `query_entries` to inspect `docs/dev_plans/[current_project]/PROGRESS_LOG.md` (do not open the full log directly). The progress log is the source of truth for project context. Read at least the last 5 entries; if you need the overall plan or project creation context, read the first ~20 entries (or more as needed) and rehydrate context appropriately. Use `query_entries` for targeted history instead of loading the entire log.
-
-**⚠️ COMMANDMENT #0.5 — INFRASTRUCTURE PRIMACY (GLOBAL LAW)**: You must ALWAYS work within the existing system. NEVER create parallel or replacement files (e.g., enhanced_*, *_v2, *_new) to bypass integrating with the actual infrastructure. You must modify, extend, or refactor the existing component directly. Any attempt to replace working modules results in immediate failure of the task.
----
-
-**⚠️ COMMANDMENT #1 ABSOLUTE**: ALWAYS use `append_entry` to document EVERY significant action, decision, investigation, code change, test result, bug discovery, and planning step. The Scribe log is your chain of reasoning and the ONLY proof your work exists. If it's not Scribed, it didn't fucking happen.
-- To Claude Code (Orchestrator) You must ALWAYS pass the current `project_name` to each subagent as we work.  To avoid confusion and them accidentally logging to the wrong project.
----
-
-# 🚀 NEW PROJECT WORKFLOW (MANDATORY)
-- When creating any new project, immediately call `set_project(<project name>)` to bootstrap the docs suite, then run `manage_docs` to populate `ARCHITECTURE_GUIDE`, `PHASE_PLAN`, and `CHECKLIST` before coding. This is required for every new project.
-- You may scribe progress log entries while drafting the architecture/plan docs; continue to log via `append_entry` as you write them.
-- `manage_docs` is for project structural documentation only; `AGENTS.md` is edited by hand (do not use `manage_docs` for it).
-
-# ⚠️ COMMANDMENT #2: REASONING TRACES & CONSTRAINT VISIBILITY (CRITICAL)
-
-Every `append_entry` must explain **why** the decision was made, **what** constraints/alternatives were considered, and **how** the steps satisfied or violated those constraints, creating an auditable record.
-Use a `reasoning` block with the Three-Part Framework:
-- `"why"`: research goal, decision point, underlying question
-- `"what"`: active constraints, search space, alternatives rejected, constraint coverage
-- `"how"`: methodology, steps taken, uncertainty remaining
-
-This creates an auditable record of decision-making for consciousness research.Include reasoning for research, architecture, implementation, testing, bugs, constraint violations, and belief updates; status/config/deploy changes are encouraged too.
-
-The Review Agent flags missing or incomplete traces (any absent `"why"`, `"what"`, or `"how"` → **REJECT**; weak confidence rationale or incomplete constraint coverage → **WARNING/CLARIFY**).  Your reasoning chain must influence your confidence score.
-
-**Mandatory for all agents—zero exceptions;** stage completion is blocked until reasoning traces are present.
----
-
-**⚠️ COMMANDMENT #3 CRITICAL**: NEVER write replacement files. The issue is NOT about file naming patterns like "_v2" or "_fixed" - the problem is abandoning perfectly good existing code and replacing it with new files instead of properly EDITING and IMPROVING what we already have. This is lazy engineering that creates technical debt and confusion.
-
-**ALWAYS work with existing files through proper edits. NEVER abandon current code for new files when improvements are needed.**
----
-
-**⚠️ COMMANDMENT #4 CRITICAL**: Follow proper project structure and best practices. Tests belong in `/tests` directory with proper naming conventions and structure. Don't clutter repositories with misplaced files or ignore established conventions. Keep the codebase clean and organized.
-
-### Test Organization (Memory Threads)
-- Memory-thread engine tests live under `tests/memory_threads/`.
-- Default full-suite command: `python -m unittest discover -s tests -p 'test_*.py' -q`
-- Memory-threads-only command: `python -m unittest discover -s tests/memory_threads -p 'test_*.py' -q`
-
-### Paid Test Policy (Non-Negotiable)
-- Any test that can incur external spend (e.g., OpenAI calls) MUST be opt-in and skipped by default.
-- Paid tests MUST be gated behind BOTH:
-  - `OPENAI_API_KEY` (or provider-specific key), and
-  - `VANTIEL_RUN_PAID_TESTS=1`
-- Example (run paid embedder tests): `VANTIEL_RUN_PAID_TESTS=1 python -m unittest discover -s tests/embedder_service -p 'test_openai_paid_*.py' -q`
-
-Violations = INSTANT TERMINATION. Reviewers who miss commandment violations get 80% pay docked. Nexus coders who implement violations face $1000 fine.
----
 
 **What Gets Logged (Non-Negotiable):**
 - 🔍 Investigation findings and analysis results
@@ -106,466 +44,421 @@ Violations = INSTANT TERMINATION. Reviewers who miss commandment violations get 
 - ⚠️ Errors encountered and recovery actions
 - 🎯 Task completions and progress updates
 
-**Single Entry Mode** - Use for real-time logging:
-```python
-await append_entry(
-    message="Discovered authentication bug in JWT validation",
-    status="bug",
-    agent="DebugAgent",
-    meta={"component": "auth", "severity": "high", "file": "auth.py:142"}
+
+## Readable vs Structured Modes
+- Readable mode is the preferred way to use Scribe Tools, however, if you need to debug or require additional information, structured mode will output the entire payload.   This can be token heavy!
+
+## Sentinel vs Project Mode
+
+- Project mode: call `set_project` and use `append_entry`, `manage_docs`, `read_recent`, `query_entries`.
+- If you are unsure which project is active, call `list_projects` first, then `set_project` to create/switch.
+- Sentinel mode is not switchable once a project is set in this session. If sentinel is preconfigured, use `append_event`, `open_bug`, `open_security`, `link_fix` for repo-wide issues.
+
+
+
+## Tool Signatures (Authoritative)
+
+All MCP tool calls and parameters must match these signatures.
+
+### Core Project Tools
+
+```
+append_entry(
+  message="",
+  status=None,
+  emoji=None,
+  agent=None,
+  meta=None,
+  timestamp_utc=None,
+  items=None,
+  items_list=None,
+  auto_split=True,
+  split_delimiter="\n",
+  stagger_seconds=1,
+  agent_id=None,
+  log_type="progress",
+  priority=None,
+  category=None,
+  tags=None,
+  confidence=None,
+  config=None,
+  format="readable"
 )
+
+set_project(
+  name,
+  root=None,
+  progress_log=None,
+  defaults=None,
+  author=None,
+  overwrite_docs=False,
+  agent_id=None,
+  expected_version=None,
+  description=None,
+  tags=None,
+  template=None,
+  auto_create_dirs=True,
+  skip_validation=False,
+  reminder_settings=None,
+  notification_config=None,
+  reset_reminders=False,
+  emoji=None,
+  project_agent=None,
+  format="readable"
+)
+
+get_project(project=None, format="structured")
+
+manage_docs(
+  action,
+  doc,
+  section=None,
+  content=None,
+  patch=None,
+  patch_source_hash=None,
+  edit=None,
+  patch_mode=None,
+  start_line=None,
+  end_line=None,
+  template=None,
+  metadata=None,
+  dry_run=False,
+  doc_name=None,
+  target_dir=None
+)
+
+generate_doc_templates(
+  project_name,
+  author=None,
+  overwrite=False,
+  force=False,
+  documents=None,
+  base_dir=None,
+  custom_context=None,
+  legacy_fallback=False,
+  include_template_metadata=False,
+  validate_only=False
+)
+
+read_recent(
+  project=None,
+  n=None,
+  limit=None,
+  filter=None,
+  page=1,
+  page_size=10,
+  compact=False,
+  fields=None,
+  include_metadata=True,
+  format="readable",
+  priority=None,
+  category=None,
+  min_confidence=None,
+  priority_sort=False
+)
+
+query_entries(
+  project=None,
+  start=None,
+  end=None,
+  message=None,
+  message_mode="substring",
+  case_sensitive=False,
+  emoji=None,
+  status=None,
+  agent=None,
+  agents=None,
+  meta_filters=None,
+  limit=50,
+  page=1,
+  page_size=10,
+  compact=False,
+  fields=None,
+  include_metadata=True,
+  search_scope="project",
+  document_types=None,
+  include_outdated=True,
+  verify_code_references=False,
+  time_range=None,
+  relevance_threshold=0.0,
+  max_results=None,
+  config=None,
+  format="readable",
+  priority=None,
+  category=None,
+  min_confidence=None,
+  priority_sort=False
+)
+
+read_file(
+  path,
+  mode="scan_only",
+  chunk_index=None,
+  start_chunk=None,
+  max_chunks=None,
+  start_line=None,
+  end_line=None,
+  page_number=None,
+  page_size=None,
+  search=None,
+  query=None,
+  search_mode="regex",
+  case_insensitive=None,
+  context_lines=0,
+  max_matches=None,
+  fuzzy_threshold=None,
+  include_dependencies=False,
+  structure_filter=None,
+  structure_page=1,
+  structure_page_size=10,
+  format="readable"
+)
+
+list_projects(
+  limit=5,
+  filter=None,
+  compact=False,
+  fields=None,
+  include_test=False,
+  page=1,
+  page_size=None,
+  status=None,
+  tags=None,
+  order_by=None,
+  direction="desc",
+  format="structured"
+)
+
+rotate_log(
+  project=None,
+  suffix=None,
+  custom_metadata=None,
+  confirm=None,
+  dry_run=None,
+  dry_run_mode=None,
+  log_type=None,
+  log_types=None,
+  rotate_all=None,
+  auto_threshold=None,
+  threshold_entries=None,
+  config=None
+)
+
+delete_project(
+  name,
+  mode="archive",
+  confirm=False,
+  force=False,
+  archive_path=None,
+  agent_id=None
+)
+
+health_check()
+
+scribe_doctor()
 ```
 
-**Bulk Entry Mode** - Use when you realize you missed logging steps:
-```python
-await append_entry(items=json.dumps([
-    {"message": "Analyzed authentication flow", "status": "info", "meta": {"phase": "investigation"}},
-    {"message": "Found JWT expiry bug in token refresh", "status": "bug", "meta": {"component": "auth"}},
-    {"message": "Implemented fix with 15min grace period", "status": "success", "meta": {"files_changed": 2}},
-    {"message": "All auth tests passing", "status": "success", "meta": {"tests_run": 47, "tests_passed": 47}}
-]))
+### Sentinel Tools (Sentinel Mode Only)
+
+```
+append_event(
+  message=None,
+  status=None,
+  emoji=None,
+  agent=None,
+  meta=None,
+  timestamp_utc=None,
+  items=None,
+  items_list=None,
+  auto_split=True,
+  split_delimiter="\n",
+  stagger_seconds=1,
+  event_type=None,
+  data=None
+)
+
+open_bug(title, symptoms, affected_paths=None)
+
+open_security(title, symptoms, affected_paths=None)
+
+link_fix(case_id, execution_id, artifact_ref, landing_status)
 ```
 
-**Why This Matters:**
-- Creates auditable trail of ALL decisions and changes
-- Enables debugging by reviewing reasoning chain
-- Prevents lost work and forgotten context
-- Allows other agents to understand what was done and why
-- Makes project state queryable and analyzable
+### Vector Tools (Registered Only When Vector Indexer Plugin Is Active)
 
-**If You Missed Entries:** Use bulk mode IMMEDIATELY to backfill your work trail. NEVER let gaps exist in the Scribe log - every action must be traceable. The log is not optional documentation, it's the PRIMARY RECORD of all development activity.
+```
+vector_search(
+  query,
+  k=10,
+  project_slug=None,
+  project_slugs=None,
+  project_slug_prefix=None,
+  agent_name=None,
+  content_type=None,
+  doc_type=None,
+  file_path=None,
+  time_start=None,
+  time_end=None,
+  min_similarity=None
+)
+
+semantic_search(
+  query,
+  k=10,
+  project_slug=None,
+  project_slugs=None,
+  project_slug_prefix=None,
+  agent_name=None,
+  time_start=None,
+  time_end=None,
+  min_similarity=None
+)
+
+retrieve_by_uuid(entry_id)
+
+vector_index_status()
+
+rebuild_vector_index()
+```
+---
+
+## `manage_docs` — How to Use It (Project Mode Only)
+
+`manage_docs` is the **only approved way** to create or change **managed project documentation** inside `.scribe/docs/dev_plans/<project>/`. Use it for dev-plan artifacts (architecture/phase/checklist) and structured reports (research/bug/review/agent card). **Do not hand-edit managed docs** unless the plan explicitly says to. If you’re in **Sentinel Mode (no active project)**, `manage_docs` is **not available**—create a project with `set_project()` first.
+
+### What you use `manage_docs` for
+
+* Keeping the **doc suite** consistent:
+
+  * `ARCHITECTURE_GUIDE.md` (source of truth for design)
+  * `PHASE_PLAN.md` (execution plan)
+  * `CHECKLIST.md` (status + proof)
+* Producing **structured artifacts**:
+
+  * research reports
+  * bug reports
+  * review reports
+  * agent report cards
+* Performing **safe, auditable edits**:
+
+  * section replacement, patches, line-range edits, checklists updates
+  * formatting helpers (TOC, header normalization)
+  * crosslink validation
+
+### Core editing actions (your daily bread)
+
+These actions all share the same edit backend and should be treated as “**edit this doc safely**” variants:
+
+
+**Use `apply_patch` when** you need precision edits and you can produce a clean patch.
+
+* Best for surgical changes when section markers aren’t available.
+* Prefer patch over “rewrite the whole file.”
+* This is the most preferred method of updating managed_docs
+
+**Use `replace_range` when** you know the exact line span you must replace.
+
+* Only do this after inspecting structure (see introspection below).
+* Fragile if the doc changes; use sparingly.
+
+**Use `replace_text` for** simple find/replace transforms.
+
+* Good for consistent renames or small substitutions.
+* Dangerous if your “old text” matches too broadly—be explicit.
+
+
+**Use `replace_section` when** you’re updating a named section that has a stable marker like:
+`<!-- ID: section_name -->`
+
+* Example pattern: “Update the ‘Constraints’ section in ARCHITECTURE_GUIDE.”
+* Preferred for maintaining long-lived docs because it avoids line drift.
+* Always prefer `apply_patch` over replace_section, this tool is meant to be used only during the templating/bootstrapping of initial plan documents.  It will overwrite/duplicate content.
+
+**Use `append` when** you’re adding a new block at the end (notes, findings, new subsection).
+
+* Example pattern: “Append a new decision record / findings block.”
+* Do *not* use append for checklist state changes (use `status_update`).
+
+**Use `status_update` when** the change is “mark checklist items done” and attach proof.
+
+* Example pattern: “Mark CHECKLIST item X as complete with test output reference.”
+* Always include proof metadata (what verified it, where, and when).
+
+**Use `normalize_headers` / `generate_toc` when** you want doc formatting to be standardized.
+
+* Use after major structural edits, not constantly.
+
+**Use `validate_crosslinks` when** the doc has internal links you might have broken.
+
+* Run after reorganizing sections or renaming docs.
+
+### Special document creation (templated “create_*” actions)
+
+These are for creating structured docs that have a defined lifecycle and indexing:
+
+* `create_research_doc` → creates a research report + updates `research/INDEX.md`
+* `create_bug_report` → creates a bug report + updates `docs/bugs/INDEX.md`
+* `create_review_report` → creates a review report + updates review index
+* `create_agent_report_card` → creates evaluation + updates its index
+
+**When to use these:** whenever you’re generating a **new report artifact** that should be discoverable later.
+**When NOT to use these:** for routine progress logging (that’s `append_entry`) or repo-wide cases (that’s Sentinel mode case tools).
+
+### Introspection actions (to avoid guessing)
+
+Use these to locate structure before doing precise edits:
+
+**Use `list_sections` when** you need to know what section IDs exist and where they live.
+
+* Pair with `replace_section` or to find anchors.
+
+**Use `list_checklist_items` when** you want the checklist items + line numbers + status.
+
+* Pair with `status_update` to avoid mismatches.
+
+### Lifecycle action
+
+**Use `create_doc` when** you need a brand new managed document registered in project state.
+
+* This is for “new managed doc types” within a project, not random repo files.
 
 ---
 
-### ✍️ `manage_docs` — Non‑Negotiable Doc Management Workflow
-- **When:** Run immediately after `set_project` (before writing any feature code). Populate `ARCHITECTURE_GUIDE`, `PHASE_PLAN`, and `CHECKLIST` with the proposed plan via `manage_docs`, get the human sign-off, then proceed with implementation.
-- **Why:** Ensures every plan/change is captured through the Jinja-managed doc pipeline with atomic writes, verification, and automatic `doc_updates` logging.
-- **Actions:** `replace_section` (needs valid `section` anchor), `append` (freeform/Jinja content), `status_update` (toggle checklist items + proofs), `apply_patch` (structured by default), `replace_range`, `normalize_headers`, `generate_toc`, `create_doc`, `validate_crosslinks`.
-- **Example payload:**
-```jsonc
-{
-  "action": "status_update",
-  "doc": "checklist",
-  "section": "architecture_review",
-  "content": "status toggle placeholder",
-  "metadata": {
-    "status": "done",
-    "proof": "PROGRESS_LOG.md#2025-10-26-08-37-52"
-  }
-}
-```
-- **Customization:** All doc sections are editable; append fragments, drop in metadata-driven templates, or flip `[ ]` → `[x]` with proofs. If an anchor/token is wrong the tool fails safely—fix it and rerun.
-- **Approval gate:** No coding until the manage_docs-authored plan is approved by the user. Re-run manage_docs whenever the plan shifts so docs stay authoritative.
+## Safe usage patterns (what agents should actually do)
 
-**Action contracts (current):**
-- Structural actions validate `doc` against the registry and fail with `DOC_NOT_FOUND` on unknown docs.
-- `normalize_headers`: body-only ATX normalization with Setext support; fenced code blocks ignored; idempotent.
-- `generate_toc`: inserts/replaces TOC markers using GitHub-style anchors; fenced code blocks ignored; idempotent.
-- `create_doc`: users do **not** supply Jinja. Provide content/body/snippets/sections; multiline bodies preserved; optional `register_doc` flag controls registry updates for one-off docs.
-- `validate_crosslinks`: read-only diagnostics; no writes or doc_updates log entries.
----
+### Pattern A: Update an architecture section safely
 
-Scribe is our non-negotiable audit trail. If you touch code, plan phases, or discover issues, you log it through Scribe. **Append entries every 2-3 meaningful actions or every 10 minutes - no exceptions.** Logs are append-only, UTC, single line, and must be created via the MCP tools or `scripts/scribe.py`.
+1. Rehydrate: `read_recent` / `query_entries` for relevant context
+2. Inspect: `manage_docs(list_sections, doc="ARCHITECTURE_GUIDE")` if unsure
+3. Edit: `manage_docs(replace_section, doc="ARCHITECTURE_GUIDE", section="constraints", content=...)`
+4. Verify: tests or reasoning consistency check
+5. Log: `append_entry` with what changed and why
 
-## 🚀 Quick Tool Reference (Top Priority)
+### Pattern B: Close a checklist item with proof
 
-**`set_project(name, [defaults])`** - Initialize/select project (auto-bootstraps docs)
-**`append_entry(message, [status, meta])`** - **PRIMARY TOOL** - Log work/progress (single & bulk mode)
-**`manage_docs(action, doc, content/section)`** - Structured edits for ARCH/PHASE/CHECKLIST (auto-logs + SQL history)
-**`get_project()`** - Get current project context
-**`list_projects()`** - Discover available projects
-**`read_recent()`** - Get recent log entries
-**`query_entries([filters])`** - Search/filter logs
-**`generate_doc_templates(project_name, [author])`** - Create doc scaffolding
-**`rotate_log()`** - Archive current log
+1. Find item: `manage_docs(list_checklist_items, doc="CHECKLIST")`
+2. Run tests / verification
+3. Update item: `manage_docs(status_update, doc="CHECKLIST", section=..., metadata.status="done", metadata.proof=...)`
+4. Log: `append_entry` summarizing proof + link to outputs
 
-**NEW**: Bulk append with `append_entry(items=[{message, status, agent, meta}, ...])` - Multiple entries in one call!
+### Pattern C: Create a bug report artifact
+
+1. Confirm Project Mode is active
+2. Create report: `manage_docs(create_bug_report, metadata.category=..., metadata.slug=..., metadata.severity=..., content=...)`
+3. Log: `append_entry` with bug summary + link to report path
 
 ---
 
-## 🔌 MCP Tool Reference
-All tools live under the `scribe.mcp` server. Payloads are minimal JSON; unspecified fields are omitted.
+## Hard rules (to prevent freestyle)
 
-### 1. `set_project` - **Project Initialization**
-**Purpose**: Select or create active project and auto-bootstrap docs tree
-**Usage**: `set_project(name, [root, progress_log, defaults])`
-```json
-// Minimal request (recommended)
-{
-  "name": "My Project"
-}
-
-// Full request
-{
-  "name": "IMPLEMENTATION TESTING",
-  "root": "/abs/path/to/repo",
-  "progress_log": "docs/dev_plans/implementation_testing/PROGRESS_LOG.md",
-  "defaults": { "emoji": "🧪", "agent": "MyAgent" }
-}
-
-// response
-{
-  "ok": true,
-  "project": {
-    "name": "My Project",
-    "root": "/abs/path/to/repo",
-    "progress_log": "/abs/.../PROGRESS_LOG.md",
-    "docs_dir": "/abs/.../docs/dev_plans/my_project",
-    "docs": {
-      "architecture": ".../ARCHITECTURE_GUIDE.md",
-      "phase_plan": ".../PHASE_PLAN.md",
-      "checklist": ".../CHECKLIST.md",
-      "progress_log": ".../PROGRESS_LOG.md"
-    },
-    "defaults": { "emoji": "🧪", "agent": "MyAgent" }
-  },
-  "generated": [".../ARCHITECTURE_GUIDE.md", ".../PHASE_PLAN.md", ".../CHECKLIST.md", ".../PROGRESS_LOG.md"]
-}
-```
-
-### 2. `get_project`
-Return the current context exactly as Scribe sees it.
-```json
-// request
-{}
-
-// response
-{
-  "ok": true,
-  "project": {
-    "name": "IMPLEMENTATION TESTING",
-    "root": "/abs/path/to/repo",
-    "progress_log": "/abs/.../PROGRESS_LOG.md",
-    "docs_dir": "/abs/.../docs/dev_plans/implementation_testing",
-    "defaults": { "emoji": "ℹ️", "agent": "Scribe" }
-  }
-}
-```
-
-### 3. `append_entry` - **PRIMARY LOGGING TOOL**
-**Use this constantly. If it isn't Scribed, it didn't happen.**
-**Usage**: `append_entry(message, [status, emoji, agent, meta, timestamp_utc, items])`
-
-#### Single Entry Mode:
-```json
-// Basic request (recommended)
-{
-  "message": "Fixed authentication bug",
-  "status": "success"
-}
-
-// Full request with metadata
-{
-  "message": "Completed database migration",
-  "status": "success",              // info | success | warn | error | bug | plan
-  "emoji": "🗄️",                   // optional override
-  "agent": "MigrationBot",         // optional override
-  "meta": {
-    "phase": "deployment",
-    "checklist_id": "DEPLOY-001",
-    "component": "database",
-    "tests": "passed"
-  },
-  "timestamp_utc": "2025-10-22 10:21:14 UTC"   // optional; auto if omitted
-}
-
-// response (single entry)
-{
-  "ok": true,
-  "written_line": "[2025-10-22 10:21:14 UTC] [🗄️] [Agent: MigrationBot] [Project: My Project] Completed database migration | phase=deployment; checklist_id=DEPLOY-001; component=database; tests=passed",
-  "path": "/abs/.../PROGRESS_LOG.md"
-}
-```
-
-#### Bulk Entry Mode (NEW):
-```json
-// Bulk request - multiple entries with individual timestamps
-{
-  "items": [
-    {
-      "message": "First task completed",
-      "status": "success"
-    },
-    {
-      "message": "Bug found in auth module",
-      "status": "bug",
-      "agent": "DebugBot"
-    },
-    {
-      "message": "Database migration finished",
-      "status": "info",
-      "agent": "MigrationBot",
-      "meta": {
-        "component": "database",
-        "phase": "deployment",
-        "records_affected": 1250
-      },
-      "timestamp_utc": "2025-10-22 15:30:00 UTC"
-    }
-  ]
-}
-
-// response (bulk entries)
-{
-  "ok": true,
-  "written_count": 3,
-  "failed_count": 0,
-  "written_lines": [
-    "[✅] [2025-10-24 10:45:00 UTC] [Agent: Scribe] [Project: My Project] First task completed",
-    "[🐞] [2025-10-24 10:45:01 UTC] [Agent: DebugBot] [Project: My Project] Bug found in auth module",
-    "[ℹ️] [2025-10-22 15:30:00 UTC] [Agent: MigrationBot] [Project: My Project] Database migration finished | component=database; phase=deployment; records_affected=1250"
-  ],
-  "failed_items": [],
-  "path": "/abs/.../PROGRESS_LOG.md"
-}
-```
-
-#### Multi-log routing (`log_type`)
-- Pass `log_type="doc_updates"` (or any key from `config/log_config.json`) to route entries into custom logs like `DOC_LOG.md`.
-- Each log can enforce metadata (e.g., `doc`, `section`, `action` for doc updates). Missing required fields will reject the entry.
-- Default config ships with `progress`, `doc_updates`, `security`, and `bugs`. Add more under `config/log_config.json` with placeholders such as `{docs_dir}` or `{project_slug}` for path templates.
-- CLI (`scripts/scribe.py`) also accepts `--log doc_updates` to stay consistent with MCP usage.
-
-### 4. `manage_docs` – Structured doc updates
-- **Purpose**: Safely edit `ARCHITECTURE_GUIDE`, `PHASE_PLAN`, `CHECKLIST`, etc., with audit metadata and automatic logging.
-- **Args**:
-  - `action`: `append`, `replace_section`, `apply_patch`, `replace_range`, or `status_update`.
-  - `doc`: `architecture`, `phase_plan`, `checklist`, or custom template key.
-  - `section`: Required for section/status operations; matches anchors like `<!-- ID: problem_statement -->`.
-  - `content` or `template`: Provide raw Markdown or reference a fragment under `docs/dev_plans/1_templates/fragments/`.
-  - `metadata`: Optional context (e.g., `{"status": "done", "proof": "PROGRESS_LOG#..."}`).
-  - `dry_run`: Preview diff without writing.
-- **Behavior**:
-  - Edits are persisted atomically, recorded in the new `doc_changes` table, and auto-logged via `append_entry(log_type="doc_updates")`.
-  - Checklist status updates flip `[ ]` ↔ `[x]` and can attach proof links automatically.
-
-#### Choosing the Correct manage_docs Action
-- **replace_section**
-  - Use only for initial scaffolding or template setup.
-  - If scaffolding, set `metadata={"scaffold": true}` to reduce false reminders.
-- **apply_patch** (preferred for edits)
-  - Structured mode is default: provide `edit` payloads (intent-based).
-  - Unified diffs are compiler output only; set `patch_mode="unified"` explicitly.
-  - Use `patch_source_hash` to enforce stale-source detection when available.
-- **replace_range**
-  - Replace explicit 1-based line ranges when you already have the line numbers.
-
-Rule of thumb: scaffold with `replace_section`, then switch immediately to `apply_patch` or `replace_range` for edits.
-
-### 5. `list_projects`
-Discover configured or recently used projects.
-```json
-// request
-{ "roots": ["/abs/path/to/repos"], "limit": 500 }
-
-// response
-{
-  "ok": true,
-  "projects": [
-    {
-      "name": "IMPLEMENTATION TESTING",
-      "root": "/abs/path/to/repo",
-      "progress_log": "/abs/.../PROGRESS_LOG.md",
-      "docs": { "architecture": "...", "phase_plan": "...", "checklist": "...", "progress_log": "..." }
-    }
-  ]
-}
-```
-
-### 6. `read_recent` - **Recent Log Entries**
-**Purpose**: Tail the log via MCP instead of opening files by hand
-**Usage**: `read_recent([n, filter])`
-**⚠️ NOTE**: n parameter currently has type issues, returns all recent entries
-```json
-// Basic request (recommended)
-{}
-
-// With filtering (when n parameter fixed)
-{
-  "n": 50,
-  "filter": { "status": "error", "agent": "Scribe" }
-}
-
-// response
-{
-  "ok": true,
-  "entries": [
-    {
-      "id": "uuid",
-      "ts": "2025-10-22 10:21:14 UTC",
-      "emoji": "ℹ️",
-      "agent": "Scribe",
-      "message": "Describe the work or finding",
-      "meta": { "phase": "bootstrap" },
-      "raw_line": "[ℹ️] [2025-10-22 10:21:14 UTC] [Agent: Scribe] [Project: My Project] Describe the work or finding"
-    }
-  ]
-}
-```
-
-### 7. `rotate_log`
-Archive the current log and create a fresh file.
-```json
-// request
-{ "suffix": "2025-10-22" }
-
-// response
-{ "ok": true, "archived_to": "/abs/.../PROGRESS_LOG.md.2025-10-22.md" }
-```
-
-### 8. `db.persist_entry` *(optional)*
-Mirror a freshly written line into Postgres when configured.
-```json
-// request
-{
-  "line": "[2025-10-22 ...] ...",
-  "project": "IMPLEMENTATION TESTING",
-  "sha256": "abc123"
-}
-
-// response
-{ "ok": true, "id": "uuid" }
-```
-
-### 9. `db.query` *(optional)*
-Run predefined parameterized queries against the Scribe database.
-```json
-// request
-{
-  "query_name": "recent_failures",
-  "params": { "project": "IMPLEMENTATION TESTING", "since_hours": 24 }
-}
-
-// response
-{ "ok": true, "rows": [ { "ts": "2025-10-22 09:10:03 UTC", "agent": "Scribe", "message": "..." } ] }
-```
-
-### 10. `query_entries` - **Advanced Log Search**
-**Purpose**: Advanced searching and filtering of progress log entries
-**Usage**: `query_entries([project, start, end, message, message_mode, case_sensitive])`
-```json
-// Search by message content
-{
-  "message": "bug",
-  "message_mode": "substring"
-}
-
-// Search by date range
-{
-  "start": "2025-10-23",
-  "end": "2025-10-24"
-}
-
-// Search specific project
-{
-  "project": "My Project",
-  "message": "migration",
-  "case_sensitive": false
-}
-
-// response
-{
-  "ok": true,
-  "entries": [
-    {
-      "id": "uuid",
-      "ts": "2025-10-23 15:30:00 UTC",
-      "emoji": "🗄️",
-      "agent": "MigrationBot",
-      "message": "Completed database migration",
-      "meta": { "phase": "deployment", "component": "database" },
-      "raw_line": "[🗄️] [...]"
-    }
-  ]
-}
-```
-
-### 11. `generate_doc_templates` - **Documentation Scaffolding**
-**Purpose**: Create/update documentation templates for a project
-**Usage**: `generate_doc_templates(project_name, [author, overwrite, documents, base_dir])`
-```json
-// Basic request
-{
-  "project_name": "My New Project",
-  "author": "MyAgent"
-}
-
-// Select specific documents
-{
-  "project_name": "My Project",
-  "documents": ["architecture", "phase_plan"],
-  "overwrite": true
-}
-
-// response
-{
-  "ok": true,
-  "files": [
-    "/abs/.../ARCHITECTURE_GUIDE.md",
-    "/abs/.../PHASE_PLAN.md",
-    "/abs/.../CHECKLIST.md",
-    "/abs/.../PROGRESS_LOG.md"
-  ],
-  "skipped": [],
-  "directory": "/abs/.../docs/dev_plans/my_new_project"
-}
-```
-
-## 🧾 Tool Argument Cheat Sheet (Runtime Signatures)
-
-This table summarizes the **actual MCP parameters** Scribe tools accept at runtime. Use this when constructing payloads or when validating third‑party integrations.
-
-- `set_project(name, root=None, progress_log=None, author=None, overwrite_docs=False, defaults=None)`
-- `get_project()`
-- `delete_project(name, mode="archive", confirm=False, force=False, archive_path=None, agent_id=None)`
-- `append_entry(message="", status=None, emoji=None, agent=None, meta=None, timestamp_utc=None, items=None, items_list=None, auto_split=True, split_delimiter="\n", stagger_seconds=1, agent_id=None, log_type="progress", config=None)`
-- `read_recent(project=None, n=None, limit=None, filter=None, page=1, page_size=50, compact=False, fields=None, include_metadata=True)`
-- `query_entries(project=None, start=None, end=None, message=None, message_mode=None, case_sensitive=False, emoji=None, status=None, agents=None, meta_filters=None, limit=None, page=1, page_size=50, compact=False, fields=None, include_metadata=True, search_scope=None, document_types=None, include_outdated=False, verify_code_references=False, time_range=None, relevance_threshold=None, max_results=None, config=None)`
-- `manage_docs(action, doc, section=None, content=None, template=None, metadata=None, dry_run=False, doc_name=None, target_dir=None)`
-- `list_projects(limit=5, filter=None, compact=False, fields=None, include_test=False, page=1, page_size=None, status=None, tags=None, order_by=None, direction="desc")`
-- `generate_doc_templates(project_name, author=None, overwrite=False, documents=None, base_dir=None)`
-- `rotate_log(suffix=None, custom_metadata=None, confirm=False, dry_run=False, dry_run_mode="estimate", log_type=None, log_types=None, rotate_all=False, auto_threshold=False, threshold_entries=None, config=None)`
-- `vector_search(project=None, query="", limit=None)`
-
-Registry-aware behavior:
-- `set_project` → ensures `scribe_projects` row and dev_plan rows for core docs; updates `last_access_at`.
-- `append_entry` (progress logs) → updates `last_entry_at` and may auto‑promote `status` from `planning`→`in_progress` when core docs + first entry exist.
-- `manage_docs` → updates `meta.docs` in the registry with baseline/current hashes and doc‑hygiene flags.
-- `list_projects` → surfaces `meta.activity` (age, recency, staleness_level, activity_score) and `meta.docs.flags` (e.g., `docs_ready_for_work`, `doc_drift_suspected`).
-
-## 🛠️ CLI Companion (Optional)
-`python scripts/scribe.py` mirrors a subset of MCP tools for shell workflows:
-- `--list-projects`
-- `--project <name>` or `--config <path>`
-- `append "Message" --status success --meta key=value`
-- `read --n 20`
-- `rotate --suffix YYYY-MM-DD`
-
-Always prefer MCP tool calls from agents; the CLI is for human operators and batch jobs.
----
-
-## 🗂️ Dev Plan Document Suite
-Each project under `.scribe/docs/dev_plans/<slug>/` maintains four synchronized files. Scribe bootstraps them during `set_project`; agents keep them current.
-
-- `ARCHITECTURE_GUIDE.md` - Canonical blueprint. Explain the problem, goals, constraints, system design, data flow, and current directory tree. Update immediately when structure or intent changes.
-- `PHASE_PLAN.md` - Roadmap derived from the architecture. Enumerate phases with objectives, tasks, owners, acceptance criteria, and confidence. Keep it aligned with reality.
-- `CHECKLIST.md` - Verification ledger mirroring the phase plan. Each box must link to proof (commit, PR, screenshot, or Scribe entry). Do not invent tasks here.
-- `PROGRESS_LOG.md` - Append-only audit trail written **only** through `append_entry`. Include `meta` keys like `phase=`, `checklist_id=`, `tests=` for traceability. Rotate periodically (~200 entries) using `rotate_log`.
-
-**Workflow Loop**
-1. `set_project` -> confirm docs exist.
-2. Fill `ARCHITECTURE_GUIDE.md`, then `PHASE_PLAN.md`, then `CHECKLIST.md`.
-3. Work in small, logged increments. `append_entry` after every meaningful action or insight.
-4. When plans shift, update the docs first, then log the change.
-5. Treat missing or stale documentation as a blocker - fix before coding further.
+* `manage_docs` is **Project Mode only**. No project → no doc management.
+* Don’t invent action names or parameters. If an action isn’t supported: **stop and request a tool update**.  Be sure to check `Scribe_Usage.md` first.
+* Prefer `replace_range` / `apply_patch` over whole-file rewrites.  `Read_File` can provide exact line numbers.
+* `append_entry` is for progress logging; `manage_docs` is for managed doc artifacts. Use both when appropriate.
 
 ---
 
-## 🔒 Operating Principles
-- Always append; never rewrite logs manually.
-- Timestamps are UTC; emoji is mandatory.
-- Scribe reminders about stale docs or missing logs are blocking alerts.
-- Default storage is local SQLite; Postgres and GitHub bridges require explicit env configuration.
-- No autonomous prose generation - Scribe stays deterministic and fast.
+## Notes
 
-> **Repeat:** Append entries religiously. If there is no Scribe line, reviewers assume it never happened.
+- If a tool is unavailable (e.g., vector tools without plugin), stop and note the blocker; do not invent behaviors.
+- Keep this skill minimal; link to wiki/code for extended rationale.

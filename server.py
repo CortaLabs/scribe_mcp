@@ -105,6 +105,32 @@ agent_identity = None  # Will be initialized in startup
 router_context_manager = RouterContextManager(storage_backend=storage_backend)
 _startup_complete = False
 
+# Background task management (prevents garbage collection of fire-and-forget tasks)
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+background_tasks: set[asyncio.Task] = set()
+
+def schedule_background_task(coro):
+    """
+    Schedule a background task with automatic cleanup.
+
+    Prevents garbage collection of fire-and-forget tasks by maintaining
+    a strong reference in the background_tasks set. Tasks are automatically
+    removed when complete via add_done_callback.
+
+    Args:
+        coro: Coroutine to execute in background
+
+    Returns:
+        asyncio.Task: The created task (for testing/debugging)
+    """
+    import sys
+    print(f"[DEBUG] schedule_background_task called, creating task...", file=sys.stderr)
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    print(f"[DEBUG] Task created and added to background_tasks (total: {len(background_tasks)})", file=sys.stderr)
+    return task
+
 if _MCP_AVAILABLE:
     from mcp import types as mcp_types
 

@@ -14,6 +14,7 @@ This document provides comprehensive usage instructions for all available Scribe
 - `generate_toc` uses GitHub-style anchors (NFKD normalization, ASCII folding, emoji removal, punctuation collapse, de-dup suffixes).
 - `create_doc` preserves multiline body content in metadata (`body`, `snippet`, `content`).
 - `read_file` adds repo-scoped scan/chunk/page/search modes with provenance logging for every read.
+- `read_file` **Phase 5 enhancements**: Full signature extraction (types, defaults, return types), line ranges for all functions/classes/methods, method display under classes, structure filtering (`structure_filter` for regex-based class/function search), and structure pagination (`structure_page`, `structure_page_size`) for browsing large classes with 50+ methods.
 - `scribe_doctor` provides environment readiness diagnostics (repo root, config, plugin status, vector readiness).
 - `manage_docs` adds semantic search via `action="search"` with `search_mode="semantic"` and doc/log separation.
 - Semantic search supports `project_slug`, `project_slugs`, `project_slug_prefix`, `doc_type`, `file_path`, `time_start/time_end`.
@@ -628,7 +629,7 @@ await query_entries(
 ---
 
 ### `read_file`
-**Purpose**: Repo-scoped file access with deterministic scan/chunk/page/search modes and read provenance logging.
+**Purpose**: Repo-scoped file access with deterministic scan/chunk/page/search modes, dependency analysis, and read provenance logging.
 
 **Required Parameters:**
 - `path` (string): File path (absolute or repo-relative)
@@ -640,25 +641,104 @@ await query_entries(
 - `page_number` / `page_size`: Pagination controls (for `page`)
 - `start_chunk` / `max_chunks`: Streaming controls (for `full_stream`)
 - `search`: Search term (for `search` mode)
-- `search_mode`: `literal` (default) or `regex`
+- `query`: Alias for `search` (for `search` mode, defaults to smart inference)
+- `search_mode`: `regex` (default) or `literal` - **Note: Default changed from literal to regex**
 - `context_lines`: Lines of context around matches (search mode)
 - `max_matches`: Max matches to return (search mode)
+- `include_dependencies`: `False` (default) or `True` - Enable dependency analysis (Python files only)
+- `format`: `readable` (default), `structured`, or `compact` - Output format
+
+**Scan Mode Enhancements:**
+When `mode="scan_only"`, the tool automatically detects file type and extracts structure:
+
+- **Python files**: AST analysis showing functions, classes, methods with line numbers and signatures
+- **Markdown files**: Heading hierarchy with line numbers (max 100 headings)
+- **JavaScript/TypeScript**: Basic structure detection
+- **SKILL.md detection**: Special urgent warning when reading SKILL.md files
+- **Navigation hints**: Suggested chunk sizes and example calls for large files
+
+**Dependency Analysis (`include_dependencies=True`):**
+Provides static analysis of Python imports with governance features:
+
+1. **Import Categorization**:
+   - **Standard Library**: Python stdlib imports (detected via sys.stdlib_module_names)
+   - **Third-Party Packages**: External dependencies from pip/conda
+   - **Local Modules**: Project-internal imports with path resolution and existence checks
+
+2. **Path Resolution**:
+   - Resolves relative imports (e.g., `from ..utils import helper`)
+   - Resolves absolute imports (e.g., `from scribe_mcp.tools import append_entry`)
+   - Shows resolved file paths with ✓ checkmarks when files exist
+   - Detects workspace root automatically (.git, pyproject.toml markers)
+
+3. **Impact Radius (Blast Radius)**:
+   - Shows how many files import the current file
+   - Categorized by impact level:
+     - **Low**: 0-4 importers
+     - **Medium**: 5-15 importers (⚠️ warning)
+     - **High**: 16+ importers (🚨 high impact)
+   - Lists up to 20 files that import this module
+   - Helps assess change risk before modifications
+
+4. **Boundary Enforcement**:
+   - Checks imports against `.scribe/config/boundary_rules.yaml` rules
+   - Detects forbidden import patterns (e.g., "sentinel layer must not import tools")
+   - Shows violations with severity levels: ERROR, WARNING, INFO
+   - Supports glob patterns with `**` for recursive matching
+   - Respects `allowed_exceptions` for legitimate edge cases
+
+5. **Static Analysis Disclaimer**:
+   - Automatically included when dependencies or impact radius shown
+   - Clarifies that only import-time relationships are detected
+   - Honest about limitations: no runtime dependencies, dynamic imports, or reflection patterns
 
 **Example Usage:**
 ```python
-# Scan file metadata only
-await read_file(path="docs/Scribe_Usage.md", mode="scan_only")
+# Basic scan (metadata + structure)
+await read_file(path="tools/read_file.py", mode="scan_only")
+
+# Scan with dependency analysis
+await read_file(path="tools/read_file.py", mode="scan_only", include_dependencies=True)
 
 # Read specific chunk
 await read_file(path="docs/Scribe_Usage.md", mode="chunk", chunk_index=[0])
 
-# Search within file
+# Regex search (default mode)
+await read_file(path="tools/read_file.py", mode="search", query=r"async\s+def\s+\w+")
+
+# Literal search (explicit)
 await read_file(path="docs/Scribe_Usage.md", mode="search", search="semantic", search_mode="literal")
+
+# Search with context lines
+await read_file(path="server.py", mode="search", query="async def", context_lines=2)
 ```
 
+**Configuration:**
+Boundary rules are defined in `.scribe/config/boundary_rules.yaml`:
+```yaml
+version: 1.0
+enabled: true
+rules:
+  - name: "Sentinel Layer Isolation"
+    severity: "error"
+    pattern:
+      source: "sentinel/**/*.py"
+      forbidden_imports:
+        - "tools/**"
+        - "scribe_mcp.tools.*"
+```
+
+**Performance:**
+- Dependency analysis: ~20% overhead when enabled (opt-in)
+- Impact radius: <3s for typical repositories (<500 Python files)
+- Boundary checking: <20ms overhead per file
+- Zero overhead when `include_dependencies=False` (default)
+
 **Notes:**
-- Every read is logged with provenance (absolute path, hash, byte size, encoding, read mode).
-- Enforces repo scope by default; out-of-scope paths are denied.
+- Every read is logged with provenance (absolute path, hash, byte size, encoding, read mode)
+- Enforces repo scope by default; out-of-scope paths are denied
+- Dependency analysis is static only - does not execute code or resolve runtime imports
+- Impact radius requires workspace root detection (looks for .git, pyproject.toml markers)
 
 ### `scribe_doctor`
 **Purpose**: Diagnostics for repo root, config resolution, plugin status, and vector readiness.
@@ -862,6 +942,157 @@ await generate_doc_templates(
   "validation": {/* template validation results */}
 }
 ```
+
+### Auto-Registration for EDIT Operations (v2.2.0+)
+
+Starting in v2.2.0, `manage_docs` automatically registers unregistered documents when you perform EDIT operations. This eliminates "DOC_NOT_FOUND" errors and streamlines workflows for both AI agents and human users.
+
+#### How It Works
+
+When you call `manage_docs` with an EDIT action, the system automatically:
+1. Checks if the document is registered in the project's `docs` metadata
+2. If unregistered, resolves the document path based on the document key
+3. Verifies the file exists on disk
+4. Computes the SHA256 hash for integrity tracking
+5. Updates the project's `docs_json` database field
+6. Logs the registration to the progress log
+7. Proceeds with your requested edit operation
+
+**EDIT operations (auto-register if needed):**
+- `list_sections` - List all section anchors in a document
+- `replace_section` - Replace content using section anchors
+- `apply_patch` - Apply structured or unified diff patches
+- `replace_range` - Replace explicit line ranges
+- `append` - Append content to document or section
+- `status_update` - Update checklist item status
+- `normalize_headers` - Normalize markdown headers to ATX format
+- `generate_toc` - Generate table of contents
+- `search` - Semantic search across documents
+- `replace_text` - Replace text patterns
+- `validate_crosslinks` - Validate cross-document references
+
+**CREATE operations (explicit registration):**
+These actions handle document creation and registration internally, so auto-registration is not needed:
+- `create_research_doc` - Create structured research documents
+- `create_bug_report` - Create structured bug reports
+- `create_review_report` - Create review reports
+- `create_agent_report_card` - Create agent performance reports
+- `create_doc` - Create custom documents
+
+#### Example Workflow
+
+**Before v2.2.0 (manual registration required):**
+```python
+# Step 1: Explicitly register documents first
+await generate_doc_templates(project_name="my_project")
+
+# Step 2: Then perform edits
+await manage_docs(
+    action="replace_section",
+    doc="architecture",
+    section="problem_statement",
+    content="Updated content..."
+)
+```
+
+**v2.2.0+ (auto-registration):**
+```python
+# Just call manage_docs directly - auto-registration handles the rest
+await manage_docs(
+    action="replace_section",
+    doc="architecture",
+    section="problem_statement",
+    content="Updated content..."
+)
+# Auto-registers 'architecture' if needed, then performs the edit
+```
+
+#### What Gets Registered
+
+When auto-registration triggers, the following happens:
+
+1. **Document Path Resolution**: The document key (e.g., "architecture") is mapped to its canonical filename (e.g., `ARCHITECTURE_GUIDE.md`)
+
+2. **File Verification**: The system checks that the file exists at the expected path within the project's documentation directory
+
+3. **Hash Computation**: A SHA256 hash is computed for the file contents to enable integrity tracking and change detection
+
+4. **Database Update**: The project's `docs_json` field in the database is updated with the new registration
+
+5. **Progress Log Entry**: A log entry is created documenting the auto-registration event:
+   ```
+   [ℹ️] [timestamp] Auto-registered 'architecture' → ARCHITECTURE_GUIDE.md
+   ```
+
+#### Requirements for Auto-Registration
+
+Auto-registration requires all of the following conditions:
+
+- **Database Backend**: SQLite or PostgreSQL storage must be active (auto-registration uses database-backed project metadata)
+- **File Must Exist**: The document file must exist on disk at the expected path
+- **Valid Document Key**: The document key must be one of the recognized types (architecture, phase_plan, checklist, etc.)
+- **Active Project Context**: A project must be set via `set_project()` before calling `manage_docs`
+
+#### Troubleshooting
+
+**Error: "DOC_NOT_FOUND: Document 'X' not registered"**
+
+This error occurs when:
+- Auto-registration is disabled (should not happen in v2.2.0+)
+- The action is not an EDIT operation (use CREATE operations for new docs)
+- Something prevented auto-registration from completing
+
+*Solution:*
+1. Verify you're using an EDIT action (see list above)
+2. Check that the file exists: `ls .scribe/docs/dev_plans/<project>/<DOC_FILE>.md`
+3. Review progress log for auto-registration errors
+4. Try manual registration: `await generate_doc_templates(project_name="<project>")`
+
+**Error: "Cannot auto-register: file does not exist at path X"**
+
+The document file doesn't exist at the expected location.
+
+*Solution:*
+1. Create the file first: `await generate_doc_templates(project_name="<project>")`
+2. Or use a CREATE action to generate a new document
+3. Verify the project name matches the directory structure
+
+**Auto-registration logs but edit fails**
+
+Registration succeeded, but the edit operation encountered an issue.
+
+*Solution:*
+1. For `replace_section`: Verify section anchors exist using `list_sections`
+2. For `replace_range`: Check that line numbers are valid and within bounds
+3. For `apply_patch`: Ensure YAML frontmatter is valid and not corrupted
+4. Review the error message for specific guidance
+
+**Database connectivity issues**
+
+Auto-registration requires database write access.
+
+*Solution:*
+1. Verify database backend is configured: Check `SCRIBE_STORAGE_BACKEND` environment variable
+2. For SQLite: Ensure write permissions on the database file
+3. For PostgreSQL: Verify connection string and credentials
+4. Run diagnostics: `await scribe_doctor()` to check system health
+
+#### Best Practices
+
+**For AI Agents:**
+- Don't worry about pre-registering documents - just call `manage_docs` with EDIT actions directly
+- Use CREATE actions (`create_research_doc`, `create_bug_report`) for new documents
+- Check error messages for actionable guidance if auto-registration fails
+
+**For Human Users:**
+- Auto-registration works transparently - no workflow changes needed
+- Use `generate_doc_templates()` to create initial project scaffolding
+- Monitor progress logs to see when auto-registration occurs
+
+**For Tool Developers:**
+- Auto-registration is handled in the `manage_docs` tool entry point
+- No changes needed to individual action handlers
+- All EDIT actions benefit automatically
 
 ---
 

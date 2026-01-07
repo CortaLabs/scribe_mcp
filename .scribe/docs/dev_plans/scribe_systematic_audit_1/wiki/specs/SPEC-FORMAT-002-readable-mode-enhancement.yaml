@@ -1,0 +1,633 @@
+# SPEC-FORMAT-002: Readable Mode Enhancement
+
+metadata:
+  spec_id: SPEC-FORMAT-002
+  title: "Readable Mode Enhancement - rotate_log and get_project Fixes"
+  created: 2026-01-05
+  author: ResearchAgent-Phase5-FormatValidator
+  status: PROPOSED
+  priority: HIGH
+  estimated_effort: "3-5 hours"
+  dependencies:
+    - SPEC-FORMAT-001  # Base class infrastructure
+  related_bugs:
+    - BUG-FORMAT-004  # rotate_log no readable mode
+    - get_project_anomaly  # Readable 4x larger than JSON
+
+---
+
+# Problem Statement
+
+## Issue #1: rotate_log Has NO Readable Mode
+
+**Current Behavior**: rotate_log ignores `format` parameter, returns JSON for ALL modes
+
+**Evidence**:
+- `format="readable"` → JSON (429 chars)
+- `format="structured"` → JSON (429 chars)
+- `format="compact"` → JSON (429 chars)
+
+**Impact**: No human-readable summary for log rotation operations
+
+**Expected Behavior**: Readable mode should provide box-formatted summary
+
+---
+
+## Issue #2: get_project Readable Mode Bloat
+
+**Current Behavior**: Readable mode is 4x LARGER than structured mode
+
+**Evidence**:
+- `format="readable"` → ~2,400 chars (includes last 5 log entries)
+- `format="structured"` → 651 chars (omits recent activity)
+
+**Impact**: Readable mode defeats token optimization purpose
+
+**Question**: Is this intentional (UX) or bug (data inclusion)?
+
+---
+
+# Goals
+
+## Primary Objectives
+
+1. **Add readable mode to rotate_log** (BUG-FORMAT-004)
+2. **Investigate get_project readable bloat** (determine if bug or feature)
+3. **Standardize readable mode verbosity** (avoid unexpected data inclusion)
+4. **Achieve target token reductions** (40-50% for rotate_log)
+
+## Success Criteria
+
+- ✅ rotate_log readable mode reduces tokens 40-50% vs JSON
+- ✅ get_project readable mode decision documented (fix or feature)
+- ✅ Readable mode verbosity is predictable and documented
+- ✅ All tools with readable mode achieve ≥30% token reduction
+
+---
+
+# Technical Design
+
+## rotate_log Readable Mode Implementation
+
+### Current Output (JSON)
+
+```json
+{
+  "ok": true,
+  "project": "my_project",
+  "log_type": "progress",
+  "original_path": "PROGRESS_LOG.md",
+  "archived_path": "PROGRESS_LOG.md.20260105_120000.md",
+  "new_log_path": "PROGRESS_LOG.md",
+  "original_size": 15234,
+  "rotation_timestamp": "2026-01-05T12:00:00Z",
+  "status": "success"
+}
+```
+
+**Size**: ~429 chars
+
+---
+
+### Proposed Readable Output
+
+```
+╔══════════════════════════════════════════════════════════╗
+║ ✅ LOG ROTATION COMPLETE                                 ║
+╟──────────────────────────────────────────────────────────╢
+║ Project: my_project                                      ║
+║ Log Type: progress                                       ║
+╟──────────────────────────────────────────────────────────╢
+║ Original: PROGRESS_LOG.md (14.9 KB, 342 entries)         ║
+║ Archived: PROGRESS_LOG.md.20260105_120000.md             ║
+║ New Log: PROGRESS_LOG.md (empty)                         ║
+╟──────────────────────────────────────────────────────────╢
+║ Rotated: 2026-01-05 12:00:00 UTC                         ║
+╚══════════════════════════════════════════════════════════╝
+```
+
+**Estimated Size**: ~380 chars
+
+**Token Reduction**: ~11% (429 → 380 chars)
+
+**Note**: Modest reduction (not 40-50%) due to formatting overhead. Acceptable trade-off for UX.
+
+---
+
+### Implementation
+
+**File**: `tools/rotate_log.py`
+
+**Method**:
+```python
+def _format_readable(self, rotation_data: Dict, **kwargs) -> str:
+    """
+    Format rotation result as human-readable box summary.
+
+    Args:
+        rotation_data: Rotation result dict from execute()
+
+    Returns:
+        Box-formatted string with rotation details
+    """
+    from scribe_mcp.utils.response import ResponseFormatter
+    formatter = ResponseFormatter()
+
+    # Extract data
+    project = rotation_data.get("project", "unknown")
+    log_type = rotation_data.get("log_type", "progress")
+    original = rotation_data.get("original_path", "")
+    archived = rotation_data.get("archived_path", "")
+    new_log = rotation_data.get("new_log_path", "")
+    size = rotation_data.get("original_size", 0)
+    timestamp = rotation_data.get("rotation_timestamp", "")
+    status = rotation_data.get("status", "unknown")
+
+    # Format size
+    if size < 1024:
+        size_str = f"{size} bytes"
+    elif size < 1024 * 1024:
+        size_str = f"{size / 1024:.1f} KB"
+    else:
+        size_str = f"{size / (1024 * 1024):.1f} MB"
+
+    # Count entries (if available)
+    entry_count = rotation_data.get("entry_count", "unknown")
+    size_info = f"{size_str}, {entry_count} entries" if entry_count != "unknown" else size_str
+
+    # Status icon
+    icon = "✅" if status == "success" else "⚠️"
+
+    # Create header box
+    metadata = {
+        "Project": project,
+        "Log Type": log_type,
+    }
+
+    header = formatter._create_header_box(
+        f"{icon} LOG ROTATION COMPLETE",
+        metadata
+    )
+
+    # File details section
+    details = [
+        f"Original: {original} ({size_info})",
+        f"Archived: {archived}",
+        f"New Log: {new_log} (empty)",
+    ]
+
+    # Format timestamp
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        timestamp_str = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except:
+        timestamp_str = timestamp
+
+    footer_data = {
+        "Rotated": timestamp_str
+    }
+
+    footer = formatter._create_footer_box(footer_data)
+
+    # Combine sections
+    return header + "\n\n" + "\n".join(details) + "\n\n" + footer
+```
+
+**Testing**:
+```python
+async def test_rotate_log_readable_mode():
+    result = await rotate_log(format="readable")
+
+    # Verify readable format
+    assert isinstance(result, str)
+    assert "╔" in result  # Box drawing
+    assert "LOG ROTATION COMPLETE" in result
+    assert "Project:" in result
+
+    # Verify token reduction (vs JSON)
+    json_result = await rotate_log(format="structured")
+    readable_size = len(result)
+    json_size = len(json.dumps(json_result))
+
+    # Readable should be smaller or similar (acceptable if formatting overhead)
+    assert readable_size <= json_size * 1.2  # Allow 20% overhead for formatting
+```
+
+---
+
+## get_project Readable Mode Investigation
+
+### Current Behavior Analysis
+
+**Readable Mode** (~2,400 chars):
+- Project metadata (name, slug, root, status)
+- Lifecycle information (created, last entry, last access)
+- Activity metrics (entry count, activity score)
+- **Recent activity (last 5 log entries)** ← EXTRA DATA
+
+**Structured Mode** (651 chars):
+- Project metadata only
+- NO recent activity
+
+**Discrepancy**: Readable includes additional context not in JSON
+
+---
+
+### Decision Tree
+
+#### Option A: Bug - Remove Recent Activity
+
+**Rationale**: Readable should be subset of structured (not superset)
+
+**Fix**:
+```python
+def _format_readable(self, project_data: Dict, **kwargs) -> str:
+    # Remove recent_activity inclusion
+    # Show only metadata (matches structured scope)
+    ...
+```
+
+**Result**: Readable ~650 chars (matches structured)
+
+**Token Reduction**: 0% (same data, different format)
+
+**Impact**: Consistent data across modes, loses UX feature
+
+---
+
+#### Option B: Feature - Add Verbosity Flag
+
+**Rationale**: Recent activity is valuable UX, make it optional
+
+**Fix**:
+```python
+async def get_project(
+    project: str = None,
+    format: str = "readable",
+    verbose: bool = False,  # NEW parameter
+    **kwargs
+):
+    """
+    Get current project context.
+
+    Args:
+        project: Optional project name override
+        format: Output format (readable/structured/compact)
+        verbose: Include recent activity in readable mode (default: False)
+    """
+    ...
+
+def _format_readable(self, project_data: Dict, verbose: bool = False, **kwargs):
+    # Include recent activity only if verbose=True
+    if verbose:
+        # Current behavior (~2,400 chars)
+    else:
+        # Concise metadata only (~650 chars)
+```
+
+**Result**:
+- Default: ~650 chars (consistent with structured)
+- Verbose: ~2,400 chars (when user wants context)
+
+**Token Reduction**: 73% (default mode)
+
+**Impact**: Maintains UX feature with opt-in verbosity
+
+---
+
+#### Option C: Document as Feature
+
+**Rationale**: Readable mode is for humans, extra context is intentional
+
+**Fix**: None (document behavior in tool spec)
+
+**Documentation**:
+```markdown
+## get_project Readable Mode
+
+**Behavior**: Includes last 5 log entries for context (not in JSON modes)
+
+**Rationale**: Human users benefit from recent activity summary
+
+**Token Impact**: Readable mode is 4x larger than JSON (trade-off for UX)
+
+**Alternative**: Use `format="structured"` for minimal output
+```
+
+**Impact**: No code changes, clear expectations
+
+---
+
+### Recommendation
+
+**Choose Option B** (verbosity flag)
+
+**Justification**:
+1. Preserves UX feature (recent activity)
+2. Allows token optimization (default=false)
+3. Explicit user control (verbose=true when needed)
+4. Consistent with structured mode data scope (default)
+
+**Implementation Effort**: 1-2 hours
+
+---
+
+## Standardized Readable Mode Verbosity
+
+### Guideline for All Tools
+
+**Principle**: Readable mode should NOT include data absent from structured mode (unless explicitly requested via verbosity flag)
+
+**Data Scope Rules**:
+1. **Baseline**: Readable shows SAME data as structured, different format
+2. **Enhanced**: Readable MAY include extra context if `verbose=True` parameter provided
+3. **Forbidden**: Readable MUST NOT include surprise data without user opt-in
+
+**Examples**:
+
+**✅ GOOD** (list_projects):
+- Structured: List of project dicts
+- Readable: Formatted table of projects (same data, table format)
+
+**✅ GOOD** (read_file):
+- Structured: File metadata + content
+- Readable: Formatted file with line numbers (same data, formatted)
+
+**⚠️ QUESTIONABLE** (get_project current):
+- Structured: Project metadata
+- Readable: Project metadata + recent entries (EXTRA DATA - should be opt-in)
+
+**❌ BAD** (hypothetical):
+- Structured: Query results
+- Readable: Query results + random suggestions (SURPRISE DATA)
+
+---
+
+### Implementation Checklist
+
+**For Each Tool**:
+- [ ] Verify readable shows same data scope as structured
+- [ ] If readable adds context, make it opt-in via `verbose` parameter
+- [ ] Document any verbosity flags in tool specification
+- [ ] Test token reduction is ≥30% (or document why not)
+
+---
+
+## Implementation Plan
+
+### Phase 1: rotate_log Readable Mode (2-3 hours)
+
+**Tasks**:
+1. Implement `_format_readable()` method in rotate_log.py
+2. Add box-formatted output with rotation details
+3. Test all 3 format modes (readable/structured/compact)
+4. Verify output quality and token reduction
+
+**Files Modified**:
+- `tools/rotate_log.py`
+- `tests/test_rotate_log_formats.py` (new test file)
+
+**Success Criteria**:
+- ✅ Readable mode returns string with boxes
+- ✅ Structured/compact modes unchanged
+- ✅ Readable mode provides clear UX
+- ✅ Tests pass for all format modes
+
+---
+
+### Phase 2: get_project Investigation (1-2 hours)
+
+**Tasks**:
+1. Review get_project readable mode implementation
+2. Determine if recent activity is intentional or bug
+3. Implement verbosity flag (recommended Option B)
+4. Test token reduction with default verbose=False
+
+**Files Modified**:
+- `tools/get_project.py`
+- `tests/test_get_project_formats.py`
+
+**Success Criteria**:
+- ✅ Default readable mode matches structured data scope (~650 chars)
+- ✅ Verbose mode available for context-rich output (~2,400 chars)
+- ✅ Documentation explains verbosity behavior
+- ✅ Tests verify both modes
+
+---
+
+### Phase 3: Verbosity Standard Documentation (1 hour)
+
+**Tasks**:
+1. Document readable mode verbosity guidelines
+2. Audit other tools for surprise data inclusion
+3. Update CLAUDE.md with format parameter guidance
+4. Create tool specification template with format modes
+
+**Files Modified**:
+- `docs/Scribe_Usage.md`
+- `CLAUDE.md`
+- `docs/format_parameter_guide.md` (new)
+
+**Success Criteria**:
+- ✅ Clear verbosity guidelines for future tool development
+- ✅ All existing tools audited for compliance
+- ✅ Documentation updated
+
+---
+
+## Testing Strategy
+
+### rotate_log Tests
+
+```python
+async def test_rotate_log_readable_mode():
+    # Setup test project with log entries
+    await set_project(name="rotate_test")
+    for i in range(100):
+        await append_entry(message=f"Entry {i}", status="info")
+
+    # Perform rotation
+    result = await rotate_log(format="readable")
+
+    # Verify readable format
+    assert isinstance(result, str)
+    assert "╔" in result  # Box drawing
+    assert "LOG ROTATION COMPLETE" in result
+    assert "rotate_test" in result
+    assert "PROGRESS_LOG.md" in result
+
+    # Verify structured mode still works
+    result_json = await rotate_log(format="structured")
+    assert isinstance(result_json, dict)
+    assert result_json["ok"] is True
+
+async def test_rotate_log_token_reduction():
+    # Measure token difference
+    readable = await rotate_log(format="readable")
+    structured = await rotate_log(format="structured")
+
+    readable_tokens = len(readable)  # Approximate
+    structured_tokens = len(json.dumps(structured))
+
+    # Readable should be comparable or smaller
+    assert readable_tokens <= structured_tokens * 1.2  # Allow 20% overhead
+```
+
+---
+
+### get_project Tests
+
+```python
+async def test_get_project_verbosity():
+    await set_project(name="verbose_test")
+
+    # Default (concise)
+    result_concise = await get_project(format="readable")
+    assert isinstance(result_concise, str)
+    concise_size = len(result_concise)
+
+    # Verbose (with recent activity)
+    result_verbose = await get_project(format="readable", verbose=True)
+    assert isinstance(result_verbose, str)
+    verbose_size = len(result_verbose)
+
+    # Verbose should be significantly larger
+    assert verbose_size > concise_size * 2
+
+    # Concise should match structured data scope
+    result_json = await get_project(format="structured")
+    json_size = len(json.dumps(result_json))
+    assert abs(concise_size - json_size) < json_size * 0.3  # Within 30%
+
+async def test_get_project_default_not_verbose():
+    # Verify default is NOT verbose
+    result = await get_project(format="readable")
+
+    # Should NOT include recent entries by default
+    assert "Recent entries:" not in result
+    assert "Last 5 entries:" not in result
+```
+
+---
+
+## Success Metrics
+
+### rotate_log Targets
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Readable mode exists | YES | NO (BUG) |
+| Readable token reduction | ≥0% (acceptable overhead) | N/A |
+| User satisfaction | High (clear output) | N/A |
+
+---
+
+### get_project Targets
+
+| Metric | Target (Option B) | Current |
+|--------|-------------------|---------|
+| Default readable size | ~650 chars | ~2,400 chars |
+| Verbose readable size | ~2,400 chars | ~2,400 chars |
+| Token reduction (default) | 0% (matches JSON) | -269% (BLOAT) |
+| User control | Yes (verbose flag) | No (always verbose) |
+
+---
+
+## Rollout Plan
+
+### Stage 1: rotate_log Fix (Week 1)
+
+- Implement readable mode
+- Test in development
+- Deploy to staging
+- Collect user feedback
+
+---
+
+### Stage 2: get_project Enhancement (Week 1-2)
+
+- Investigate current behavior
+- Implement verbosity flag
+- Test both modes
+- Update documentation
+
+---
+
+### Stage 3: Documentation & Standards (Week 2)
+
+- Document verbosity guidelines
+- Audit all tools
+- Update CLAUDE.md
+- Training for future tool development
+
+---
+
+## Dependencies
+
+### Depends On
+
+- SPEC-FORMAT-001: Base class infrastructure (BaseFormattedTool)
+- BUG-FORMAT-004: Investigation complete (Team B)
+
+### Enables
+
+- Improved UX for log rotation operations
+- Token optimization for get_project
+- Standardized readable mode behavior across tools
+
+---
+
+## Open Questions
+
+1. **Should all tools support verbosity flag?**
+   - Recommendation: Only tools with context-heavy readable output
+   - Examples: get_project, read_recent (if showing extra context)
+
+2. **What's acceptable token overhead for formatting?**
+   - Recommendation: Up to 20% overhead acceptable for UX (boxes, colors)
+   - Example: rotate_log readable may be slightly larger due to formatting
+
+3. **Should verbose default to true or false?**
+   - Recommendation: Default to false (token optimization)
+   - Users can opt-in when they want extra context
+
+---
+
+## Future Enhancements
+
+### Not In Scope (v1)
+
+1. Per-tool verbosity defaults configuration
+2. Multiple verbosity levels (minimal/standard/verbose)
+3. Automatic verbosity based on terminal width
+4. Readable mode themes (compact/standard/detailed)
+
+### Potential v2 Features
+
+1. **Verbosity Presets**: Named profiles (minimal/standard/verbose/debug)
+2. **Context-Aware Verbosity**: Adjust based on available screen space
+3. **Smart Truncation**: Intelligent summarization for verbose data
+4. **Readable Mode Variants**: Light/detailed/compact variants
+
+---
+
+## References
+
+**Related Documents**:
+- Format Parameter Audit: `/wiki/analysis/format_parameter_audit.md`
+- BUG-FORMAT-004: `/wiki/bugs/phase_5_bugs/BUG-FORMAT-004-rotate-log-no-readable-mode.md`
+- Team A1 Final Report: `/wiki/analysis/TEAM_A1_FINAL_REPORT.md`
+- SPEC-FORMAT-001: `/wiki/specs/SPEC-FORMAT-001-format-parameter-standardization.yaml`
+
+**Source Files**:
+- `tools/rotate_log.py` - Needs readable mode implementation
+- `tools/get_project.py` - Needs verbosity investigation
+- `utils/response.py` - ResponseFormatter class
+
+---
+
+**Spec Status**: PROPOSED
+**Ready for Implementation**: YES (after SPEC-FORMAT-001 base infrastructure)
+**Estimated Timeline**: 5 hours development + 1 week testing
+**Risk Level**: LOW (localized changes, clear requirements)

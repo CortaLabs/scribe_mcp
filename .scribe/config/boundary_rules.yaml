@@ -1,0 +1,53 @@
+# Boundary Rules Configuration
+# Defines forbidden import patterns for governance enforcement
+# Version: 1.0
+
+version: 1.0
+enabled: true  # Master toggle for boundary checking
+
+rules:
+  - name: "Sentinel Layer Isolation"
+    description: "Sentinel code must not import from tools layer"
+    severity: "error"  # error | warning | info
+    pattern:
+      source: "sentinel/**/*.py"      # Files this rule applies to
+      forbidden_imports:
+        - "tools/**"                   # Cannot import from these paths
+        - "scribe_mcp.tools.*"         # Cannot import these modules
+
+  - name: "Test Isolation"
+    description: "Tests should not import from other tests"
+    severity: "warning"
+    pattern:
+      source: "tests/**/*.py"
+      forbidden_imports:
+        - "tests/**"  # Self-import forbidden (except fixtures)
+      allowed_exceptions:
+        - "tests/conftest.py"  # Shared fixtures allowed
+
+  - name: "Doc Management Separation"
+    description: "Documentation layer should be independent"
+    severity: "info"
+    pattern:
+      source: "doc_management/**/*.py"
+      forbidden_imports:
+        - "tools/**"
+
+  - name: "Storage Layer Isolation"
+    description: "Storage layer should not depend on tools layer"
+    severity: "error"
+    pattern:
+      source: "storage/**/*.py"
+      forbidden_imports:
+        - "tools/**"
+        - "scribe_mcp.tools.*"
+
+  - name: "Shared Utilities Independence"
+    description: "Shared utilities should have minimal dependencies"
+    severity: "warning"
+    pattern:
+      source: "shared/**/*.py"
+      forbidden_imports:
+        - "tools/**"
+        - "doc_management/**"
+        - "sentinel/**"

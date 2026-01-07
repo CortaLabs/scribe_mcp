@@ -19,6 +19,7 @@ from scribe_mcp.doc_management.manager import (
     DocumentOperationError,
     SECTION_MARKER,
     _resolve_create_doc_path,
+    _resolve_doc_path,
 )
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.utils.frontmatter import parse_frontmatter
@@ -886,6 +887,223 @@ async def _record_agent_report_card_metadata(
         print(f"⚠️  Failed to record agent report card metadata: {exc}")
 
 
+async def _auto_register_document(
+    project: Dict[str, Any],
+    doc_key: str,
+) -> bool:
+    """
+    Auto-register an unregistered document with the project.
+
+    This function is called automatically for EDIT operations when a document
+    is not yet registered in the project's docs mapping. It:
+    1. Resolves the document path using existing conventions
+    2. Verifies the file exists
+    3. Computes SHA256 hash for tracking
+    4. Updates the database docs_json column
+    5. Updates ProjectRegistry for in-memory tracking
+    6. Logs the registration event
+
+    Args:
+        project: Active project dict from context (must have name, root)
+        doc_key: Document key (e.g., "architecture", "phase_plan", "checklist")
+
+    Returns:
+        True if registration successful
+
+    Raises:
+        ValueError: If document file doesn't exist or registration fails
+        DocumentOperationError: If doc_key is invalid or path resolution fails
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Resolve document path using existing infrastructure
+        doc_path = _resolve_doc_path(project, doc_key)
+    except Exception as e:
+        raise ValueError(
+            f"Cannot auto-register '{doc_key}': Invalid document key or path resolution failed. "
+            f"Use 'generate_doc_templates' to create standard documents first. Error: {e}"
+        )
+
+    # Verify file exists
+    if not doc_path.exists():
+        raise ValueError(
+            f"Cannot auto-register '{doc_key}': File {doc_path} does not exist. "
+            f"Use 'generate_doc_templates' to create it first."
+        )
+
+    # Compute SHA256 hash for document tracking
+    try:
+        with open(doc_path, 'rb') as f:
+            doc_hash = hashlib.sha256(f.read()).hexdigest()
+    except Exception as e:
+        raise ValueError(f"Failed to read document {doc_path} for hashing: {e}")
+
+    # Update database docs_json column
+    backend = server_module.storage_backend
+    if not backend:
+        raise ValueError("Storage backend not available for auto-registration")
+
+    project_name = project.get("name")
+    if not project_name:
+        raise ValueError("Project must have a name for auto-registration")
+
+    try:
+        # Get current docs_json from database
+        current_docs = project.get("docs", {})
+
+        # Add new document to docs mapping
+        current_docs[doc_key] = str(doc_path)
+        docs_json = json.dumps(current_docs)
+
+        # Update database using direct SQL since upsert_project doesn't support docs_json yet
+        # This is a Phase 3 workaround for Phase 1/2 gap
+        await backend._execute(
+            """
+            UPDATE scribe_projects
+            SET docs_json = ?
+            WHERE name = ?
+            """,
+            (docs_json, project_name),
+        )
+
+        logger.info(f"Auto-registered document '{doc_key}' for project '{project_name}'")
+
+    except Exception as e:
+        raise ValueError(f"Failed to update database for auto-registration: {e}")
+
+    # Update ProjectRegistry for in-memory tracking
+    try:
+        await _PROJECT_REGISTRY.record_doc_update(
+            project_name=project_name,
+            doc_key=doc_key,
+            file_path=str(doc_path),
+            baseline_hash=doc_hash,
+            current_hash=doc_hash,
+        )
+    except Exception as e:
+        # Non-fatal - log warning but don't fail registration
+        logger.warning(f"Failed to update ProjectRegistry for '{doc_key}': {e}")
+
+    # Log registration event to progress log
+    try:
+        await append_entry(
+            message=f"Auto-registered document: {doc_key} ({doc_path.name})",
+            status="info",
+            agent="manage_docs",
+            meta={
+                "action": "auto_register",
+                "doc": doc_key,
+                "path": str(doc_path),
+                "hash": doc_hash[:8],
+            }
+        )
+    except Exception as e:
+        # Non-fatal - log warning but don't fail registration
+        logger.warning(f"Failed to log auto-registration event: {e}")
+
+    return True
+
+
+def _resolve_custom_doc_path(
+    project: Dict[str, Any],
+    doc_type: str,
+    doc_name: str,
+) -> Optional[Path]:
+    """
+    Resolve custom document path by searching appropriate subdirectories.
+
+    Supports:
+    - research: research/<doc_name>.md
+    - bugs: docs/bugs/<category>/<date>_<slug>/report.md
+    - reviews: REVIEW_REPORT_<stage>_<timestamp>.md
+    - agent_cards: AGENT_REPORT_CARD_<agent>_<stage>_<timestamp>.md
+
+    Args:
+        project: Project configuration dictionary
+        doc_type: Type of custom document (research, bugs, reviews, agent_cards)
+        doc_name: Document identifier (filename, slug, or search pattern)
+
+    Returns:
+        Path to document if found, None otherwise
+    """
+    # Derive docs_dir from progress_log path (source of truth from database)
+    progress_log = project.get("progress_log")
+    if not progress_log:
+        # No progress_log means project not properly initialized
+        return None
+
+    # Extract docs_dir from progress_log path
+    # e.g., /path/.scribe/docs/dev_plans/project/PROGRESS_LOG.md -> /path/.scribe/docs/dev_plans/project/
+    docs_dir = Path(progress_log).parent
+    project_root = Path(project.get("root", ""))
+
+    # Research documents
+    if doc_type == "research":
+        research_dir = docs_dir / "research"
+        if not research_dir.exists():
+            return None
+
+        # Try exact match with .md extension
+        candidate = research_dir / f"{doc_name}.md"
+        if candidate.exists():
+            return candidate
+
+        # Try without extension (if .md already provided)
+        if doc_name.endswith(".md"):
+            candidate = research_dir / doc_name
+            if candidate.exists():
+                return candidate
+
+        return None
+
+    # Bug reports
+    elif doc_type == "bugs":
+        bugs_root = project_root / "docs" / "bugs"
+        if not bugs_root.exists():
+            return None
+
+        # Search all category directories for matching slug
+        for category_dir in bugs_root.iterdir():
+            if not category_dir.is_dir():
+                continue
+            # Search for directories ending with the slug
+            for bug_dir in category_dir.iterdir():
+                if not bug_dir.is_dir():
+                    continue
+                # Check if directory name ends with _<slug>
+                if bug_dir.name.endswith(f"_{doc_name}"):
+                    report_file = bug_dir / "report.md"
+                    if report_file.exists():
+                        return report_file
+
+        return None
+
+    # Review reports
+    elif doc_type == "reviews":
+        # Search for REVIEW_REPORT_* matching provided identifier
+        pattern = f"REVIEW_REPORT_*{doc_name}*.md"
+        candidates = list(docs_dir.glob(pattern))
+        if candidates:
+            # Return most recent if multiple matches
+            return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+        return None
+
+    # Agent report cards
+    elif doc_type == "agent_cards":
+        # Search for AGENT_REPORT_CARD_* matching provided identifier
+        pattern = f"AGENT_REPORT_CARD_*{doc_name}*.md"
+        candidates = list(docs_dir.glob(pattern))
+        if candidates:
+            # Return most recent if multiple matches
+            return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+        return None
+
+    return None
+
+
 @app.tool()
 async def manage_docs(
     action: str,
@@ -1001,6 +1219,123 @@ async def manage_docs(
 
     backend = server_module.storage_backend
     registry_warning = None
+
+    # Define EDIT actions that should trigger auto-registration
+    EDIT_ACTIONS = {
+        "list_sections",
+        "replace_section",
+        "apply_patch",
+        "replace_range",
+        "append",
+        "status_update",
+        "normalize_headers",
+        "generate_toc",
+        "search",
+        "replace_text",
+        "validate_crosslinks",
+    }
+
+    # Custom document path resolution (research, bugs, reviews, agent_cards)
+    # This allows editing custom docs without requiring registration
+    custom_doc_types = {"research", "bugs", "reviews", "agent_cards"}
+    if action in EDIT_ACTIONS and doc in custom_doc_types and doc_name:
+        # Attempt to resolve custom document path
+        resolved_path = _resolve_custom_doc_path(
+            project=project,
+            doc_type=doc,
+            doc_name=doc_name
+        )
+
+        if resolved_path:
+            # Custom doc found - use it directly by temporarily updating project docs
+            logger.info(f"Resolved custom document: {resolved_path}")
+
+            # Create a temporary project dict with the resolved path
+            # This allows the rest of manage_docs to work as normal
+            project = project.copy()
+            project["docs"] = project.get("docs", {}).copy()
+
+            # Store the resolved path relative to docs_dir for consistency
+            # Derive docs_dir from progress_log (source of truth from database)
+            progress_log = project.get("progress_log")
+            if progress_log:
+                docs_dir = Path(progress_log).parent
+                try:
+                    relative_path = resolved_path.relative_to(docs_dir)
+                    project["docs"][doc] = str(relative_path)
+                except ValueError:
+                    # If not relative to docs_dir, try relative to project root
+                    project_root = Path(project.get("root", ""))
+                    try:
+                        relative_path = resolved_path.relative_to(project_root)
+                        project["docs"][doc] = str(relative_path)
+                    except ValueError:
+                        # Fall back to absolute path
+                        project["docs"][doc] = str(resolved_path)
+            else:
+                # No progress_log - use absolute path
+                project["docs"][doc] = str(resolved_path)
+
+            logger.info(f"Temporarily registered custom doc '{doc}' at: {project['docs'][doc]}")
+            # Continue to edit logic (skip auto-registration)
+        else:
+            # Custom doc not found - return helpful error
+            error_payload = _MANAGE_DOCS_HELPER.error_response(
+                f"Custom document '{doc_name}' not found",
+                suggestion=(
+                    f"Ensure document was created with create_{doc}_doc action. "
+                    f"Check doc_name spelling and verify the document exists. "
+                    f"For research docs: check .scribe/docs/dev_plans/{project.get('slug', '<project>')}/research/ "
+                    f"For bug reports: check docs/bugs/<category>/<date>_{doc_name}/"
+                ),
+                extra={
+                    "doc_type": doc,
+                    "doc_name": doc_name,
+                    "searched_in": str(Path(project.get("progress_log")).parent) if project.get("progress_log") else "unknown",
+                    "project_root": str(project.get("root"))
+                }
+            )
+            return _MANAGE_DOCS_HELPER.apply_context_payload(error_payload, context)
+
+    # Auto-register unregistered documents for EDIT operations
+    elif action in EDIT_ACTIONS and doc:
+        docs = project.get("docs", {})
+
+        # Check if document is registered
+        if doc not in docs:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Document '{doc}' not registered, attempting auto-registration...")
+
+            try:
+                await _auto_register_document(project, doc)
+
+                # Re-fetch project data to get updated docs mapping
+                # We need to call prepare_context again to get fresh data from database
+                try:
+                    context = await _MANAGE_DOCS_HELPER.prepare_context(
+                        tool_name="manage_docs",
+                        agent_id=None,
+                        require_project=True,
+                        state_snapshot=state_snapshot,
+                        reminder_variables={"action": action, "scaffold": scaffold_flag},
+                    )
+                    project = context.project or {}
+                    logger.info(f"Successfully auto-registered and reloaded project context for '{doc}'")
+                except Exception as reload_error:
+                    logger.warning(f"Auto-registration succeeded but context reload failed: {reload_error}")
+                    # Continue anyway - the database was updated successfully
+
+            except Exception as e:
+                error_payload = _MANAGE_DOCS_HELPER.error_response(
+                    f"Auto-registration failed for document '{doc}'",
+                    suggestion=(
+                        f"Ensure the file exists or use 'generate_doc_templates' to create it. "
+                        f"Error: {str(e)}"
+                    ),
+                    extra={"doc": doc, "auto_registration_error": str(e)},
+                )
+                return _MANAGE_DOCS_HELPER.apply_context_payload(error_payload, context)
 
     # Handle research, bug, review, and agent report card creation
     if action in ["create_research_doc", "create_bug_report", "create_review_report", "create_agent_report_card"]:
@@ -1717,10 +2052,49 @@ async def _handle_list_sections(
     docs_mapping = project.get("docs") or {}
     path_str = docs_mapping.get(doc)
     if not path_str:
-        return helper.apply_context_payload(
-            helper.error_response(f"Document '{doc}' is not registered for project '{project.get('name')}'."),
-            context,
-        )
+        # Try auto-registration before returning error
+        from doc_management.manager import _resolve_doc_path
+        from tools.get_project import get_active_project
+        from storage import get_storage
+        import json
+
+        print(f"DEBUG: Attempting auto-registration for doc='{doc}', project='{project.get('name')}'")
+        try:
+            resolved_path = _resolve_doc_path(project, doc)
+            print(f"DEBUG: Resolved path: {resolved_path}, exists: {resolved_path.exists()}")
+            if resolved_path.exists():
+                # Auto-register the document by updating docs_json in database
+                project_name = project.get("name")
+                storage = await get_storage()
+
+                # Get current docs mapping and add new document
+                current_docs = project.get("docs") or {}
+                current_docs[doc] = str(resolved_path)
+
+                # Update database directly
+                docs_json = json.dumps(current_docs)
+                await storage._execute(
+                    "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
+                    (docs_json, project_name)
+                )
+
+                # Refresh project state and retry
+                project = await get_active_project()
+                docs_mapping = project.get("docs") or {}
+                path_str = docs_mapping.get(doc)
+        except Exception as e:
+            # If auto-registration fails, fall through to error
+            import traceback
+            print(f"DEBUG: Auto-registration failed: {e}")
+            traceback.print_exc()
+            pass
+
+        # If still not registered, return error
+        if not path_str:
+            return helper.apply_context_payload(
+                helper.error_response(f"Document '{doc}' is not registered for project '{project.get('name')}'."),
+                context,
+            )
 
     path = Path(path_str)
     if not path.exists():
@@ -1942,7 +2316,12 @@ async def _handle_special_document_creation(
     metadata = healed_metadata
 
     project_root = Path(project.get("root", ""))
-    docs_dir = project_root / "docs" / "dev_plans" / project.get("name", "")
+    # Use actual docs_dir from project configuration (not hardcoded path)
+    docs_dir_str = project.get("docs_dir", "")
+    docs_dir = Path(docs_dir_str) if docs_dir_str else Path("")
+    # Fallback if docs_dir not in project (shouldn't happen in practice)
+    if not docs_dir or str(docs_dir) == "" or str(docs_dir) == ".":
+        docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / project.get("name", "")
     now = datetime.now(timezone.utc)
     timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 

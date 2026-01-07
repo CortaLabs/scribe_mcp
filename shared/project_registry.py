@@ -126,40 +126,108 @@ class ProjectRegistry:
                 return
 
             project_id, status = row
-            if status != "planning":
-                conn.commit()
-                return
 
-            # Check for core dev_plan docs: architecture, phase_plan, checklist
-            try:
+            if status == "planning":
+                # Check for core dev_plan docs: architecture, phase_plan, checklist
+                try:
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) FROM dev_plans
+                        WHERE project_id = ?
+                          AND plan_type IN ('architecture', 'phase_plan', 'checklist')
+                        """,
+                        (project_id,),
+                    )
+                    docs_count = cursor.fetchone()[0] or 0
+                except sqlite3.Error:
+                    docs_count = 0
+
+                if docs_count < 3:
+                    conn.commit()
+                    return
+
+                # Only auto-promote on progress log writes; other log types
+                # (e.g., doc_updates) still update last_entry_at but do not
+                # change lifecycle state.
+                if normalized_log_type != "progress":
+                    conn.commit()
+                    return
+
+                # All conditions met; promote planning -> in_progress
                 cursor.execute(
                     """
-                    SELECT COUNT(*) FROM dev_plans
-                    WHERE project_id = ?
-                      AND plan_type IN ('architecture', 'phase_plan', 'checklist')
+                    UPDATE scribe_projects
+                    SET status = 'in_progress',
+                        last_status_change = ?
+                    WHERE id = ?
                     """,
-                    (project_id,),
+                    (now, project_id),
                 )
-                docs_count = cursor.fetchone()[0] or 0
-            except sqlite3.Error:
-                docs_count = 0
-
-            if docs_count < 3:
                 conn.commit()
                 return
 
-            # Only auto-promote on progress log writes; other log types
-            # (e.g., doc_updates) still update last_entry_at but do not
-            # change lifecycle state.
+            if status != "in_progress":
+                conn.commit()
+                return
+
             if normalized_log_type != "progress":
                 conn.commit()
                 return
 
-            # All conditions met; promote planning -> in_progress
+            # Check latest progress log metadata for completion signals.
+            try:
+                cursor.execute(
+                    """
+                    SELECT meta FROM scribe_entries
+                    WHERE project_id = ?
+                    ORDER BY ts_iso DESC, created_at DESC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                )
+                entry_row = cursor.fetchone()
+            except sqlite3.Error:
+                entry_row = None
+
+            if not entry_row or not entry_row[0]:
+                conn.commit()
+                return
+
+            try:
+                import json
+
+                entry_meta = json.loads(entry_row[0])
+            except Exception:
+                entry_meta = {}
+
+            final_grade = entry_meta.get("final_grade")
+            approval_status = entry_meta.get("approval_status")
+            project_status = entry_meta.get("project_status")
+
+            grade_ok = False
+            if final_grade is not None:
+                try:
+                    grade_ok = float(final_grade) >= 93.0
+                except (TypeError, ValueError):
+                    grade_ok = False
+
+            approval_ok = (
+                isinstance(approval_status, str)
+                and approval_status.strip().upper() == "APPROVED"
+            )
+            project_status_ok = (
+                isinstance(project_status, str)
+                and project_status.strip().lower() == "ready_for_production"
+            )
+
+            if not (grade_ok or approval_ok or project_status_ok):
+                conn.commit()
+                return
+
             cursor.execute(
                 """
                 UPDATE scribe_projects
-                SET status = 'in_progress',
+                SET status = 'complete',
                     last_status_change = ?
                 WHERE id = ?
                 """,

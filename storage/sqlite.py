@@ -51,22 +51,24 @@ class SQLiteStorage(StorageBackend):
         name: str,
         repo_root: str,
         progress_log_path: str,
+        docs_json: Optional[str] = None,
     ) -> ProjectRecord:
         await self._initialise()
         async with self._write_lock:
             await self._execute(
             """
-            INSERT INTO scribe_projects (name, repo_root, progress_log_path)
-            VALUES (?, ?, ?)
+            INSERT INTO scribe_projects (name, repo_root, progress_log_path, docs_json)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(name)
             DO UPDATE SET repo_root = excluded.repo_root,
-                          progress_log_path = excluded.progress_log_path;
+                          progress_log_path = excluded.progress_log_path,
+                          docs_json = excluded.docs_json;
             """,
-            (name, repo_root, progress_log_path),
+            (name, repo_root, progress_log_path, docs_json),
         )
         row = await self._fetchone(
             """
-            SELECT id, name, repo_root, progress_log_path
+            SELECT id, name, repo_root, progress_log_path, docs_json
             FROM scribe_projects
             WHERE name = ?;
             """,
@@ -77,13 +79,14 @@ class SQLiteStorage(StorageBackend):
             name=row["name"],
             repo_root=row["repo_root"],
             progress_log_path=row["progress_log_path"],
+            docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
         )
 
     async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
         await self._initialise()
         row = await self._fetchone(
             """
-            SELECT id, name, repo_root, progress_log_path
+            SELECT id, name, repo_root, progress_log_path, docs_json
             FROM scribe_projects
             WHERE name = ?;
             """,
@@ -96,13 +99,14 @@ class SQLiteStorage(StorageBackend):
             name=row["name"],
             repo_root=row["repo_root"],
             progress_log_path=row["progress_log_path"],
+            docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
         )
 
     async def list_projects(self) -> List[ProjectRecord]:
         await self._initialise()
         rows = await self._fetchall(
             """
-            SELECT id, name, repo_root, progress_log_path
+            SELECT id, name, repo_root, progress_log_path, docs_json
             FROM scribe_projects
             ORDER BY name;
             """
@@ -115,6 +119,7 @@ class SQLiteStorage(StorageBackend):
                     name=row["name"],
                     repo_root=row["repo_root"],
                     progress_log_path=row["progress_log_path"],
+                    docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
                 )
             )
         return records
@@ -655,7 +660,8 @@ class SQLiteStorage(StorageBackend):
                         repo_root TEXT NOT NULL,
                         progress_log_path TEXT NOT NULL,
                         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        docs_json TEXT
                     );
                     """,
                     """
@@ -1001,6 +1007,35 @@ class SQLiteStorage(StorageBackend):
                     CREATE INDEX IF NOT EXISTS idx_reminder_history_session_tool
                         ON reminder_history(session_id, tool_name);
                     """,
+                    # Tool Calls Tracking Table (for direct logging without recursion)
+                    """
+                    CREATE TABLE IF NOT EXISTS tool_calls (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL,
+                        tool_name TEXT NOT NULL,
+                        timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        duration_ms REAL,
+                        status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'error', 'partial')),
+                        format_requested TEXT,
+                        project_name TEXT,
+                        agent_id TEXT,
+                        error_message TEXT,
+                        response_size_bytes INTEGER,
+                        FOREIGN KEY (session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
+                    );
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);
+                    """,
                     # Document Management 2.0 Indexes
                     "CREATE INDEX IF NOT EXISTS idx_document_sections_project ON document_sections(project_id);",
                     "CREATE INDEX IF NOT EXISTS idx_document_sections_updated ON document_sections(updated_at);",
@@ -1041,8 +1076,8 @@ class SQLiteStorage(StorageBackend):
             # Ensure legacy databases have the newer scribe_projects columns
             await self._ensure_column("scribe_projects", "repo_root", "TEXT")
             await self._ensure_column("scribe_projects", "progress_log_path", "TEXT")
-            await self._ensure_column("scribe_projects", "status", "TEXT DEFAULT 'planning'")
-            await self._ensure_column("scribe_projects", "phase", "TEXT DEFAULT 'setup'")
+            await self._ensure_column("scribe_projects", "status", "TEXT")
+            await self._ensure_column("scribe_projects", "phase", "TEXT")
             await self._ensure_column("scribe_projects", "confidence", "REAL DEFAULT 0.0")
             await self._ensure_column("scribe_projects", "completed_at", "TIMESTAMP")
             await self._ensure_column("scribe_projects", "last_activity", "TIMESTAMP")
@@ -1053,7 +1088,7 @@ class SQLiteStorage(StorageBackend):
             await self._ensure_column("scribe_projects", "tags", "TEXT")
             await self._ensure_column("scribe_projects", "meta", "TEXT")
             # Ensure scribe_entries has metadata columns for categorization and prioritization
-            await self._ensure_column("scribe_entries", "priority", "TEXT DEFAULT 'medium'")
+            await self._ensure_column("scribe_entries", "priority", "TEXT")
             await self._ensure_column("scribe_entries", "category", "TEXT")
             await self._ensure_column("scribe_entries", "tags", "TEXT")
             await self._ensure_column("scribe_entries", "confidence", "REAL DEFAULT 1.0")
@@ -1073,6 +1108,16 @@ class SQLiteStorage(StorageBackend):
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_priority_ts ON scribe_entries(priority, ts_iso DESC);")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_category_ts ON scribe_entries(category, ts_iso DESC);")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);")
+
+            # Migration: Add docs_json column for manage_docs functionality (BUG-MANAGE-DOCS-001)
+            await self.migrate_add_docs_json_column()
+
+            # Backfill docs_json from state.json for existing projects
+            from pathlib import Path
+            state_path = Path(self._path).parent / "state.json"
+            if state_path.exists():
+                await self.backfill_docs_json_from_state(state_path)
+
             self._initialised = True
 
     async def _migrate_document_sections(self) -> None:
@@ -1136,7 +1181,9 @@ class SQLiteStorage(StorageBackend):
         conn = self._connect()
         try:
             cursor = conn.execute(f"PRAGMA table_info({table});")
-            existing = {row["name"] for row in cursor.fetchall()}
+            # PRAGMA table_info returns tuples: (cid, name, type, notnull, dflt_value, pk)
+            # Column name is at index 1
+            existing = {row[1] for row in cursor.fetchall()}
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
                 conn.commit()
@@ -1166,6 +1213,115 @@ class SQLiteStorage(StorageBackend):
                 # Old schema detected - drop table so it can be recreated with new schema
                 conn.execute("DROP TABLE agent_sessions;")
                 conn.commit()
+        finally:
+            conn.close()
+
+    async def migrate_add_docs_json_column(self) -> bool:
+        """
+        Idempotent migration: Add docs_json column to scribe_projects table.
+
+        This migration adds the docs_json TEXT column needed for manage_docs
+        document registration functionality (BUG-MANAGE-DOCS-001 fix).
+
+        Returns:
+            True if column was added or already exists
+
+        Raises:
+            Exception if migration fails
+        """
+        return await asyncio.to_thread(self._migrate_add_docs_json_column_sync)
+
+    def _migrate_add_docs_json_column_sync(self) -> bool:
+        """Synchronous implementation of docs_json column migration."""
+        conn = self._connect()
+        try:
+            # Check if column already exists
+            cursor = conn.execute("PRAGMA table_info(scribe_projects);")
+            columns = cursor.fetchall()
+            column_names = [col[1] for col in columns]
+
+            if 'docs_json' in column_names:
+                logger.info("docs_json column already exists - migration already applied")
+                return True
+
+            # Add the column
+            conn.execute("ALTER TABLE scribe_projects ADD COLUMN docs_json TEXT;")
+            conn.commit()
+            logger.info("Successfully added docs_json column to scribe_projects table")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add docs_json column: {e}")
+            raise
+        finally:
+            conn.close()
+
+    async def backfill_docs_json_from_state(self, state_path: Path) -> int:
+        """
+        Backfill docs_json from state.json for existing projects.
+
+        This function reads document metadata from state.json and populates
+        the docs_json column for projects that have document mappings but
+        haven't been updated in the database yet.
+
+        Args:
+            state_path: Path to state.json file
+
+        Returns:
+            Number of projects successfully backfilled
+
+        Raises:
+            FileNotFoundError if state.json doesn't exist
+            json.JSONDecodeError if state.json is malformed
+        """
+        return await asyncio.to_thread(self._backfill_docs_json_from_state_sync, state_path)
+
+    def _backfill_docs_json_from_state_sync(self, state_path: Path) -> int:
+        """Synchronous implementation of docs_json backfill."""
+        import json
+
+        # Load state.json
+        if not state_path.exists():
+            logger.warning(f"State file not found: {state_path}")
+            return 0
+
+        try:
+            with open(state_path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse state.json: {e}")
+            raise
+
+        projects = state.get("projects", {})
+        backfilled_count = 0
+
+        conn = self._connect()
+        try:
+            for project_name, project_data in projects.items():
+                docs = project_data.get("docs")
+                if not docs:
+                    continue  # Skip projects without docs
+
+                # Serialize docs to JSON
+                docs_json = json.dumps(docs)
+
+                # Update the project
+                cursor = conn.execute(
+                    "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
+                    (docs_json, project_name)
+                )
+
+                if cursor.rowcount > 0:
+                    backfilled_count += 1
+
+            conn.commit()
+            logger.info(f"Backfilled {backfilled_count} projects with docs_json from state.json")
+            return backfilled_count
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to backfill docs_json: {e}")
+            raise
         finally:
             conn.close()
 
@@ -1950,5 +2106,229 @@ class SQLiteStorage(StorageBackend):
                 f"Slow reminder query: cleanup_reminder_history took {elapsed_ms:.2f}ms "
                 f"(threshold: {cleanup_threshold_ms}ms) [deleted={result} records]"
             )
+
+        return result
+
+    # Tool Call Logging Methods (Scope 1: Direct logging without recursion)
+
+    async def record_tool_call(
+        self,
+        session_id: str,
+        tool_name: str,
+        duration_ms: Optional[float] = None,
+        status: str = "success",
+        format_requested: Optional[str] = None,
+        project_name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        response_size_bytes: Optional[int] = None
+    ) -> None:
+        """Record a tool call to the database for analytics.
+
+        This method provides direct SQL logging without triggering append_entry,
+        preventing recursion in finalize_tool_response().
+
+        Args:
+            session_id: Session identifier from scribe_sessions table
+            tool_name: Name of the tool that was called
+            duration_ms: Optional execution time in milliseconds
+            status: Tool execution status (success, error, partial)
+            format_requested: Format parameter from tool call (readable/structured/compact)
+            project_name: Optional project context
+            agent_id: Optional agent identifier
+            error_message: Optional error details if status=error
+            response_size_bytes: Optional response payload size for cost tracking
+        """
+        await self._initialise()
+        async with self._write_lock:
+            try:
+                await self._execute(
+                    """
+                    INSERT INTO tool_calls (
+                        session_id, tool_name, timestamp, duration_ms, status,
+                        format_requested, project_name, agent_id, error_message, response_size_bytes
+                    ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (session_id, tool_name, duration_ms, status,
+                     format_requested, project_name, agent_id, error_message, response_size_bytes)
+                )
+            except Exception as e:
+                # Log error but don't raise - tool logging should never block tool execution
+                logger.error(f"Failed to record tool call: {e}")
+
+    def record_tool_call_sync(
+        self,
+        session_id: str,
+        tool_name: str,
+        duration_ms: Optional[float] = None,
+        status: str = "success",
+        format_requested: Optional[str] = None,
+        project_name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        response_size_bytes: Optional[int] = None
+    ) -> None:
+        """Synchronous version of record_tool_call for background thread execution.
+
+        This method is designed to be called via asyncio.to_thread() from
+        finalize_tool_response(). It uses synchronous sqlite3 connection
+        instead of aiosqlite for thread-safe execution.
+
+        Args:
+            session_id: Session identifier from scribe_sessions table
+            tool_name: Name of the tool that was called
+            duration_ms: Optional execution time in milliseconds
+            status: Tool execution status (success, error, partial)
+            format_requested: Format parameter from tool call
+            project_name: Optional project context
+            agent_id: Optional agent identifier
+            error_message: Optional error details if status=error
+            response_size_bytes: Optional response payload size
+
+        Thread Safety:
+            SQLite with WAL mode supports concurrent writes from multiple threads.
+            This method acquires a lock via SQLite's internal locking mechanism.
+
+        Error Handling:
+            Exceptions are caught and logged to stderr. SQL logging failures
+            must never propagate to the calling code or block tool execution.
+        """
+        try:
+            # Use synchronous sqlite3 connection (not aiosqlite)
+            import sqlite3
+            conn = sqlite3.connect(str(self._path))
+            conn.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for concurrency
+
+            # Execute insert directly (no await needed)
+            conn.execute(
+                """
+                INSERT INTO tool_calls (
+                    session_id, tool_name, timestamp, duration_ms, status,
+                    format_requested, project_name, agent_id, error_message, response_size_bytes
+                ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, tool_name, duration_ms, status,
+                 format_requested, project_name, agent_id, error_message, response_size_bytes)
+            )
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            # SQL logging is optional, never block or raise
+            import sys
+            print(f"Warning: SQL tool logging failed in background thread: {e}", file=sys.stderr)
+
+    async def get_session_tool_calls(
+        self,
+        session_id: str,
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get tool call history for a session.
+
+        Args:
+            session_id: Session identifier
+            limit: Optional maximum number of results
+
+        Returns:
+            List of tool call records ordered by timestamp (newest first)
+        """
+        await self._initialise()
+
+        query = """
+            SELECT id, tool_name, timestamp, duration_ms, status,
+                   format_requested, project_name, agent_id, error_message, response_size_bytes
+            FROM tool_calls
+            WHERE session_id = ?
+            ORDER BY timestamp DESC
+        """
+
+        if limit:
+            query += f" LIMIT {int(limit)}"
+
+        rows = await self._fetchall(query, (session_id,))
+        return [dict(row) for row in rows]
+
+    async def get_tool_metrics(
+        self,
+        tool_name: Optional[str] = None,
+        project_name: Optional[str] = None,
+        time_range_hours: Optional[int] = 24
+    ) -> Dict[str, Any]:
+        """Get aggregated metrics for tool calls.
+
+        Args:
+            tool_name: Optional tool name filter
+            project_name: Optional project name filter
+            time_range_hours: Time range in hours (default: 24)
+
+        Returns:
+            Dictionary with aggregated metrics:
+            - total_calls: Total number of tool calls
+            - success_count: Number of successful calls
+            - error_count: Number of failed calls
+            - avg_duration_ms: Average execution time
+            - p95_duration_ms: 95th percentile execution time (approximation)
+            - total_response_bytes: Total response size
+        """
+        await self._initialise()
+
+        # Build WHERE clause
+        where_clauses = []
+        params = []
+
+        if tool_name:
+            where_clauses.append("tool_name = ?")
+            params.append(tool_name)
+
+        if project_name:
+            where_clauses.append("project_name = ?")
+            params.append(project_name)
+
+        if time_range_hours:
+            where_clauses.append("timestamp >= datetime('now', ? || ' hours')")
+            params.append(f"-{time_range_hours}")
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        # Main aggregation query
+        row = await self._fetchone(
+            f"""
+            SELECT
+                COUNT(*) as total_calls,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
+                AVG(duration_ms) as avg_duration_ms,
+                SUM(response_size_bytes) as total_response_bytes
+            FROM tool_calls
+            WHERE {where_sql}
+            """,
+            tuple(params)
+        )
+
+        result = dict(row) if row else {
+            "total_calls": 0,
+            "success_count": 0,
+            "error_count": 0,
+            "avg_duration_ms": None,
+            "total_response_bytes": None
+        }
+
+        # Calculate p95 approximation using LIMIT/OFFSET
+        # (SQLite doesn't have percentile_cont, so we approximate)
+        if result["total_calls"] > 0:
+            p95_offset = int(result["total_calls"] * 0.05)  # Skip bottom 5%
+            p95_row = await self._fetchone(
+                f"""
+                SELECT duration_ms
+                FROM tool_calls
+                WHERE {where_sql} AND duration_ms IS NOT NULL
+                ORDER BY duration_ms DESC
+                LIMIT 1 OFFSET ?
+                """,
+                tuple(params + [p95_offset])
+            )
+            result["p95_duration_ms"] = p95_row["duration_ms"] if p95_row else None
+        else:
+            result["p95_duration_ms"] = None
 
         return result
