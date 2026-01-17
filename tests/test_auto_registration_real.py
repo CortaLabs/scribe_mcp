@@ -43,7 +43,7 @@ async def test_auto_registration_fallback_path():
 
     try:
         # Step 1: Create project with set_project
-        await set_project(name=project_name)
+        await set_project(name=project_name, root=str(settings.project_root))
 
         # Step 2: Verify ARCHITECTURE_GUIDE exists in .scribe/ structure
         state_path = Path(settings.project_root) / ".scribe" / "state.json"
@@ -116,7 +116,7 @@ async def test_fallback_path_without_docs_dir():
 
     try:
         # Create project
-        await set_project(name=project_name)
+        await set_project(name=project_name, root=str(settings.project_root))
 
         # Manually remove docs_dir from project config
         state_path = Path(settings.project_root) / ".scribe" / "state.json"

@@ -20,6 +20,7 @@ import uuid
 from scribe_mcp.tools.set_project import set_project
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp.tools.delete_project import delete_project
+from scribe_mcp.config.settings import settings
 
 
 @pytest.mark.asyncio
@@ -34,7 +35,7 @@ async def test_new_project_uses_scribe_structure():
 
     try:
         # Create a new project
-        await set_project(name=project_name)
+        await set_project(name=project_name, root=str(settings.project_root))
 
         # Call manage_docs which uses _resolve_doc_path()
         # If the fallback logic works, it should find docs in .scribe/
@@ -62,10 +63,10 @@ async def test_architecture_guide_in_scribe_dir():
 
     try:
         # Create project
-        await set_project(name=project_name)
+        await set_project(name=project_name, root=str(settings.project_root))
 
         # Check that ARCHITECTURE_GUIDE exists in .scribe structure
-        expected_path = Path.cwd() / ".scribe" / "docs" / "dev_plans" / project_name / "ARCHITECTURE_GUIDE.md"
+        expected_path = settings.project_root / ".scribe" / "docs" / "dev_plans" / project_name / "ARCHITECTURE_GUIDE.md"
 
         assert expected_path.exists(), f"ARCHITECTURE_GUIDE should exist at {expected_path}"
         assert ".scribe" in str(expected_path), f"Path should contain .scribe: {expected_path}"

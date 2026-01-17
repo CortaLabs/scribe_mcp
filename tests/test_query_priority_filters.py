@@ -12,13 +12,14 @@ from scribe_mcp.tools.read_recent import read_recent
 from scribe_mcp.tools.query_entries import query_entries
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.tools.set_project import set_project
+from scribe_mcp.config.settings import settings
 
 
 @pytest.fixture
 async def test_project():
     """Create a test project for filtering tests."""
     project_name = f"test_priority_filters"
-    await set_project(name=project_name)
+    await set_project(name=project_name, root=str(settings.project_root))
     return project_name
 
 

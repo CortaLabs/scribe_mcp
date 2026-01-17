@@ -18,6 +18,7 @@ from scribe_mcp.tools.get_project import get_project
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp.tools.delete_project import delete_project
 from scribe_mcp.storage.sqlite import SQLiteStorage
+from scribe_mcp.config.settings import settings
 
 
 @pytest.mark.asyncio
@@ -33,7 +34,7 @@ async def test_auto_registration_with_real_set_project():
 
     try:
         # Step 1: Create project with set_project (creates .scribe/docs/dev_plans/ structure)
-        result = await set_project(name=project_name)
+        result = await set_project(name=project_name, root=str(settings.project_root))
         assert "error" not in result, f"set_project failed: {result.get('error')}"
 
         # Step 2: Verify project has docs_dir configured correctly

@@ -184,6 +184,50 @@ class TestToolLogPath:
         assert result.parent.name == "logs"
         assert result.parent.parent.name == ".scribe"
 
+    def test_custom_repo_root_sentinel_mode(self, tmp_path):
+        """Verify get_tool_log_path uses repo-level logs when no progress_log_path (sentinel mode)."""
+        result = get_tool_log_path(repo_root=tmp_path)
+        assert result == tmp_path / ".scribe" / "logs" / "TOOL_LOG.jsonl"
+        assert result.name == "TOOL_LOG.jsonl"
+        assert result.parent.name == "logs"
+        assert result.parent.parent.name == ".scribe"
+
+    def test_progress_log_path_takes_precedence(self, tmp_path):
+        """Verify get_tool_log_path uses progress_log_path directory (ensures correct slugification)."""
+        # progress_log_path directory is used regardless of project_name
+        progress_log = str(tmp_path / ".scribe" / "docs" / "dev_plans" / "disk_sync" / "PROGRESS_LOG.md")
+        result = get_tool_log_path(progress_log_path=progress_log)
+        expected = tmp_path / ".scribe" / "docs" / "dev_plans" / "disk_sync" / "TOOL_LOG.jsonl"
+        assert result == expected
+        assert result.name == "TOOL_LOG.jsonl"
+        assert result.parent.name == "disk_sync"  # Uses slugified name from path, not project_name
+
+    def test_progress_log_path_ignores_project_name(self, tmp_path):
+        """Verify project_name is ignored when progress_log_path is provided."""
+        # Even if project_name has hyphens, the path comes from progress_log_path
+        progress_log = str(tmp_path / "disk_sync" / "PROGRESS_LOG.md")
+        result = get_tool_log_path(
+            project_name="disk-sync",  # Has hyphen, but should be ignored
+            progress_log_path=progress_log
+        )
+        expected = tmp_path / "disk_sync" / "TOOL_LOG.jsonl"
+        assert result == expected
+
+    def test_no_progress_log_uses_fallback(self):
+        """Verify falls back to SCRIBE_ROOT logs when no progress_log_path."""
+        from scribe_mcp.config.settings import settings
+        # Without progress_log_path, should fall back to repo-level logs
+        result = get_tool_log_path(project_name="my_project")  # project_name alone doesn't create per-project path
+        expected = settings.project_root / ".scribe" / "logs" / "TOOL_LOG.jsonl"
+        assert result == expected
+
+    def test_none_repo_root_uses_default(self):
+        """Verify get_tool_log_path uses default when repo_root is None."""
+        from scribe_mcp.config.settings import settings
+        result = get_tool_log_path(repo_root=None)
+        expected = settings.project_root / ".scribe" / "logs" / "TOOL_LOG.jsonl"
+        assert result == expected
+
 
 class TestAppendJsonlLine:
     """Test _append_jsonl_line() minimal JSONL writer."""
@@ -228,10 +272,10 @@ class TestLogToolCall:
         """Test log_tool_call with minimal required parameters."""
         test_log = tmp_path / "TOOL_LOG.jsonl"
 
-        # Mock get_tool_log_path to use temp file
+        # Mock get_tool_log_path to use temp file (accepts optional repo_root)
         monkeypatch.setattr(
             'scribe_mcp.utils.tool_logger.get_tool_log_path',
-            lambda: test_log
+            lambda repo_root=None, project_name=None, progress_log_path=None: test_log
         )
 
         log_tool_call(
@@ -254,7 +298,7 @@ class TestLogToolCall:
 
         monkeypatch.setattr(
             'scribe_mcp.utils.tool_logger.get_tool_log_path',
-            lambda: test_log
+            lambda repo_root=None, project_name=None, progress_log_path=None: test_log
         )
 
         log_tool_call(
@@ -282,10 +326,91 @@ class TestLogToolCall:
         assert entry["error_message"] == "Test error"
         assert entry["response_size_bytes"] == 1024
 
+    def test_repo_root_parameter(self, tmp_path, monkeypatch):
+        """Test that repo_root parameter is passed to get_tool_log_path and included in entry."""
+        test_log = tmp_path / "TOOL_LOG.jsonl"
+        captured_args = []
+
+        # Mock get_tool_log_path to capture the args and use temp file
+        def mock_get_tool_log_path(repo_root=None, project_name=None, progress_log_path=None):
+            captured_args.append((repo_root, project_name, progress_log_path))
+            return test_log
+
+        monkeypatch.setattr(
+            'scribe_mcp.utils.tool_logger.get_tool_log_path',
+            mock_get_tool_log_path
+        )
+
+        # Call with repo_root and project_name
+        log_tool_call(
+            tool_name="test_tool",
+            session_id="session_123",
+            repo_root="/some/repo/path",
+            project_name="my_project"
+        )
+
+        # Verify args were passed to get_tool_log_path
+        assert len(captured_args) == 1
+        assert str(captured_args[0][0]) == "/some/repo/path"
+        assert captured_args[0][1] == "my_project"
+
+        # Verify repo_root is in the logged entry
+        content = test_log.read_text()
+        entry = json.loads(content)
+        assert entry["repo_root"] == "/some/repo/path"
+        assert entry["project_name"] == "my_project"
+
+    def test_progress_log_path_parameter(self, tmp_path, monkeypatch):
+        """Test that progress_log_path is passed to get_tool_log_path for correct slugification."""
+        test_log = tmp_path / "TOOL_LOG.jsonl"
+        captured_args = []
+
+        # Mock get_tool_log_path to capture the args
+        def mock_get_tool_log_path(repo_root=None, project_name=None, progress_log_path=None):
+            captured_args.append((repo_root, project_name, progress_log_path))
+            return test_log
+
+        monkeypatch.setattr(
+            'scribe_mcp.utils.tool_logger.get_tool_log_path',
+            mock_get_tool_log_path
+        )
+
+        # Call with progress_log_path
+        log_tool_call(
+            tool_name="test_tool",
+            session_id="session_123",
+            project_name="disk-sync",
+            progress_log_path="/repo/.scribe/docs/dev_plans/disk_sync/PROGRESS_LOG.md"
+        )
+
+        # Verify progress_log_path was passed to get_tool_log_path
+        assert len(captured_args) == 1
+        assert captured_args[0][2] == "/repo/.scribe/docs/dev_plans/disk_sync/PROGRESS_LOG.md"
+
+    def test_repo_root_none_not_in_entry(self, tmp_path, monkeypatch):
+        """Test that repo_root is not in entry when None."""
+        test_log = tmp_path / "TOOL_LOG.jsonl"
+
+        monkeypatch.setattr(
+            'scribe_mcp.utils.tool_logger.get_tool_log_path',
+            lambda repo_root=None, project_name=None, progress_log_path=None: test_log
+        )
+
+        # Call without repo_root
+        log_tool_call(
+            tool_name="test_tool",
+            session_id="session_123"
+        )
+
+        # Verify repo_root is NOT in the logged entry
+        content = test_log.read_text()
+        entry = json.loads(content)
+        assert "repo_root" not in entry
+
     def test_graceful_error_handling(self, monkeypatch, capsys):
         """Test that errors are logged to stderr but don't raise."""
-        # Make get_tool_log_path raise an error
-        def mock_error():
+        # Make get_tool_log_path raise an error (accepts optional params)
+        def mock_error(repo_root=None, project_name=None, progress_log_path=None):
             raise RuntimeError("Simulated error")
 
         monkeypatch.setattr(
@@ -310,7 +435,7 @@ class TestLogToolCall:
 
         monkeypatch.setattr(
             'scribe_mcp.utils.tool_logger.get_tool_log_path',
-            lambda: test_log
+            lambda repo_root=None, project_name=None, progress_log_path=None: test_log
         )
 
         log_tool_call(
@@ -331,7 +456,7 @@ class TestLogToolCall:
 
         monkeypatch.setattr(
             'scribe_mcp.utils.tool_logger.get_tool_log_path',
-            lambda: test_log
+            lambda repo_root=None, project_name=None, progress_log_path=None: test_log
         )
 
         log_tool_call(tool_name="tool1", session_id="session_1")
@@ -356,7 +481,7 @@ class TestTimestampFormat:
 
         monkeypatch.setattr(
             'scribe_mcp.utils.tool_logger.get_tool_log_path',
-            lambda: test_log
+            lambda repo_root=None, project_name=None, progress_log_path=None: test_log
         )
 
         log_tool_call(tool_name="test_tool", session_id="session_123")
