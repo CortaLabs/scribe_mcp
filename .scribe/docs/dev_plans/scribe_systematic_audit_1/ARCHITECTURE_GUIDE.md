@@ -1,5 +1,44 @@
+---
+id: scribe_systematic_audit_1-architecture
+title: "\U0001F3D7\uFE0F Architecture Guide \u2014 Scribe Systematic Audit #1"
+doc_type: architecture
+category: engineering
+status: draft
+version: '0.1'
+last_updated: '2026-01-08'
+maintained_by: Corta Labs
+created_by: Corta Labs
+owners: []
+related_docs: []
+tags: []
+summary: ''
+---
+<!-- TOC:start -->
+- [1 🏗️ Architecture Guide — Scribe Systematic Audit #1](#1-architecture-guide-scribe-systematic-audit-1)
+  - [1.1 Problem Statement](#11-problem-statement)
+  - [1.2 Requirements & Constraints](#12-requirements-constraints)
+  - [1.3 Architecture Overview](#13-architecture-overview)
+  - [1.4 Detailed Design](#14-detailed-design)
+    - [1.4.1 Wiki Page Template Structure](#141-wiki-page-template-structure)
+    - [1.4.2 Phase 1: Tool-by-Tool Audit (Parallel Execution)](#142-phase-1-tool-by-tool-audit-parallel-execution)
+    - [1.4.3 Phase 2: Storage & State Audit (Sequential, 6-8 hours)](#143-phase-2-storage-state-audit-sequential-6-8-hours)
+    - [1.4.4 Phase 3: Import Graph & Packaging (Sequential, 5-7 hours)](#144-phase-3-import-graph-packaging-sequential-5-7-hours)
+    - [1.4.5 Phase 4: Dead Code & Redundancy (Sequential, 6-8 hours)](#145-phase-4-dead-code-redundancy-sequential-6-8-hours)
+    - [1.4.6 Phase 5: Token Bloat Analysis (Sequential, 5-7 hours)](#146-phase-5-token-bloat-analysis-sequential-5-7-hours)
+    - [1.4.7 Phase 6: Architecture Synthesis (Architect Agent, 6-8 hours)](#147-phase-6-architecture-synthesis-architect-agent-6-8-hours)
+    - [1.4.8 Phase 7: Final Review (Review Agent + Human, 3-4 hours)](#148-phase-7-final-review-review-agent-human-3-4-hours)
+  - [1.5 Directory Structure (Keep Updated)](#15-directory-structure-keep-updated)
+  - [1.6 Data & Storage](#16-data-storage)
+  - [1.7 Testing & Validation Strategy](#17-testing-validation-strategy)
+  - [1.8 Deployment & Operations](#18-deployment-operations)
+  - [1.9 Open Questions & Follow-Ups](#19-open-questions-follow-ups)
+  - [1.10 Open Questions <!-- ID: open_questions -->](#110-open-questions-id-open-questions)
+  - [1.11 - **Next Review**: After Phase 1 completion (parallel tool audits)](#111-next-review-after-phase-1-completion-parallel-tool-audits)
+  - [1.12 Test Append Section](#112-test-append-section)
+<!-- TOC:end -->
 
-# 🏗️ Architecture Guide — Scribe Systematic Audit #1
+
+# 1 🏗️ Architecture Guide — Scribe Systematic Audit #1
 
 **Author:** ArchitectAgent
 **Version:** v1.0 (Phase 0 Charter)
@@ -9,7 +48,7 @@
 > **Mission:** Forensic audit of entire Scribe MCP codebase (204 Python files, 51,014 LOC) to document all components, eliminate technical debt, reduce token overhead by 30-40%, and establish comprehensive wiki-based knowledge base for AI agent consumption.
 
 ---
-## 1. Problem Statement
+## 1.1 Problem Statement
 <!-- ID: problem_statement -->
 
 **Context:** The Scribe MCP codebase has grown organically to 51,014 LOC across 204 Python files without systematic code review or architecture documentation. This has resulted in:
@@ -54,7 +93,7 @@
 
 
 ---
-## 2. Requirements & Constraints
+## 1.2 Requirements & Constraints
 <!-- ID: requirements_constraints -->
 
 **Functional Requirements:**
@@ -126,7 +165,7 @@
 
 
 ---
-## 3. Architecture Overview
+## 1.3 Architecture Overview
 <!-- ID: architecture_overview -->
 
 **Solution Summary:** Multi-phase forensic audit producing comprehensive wiki-based documentation system, targeted refactoring via implementation specs, and systematic technical debt elimination.
@@ -254,10 +293,10 @@ Final Review Agent Verification
 
 
 ---
-## 4. Detailed Design
+## 1.4 Detailed Design
 <!-- ID: detailed_design -->
 
-### 4.1 Wiki Page Template Structure
+### 1.4.1 Wiki Page Template Structure
 
 Every tool wiki page must follow this structure:
 
@@ -314,7 +353,7 @@ async def <tool_name>(<params>):
 1. <opportunity with reasoning>
 ```
 
-### 4.2 Phase 1: Tool-by-Tool Audit (Parallel Execution)
+### 1.4.2 Phase 1: Tool-by-Tool Audit (Parallel Execution)
 
 **Agent A - Ultra-High Complexity Tools (Estimated 14-16 hours)**
 - append_entry.py (2,357 LOC)
@@ -376,7 +415,7 @@ async def <tool_name>(<params>):
 - project_utils.py (254 LOC)
 - generate_doc_templates.py (544 LOC)
 
-### 4.3 Phase 2: Storage & State Audit (Sequential, 6-8 hours)
+### 1.4.3 Phase 2: Storage & State Audit (Sequential, 6-8 hours)
 
 **Research Agent E Mission:**
 
@@ -404,7 +443,7 @@ async def <tool_name>(<params>):
    - Analyze state.json structure
    - Map rotation_state.json usage (utils/rotation_state.py - 528 LOC)
 
-### 4.4 Phase 3: Import Graph & Packaging (Sequential, 5-7 hours)
+### 1.4.4 Phase 3: Import Graph & Packaging (Sequential, 5-7 hours)
 
 **Research Agent F Mission:**
 
@@ -427,7 +466,7 @@ async def <tool_name>(<params>):
    - Identify tight coupling points
    - Document lazy import patterns
 
-### 4.5 Phase 4: Dead Code & Redundancy (Sequential, 6-8 hours)
+### 1.4.5 Phase 4: Dead Code & Redundancy (Sequential, 6-8 hours)
 
 **Research Agent G Mission:**
 
@@ -447,7 +486,7 @@ async def <tool_name>(<params>):
    - Map candidates for utils/ consolidation
    - Create refactoring specs
 
-### 4.6 Phase 5: Token Bloat Analysis (Sequential, 5-7 hours)
+### 1.4.6 Phase 5: Token Bloat Analysis (Sequential, 5-7 hours)
 
 **Research Agent H Mission:**
 
@@ -470,7 +509,7 @@ async def <tool_name>(<params>):
    - Prioritize by tool call frequency
    - Define measurement verification criteria
 
-### 4.7 Phase 6: Architecture Synthesis (Architect Agent, 6-8 hours)
+### 1.4.7 Phase 6: Architecture Synthesis (Architect Agent, 6-8 hours)
 
 **Deliverables:**
 1. **System Architecture Map**
@@ -488,7 +527,7 @@ async def <tool_name>(<params>):
    - Format parameter strategy
    - Output verbosity guidelines
 
-### 4.8 Phase 7: Final Review (Review Agent + Human, 3-4 hours)
+### 1.4.8 Phase 7: Final Review (Review Agent + Human, 3-4 hours)
 
 **Review Agent Mission:**
 - Grade all wiki pages (completeness, accuracy, clarity)
@@ -504,7 +543,7 @@ async def <tool_name>(<params>):
 
 
 ---
-## 5. Directory Structure (Keep Updated)
+## 1.5 Directory Structure (Keep Updated)
 <!-- ID: directory_structure -->
 
 ```
@@ -590,7 +629,7 @@ async def <tool_name>(<params>):
 
 
 ---
-## 6. Data & Storage
+## 1.6 Data & Storage
 <!-- ID: data_storage -->
 
 **Primary Datastores:**
@@ -629,7 +668,7 @@ async def <tool_name>(<params>):
 
 
 ---
-## 7. Testing & Validation Strategy
+## 1.7 Testing & Validation Strategy
 <!-- ID: testing_strategy -->
 
 **Existing Test Suite:**
@@ -669,7 +708,7 @@ async def <tool_name>(<params>):
 
 
 ---
-## 8. Deployment & Operations
+## 1.8 Deployment & Operations
 <!-- ID: deployment_operations -->
 
 **This is an Audit Project - No Deployment**
@@ -699,24 +738,21 @@ This audit does not deploy code changes. It produces documentation and implement
 
 
 ---
-## 9. Open Questions & Follow-Ups
+## 1.9 Open Questions & Follow-Ups
 <!-- ID: open_questions -->
+## 1.10 Open Questions
 
-| Item | Owner | Status | Phase | Notes |
-|------|-------|--------|-------|-------|
-| Complete PostgreSQL implementation or deprecate? | Architect | OPEN | 2 | Evaluate user demand vs effort |
-| Migrate to src/ packaging structure? | Architect | OPEN | 3 | 6-9 hours effort, improves imports |
-| Implement automated wiki generation from code? | Research | OPEN | 6 | Prevents documentation drift |
-| Consolidate config classes into unified system? | Research | OPEN | 4 | Reduces duplication in tools/config/ |
-| Should token optimization be aggressive or conservative? | Human | OPEN | 5 | Balance verbosity vs usability |
-| Deprecate sqlite3.connect() usage entirely? | Architect | OPEN | 2 | Enforce abstraction layer strictly |
-| Create implementation priority tiers (P0/P1/P2)? | Human | OPEN | 7 | Guides post-audit execution |
-
-> **Note**: Update this table as questions are answered during audit phases. Reference decisions in relevant sections above.
+1. ~~Does replace_range work?~~ **VERIFIED: YES** (2026-01-07)
+2. ~~Does apply_patch work end-to-end?~~ **VERIFIED: YES** (2026-01-07)
+3. How should we handle legacy projects without complete docs mapping?
+4. What is the migration path for incomplete project.docs fields?
 
 
----
-## 10. References & Appendix
+3. Does replace_range work for line-targeted edits?
+4. What is the best way to handle parameter validation?
+
+1. How should we handle legacy projects without complete docs mapping?
+2. What is the migration path for incomplete project.docs fields?
 <!-- ID: references_appendix -->
 
 **Project Documentation:**
@@ -765,4 +801,8 @@ This audit does not deploy code changes. It produces documentation and implement
 - **Author**: ArchitectAgent
 - **Last Updated**: 2026-01-05 01:57:00 UTC
 - **Status**: ACTIVE - Charter Approved
-- **Next Review**: After Phase 1 completion (parallel tool audits)
+## 1.11 - **Next Review**: After Phase 1 completion (parallel tool audits)
+
+## 1.12 Test Append Section
+
+This content was appended during manage_docs validation testing.
