@@ -27,9 +27,13 @@ _GET_PROJECT_HELPER = _GetProjectHelper()
 _PROJECT_REGISTRY = ProjectRegistry()
 
 
-async def _compute_doc_status(project_name: str) -> Dict[str, Any]:
+async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Compute comprehensive document status for SITREP enhancement.
+
+    Args:
+        project_name: Name of the project
+        project_data: Optional project dict with live 'docs' mapping from state_manager
 
     Returns:
         Dict containing flags, hashes, counts, doc list with modification indicators
@@ -42,14 +46,25 @@ async def _compute_doc_status(project_name: str) -> Dict[str, Any]:
     baseline_hashes = docs_meta.get("baseline_hashes") or {}
     current_hashes = docs_meta.get("current_hashes") or {}
 
+    # Merge docs from baseline_hashes with live project.docs registry
+    # This ensures newly registered docs appear in the list
+    all_doc_keys = set(baseline_hashes.keys())
+    if project_data:
+        live_docs = project_data.get("docs") or {}
+        all_doc_keys.update(live_docs.keys())
+
     # Build doc list with modification flags
     base_docs = ["architecture", "phase_plan", "checklist", "progress_log"]
-    custom_docs = [doc for doc in baseline_hashes.keys() if doc not in base_docs]
+    custom_docs = [doc for doc in all_doc_keys if doc not in base_docs]
 
     doc_list = []
-    for doc_key in sorted(baseline_hashes.keys()):
+    for doc_key in sorted(all_doc_keys):
         is_modified = flags.get(f"{doc_key}_modified", False)
-        flag = "✏️" if is_modified else "✓"
+        # Use different indicator for docs only in live registry (not in baseline_hashes)
+        if doc_key in baseline_hashes:
+            flag = "✏️" if is_modified else "✓"
+        else:
+            flag = "📄"  # Registered but no baseline hash yet
         doc_list.append(f"{flag} {doc_key}")
 
     return {
@@ -59,8 +74,8 @@ async def _compute_doc_status(project_name: str) -> Dict[str, Any]:
         "last_update_at": docs_meta.get("last_update_at"),
         "update_count": docs_meta.get("update_count"),
         # SITREP enhancements
-        "total_docs": len(baseline_hashes),
-        "base_docs": len([d for d in base_docs if d in baseline_hashes]),
+        "total_docs": len(all_doc_keys),
+        "base_docs": len([d for d in base_docs if d in all_doc_keys]),
         "custom_docs": len(custom_docs),
         "doc_list": doc_list,
     }
@@ -148,6 +163,59 @@ async def _read_recent_progress_entries(progress_log_path: str, limit: int = 5) 
 
         # Return last N entries
         return entries[-limit:] if len(entries) > limit else entries
+
+    except Exception:
+        return []
+
+
+async def _read_recent_entries_from_db(
+    project_name: str,
+    limit: int = 5,
+    log_types: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Read last N entries from database (preferred over file-based).
+
+    Args:
+        project_name: Name of the project
+        limit: Maximum number of recent entries to return
+        log_types: Filter by log types (default: progress, bugs, security)
+
+    Returns:
+        List of entry dicts with timestamp, emoji, agent, message
+    """
+    try:
+        import server as server_module
+        backend = server_module.storage_backend
+        if not backend:
+            return []
+
+        project_record = await backend.fetch_project(project_name)
+        if not project_record:
+            return []
+
+        # Default to meaningful log types (exclude tool_logs)
+        # Include both singular and plural variants for compatibility
+        if log_types is None:
+            log_types = ["progress", "bugs", "bug", "security"]
+
+        entries = await backend.fetch_recent_entries(
+            project=project_record,
+            limit=limit,
+            filters={"log_type": log_types}
+        )
+
+        # Format entries for display
+        result = []
+        for entry in entries:
+            result.append({
+                "emoji": entry.get("emoji", "ℹ️"),
+                "timestamp": entry.get("ts_iso") or entry.get("ts", ""),
+                "agent": entry.get("agent", "unknown"),
+                "message": entry.get("message", "")
+            })
+
+        return result
 
     except Exception:
         return []
@@ -279,12 +347,13 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.tool()
-async def get_project(project: Optional[str] = None, format: str = "structured") -> Dict[str, Any]:
+async def get_project(project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
     """Return the active project selection, resolving defaults when necessary.
 
     Args:
         project: Optional project name to retrieve
         format: Output format - "readable" (human-friendly), "structured" (full JSON), "compact" (minimal)
+        verbose: If True, include recent log entries in readable format (default: False)
     """
     state_snapshot = await server_module.state_manager.record_tool("get_project")
     agent_identity = server_module.get_agent_identity()
@@ -393,7 +462,7 @@ async def get_project(project: Optional[str] = None, format: str = "structured")
     try:
         if current_name:
             response.setdefault("meta", {})
-            response["meta"]["docs_status"] = await _compute_doc_status(current_name)
+            response["meta"]["docs_status"] = await _compute_doc_status(current_name, target_project)
             response["meta"]["log_entry_counts"] = await _compute_log_counts(response)
     except Exception:
         pass
@@ -407,10 +476,14 @@ async def get_project(project: Optional[str] = None, format: str = "structured")
     try:
         if current_name:
             # Get entry count from backend (Phase 4.2)
+            # Only count meaningful log types: progress, bugs, security (NOT tool_logs)
             backend = server_module.storage_backend
             # Fetch project record first to get proper ProjectRecord object
             project_record = await backend.fetch_project(current_name) if backend else None
-            entry_count = await backend.count_entries(project_record) if project_record else 0
+            entry_count = await backend.count_entries(
+                project_record,
+                filters={"log_type": ["progress", "bugs", "bug", "security"]}
+            ) if project_record else 0
 
             # Detect project state (Phase 4.1 integration)
             state, sitrep_message = detect_project_state(response, entry_count)
@@ -435,14 +508,16 @@ async def get_project(project: Optional[str] = None, format: str = "structured")
     if format == "readable":
         from utils.response import default_formatter
 
-        # Read last 2-5 progress log entries (COMPLETE, no truncation!)
-        recent_entries = await _read_recent_progress_entries(
-            target_project.get("progress_log", ""),
-            limit=3  # Use 3 for compact display (~150-200 tokens)
-        )
+        # Read recent entries from DB only if verbose=True
+        recent_entries = []
+        if verbose and current_name:
+            recent_entries = await _read_recent_entries_from_db(
+                current_name,
+                limit=3  # Use 3 for compact display (~150-200 tokens)
+            )
 
-        # Get doc status with counts and list
-        doc_status = await _compute_doc_status(current_name) if current_name else {}
+        # Get doc status with counts and list (pass target_project for live docs registry)
+        doc_status = await _compute_doc_status(current_name, target_project) if current_name else {}
 
         # Format SITREP using new compact formatter
         readable_content = await _format_readable_sitrep(
@@ -476,14 +551,14 @@ async def get_project(project: Optional[str] = None, format: str = "structured")
 
     # For structured/compact formats with enhanced SITREP (Phase 4.2)
     if format in ["structured", "json", "compact"]:
-        # Get recent entries for JSON format with pagination
-        recent_entries = await _read_recent_progress_entries(
-            target_project.get("progress_log", ""),
+        # Get recent entries from DB for JSON format
+        recent_entries = await _read_recent_entries_from_db(
+            current_name,
             limit=5
-        )
+        ) if current_name else []
 
-        # Get doc status
-        doc_status = await _compute_doc_status(current_name) if current_name else {}
+        # Get doc status (pass target_project for live docs registry)
+        doc_status = await _compute_doc_status(current_name, target_project) if current_name else {}
 
         # Build enhanced payload
         payload = {

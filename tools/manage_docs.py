@@ -78,7 +78,7 @@ def _normalize_metadata_with_healing(metadata: Optional[Dict[str, Any] | str]) -
 
 def _heal_manage_docs_parameters(
     action: str,
-    doc: str,
+    doc_category: str,
     section: Optional[str] = None,
     content: Optional[str] = None,
     patch: Optional[str] = None,
@@ -135,13 +135,13 @@ def _heal_manage_docs_parameters(
     healed_params["action"] = healed_action
     healed_params["invalid_action"] = invalid_action
 
-    # Heal doc parameter (string normalization only; no enum correction)
-    original_doc = doc
-    healed_doc = str(original_doc).strip() if original_doc is not None else ""
-    if healed_doc != original_doc:
+    # Heal doc_category parameter (string normalization only; no enum correction)
+    original_doc_category = doc_category
+    healed_doc_category = str(original_doc_category).strip() if original_doc_category is not None else ""
+    if healed_doc_category != original_doc_category:
         healing_applied = True
-        healing_messages.append(f"Auto-normalized doc from '{original_doc}' to '{healed_doc}'")
-    healed_params["doc"] = healed_doc
+        healing_messages.append(f"Auto-normalized doc_category from '{original_doc_category}' to '{healed_doc_category}'")
+    healed_params["doc_category"] = healed_doc_category
 
     # Heal section parameter (string normalization)
     if section is not None:
@@ -269,7 +269,8 @@ def _heal_manage_docs_parameters(
         healing_messages.append(f"Auto-corrected dry_run to boolean {healed_dry_run}")
     healed_params["dry_run"] = healed_dry_run
 
-    # Heal doc_name parameter (string normalization)
+    # Heal doc_name parameter (string normalization only)
+    # doc_name is the UNIQUE identifier - it cannot be inferred from doc_category
     if doc_name is not None:
         original_doc_name = doc_name
         healed_doc_name = str(doc_name).strip()
@@ -541,13 +542,13 @@ def _normalize_doc_search_mode(value: Optional[str]) -> str:
     return normalized
 
 
-def _iter_doc_search_targets(project: Dict[str, Any], doc: str) -> List[tuple[str, Path]]:
+def _iter_doc_search_targets(project: Dict[str, Any], doc_name: str) -> List[tuple[str, Path]]:
     docs_mapping = project.get("docs") or {}
-    if doc in {"*", "all"}:
+    if doc_name in {"*", "all"}:
         return [(key, Path(path)) for key, path in docs_mapping.items()]
-    if doc not in docs_mapping:
+    if doc_name not in docs_mapping:
         return []
-    return [(doc, Path(docs_mapping[doc]))]
+    return [(doc_name, Path(docs_mapping[doc_name]))]
 
 
 def _search_doc_lines(
@@ -580,7 +581,7 @@ def _search_doc_lines(
 async def _index_doc_for_vector(
     *,
     project: Dict[str, Any],
-    doc: str,
+    doc_name: str,
     change_path: Path,
     after_hash: str,
     agent_id: str,
@@ -598,7 +599,7 @@ async def _index_doc_for_vector(
     if not vector_indexer:
         return
 
-    if _should_skip_doc_index(doc, change_path):
+    if _should_skip_doc_index(doc_name, change_path):
         return
 
     try:
@@ -636,7 +637,7 @@ async def _index_doc_for_vector(
         message = f"{title}\n\n{chunk}" if title else chunk
         doc_meta = {
             "content_type": "doc",
-            "doc": doc,
+            "doc_name": doc_name,
             "doc_title": title,
             "doc_type": doc_type,
             "file_path": str(change_path),
@@ -889,7 +890,7 @@ async def _record_agent_report_card_metadata(
 
 async def _auto_register_document(
     project: Dict[str, Any],
-    doc_key: str,
+    doc_name: str,
 ) -> bool:
     """
     Auto-register an unregistered document with the project.
@@ -905,14 +906,14 @@ async def _auto_register_document(
 
     Args:
         project: Active project dict from context (must have name, root)
-        doc_key: Document key (e.g., "architecture", "phase_plan", "checklist")
+        doc_name: Unique document identifier (e.g., "architecture", "phase_plan", "checklist")
 
     Returns:
         True if registration successful
 
     Raises:
         ValueError: If document file doesn't exist or registration fails
-        DocumentOperationError: If doc_key is invalid or path resolution fails
+        DocumentOperationError: If doc_name is invalid or path resolution fails
     """
     import logging
 
@@ -920,17 +921,17 @@ async def _auto_register_document(
 
     try:
         # Resolve document path using existing infrastructure
-        doc_path = _resolve_doc_path(project, doc_key)
+        doc_path = _resolve_doc_path(project, doc_name)
     except Exception as e:
         raise ValueError(
-            f"Cannot auto-register '{doc_key}': Invalid document key or path resolution failed. "
+            f"Cannot auto-register '{doc_name}': Invalid document identifier or path resolution failed. "
             f"Use 'generate_doc_templates' to create standard documents first. Error: {e}"
         )
 
     # Verify file exists
     if not doc_path.exists():
         raise ValueError(
-            f"Cannot auto-register '{doc_key}': File {doc_path} does not exist. "
+            f"Cannot auto-register '{doc_name}': File {doc_path} does not exist. "
             f"Use 'generate_doc_templates' to create it first."
         )
 
@@ -955,21 +956,13 @@ async def _auto_register_document(
         current_docs = project.get("docs", {})
 
         # Add new document to docs mapping
-        current_docs[doc_key] = str(doc_path)
+        current_docs[doc_name] = str(doc_path)
         docs_json = json.dumps(current_docs)
 
-        # Update database using direct SQL since upsert_project doesn't support docs_json yet
-        # This is a Phase 3 workaround for Phase 1/2 gap
-        await backend._execute(
-            """
-            UPDATE scribe_projects
-            SET docs_json = ?
-            WHERE name = ?
-            """,
-            (docs_json, project_name),
-        )
+        # Update database via StorageBackend API
+        await backend.update_project_docs(project_name, docs_json)
 
-        logger.info(f"Auto-registered document '{doc_key}' for project '{project_name}'")
+        logger.info(f"Auto-registered document '{doc_name}' for project '{project_name}'")
 
     except Exception as e:
         raise ValueError(f"Failed to update database for auto-registration: {e}")
@@ -978,24 +971,24 @@ async def _auto_register_document(
     try:
         await _PROJECT_REGISTRY.record_doc_update(
             project_name=project_name,
-            doc_key=doc_key,
+            doc_key=doc_name,
             file_path=str(doc_path),
             baseline_hash=doc_hash,
             current_hash=doc_hash,
         )
     except Exception as e:
         # Non-fatal - log warning but don't fail registration
-        logger.warning(f"Failed to update ProjectRegistry for '{doc_key}': {e}")
+        logger.warning(f"Failed to update ProjectRegistry for '{doc_name}': {e}")
 
     # Log registration event to progress log
     try:
         await append_entry(
-            message=f"Auto-registered document: {doc_key} ({doc_path.name})",
+            message=f"Auto-registered document: {doc_name} ({doc_path.name})",
             status="info",
             agent="manage_docs",
             meta={
                 "action": "auto_register",
-                "doc": doc_key,
+                "doc_name": doc_name,
                 "path": str(doc_path),
                 "hash": doc_hash[:8],
             }
@@ -1009,7 +1002,7 @@ async def _auto_register_document(
 
 def _resolve_custom_doc_path(
     project: Dict[str, Any],
-    doc_type: str,
+    doc_category: str,
     doc_name: str,
 ) -> Optional[Path]:
     """
@@ -1023,8 +1016,8 @@ def _resolve_custom_doc_path(
 
     Args:
         project: Project configuration dictionary
-        doc_type: Type of custom document (research, bugs, reviews, agent_cards)
-        doc_name: Document identifier (filename, slug, or search pattern)
+        doc_category: Category of custom document (research, bugs, reviews, agent_cards)
+        doc_name: Unique document identifier (filename or slug)
 
     Returns:
         Path to document if found, None otherwise
@@ -1041,7 +1034,7 @@ def _resolve_custom_doc_path(
     project_root = Path(project.get("root", ""))
 
     # Research documents
-    if doc_type == "research":
+    if doc_category == "research":
         research_dir = docs_dir / "research"
         if not research_dir.exists():
             return None
@@ -1060,7 +1053,7 @@ def _resolve_custom_doc_path(
         return None
 
     # Bug reports
-    elif doc_type == "bugs":
+    elif doc_category == "bugs":
         bugs_root = project_root / "docs" / "bugs"
         if not bugs_root.exists():
             return None
@@ -1082,7 +1075,7 @@ def _resolve_custom_doc_path(
         return None
 
     # Review reports
-    elif doc_type == "reviews":
+    elif doc_category == "reviews":
         # Search for REVIEW_REPORT_* matching provided identifier
         pattern = f"REVIEW_REPORT_*{doc_name}*.md"
         candidates = list(docs_dir.glob(pattern))
@@ -1092,7 +1085,7 @@ def _resolve_custom_doc_path(
         return None
 
     # Agent report cards
-    elif doc_type == "agent_cards":
+    elif doc_category == "agent_cards":
         # Search for AGENT_REPORT_CARD_* matching provided identifier
         pattern = f"AGENT_REPORT_CARD_*{doc_name}*.md"
         candidates = list(docs_dir.glob(pattern))
@@ -1107,7 +1100,7 @@ def _resolve_custom_doc_path(
 @app.tool()
 async def manage_docs(
     action: str,
-    doc: str,
+    doc_category: str = "",  # Document category: architecture|phase_plan|checklist|research|bugs|wiki|custom
     section: Optional[str] = None,
     content: Optional[str] = None,
     patch: Optional[str] = None,
@@ -1121,13 +1114,14 @@ async def manage_docs(
     dry_run: bool = False,
     doc_name: Optional[str] = None,
     target_dir: Optional[str] = None,
+    project: Optional[str] = None,  # Explicit project override (allows cross-project doc management)
 ) -> Dict[str, Any]:
     """Apply structured updates to architecture/phase/checklist documents and create research/bug documents."""
     state_snapshot = await server_module.state_manager.record_tool("manage_docs")
     # Apply Phase 1 exception healing to all parameters
     try:
         healed_params, healing_applied, healing_messages = _heal_manage_docs_parameters(
-            action=action, doc=doc, section=section, content=content,
+            action=action, doc_category=doc_category, section=section, content=content,
             patch=patch, patch_source_hash=patch_source_hash,
             edit=edit, patch_mode=patch_mode, start_line=start_line, end_line=end_line,
             template=template, metadata=metadata, dry_run=dry_run,
@@ -1136,7 +1130,7 @@ async def manage_docs(
 
         # Update parameters with healed values
         action = healed_params["action"]
-        doc = healed_params["doc"]
+        doc_category = healed_params["doc_category"]
         section = healed_params["section"]
         content = healed_params["content"]
         patch = healed_params["patch"]
@@ -1200,6 +1194,7 @@ async def manage_docs(
         context = await _MANAGE_DOCS_HELPER.prepare_context(
             tool_name="manage_docs",
             agent_id=None,
+            explicit_project=project,  # Allow cross-project doc management
             require_project=True,
             state_snapshot=state_snapshot,
             reminder_variables={"action": action, "scaffold": scaffold_flag},
@@ -1238,11 +1233,11 @@ async def manage_docs(
     # Custom document path resolution (research, bugs, reviews, agent_cards)
     # This allows editing custom docs without requiring registration
     custom_doc_types = {"research", "bugs", "reviews", "agent_cards"}
-    if action in EDIT_ACTIONS and doc in custom_doc_types and doc_name:
+    if action in EDIT_ACTIONS and doc_category in custom_doc_types and doc_name:
         # Attempt to resolve custom document path
         resolved_path = _resolve_custom_doc_path(
             project=project,
-            doc_type=doc,
+            doc_category=doc_category,
             doc_name=doc_name
         )
 
@@ -1262,34 +1257,34 @@ async def manage_docs(
                 docs_dir = Path(progress_log).parent
                 try:
                     relative_path = resolved_path.relative_to(docs_dir)
-                    project["docs"][doc] = str(relative_path)
+                    project["docs"][doc_category] = str(relative_path)
                 except ValueError:
                     # If not relative to docs_dir, try relative to project root
                     project_root = Path(project.get("root", ""))
                     try:
                         relative_path = resolved_path.relative_to(project_root)
-                        project["docs"][doc] = str(relative_path)
+                        project["docs"][doc_category] = str(relative_path)
                     except ValueError:
                         # Fall back to absolute path
-                        project["docs"][doc] = str(resolved_path)
+                        project["docs"][doc_category] = str(resolved_path)
             else:
                 # No progress_log - use absolute path
-                project["docs"][doc] = str(resolved_path)
+                project["docs"][doc_category] = str(resolved_path)
 
-            logger.info(f"Temporarily registered custom doc '{doc}' at: {project['docs'][doc]}")
+            logger.info(f"Temporarily registered custom doc '{doc_category}' at: {project['docs'][doc_category]}")
             # Continue to edit logic (skip auto-registration)
         else:
             # Custom doc not found - return helpful error
             error_payload = _MANAGE_DOCS_HELPER.error_response(
                 f"Custom document '{doc_name}' not found",
                 suggestion=(
-                    f"Ensure document was created with create_{doc}_doc action. "
+                    f"Ensure document was created with create_{doc_category}_doc action. "
                     f"Check doc_name spelling and verify the document exists. "
                     f"For research docs: check .scribe/docs/dev_plans/{project.get('slug', '<project>')}/research/ "
                     f"For bug reports: check docs/bugs/<category>/<date>_{doc_name}/"
                 ),
                 extra={
-                    "doc_type": doc,
+                    "doc_type": doc_category,
                     "doc_name": doc_name,
                     "searched_in": str(Path(project.get("progress_log")).parent) if project.get("progress_log") else "unknown",
                     "project_root": str(project.get("root"))
@@ -1297,18 +1292,18 @@ async def manage_docs(
             )
             return _MANAGE_DOCS_HELPER.apply_context_payload(error_payload, context)
 
-    # Auto-register unregistered documents for EDIT operations
-    elif action in EDIT_ACTIONS and doc:
+    # Auto-register unregistered documents for EDIT operations (doc_name is the unique identifier)
+    elif action in EDIT_ACTIONS and doc_name:
         docs = project.get("docs", {})
 
         # Check if document is registered
-        if doc not in docs:
+        if doc_name not in docs:
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"Document '{doc}' not registered, attempting auto-registration...")
+            logger.info(f"Document '{doc_name}' not registered, attempting auto-registration...")
 
             try:
-                await _auto_register_document(project, doc)
+                await _auto_register_document(project, doc_name)
 
                 # Re-fetch project data to get updated docs mapping
                 # We need to call prepare_context again to get fresh data from database
@@ -1321,19 +1316,19 @@ async def manage_docs(
                         reminder_variables={"action": action, "scaffold": scaffold_flag},
                     )
                     project = context.project or {}
-                    logger.info(f"Successfully auto-registered and reloaded project context for '{doc}'")
+                    logger.info(f"Successfully auto-registered and reloaded project context for '{doc_name}'")
                 except Exception as reload_error:
                     logger.warning(f"Auto-registration succeeded but context reload failed: {reload_error}")
                     # Continue anyway - the database was updated successfully
 
             except Exception as e:
                 error_payload = _MANAGE_DOCS_HELPER.error_response(
-                    f"Auto-registration failed for document '{doc}'",
+                    f"Auto-registration failed for document '{doc_name}'",
                     suggestion=(
                         f"Ensure the file exists or use 'generate_doc_templates' to create it. "
                         f"Error: {str(e)}"
                     ),
-                    extra={"doc": doc, "auto_registration_error": str(e)},
+                    extra={"doc_name": doc_name, "auto_registration_error": str(e)},
                 )
                 return _MANAGE_DOCS_HELPER.apply_context_payload(error_payload, context)
 
@@ -1354,24 +1349,30 @@ async def manage_docs(
         )
 
     if action == "list_sections":
+        if not doc_name:
+            response = {"ok": False, "error": "list_sections requires doc_name parameter"}
+            return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
         allowed_docs = set((project.get("docs") or {}).keys())
-        if doc not in allowed_docs:
-            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc '{doc}' is not registered"}
+        if doc_name not in allowed_docs:
+            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
             return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
         return await _handle_list_sections(
             project,
-            doc=doc,
+            doc_name=doc_name,
             helper=_MANAGE_DOCS_HELPER,
             context=context,
         )
     if action == "list_checklist_items":
+        if not doc_name:
+            response = {"ok": False, "error": "list_checklist_items requires doc_name parameter"}
+            return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
         allowed_docs = set((project.get("docs") or {}).keys())
-        if doc not in allowed_docs:
-            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc '{doc}' is not registered"}
+        if doc_name not in allowed_docs:
+            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
             return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
         return await _handle_list_checklist_items(
             project,
-            doc=doc,
+            doc_name=doc_name,
             metadata=metadata if isinstance(metadata, dict) else {},
             helper=_MANAGE_DOCS_HELPER,
             context=context,
@@ -1523,9 +1524,12 @@ async def manage_docs(
             return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
 
         # exact/fuzzy searches against doc content
-        targets = _iter_doc_search_targets(project, doc)
+        if not doc_name:
+            response = {"ok": False, "error": "search requires doc_name parameter (use '*' or 'all' to search all docs)"}
+            return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
+        targets = _iter_doc_search_targets(project, doc_name)
         if not targets:
-            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc '{doc}' is not registered"}
+            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
             return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
 
         fuzzy_threshold = float(search_meta.get("fuzzy_threshold", 0.8))
@@ -1584,14 +1588,14 @@ async def manage_docs(
     }
     if action in allowed_doc_actions:
         allowed_docs = set((project.get("docs") or {}).keys())
-        if doc not in allowed_docs:
-            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc '{doc}' is not registered"}
+        if doc_name not in allowed_docs:
+            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
             return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
 
     if action == "create_doc" and isinstance(metadata, dict):
         register_existing = bool(metadata.get("register_existing"))
         if register_existing:
-            register_key = metadata.get("register_as") or metadata.get("doc_name") or doc
+            register_key = metadata.get("register_as") or metadata.get("doc_name") or doc_name
             if not register_key:
                 response = {
                     "ok": False,
@@ -1599,7 +1603,7 @@ async def manage_docs(
                 }
                 return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
             try:
-                doc_path = _resolve_create_doc_path(project, metadata, doc)
+                doc_path = _resolve_create_doc_path(project, metadata, doc_name)
             except Exception as exc:
                 response = {"ok": False, "error": f"register_existing failed to resolve path: {exc}"}
                 return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
@@ -1607,6 +1611,7 @@ async def manage_docs(
                 docs_mapping = dict(project.get("docs") or {})
                 docs_mapping[str(register_key)] = str(doc_path)
                 project["docs"] = docs_mapping
+                registry_warning = ""
                 try:
                     await server_module.state_manager.set_current_project(
                         project.get("name"),
@@ -1614,11 +1619,18 @@ async def manage_docs(
                         agent_id=agent_id,
                         mirror_global=False,
                     )
+                    # Also persist to database via StorageBackend API
+                    backend = getattr(server_module, "storage_backend", None)
+                    if backend:
+                        import json as _json
+                        await backend.update_project_docs(
+                            project.get("name"), _json.dumps(docs_mapping)
+                        )
                 except Exception as exc:
                     registry_warning = f"Registry update failed: {exc}"
                 response: Dict[str, Any] = {
                     "ok": True,
-                    "doc": doc,
+                    "doc_name": doc_name,
                     "section": None,
                     "action": action,
                     "path": str(doc_path),
@@ -1630,10 +1642,16 @@ async def manage_docs(
                     response.setdefault("warnings", []).append(registry_warning)
                 return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
 
+    # Validate doc_name is provided for document operations
+    if not doc_name:
+        response = {"ok": False, "error": f"Action '{action}' requires doc_name parameter"}
+        return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
+
     try:
         change = await apply_doc_change(
             project,
-            doc=doc,
+            doc_name=doc_name,
+            doc_category=doc_category,
             action=action,
             section=section,
             content=content,
@@ -1660,7 +1678,7 @@ async def manage_docs(
             storage_record = await _get_or_create_storage_project(backend, project)
             await backend.record_doc_change(
                 storage_record,
-                doc=doc,
+                doc=doc_name,
                 section=section,
                 action=action,
                 agent=agent_id,
@@ -1677,7 +1695,7 @@ async def manage_docs(
                 if project_name:
                     _PROJECT_REGISTRY.record_doc_update(
                         project_name,
-                        doc=doc,
+                        doc_name=doc_name,
                         action=action,
                         before_hash=change.before_hash,
                         after_hash=change.after_hash,
@@ -1693,7 +1711,8 @@ async def manage_docs(
         log_meta = healed_metadata
         log_meta.update(
             {
-                "doc": doc,
+                "doc_name": doc_name,
+                "doc_category": doc_category,
                 "section": section or "",
                 "action": action,
                 "sha_after": change.after_hash,
@@ -1701,7 +1720,7 @@ async def manage_docs(
         )
         try:
             await append_entry(
-                message=f"Doc update [{doc}] {section or 'full'} via {action}",
+                message=f"Doc update [{doc_name}] {section or 'full'} via {action}",
                 status="info",
                 meta=log_meta,
                 agent=agent_id,
@@ -1714,7 +1733,7 @@ async def manage_docs(
             try:
                 await _index_doc_for_vector(
                     project=project,
-                    doc=doc,
+                    doc_name=doc_name,
                     change_path=Path(change.path),
                     after_hash=change.after_hash or "",
                     agent_id=agent_id or "unknown",
@@ -1726,13 +1745,16 @@ async def manage_docs(
     registry_warning = None
     response: Dict[str, Any] = {
         "ok": change.success,
-        "doc": doc,
-        "section": section,
         "action": action,
         "path": str(change.path) if change.success else "",
         "dry_run": dry_run,
         "diff": change.diff_preview,
     }
+    # Only include doc_name/section in response when meaningful (not empty)
+    if doc_name:
+        response["doc_name"] = doc_name
+    if section:
+        response["section"] = section
     if change.success:
         response["hashes"] = {"before": change.before_hash, "after": change.after_hash}
     if change.extra:
@@ -1765,15 +1787,11 @@ async def manage_docs(
     if action == "create_doc" and change.success and isinstance(metadata, dict):
         register_doc = metadata.get("register_doc")
         if register_doc is None:
-            docs_dir = project.get("docs_dir")
-            if docs_dir:
-                try:
-                    Path(change.path).resolve().relative_to(Path(docs_dir).resolve())
-                    register_doc = True
-                except ValueError:
-                    register_doc = False
+            # Default to registering any created doc unless explicitly disabled
+            register_doc = True
         register_doc = bool(register_doc)
-        register_key = metadata.get("register_as") or metadata.get("doc_name") or doc
+        # Priority: explicit register_as > doc_name (unique identifier from param or metadata)
+        register_key = metadata.get("register_as") or metadata.get("doc_name") or doc_name
         if register_doc:
             if not register_key:
                 return _MANAGE_DOCS_HELPER.apply_context_payload(
@@ -1792,12 +1810,18 @@ async def manage_docs(
                     agent_id=agent_id,
                     mirror_global=False,
                 )
+                # Also persist to database via StorageBackend API
+                backend = getattr(server_module, "storage_backend", None)
+                if backend:
+                    import json as _json
+                    await backend.update_project_docs(
+                        project.get("name"), _json.dumps(docs_mapping)
+                    )
             except Exception as exc:
                 registry_warning = f"Registry update failed: {exc}"
             if metadata.get("register_doc") is None:
                 response.setdefault("warnings", []).append(
-                    "register_doc defaulted to true for a doc created under docs_dir; "
-                    "set metadata.register_doc=false to skip registration."
+                    "register_doc defaulted to true; set metadata.register_doc=false to skip registration."
                 )
 
     if registry_warning:
@@ -1815,7 +1839,13 @@ async def manage_docs(
 
     if log_error:
         response["log_warning"] = log_error
-    if dry_run:
+
+    # Only include full file preview if explicitly requested (token-heavy!)
+    # The diff + preview_windows already provide sufficient context
+    include_full_preview = bool(
+        isinstance(metadata, dict) and metadata.get("include_full_preview")
+    )
+    if dry_run and include_full_preview:
         preview_content = change.content_written
         include_frontmatter = bool(
             isinstance(metadata, dict) and metadata.get("include_frontmatter_preview")
@@ -2044,13 +2074,13 @@ Examples:
 
 async def _handle_list_sections(
     project: Dict[str, Any],
-    doc: str,
+    doc_name: str,
     helper: LoggingToolMixin,
     context: LoggingContext,
 ) -> Dict[str, Any]:
     """Return the list of section anchors for a document."""
     docs_mapping = project.get("docs") or {}
-    path_str = docs_mapping.get(doc)
+    path_str = docs_mapping.get(doc_name)
     if not path_str:
         # Try auto-registration before returning error
         from doc_management.manager import _resolve_doc_path
@@ -2058,9 +2088,9 @@ async def _handle_list_sections(
         from storage import get_storage
         import json
 
-        print(f"DEBUG: Attempting auto-registration for doc='{doc}', project='{project.get('name')}'")
+        print(f"DEBUG: Attempting auto-registration for doc_name='{doc_name}', project='{project.get('name')}'")
         try:
-            resolved_path = _resolve_doc_path(project, doc)
+            resolved_path = _resolve_doc_path(project, doc_name)
             print(f"DEBUG: Resolved path: {resolved_path}, exists: {resolved_path.exists()}")
             if resolved_path.exists():
                 # Auto-register the document by updating docs_json in database
@@ -2069,7 +2099,7 @@ async def _handle_list_sections(
 
                 # Get current docs mapping and add new document
                 current_docs = project.get("docs") or {}
-                current_docs[doc] = str(resolved_path)
+                current_docs[doc_name] = str(resolved_path)
 
                 # Update database directly
                 docs_json = json.dumps(current_docs)
@@ -2081,7 +2111,7 @@ async def _handle_list_sections(
                 # Refresh project state and retry
                 project = await get_active_project()
                 docs_mapping = project.get("docs") or {}
-                path_str = docs_mapping.get(doc)
+                path_str = docs_mapping.get(doc_name)
         except Exception as e:
             # If auto-registration fails, fall through to error
             import traceback
@@ -2092,7 +2122,7 @@ async def _handle_list_sections(
         # If still not registered, return error
         if not path_str:
             return helper.apply_context_payload(
-                helper.error_response(f"Document '{doc}' is not registered for project '{project.get('name')}'."),
+                helper.error_response(f"Document '{doc_name}' is not registered for project '{project.get('name')}'."),
                 context,
             )
 
@@ -2127,11 +2157,12 @@ async def _handle_list_sections(
 
     response = {
         "ok": True,
-        "doc": doc,
+        "doc_name": doc_name,
         "path": str(path),
         "sections": sections,
         "body_line_offset": body_line_offset,
         "frontmatter_line_count": body_line_offset,
+        "hint": f"For full document structure, use: read_file(path='{path}', mode='scan_only')",
     }
     if duplicate_sections:
         response["duplicates"] = duplicate_sections
@@ -2143,17 +2174,17 @@ async def _handle_list_sections(
 
 async def _handle_list_checklist_items(
     project: Dict[str, Any],
-    doc: str,
+    doc_name: str,
     metadata: Dict[str, Any],
     helper: LoggingToolMixin,
     context: LoggingContext,
 ) -> Dict[str, Any]:
     """Return checklist items with line numbers for replace_range usage."""
     docs_mapping = project.get("docs") or {}
-    path_str = docs_mapping.get(doc)
+    path_str = docs_mapping.get(doc_name)
     if not path_str:
         return helper.apply_context_payload(
-            helper.error_response(f"Document '{doc}' is not registered for project '{project.get('name')}'."),
+            helper.error_response(f"Document '{doc_name}' is not registered for project '{project.get('name')}'."),
             context,
         )
 
@@ -2164,7 +2195,7 @@ async def _handle_list_checklist_items(
             context,
         )
 
-    if doc != "checklist":
+    if doc_name != "checklist":
         return helper.apply_context_payload(
             helper.error_response("list_checklist_items is only supported for checklist documents."),
             context,
@@ -2225,7 +2256,7 @@ async def _handle_list_checklist_items(
 
     response = {
         "ok": True,
-        "doc": doc,
+        "doc": doc_name,
         "path": str(path),
         "total_items": len(items),
         "items": items,
@@ -2329,6 +2360,7 @@ async def _handle_special_document_creation(
     doc_label = ""
     target_path: Optional[Path] = None
     index_updater: Optional[Callable[[], Awaitable[None]]] = None
+    index_path: Optional[Path] = None
     extra_metadata: Dict[str, Any] = {}
 
     if action == "create_research_doc":
@@ -2361,6 +2393,7 @@ async def _handle_special_document_creation(
             "researcher": metadata.get("researcher", agent_id),
         }
         index_updater = lambda: _update_research_index(research_dir, agent_id)
+        index_path = research_dir / "INDEX.md"
     elif action == "create_bug_report":
         category = metadata.get("category")
         if not category or not category.strip():
@@ -2391,6 +2424,7 @@ async def _handle_special_document_creation(
             "reported_at": metadata.get("reported_at", timestamp_str),
         }
         index_updater = lambda: _update_bug_index(project_root / "docs" / "bugs", agent_id)
+        index_path = project_root / "docs" / "bugs" / "INDEX.md"
     elif action == "create_review_report":
         stage = metadata.get("stage", "unknown")
         target_path = docs_dir / f"REVIEW_REPORT_{stage}_{now.strftime('%Y-%m-%d')}_{now.strftime('%H%M')}.md"
@@ -2398,6 +2432,7 @@ async def _handle_special_document_creation(
         doc_label = "review_report"
         extra_metadata = {"stage": stage}
         index_updater = lambda: _update_review_index(docs_dir, agent_id)
+        index_path = docs_dir / "REVIEW_INDEX.md"
     elif action == "create_agent_report_card":
         card_agent = metadata.get("agent_name", agent_id)
         stage = metadata.get("stage", "unknown")
@@ -2409,6 +2444,7 @@ async def _handle_special_document_creation(
             "stage": stage,
         }
         index_updater = lambda: _update_agent_card_index(docs_dir, agent_id)
+        index_path = docs_dir / "AGENT_CARDS_INDEX.md"
     else:
         return helper.apply_context_payload(
             helper.error_response(f"Unsupported special document action: {action}"),
@@ -2499,7 +2535,7 @@ async def _handle_special_document_creation(
             before_hash,
             after_hash,
         )
-        if doc_label == "agent_report_card":
+        if doc_label == "agent_report_card": # Alias for Doc Category
             await _record_agent_report_card_metadata(
                 storage_backend,
                 project,
@@ -2546,6 +2582,65 @@ async def _handle_special_document_creation(
                 # Don't fail the whole operation if index update fails
                 # The document was created successfully, just the index is stale
 
+        # Register the newly created document in docs_json so manage_docs can find it later
+        registration_warning: Optional[str] = None
+        if storage_backend and project:
+            try:
+                project_name = project.get("name")
+                if project_name:
+                    # Build unique doc key from label and filename (without extension)
+                    doc_key = f"{doc_label}_{target_path.stem}"
+
+                    # Get current docs mapping
+                    current_docs = project.get("docs", {})
+                    current_docs[doc_key] = str(target_path)
+                    docs_json = json.dumps(current_docs)
+
+                    # Update database via StorageBackend API
+                    await storage_backend.update_project_docs(project_name, docs_json)
+
+                    # Update in-memory registry
+                    try:
+                        _PROJECT_REGISTRY.record_doc_update(
+                            project_name=project_name,
+                            doc=doc_key,
+                            action="create",
+                            before_hash=None,
+                            after_hash=after_hash,
+                        )
+                    except Exception as reg_exc:
+                        # Non-fatal - registry update is best-effort
+                        registration_warning = f"Registry update failed: {reg_exc}"
+            except Exception as exc:
+                registration_warning = f"Doc registration failed: {exc}"
+                # Don't fail the whole operation - file was created successfully
+
+        # Also register the INDEX file if it exists (created by index_updater)
+        if storage_backend and project and index_path and index_path.exists():
+            try:
+                project_name = project.get("name")
+                if project_name:
+                    # Build index doc key based on doc type
+                    index_key = f"{doc_label}_index"
+
+                    # Get current docs mapping (may have been updated above)
+                    current_project = await storage_backend.fetch_project(project_name)
+                    if current_project and current_project.docs_json:
+                        current_docs = json.loads(current_project.docs_json)
+                    else:
+                        current_docs = project.get("docs", {})
+
+                    current_docs[index_key] = str(index_path)
+                    docs_json = json.dumps(current_docs)
+
+                    await storage_backend.update_project_docs(project_name, docs_json)
+            except Exception as exc:
+                # Non-fatal - index registration is best-effort
+                if registration_warning:
+                    registration_warning += f"; Index registration failed: {exc}"
+                else:
+                    registration_warning = f"Index registration failed: {exc}"
+
         success_payload: Dict[str, Any] = {
             "ok": True,
             "path": str(target_path),
@@ -2554,6 +2649,8 @@ async def _handle_special_document_creation(
         }
         if log_warning:
             success_payload["log_warning"] = log_warning
+        if registration_warning:
+            success_payload["registration_warning"] = registration_warning
 
         return helper.apply_context_payload(success_payload, context)
 

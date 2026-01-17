@@ -957,12 +957,47 @@ async def _execute_rotation_with_fallbacks(
 
                             # Execute file rotation
                             repo_root = Path(project.get("root") or settings.project_root).resolve()
+
+                            # Get hash chain info and compute current file hash for proper template
+                            state_manager = get_state_manager()
+                            hash_chain_info = state_manager.get_hash_chain_info(project["name"])
+                            previous_hash = hash_chain_info.get("last_hash")
+
+                            # Compute hash of current log before rotation (for hash chain)
+                            current_log_hash = ""
+                            current_entry_count = operation.get("entry_count", 0)
+                            try:
+                                if log_path.exists():
+                                    current_log_hash = compute_file_hash(log_path)
+                                    if current_entry_count == 0:
+                                        current_entry_count = count_file_lines(str(log_path))
+                            except Exception:
+                                pass  # Best effort - hash chain will work without this
+
+                            # Build rotation context with hash chain info
+                            rotation_context = create_rotation_context(
+                                rotation_id=rotation_id,
+                                rotation_timestamp=rotation_timestamp,
+                                previous_log_path=str(log_path),
+                                previous_log_hash=current_log_hash,
+                                previous_log_entries=str(current_entry_count),
+                                current_sequence=str(sequence_number),
+                                total_rotations=str(sequence_number),
+                                hash_chain_previous=previous_hash or "",
+                                hash_chain_sequence=str(sequence_number),
+                                hash_chain_root=hash_chain_info.get("root_hash") or "",
+                            )
+
+                            # Generate proper template content with Jinja2 and hash chain info
+                            template_content = await _build_template_content(log_type, project, rotation_context)
+
                             rotation_started = time.monotonic()
                             archive_path = await rotate_file(
                                 log_path,
                                 suffix=operation.get("suffix"),
                                 confirm=True,
                                 repo_root=repo_root,
+                                template_content=template_content,  # Pass the full template!
                             )
                             rotation_duration = time.monotonic() - rotation_started
 
@@ -1019,7 +1054,7 @@ async def _execute_rotation_with_fallbacks(
                                 # Try alternative rotation method
                                 try:
                                     # Simple rotation fallback: rename current log and
-                                    # create a fresh file with a minimal rotation header.
+                                    # create a fresh file with rotation header.
                                     fallback_suffix = operation.get(
                                         "suffix",
                                         f"rotated-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -1031,22 +1066,37 @@ async def _execute_rotation_with_fallbacks(
                                     # Move current log to archive
                                     await asyncio.to_thread(lambda: log_path.rename(archive_path))
 
-                                    # Write a simple rotation header into the new log file
+                                    # Write rotation header into the new log file
+                                    # Try to use proper template if rotation_context exists, otherwise fallback
                                     try:
+                                        # rotation_context was created before the failure, use it
+                                        if 'rotation_context' in dir() and rotation_context:
+                                            header = await _build_template_content(log_type, project, rotation_context)
+                                        else:
+                                            # Emergency fallback: create basic context
+                                            fallback_rotation_id = generate_rotation_id(project["name"])
+                                            fallback_timestamp = format_utc(utcnow())
+                                            fallback_context = create_rotation_context(
+                                                rotation_id=fallback_rotation_id,
+                                                rotation_timestamp=fallback_timestamp,
+                                                previous_log_path=str(archive_path),
+                                            )
+                                            header = await _build_template_content(log_type, project, fallback_context)
+                                        await asyncio.to_thread(lambda: log_path.write_text(header))
+                                    except Exception:
+                                        # If template generation fails, use minimal header
                                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
                                         project_name = project.get("name", "Unknown Project")
                                         header = (
                                             "# Progress Log\n\n"
-                                            "## Rotation Notice\n"
+                                            "## Rotation Notice (Fallback)\n"
                                             f"Previous log was archived to: {archive_path.name}\n\n"
                                             f"Rotation Time: {timestamp}\n"
-                                            f"Project: {project_name}\n\n"
+                                            f"Project: {project_name}\n"
+                                            f"Note: Full template generation failed, using minimal header.\n\n"
                                             "---\n\n"
                                         )
                                         await asyncio.to_thread(lambda: log_path.write_text(header))
-                                    except Exception:
-                                        # If header write fails, fall back to an empty file.
-                                        await asyncio.to_thread(lambda: log_path.write_text(""))
 
                                     fallback_result = {
                                         "log_type": log_type,
@@ -1243,6 +1293,76 @@ async def _execute_rotation_with_fallbacks(
             }
 
 
+def _format_readable(response: Dict[str, Any], project_name: str) -> str:
+    """
+    Format rotation response as clean readable output.
+
+    Args:
+        response: Rotation response dict
+        project_name: Project name
+
+    Returns:
+        Formatted readable string
+    """
+    lines = []
+
+    # Check if rotation was successful
+    if not response.get("ok"):
+        lines.append(f"❌ Rotation failed: {project_name}")
+        if "error" in response:
+            lines.append(f"   Error: {response['error']}")
+        return "\n".join(lines)
+
+    # Get rotation details
+    results = response.get("results", [])
+    dry_run = response.get("dry_run", False)
+
+    if dry_run:
+        lines.append(f"📋 Dry run: {project_name}")
+    else:
+        lines.append(f"✅ Log rotated: {project_name}")
+
+    # Process each result
+    for result in results:
+        status = result.get("status", "unknown")
+        log_type = result.get("log_type", "unknown")
+
+        if status == "rotated":
+            # Successful rotation
+            original_path = Path(result.get("original_path", ""))
+            archive_path = Path(result.get("archive_path", ""))
+            original_size = result.get("original_size_bytes", 0)
+
+            # Format size in KB
+            size_kb = original_size / 1024 if original_size > 0 else 0
+
+            lines.append(f"   Original: {original_path.name} ({size_kb:.1f} KB)")
+            lines.append(f"   Archived: {archive_path.name}")
+            lines.append(f"   New log: {original_path.name} (empty)")
+
+        elif status == "dry_run_complete":
+            # Dry run result
+            entry_count = result.get("entry_count", 0)
+            estimated_size = result.get("estimated_size", 0)
+            size_kb = estimated_size / 1024 if estimated_size > 0 else 0
+
+            lines.append(f"   Would rotate: {log_type}")
+            lines.append(f"   Entries: {entry_count}")
+            lines.append(f"   Size: {size_kb:.1f} KB")
+
+        elif status == "skipped":
+            # Skipped rotation
+            reason = result.get("reason", "Unknown reason")
+            lines.append(f"   Skipped: {log_type} - {reason}")
+
+        elif status == "failed":
+            # Failed rotation
+            error = result.get("error", "Unknown error")
+            lines.append(f"   Failed: {log_type} - {error}")
+
+    return "\n".join(lines)
+
+
 @app.tool()
 async def rotate_log(
     project: Optional[str] = None,
@@ -1257,6 +1377,7 @@ async def rotate_log(
     auto_threshold: Optional[bool] = None,
     threshold_entries: Optional[int] = None,
     config: Optional[RotateLogConfig] = None,  # Configuration object for enhanced parameter handling
+    format: str = "structured",  # Output format - "readable", "structured", "compact"
     **_kwargs: Any,  # tolerate unknown kwargs (contract: tools never TypeError)
 ) -> Dict[str, Any]:
     """
@@ -1275,6 +1396,7 @@ async def rotate_log(
         auto_threshold: When True, only rotate logs whose entry count exceeds a threshold.
         threshold_entries: Optional override for entry threshold (defaults to definition or 500).
         config: Optional RotateLogConfig object for enhanced parameter handling.
+        format: Output format - "readable" (human-friendly), "structured" (full JSON), "compact" (minimal)
 
     ENHANCED FEATURES:
     - Dual parameter support: Use either legacy parameters OR RotateLogConfig object
@@ -1394,6 +1516,26 @@ async def rotate_log(
             if "warnings" not in rotation_result:
                 rotation_result["warnings"] = []
             rotation_result["warnings"].append("Emergency fallback applied during preparation")
+
+        # Handle readable format
+        if format == "readable":
+            from scribe_mcp.utils.response import default_formatter
+
+            project_name = context.project.get("name") if context.project else "unknown"
+            readable_content = _format_readable(rotation_result, project_name)
+
+            payload = {
+                "ok": rotation_result.get("ok", False),
+                "rotation_executed": rotation_result.get("rotation_executed", False),
+                "readable_content": readable_content,
+                **rotation_result  # Include all original data
+            }
+
+            return await default_formatter.finalize_tool_response(
+                payload,
+                format="readable",
+                tool_name="rotate_log"
+            )
 
         return rotation_result
 

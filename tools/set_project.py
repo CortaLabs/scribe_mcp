@@ -151,6 +151,9 @@ async def set_project(
     # Quick emoji/agent settings (for convenience)
     emoji: Optional[str] = None,  # Default emoji for the project
     project_agent: Optional[str] = None,  # Default agent for the project (alias for agent_id)
+    # Bridge management (Phase 3)
+    bridge_id: Optional[str] = None,  # ID of bridge that owns this project
+    bridge_managed: bool = False,  # Whether this project is bridge-managed
     # Output formatting
     format: str = "readable",  # Output format: readable, structured, compact
 ) -> Dict[str, Any]:
@@ -215,8 +218,9 @@ async def set_project(
             tags = [tags]  # Fallback: treat as single item
 
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
+    context_root = _get_context_repo_root()
     try:
-        resolved_root = _resolve_root(root)
+        resolved_root = _resolve_root(root, context_root, skip_validation)
     except ValueError as exc:
         return _SET_PROJECT_HELPER.apply_context_payload(
             _SET_PROJECT_HELPER.error_response(str(exc)),
@@ -287,10 +291,14 @@ async def set_project(
     backend = server_module.storage_backend
     project_record = None
     if backend:
+        import json as _json
         project_record = await backend.upsert_project(
             name=name,
             repo_root=str(resolved_root),
             progress_log_path=str(resolved_log),
+            docs_json=_json.dumps(docs),  # Persist docs mapping to DB
+            bridge_id=bridge_id,
+            bridge_managed=bridge_managed,
         )
 
         # Parse docs_json from project_record and populate project_data meta
@@ -475,7 +483,15 @@ async def set_project(
             entry_count = await _count_log_entries(progress_log_path)
 
         # Use hash-based detection instead of entry_count for state determination
-        state, sitrep_message = detect_project_state(project_data, entry_count)
+        # Pass docs_were_generated flag to distinguish NEW vs EXISTING (SPEC-SET-001 fix)
+        # Note: generate_doc_templates returns "files" key, not "generated"
+        docs_were_generated = len(doc_result.get("files", [])) > 0
+        state, sitrep_message = detect_project_state(
+            project_data,
+            entry_count,
+            str(resolved_log),
+            docs_were_generated
+        )
         is_new = (state == "NEW")
 
         if is_new:
@@ -563,9 +579,28 @@ async def set_project(
     return _SET_PROJECT_HELPER.apply_context_payload(response, context_after)
 
 
-def _resolve_root(root: Optional[str]) -> Path:
+def _get_context_repo_root() -> Optional[Path]:
+    try:
+        context = server_module.get_execution_context()
+    except Exception:
+        context = None
+    if not context or not getattr(context, "repo_root", None):
+        return None
+    try:
+        return Path(str(context.repo_root)).expanduser().resolve()
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_root(root: Optional[str], context_root: Optional[Path], skip_validation: bool) -> Path:
     base = settings.project_root.resolve()
     if not root:
+        if context_root and context_root != base:
+            return context_root
+        if settings.require_explicit_root and not skip_validation:
+            raise ValueError(
+                "Explicit project root required. Pass root=... or provide context.repo_root."
+            )
         return base
 
     root_path = Path(root).expanduser()

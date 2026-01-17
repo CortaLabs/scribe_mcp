@@ -15,6 +15,7 @@ from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.shared.project_utils import detect_project_state
+from scribe_mcp.config.repo_config import get_current_repo_config
 
 
 MINIMAL_FIELDS = ("name", "root", "progress_log")
@@ -182,6 +183,8 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 async def list_projects(
     limit: Optional[int] = 5,  # Changed default to 5 for context safety
     filter: Optional[str] = None,
+    root: Optional[str] = None,  # Filter by repo root path (for bridge resolution)
+    global_mode: bool = False,  # NEW: Set True to list projects across ALL repos
     compact: bool = False,
     fields: Optional[List[str]] = None,
     include_test: bool = False,  # New parameter to control test project visibility
@@ -195,9 +198,14 @@ async def list_projects(
 ) -> Dict[str, Any]:
     """Return projects registered in the database or state cache with intelligent filtering.
 
+    By default, only returns projects scoped to the CURRENT REPOSITORY.
+    Use global_mode=True to see projects across all repositories.
+
     Args:
         limit: Maximum number of projects to return (default: 5 for context safety)
         filter: Filter projects by name (case-insensitive substring match)
+        root: Filter projects by repo root path (exact match, path-normalized)
+        global_mode: If True, list ALL projects across all repos. Default False = current repo only.
         compact: Use compact response format with short field names
         fields: Specific fields to include in response
         include_test: Include test/temp projects (default: False)
@@ -234,9 +242,29 @@ async def list_projects(
     state = await server_module.state_manager.load()
     projects_map: Dict[str, Dict[str, Any]] = {}
 
+    # Determine repo scope for query
+    # Priority: explicit root > auto-detect current repo > global if global_mode=True
+    effective_repo_root: Optional[str] = None
+    if root:
+        # Explicit root filter takes precedence
+        effective_repo_root = str(Path(root).resolve())
+    elif not global_mode:
+        # Default: scope to current repository
+        try:
+            current_repo_root, _ = get_current_repo_config()
+            effective_repo_root = str(current_repo_root)
+        except Exception:
+            # If repo detection fails, fall back to global (with warning)
+            pass
+
     backend = server_module.storage_backend
     if backend:
-        records = await backend.list_projects()
+        if effective_repo_root and hasattr(backend, "list_projects_by_repo"):
+            # Repo-scoped query (default behavior)
+            records = await backend.list_projects_by_repo(effective_repo_root)
+        else:
+            # Global query (explicit global_mode=True or fallback)
+            records = await backend.list_projects()
         for record in records:
             projects_map[record.name] = {
                 "name": record.name,
@@ -245,6 +273,12 @@ async def list_projects(
             }
 
     for name, data in state.projects.items():
+        # Skip projects from other repos when repo-scoped
+        if effective_repo_root and data.get("root"):
+            project_root = str(Path(data["root"]).resolve()) if data.get("root") else None
+            if project_root and project_root != effective_repo_root:
+                continue  # Skip projects from other repos
+
         existing = projects_map.get(name, {"name": name})
         if data.get("root"):
             existing["root"] = data["root"]
@@ -262,15 +296,18 @@ async def list_projects(
 
     active_project, current_name, recent = await load_active_project(server_module.state_manager)
     if active_project and active_project["name"] not in projects_map:
-        projects_map[active_project["name"]] = {
-            "name": active_project["name"],
-            "root": active_project.get("root"),
-            "progress_log": active_project.get("progress_log"),
-            "docs": active_project.get("docs"),
-            "defaults": active_project.get("defaults"),
-            "description": active_project.get("description"),
-            "tags": active_project.get("tags"),
-        }
+        # Only include active project if it belongs to current repo (when repo-scoped)
+        active_root = str(Path(active_project.get("root", "")).resolve()) if active_project.get("root") else None
+        if not effective_repo_root or (active_root and active_root == effective_repo_root):
+            projects_map[active_project["name"]] = {
+                "name": active_project["name"],
+                "root": active_project.get("root"),
+                "progress_log": active_project.get("progress_log"),
+                "docs": active_project.get("docs"),
+                "defaults": active_project.get("defaults"),
+                "description": active_project.get("description"),
+                "tags": active_project.get("tags"),
+            }
 
     # Enrich with Project Registry information (best-effort).
     for name, data in list(projects_map.items()):
@@ -318,7 +355,7 @@ async def list_projects(
         data["sitrep_message"] = sitrep_message
         data["entry_count"] = entry_count
 
-    # Convert to list and apply name/status/tag filters if provided
+    # Convert to list and apply name/root/status/tag filters if provided
     projects_list = list(projects_map.values())
     if filter:
         filter_lower = filter.lower()
@@ -326,6 +363,16 @@ async def list_projects(
             project for project in projects_list
             if filter_lower in project.get("name", "").lower()
         ]
+
+    # NEW: Filter by repo root path (exact match, path-normalized)
+    if root:
+        # Normalize the search path for consistent matching
+        normalized_search = str(Path(root).resolve()) if root else None
+        if normalized_search:
+            projects_list = [
+                project for project in projects_list
+                if project.get("root") and str(Path(project["root"]).resolve()) == normalized_search
+            ]
 
     if status:
         allowed_status = {s for s in status if isinstance(s, str)}
@@ -449,6 +496,7 @@ async def list_projects(
             # Route 1: No matches - helpful empty state
             filter_info = {
                 "name": filter,
+                "root": root,
                 "status": status,
                 "tags": tags
             }
@@ -510,6 +558,7 @@ async def list_projects(
             }
             filter_info = {
                 "name": filter,
+                "root": root,
                 "status": status,
                 "tags": tags,
                 "order_by": order_by,
@@ -538,6 +587,66 @@ async def list_projects(
             return await default_formatter.finalize_tool_response(response, format="readable", tool_name="list_projects")
 
     # For structured/compact formats, continue with existing logic
+
+    # PHASE 2: Implement true compact mode (BUG-COMPACT-001 fix)
+    if format == "compact":
+        # Compact mode: abbreviated keys, minimal fields, omit nulls
+        compact_projects = []
+        for project in formatted_projects:
+            compact_proj = {"n": project.get("name")}
+
+            # Only include non-null values
+            if project.get("status"):
+                compact_proj["s"] = project["status"]
+            if project.get("entry_count") or project.get("total_entries"):
+                compact_proj["e"] = project.get("entry_count", project.get("total_entries", 0))
+            if project.get("last_entry_at"):
+                compact_proj["a"] = project["last_entry_at"]
+
+            compact_projects.append(compact_proj)
+
+        # Minimal pagination info
+        compact_pagination = {
+            "i": pagination_info["page"],
+            "sz": pagination_info["page_size"],
+            "nx": pagination_info.get("has_next", False),
+            "pv": pagination_info.get("has_prev", False)
+        }
+
+        # Return minimal response without context payload bloat
+        return {
+            "p": compact_projects,
+            "tot": total_available,
+            "pg": compact_pagination
+        }
+
+    # PHASE 3: Structured mode optimization - remove unnecessary fields
+    if format == "structured":
+        # Keep only essential fields per spec
+        structured_projects = []
+        for project in formatted_projects:
+            structured_proj = {
+                "name": project.get("name"),
+                "status": project.get("status"),
+                "entries": project.get("entry_count", project.get("total_entries", 0))
+            }
+            # Only include last_entry_at if it exists
+            if project.get("last_entry_at"):
+                structured_proj["last_entry_at"] = project["last_entry_at"]
+            structured_projects.append(structured_proj)
+
+        # Return optimized response without bloat
+        return {
+            "projects": structured_projects,
+            "total": total_available,
+            "pagination": {
+                "page": pagination_info["page"],
+                "size": pagination_info["page_size"],
+                "has_next": pagination_info.get("has_next", False)
+            }
+        }
+
+    # Legacy fallback for backward compatibility (compact parameter, not format)
     token_check = context_manager.token_guard.check_limits(
         {"projects": formatted_projects, "count": len(formatted_projects)}
     )

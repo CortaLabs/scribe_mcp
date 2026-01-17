@@ -95,7 +95,20 @@ def _matches_any(path_str: str, patterns: Iterable[str]) -> bool:
     return False
 
 
-def _enforce_path_policy(path: Path, repo_root: Path) -> Optional[str]:
+def _is_external_skill_path(path: Path) -> bool:
+    parts = [part for part in _normalize_path(str(path)).split("/") if part]
+    for idx, part in enumerate(parts[:-1]):
+        if part in {".claude", ".codex"} and parts[idx + 1] == "skills":
+            return True
+    return False
+
+
+def _enforce_path_policy(
+    path: Path,
+    repo_root: Path,
+    *,
+    allow_outside_repo: bool = False,
+) -> Optional[str]:
     config = _load_sentinel_config(repo_root)
     allowlist = _normalize_patterns(config.get("allowlist"))
     denylist = _normalize_patterns(config.get("denylist")) or list(_DEFAULT_DENYLIST)
@@ -109,8 +122,13 @@ def _enforce_path_policy(path: Path, repo_root: Path) -> Optional[str]:
     if _matches_any(abs_path, denylist) or (rel_path and _matches_any(rel_path, denylist)):
         return "denylist_match"
 
-    if rel_path is None and not _matches_any(abs_path, allowlist):
-        return "absolute_path_not_allowlisted"
+    if rel_path is None:
+        if _is_external_skill_path(path):
+            return None
+        if allow_outside_repo:
+            return None
+        if not _matches_any(abs_path, allowlist):
+            return "absolute_path_not_allowlisted"
 
     if rel_path is not None:
         return None
@@ -1652,35 +1670,24 @@ def _search_file(
 
 
 async def _log_project_read(context: ExecutionContext, message: str, meta: Dict[str, Any]) -> None:
-    log_context = await resolve_logging_context(
-        tool_name="read_file",
-        server_module=server_module,
-        agent_id=None,
-        require_project=False,
-    )
-    project = log_context.project or {}
-    progress_log = project.get("progress_log")
-    if not progress_log:
-        return
-    log_path = Path(progress_log)
-    if not log_path.name:
-        return
+    """DEPRECATED: Do not use. Tool events should not go to PROGRESS_LOG.
 
-    emoji = default_status_emoji(explicit=None, status="info", project=project)
-    line = compose_log_line(
-        emoji=emoji,
-        timestamp=context.timestamp_utc,
-        agent=context.agent_identity.instance_id,
-        project_name=project.get("name", "unknown"),
-        message=message,
-        meta_pairs=tuple((str(k), str(v)) for k, v in meta.items()),
+    This function previously wrote tool events (like read_file_error) to the project's
+    PROGRESS_LOG.md. This was incorrect because:
+    1. Progress logs should only contain agent prose/audit notes from append_entry
+    2. Tool events are logged to TOOL_LOG.jsonl via finalize_tool_response()
+
+    This function is kept for backward compatibility but should be removed in a future version.
+    """
+    # NO-OP: This function is deprecated and should not be called.
+    # Tool logging is handled by finalize_tool_response() → TOOL_LOG.jsonl
+    import warnings
+    warnings.warn(
+        "_log_project_read is deprecated. Tool events should not go to PROGRESS_LOG.",
+        DeprecationWarning,
+        stacklevel=2
     )
-    await append_line(
-        log_path,
-        line,
-        repo_root=Path(context.repo_root),
-        context={"component": "logs", "project_name": project.get("name")},
-    )
+    return  # Do nothing - tool events go to TOOL_LOG.jsonl, not PROGRESS_LOG
 
 
 @app.tool()
@@ -1707,6 +1714,7 @@ async def read_file(
     structure_filter: Optional[str] = None,  # Phase 5: Filter classes/functions by name (regex supported) in scan_only mode
     structure_page: int = 1,  # Phase 5: Page number for paginating structure results (methods, classes, functions)
     structure_page_size: int = 10,  # Phase 5: Items per page for structure pagination
+    allow_outside_repo: bool = False,  # Allow reads outside repo_root (denylist still enforced)
 ) -> Union[Dict[str, Any], str]:
     exec_context = server_module.get_execution_context()
     if exec_context is None:
@@ -1728,6 +1736,7 @@ async def read_file(
     except ValueError:
         rel_path = None
 
+    external_skill_path = _is_external_skill_path(target)
     audit_meta = {
         "execution_id": exec_context.execution_id,
         "session_id": exec_context.session_id,
@@ -1737,6 +1746,8 @@ async def read_file(
         "agent_sub_id": exec_context.agent_identity.sub_id,
         "agent_display_name": exec_context.agent_identity.display_name,
         "agent_model": exec_context.agent_identity.model,
+        "allow_outside_repo": bool(allow_outside_repo),
+        "external_skill_path": external_skill_path,
     }
 
     async def get_reminders(read_mode: str) -> List[Dict[str, Any]]:
@@ -1764,6 +1775,12 @@ async def read_file(
         )
 
     async def log_read(event_type: str, data: Dict[str, Any], *, include_md: bool = True) -> None:
+        """Log read_file events to sentinel log only.
+
+        NOTE: Tool events (read_file_error, scope_violation, etc.) should NOT go to
+        PROGRESS_LOG. Progress logs are for agent prose/audit notes via append_entry.
+        Tool logging is handled separately by finalize_tool_response() → TOOL_LOG.jsonl.
+        """
         payload = {**audit_meta, **data}
         if exec_context.mode == "sentinel":
             append_sentinel_event(
@@ -1773,14 +1790,14 @@ async def read_file(
                 log_type="sentinel",
                 include_md=include_md,
             )
-        else:
-            await _log_project_read(
-                exec_context,
-                message=event_type,
-                meta=payload,
-            )
+        # Non-sentinel mode: NO-OP - tool events go to TOOL_LOG.jsonl via finalize_tool_response()
+        # Previously this called _log_project_read() which incorrectly wrote to PROGRESS_LOG
 
-    policy_error = _enforce_path_policy(target, repo_root)
+    policy_error = _enforce_path_policy(
+        target,
+        repo_root,
+        allow_outside_repo=allow_outside_repo,
+    )
     if policy_error:
         await log_read(
             "scope_violation",
@@ -2013,6 +2030,14 @@ async def read_file(
                 "read_range": f"read_file(path='{rel_path or target}', mode='line_range', start_line=1, end_line=50)",
             }
         }
+
+        # Add hint for advanced analysis (dependencies, impact, boundaries)
+        if not include_dependencies:
+            response["advanced_analysis_hint"] = {
+                "message": "For dependency analysis, boundary checking, and impact radius, add include_dependencies=True",
+                "example": f"read_file(path='{rel_path or target}', mode='scan_only', include_dependencies=True)",
+                "features": ["import resolution", "boundary violation detection", "impact radius (with include_impact=True)"]
+            }
 
         # SKILL.md special detection (Option B - urgent read indicator)
         if target.name == "SKILL.md":
