@@ -102,41 +102,41 @@ async def resolve_logging_context(
                         f.write(f"project_name from DB: {project_name}\n")
                     if project_name:
                         # Try database registry first (projects may not have JSON config files)
-                        # CRITICAL FIX: Use backend._fetchone() instead of sqlite3.connect()
-                        # to avoid connection isolation in WAL mode (Bug Fix #3)
+                        # CRITICAL FIX (Bug Fix #3): Resolve via StorageBackend APIs (not ad-hoc sqlite3.connect()
+                        # or direct SQL in tool code) to avoid connection isolation issues in WAL mode.
                         try:
-                            row = await backend._fetchone(
-                                "SELECT name, repo_root, progress_log_path, docs_json FROM scribe_projects WHERE name = ?",
-                                (project_name,)
-                            )
-                            if row:
+                            record = None
+                            if hasattr(backend, "fetch_project"):
+                                record = await backend.fetch_project(project_name)
+                            if record:
                                 session_project = {
-                                    "name": row["name"],
-                                    "root": row["repo_root"],
-                                    "progress_log": row["progress_log_path"],
+                                    "name": record.name,
+                                    "root": record.repo_root,
+                                    "progress_log": record.progress_log_path,
                                 }
 
-                                # Parse and add docs field from docs_json column
-                                if row["docs_json"]:
+                                if getattr(record, "docs_json", None):
                                     try:
-                                        session_project["docs"] = json.loads(row["docs_json"])
-                                    except (json.JSONDecodeError, TypeError) as e:
-                                        # Log warning but don't fail - fallback to state.json will work
-                                        import logging
-                                        logger = logging.getLogger(__name__)
-                                        logger.warning(f"Failed to parse docs_json for {row['name']}: {e}")
+                                        session_project["docs"] = json.loads(record.docs_json)
+                                    except (json.JSONDecodeError, TypeError):
+                                        pass
 
                                 with open(debug_log, "a") as f:
-                                    f.write(f"session_project from scribe_projects table: {session_project.get('name')}\n")
+                                    f.write(
+                                        f"session_project from storage backend: {session_project.get('name')}\n"
+                                    )
                             else:
                                 # Fallback to JSON config files for legacy projects
                                 from scribe_mcp.tools.project_utils import load_project_config
+
                                 session_project = load_project_config(project_name)
                                 with open(debug_log, "a") as f:
-                                    f.write(f"session_project from config: {session_project.get('name') if session_project else None}\n")
+                                    f.write(
+                                        f"session_project from config: {session_project.get('name') if session_project else None}\n"
+                                    )
                         except Exception as e:
                             with open(debug_log, "a") as f:
-                                f.write(f"ERROR querying scribe_projects: {e}\n")
+                                f.write(f"ERROR resolving session project: {e}\n")
                             # Fallback to JSON config on error
                             from scribe_mcp.tools.project_utils import load_project_config
                             session_project = load_project_config(project_name)
@@ -154,6 +154,26 @@ async def resolve_logging_context(
                     f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
                     f.write(f"session_key_fallback: {session_key_fallback}\n")
                     f.write(f"session_project from state: {session_project.get('name') if session_project else None}\n")
+
+            # REPO SCOPING: Verify session project belongs to current repo
+            if session_project and session_project.get("root"):
+                try:
+                    from scribe_mcp.config.repo_config import get_current_repo_config
+                    current_repo_root, _ = get_current_repo_config()
+                    project_root = Path(session_project["root"]).resolve()
+                    if project_root != current_repo_root:
+                        # Session project is from different repo - clear it
+                        debug_log = Path("/tmp/scribe_session_debug.log")
+                        with open(debug_log, "a") as f:
+                            f.write(f"\n=== SESSION PROJECT BLOCKED (cross-repo) ===\n")
+                            f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
+                            f.write(f"session_project: {session_project.get('name')}\n")
+                            f.write(f"project_root: {project_root}\n")
+                            f.write(f"current_repo: {current_repo_root}\n")
+                        session_project = None
+                except Exception:
+                    pass  # If repo detection fails, allow (backwards compat)
+
             if session_project:
                 project = dict(session_project)
                 recent_projects = [project.get("name")] if project.get("name") else []
@@ -165,22 +185,47 @@ async def resolve_logging_context(
         except Exception:
             pass
 
+    # EXPLICIT PROJECT OVERRIDE: If caller specifies a project, use it (cross-project support).
+    # This takes precedence over session project to enable agents targeting other projects.
+    if explicit_project:
+        backend = getattr(server_module, "storage_backend", None)
+        record = None
+        if backend and hasattr(backend, "fetch_project"):
+            try:
+                record = await backend.fetch_project(explicit_project)
+            except Exception:
+                record = None
+
+        if record:
+            project = {
+                "name": record.name,
+                "root": record.repo_root,
+                "progress_log": record.progress_log_path,
+            }
+            if getattr(record, "docs_json", None):
+                try:
+                    project["docs"] = json.loads(record.docs_json)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            recent_projects = [project["name"]]
+        else:
+            from scribe_mcp.tools.project_utils import load_project_config  # Lazy import.
+
+            explicit_resolved = load_project_config(explicit_project)
+            if explicit_resolved:
+                project = explicit_resolved
+                recent_projects = [project["name"]]
+            # If explicit project not found, fall through to other resolution methods
+
     # Primary path: agent-specific context if an agent_id is available.
     if agent_id and not project:
         from scribe_mcp.tools.agent_project_utils import get_agent_project_data  # Imported lazily to avoid circular import.
 
         project, recent_projects = await get_agent_project_data(agent_id)
 
-    # Fallback to explicit project request (e.g., query_entries search scopes).
-    if not project and explicit_project:
-        from scribe_mcp.tools.project_utils import load_project_config  # Lazy import.
-
-        project = load_project_config(explicit_project)
-        if project:
-            # Maintain recent projects ordering with requested name first.
-            recent_projects = [project["name"]]
-
-    # Sentinel mode must never resolve project context from global state.
+    # Sentinel mode: allow explicit project targeting, but never resolve from global state.
+    # If explicit project was provided and resolved, allow it (enables cross-project docs).
+    # Dual-write: when sentinel targets a project, also log to sentinel log for audit trail.
     if exec_context and getattr(exec_context, "mode", None) == "sentinel":
         if not recent_projects:
             try:
@@ -188,9 +233,25 @@ async def resolve_logging_context(
                 recent_projects = list(state.recent_projects)[:10]
             except Exception:
                 recent_projects = []
+
+        # If explicit project was resolved, allow it (cross-project capability)
+        if project:
+            # Mark for dual-write: sentinel should also log to sentinel log
+            state_snapshot["_sentinel_dual_write"] = True
+            state_snapshot["_sentinel_target_project"] = project.get("name", "unknown")
+            return LoggingContext(
+                tool_name=tool_name,
+                project=project,
+                recent_projects=recent_projects,
+                state_snapshot=state_snapshot,
+                reminders=[],
+                agent_id=agent_id,
+            )
+
+        # No explicit project - require_project determines behavior
         if require_project:
             raise ProjectResolutionError(
-                "Project resolution forbidden in sentinel mode.",
+                "Project resolution forbidden in sentinel mode. Provide explicit 'project' parameter to target a specific project.",
                 recent_projects,
             )
         return LoggingContext(
@@ -219,10 +280,34 @@ async def resolve_logging_context(
         )
 
     # Final fallback: use the state's active project snapshot (legacy/no context).
+    # WARNING: This path uses GLOBAL state - only safe when scoped to current repo.
     if not project and not exec_context:
         from scribe_mcp.tools.project_utils import load_active_project, load_project_config  # Lazy import.
 
         active_project, active_name, recent = await load_active_project(server_module.state_manager)
+
+        # REPO SCOPING: Only use global fallback if project belongs to current repo
+        if active_project and active_project.get("root"):
+            try:
+                from scribe_mcp.config.repo_config import get_current_repo_config
+                current_repo_root, _ = get_current_repo_config()
+                project_root = Path(active_project["root"]).resolve()
+                if project_root != current_repo_root:
+                    # Project is from different repo - don't use it
+                    # Log this for debugging
+                    debug_log = Path("/tmp/scribe_session_debug.log")
+                    with open(debug_log, "a") as f:
+                        from datetime import datetime, timezone
+                        f.write(f"\n=== GLOBAL FALLBACK BLOCKED (cross-repo) ===\n")
+                        f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
+                        f.write(f"active_project: {active_name}\n")
+                        f.write(f"project_root: {project_root}\n")
+                        f.write(f"current_repo: {current_repo_root}\n")
+                    active_project = None
+                    active_name = None
+            except Exception:
+                pass  # If repo detection fails, allow fallback (backwards compat)
+
         project = active_project
         if recent_projects:
             # Ensure active project recents are appended without duplicates.

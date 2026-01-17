@@ -7,7 +7,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from scribe_mcp.storage.base import ConflictError
 from scribe_mcp.state.manager import StateManager
 
 
@@ -457,24 +456,29 @@ async def migrate_legacy_state(state_manager: StateManager, storage) -> None:
         state_manager: JSON state manager
         storage: Database storage backend
     """
-    # Check if migration is needed by looking for existing agent_projects
+    # Best-effort check: if the Scribe agent already has a project record, treat migration as done.
+    # Avoid direct SQL here; use the storage API surface so backends can vary.
     try:
-        # Try to fetch from agent_projects table to see if it exists and has data
-        result = await storage._fetchone("SELECT COUNT(*) as count FROM agent_projects")
-        if result and result.get("count", 0) > 0:
-            return  # Already migrated
+        existing = await storage.get_agent_project("Scribe")
+        if existing and existing.get("project_name"):
+            return
     except Exception:
-        # Table doesn't exist yet, will be created on setup
+        # Table may not exist yet (first run) or backend may not support agent-scoped state.
         pass
 
     # Get legacy state
     legacy_state = await state_manager.load()
     if legacy_state.current_project:
         # Create default agent session for "Scribe"
-        from scribe_mcp.state.agent_manager import init_agent_context_manager
         manager = init_agent_context_manager(storage, state_manager)
 
-        session_id = await manager.start_session("Scribe", {"migrated": True, "legacy_project": legacy_state.current_project})
+        session_id = await manager.start_session(
+            "Scribe",
+            metadata={
+                "migrated": True,
+                "legacy_project": legacy_state.current_project,
+            },
+        )
 
         # Create the legacy project in database if it doesn't exist
         try:

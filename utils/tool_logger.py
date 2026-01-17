@@ -46,14 +46,34 @@ def _append_jsonl_line(path: Path, line: str) -> None:
         os.fsync(f.fileno())
 
 
-def get_tool_log_path() -> Path:
+def get_tool_log_path(
+    repo_root: Optional[Path] = None,
+    project_name: Optional[str] = None,
+    progress_log_path: Optional[str] = None
+) -> Path:
     """
     Get path to TOOL_LOG.jsonl file.
 
+    Args:
+        repo_root: Optional repository root.
+        project_name: Optional project name (only used for logging, not path construction).
+        progress_log_path: Optional path to project's PROGRESS_LOG.md - TOOL_LOG goes in same directory.
+                          This ensures consistent slugification (uses same path as set_project created).
+
     Returns:
-        Path to .scribe/logs/TOOL_LOG.jsonl
+        Path to TOOL_LOG.jsonl in the appropriate location:
+        - With progress_log_path: {progress_log_dir}/TOOL_LOG.jsonl (same dir as PROGRESS_LOG.md)
+        - Sentinel/no project: {repo_root}/.scribe/logs/TOOL_LOG.jsonl
+        - Fallback: {SCRIBE_ROOT}/.scribe/logs/TOOL_LOG.jsonl
     """
-    return settings.project_root / ".scribe" / "logs" / "TOOL_LOG.jsonl"
+    # Priority 1: Use progress_log_path directory if provided (ensures correct slugification)
+    if progress_log_path:
+        progress_log = Path(progress_log_path)
+        return progress_log.parent / "TOOL_LOG.jsonl"
+
+    # Priority 2: Repo-level logs for sentinel mode or unknown projects
+    base = repo_root if repo_root else settings.project_root
+    return base / ".scribe" / "logs" / "TOOL_LOG.jsonl"
 
 
 # NOTE: extract_session_context() removed to avoid circular imports.
@@ -71,6 +91,8 @@ def log_tool_call(
     agent_id: Optional[str] = None,
     error_message: Optional[str] = None,
     response_size_bytes: Optional[int] = None,
+    repo_root: Optional[str] = None,
+    progress_log_path: Optional[str] = None,
 ) -> None:
     """
     Log tool call to JSONL without recursion.
@@ -79,7 +101,7 @@ def log_tool_call(
     CRITICAL: Synchronous function to avoid async complexity.
 
     Write strategy:
-    1. JSONL: Append to .scribe/logs/TOOL_LOG.jsonl via minimal inline function
+    1. JSONL: Append to project's dev_plans directory or repo-level .scribe/logs/
     2. SQL: Handled separately by finalize_tool_response after logging completes
 
     Graceful degradation: Log errors but never raise (tool logging can't break tools).
@@ -94,6 +116,9 @@ def log_tool_call(
         agent_id: Optional agent identifier
         error_message: Optional error details if status=error
         response_size_bytes: Optional response payload size for cost tracking
+        repo_root: Optional repository root path for sentinel/fallback mode.
+        progress_log_path: Optional path to project's PROGRESS_LOG.md - TOOL_LOG goes in same dir.
+                          This ensures consistent slugification with set_project.
 
     Returns:
         None - all errors are caught and logged to stderr
@@ -121,10 +146,14 @@ def log_tool_call(
         entry["error_message"] = error_message
     if response_size_bytes is not None:
         entry["response_size_bytes"] = response_size_bytes
+    if repo_root:
+        entry["repo_root"] = repo_root
 
     # Write to JSONL (always attempt this)
     try:
-        jsonl_path = get_tool_log_path()
+        # Resolve repo_root to Path if provided
+        root_path = Path(repo_root) if repo_root else None
+        jsonl_path = get_tool_log_path(root_path, project_name, progress_log_path)
         json_line = json.dumps(entry, ensure_ascii=False)
         _append_jsonl_line(jsonl_path, json_line)
 

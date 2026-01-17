@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Set, Union
 from jinja2 import (
     Environment,
     FileSystemLoader,
-    Template,
     TemplateNotFound,
     TemplateRuntimeError,
     TemplateSyntaxError,

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from scribe_mcp.doc_management.change_logger import ChangeLogger, ChangeRecord, DiffResult
+from scribe_mcp.doc_management.change_logger import ChangeLogger, DiffResult
 
 
 @dataclass

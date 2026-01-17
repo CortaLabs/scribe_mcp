@@ -69,9 +69,12 @@ class ReminderEngine:
     """Advanced reminder engine with localization and intelligent selection."""
 
     def __init__(self, config_path: Optional[str] = None, storage: Optional[Any] = None):
-        self.config_path = config_path or "config/reminder_config.json"
-        self.reminders_path: Optional[str] = None
-        self.rules_path: Optional[str] = None
+        # Resolve config path: try repo .scribe/config/ first, fallback to package config/
+        if config_path is None:
+            config_path = self._resolve_config_path()
+        self.config_path = config_path
+        self.reminders_path: Optional[Path] = None
+        self.rules_path: Optional[Path] = None
 
         self.config: Dict[str, Any] = {}
         self.reminders: Dict[str, Any] = {}
@@ -86,6 +89,28 @@ class ReminderEngine:
         self.storage = storage  # Injected storage backend for DB-based cooldown tracking
 
         self._load_configuration()
+
+    def _resolve_config_path(self) -> str:
+        """Resolve reminder config path with repo .scribe/config/ priority.
+
+        Search order:
+        1. repo_root/.scribe/config/reminder_config.json (repo-specific)
+        2. package config/reminder_config.json (package defaults)
+        """
+        # Try repo .scribe/config/ first
+        try:
+            from scribe_mcp.config.repo_config import RepoDiscovery
+            repo_root = RepoDiscovery.find_repo_root()
+            if repo_root:
+                repo_config = repo_root / ".scribe" / "config" / "reminder_config.json"
+                if repo_config.exists():
+                    return str(repo_config)
+        except Exception:
+            pass  # Fall through to package default
+
+        # Fallback to package config (resolved relative to package, not CWD)
+        package_config = settings.project_root / "config" / "reminder_config.json"
+        return str(package_config)
 
     def _load_configuration(self) -> None:
         """Load all configuration files."""
@@ -220,7 +245,7 @@ class ReminderEngine:
 
         return hashlib.md5("|".join(parts).encode()).hexdigest()
 
-    def _should_show_reminder(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
+    async def _should_show_reminder(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
         """Check if reminder should be shown based on rules.
 
         Failure-priority logic: When operation_status == "failure", cooldowns are bypassed
@@ -245,13 +270,12 @@ class ReminderEngine:
 
                 # Use DB if available, fallback to in-memory
                 if self.storage:
-                    import asyncio
                     session_id = reminder.variables.get("session_id", "")
-                    in_cooldown = asyncio.run(self.storage.check_reminder_cooldown(
+                    in_cooldown = await self.storage.check_reminder_cooldown(
                         session_id=session_id,
                         reminder_hash=reminder_hash,
                         cooldown_minutes=cooldown_minutes
-                    ))
+                    )
                     if in_cooldown:
                         return False
                 else:
@@ -392,33 +416,36 @@ class ReminderEngine:
                         candidates.append(reminder)
 
         # Add teaching reminders
-        teaching_reminders = self._generate_teaching_reminders(context)
+        teaching_reminders = await self._generate_teaching_reminders(context)
         candidates.extend(teaching_reminders)
 
         # Filter and select best reminders
-        selected = self._select_reminders(candidates, context)
+        selected = await self._select_reminders(candidates, context)
 
         # Track shown reminders
         for reminder in selected:
             reminder_hash = self._get_reminder_hash(reminder.key, reminder.variables)
 
-            # Use DB if available
+            # Use DB if available (best-effort; reminders should never block tool execution)
             if self.storage:
-                import asyncio
                 session_id = reminder.variables.get("session_id", "")
                 project_root = reminder.variables.get("project_root", "")
                 agent_id = reminder.variables.get("agent_id", "")
                 tool_name = reminder.variables.get("tool_name", "")
 
-                asyncio.run(self.storage.record_reminder_shown(
-                    session_id=session_id,
-                    reminder_hash=reminder_hash,
-                    project_root=project_root,
-                    agent_id=agent_id,
-                    tool_name=tool_name,
-                    reminder_key=reminder.key,
-                    operation_status=context.operation_status or "neutral"
-                ))
+                try:
+                    await self.storage.record_reminder_shown(
+                        session_id=session_id,
+                        reminder_hash=reminder_hash,
+                        project_root=project_root,
+                        agent_id=agent_id,
+                        tool_name=tool_name,
+                        reminder_key=reminder.key,
+                        operation_status=context.operation_status or "neutral",
+                    )
+                except Exception:
+                    # Fallback to in-memory (legacy) on storage errors.
+                    self.history.reminder_hashes[reminder_hash] = datetime.now(timezone.utc)
             else:
                 # Fallback to in-memory (legacy)
                 self.history.reminder_hashes[reminder_hash] = datetime.now(timezone.utc)
@@ -470,7 +497,7 @@ class ReminderEngine:
             cooldown_minutes=rule_data.get("cooldown_minutes", 0)
         )
 
-    def _generate_teaching_reminders(self, context: ReminderContext) -> List[ReminderInstance]:
+    async def _generate_teaching_reminders(self, context: ReminderContext) -> List[ReminderInstance]:
         """Generate teaching reminders based on context."""
         teaching = []
 
@@ -481,18 +508,21 @@ class ReminderEngine:
         for rule_name, rule_data in teaching_rules.items():
             if self._evaluate_rule_conditions(rule_data.get("triggers", []), context):
                 reminder = self._create_reminder_from_rule(rule_name, rule_data, context)
-                if reminder and self._should_show_reminder(reminder, context):
+                if reminder and await self._should_show_reminder(reminder, context):
                     teaching.append(reminder)
 
         return teaching
 
-    def _select_reminders(self, candidates: List[ReminderInstance], context: ReminderContext) -> List[ReminderInstance]:
+    async def _select_reminders(self, candidates: List[ReminderInstance], context: ReminderContext) -> List[ReminderInstance]:
         """Select the best reminders based on priority and rules."""
         if not candidates:
             return []
 
         # Filter out suppressed reminders
-        filtered = [r for r in candidates if self._should_show_reminder(r, context)]
+        filtered = []
+        for r in candidates:
+            if await self._should_show_reminder(r, context):
+                filtered.append(r)
 
         # Sort by priority
         priority_order = self.config.get("selection", {}).get("priority_order", [])

@@ -1079,6 +1079,15 @@ class ResponseFormatter:
                 for mode_name, example in list(examples.items())[:3]:
                     parts.append(f"     • {example}")
 
+        # Add advanced analysis hint if present (scan_only mode without dependencies)
+        adv_hint = data.get('advanced_analysis_hint')
+        if adv_hint and mode == 'scan_only':
+            parts.append("")
+            parts.append("🔬 Advanced Analysis:")
+            parts.append(f"   {adv_hint.get('message', '')}")
+            if adv_hint.get('example'):
+                parts.append(f"   Example: {adv_hint['example']}")
+
         # Add reminders if present
         reminders = data.get('reminders', [])
         if reminders:
@@ -1644,16 +1653,13 @@ class ResponseFormatter:
 
         lines = []
 
-        # Header box
-        header_text = f"📋 PROJECTS - {total_count} total (Page {page} of {total_pages}, showing {len(projects)})"
-        lines.append(f"{CYAN}╔{'═' * 58}╗{RESET}")
-        lines.append(f"{CYAN}║{RESET} {header_text:<56} {CYAN}║{RESET}")
-        lines.append(f"{CYAN}╚{'═' * 58}╝{RESET}")
+        # Header - simplified without box drawing
+        header_text = f"📋 Projects ({len(projects)}/{total_count}, page {page}/{total_pages})"
+        lines.append(header_text)
         lines.append("")
 
-        # Table headers
-        lines.append(f"{GREEN}NAME{' ' * 26}STATUS{' ' * 6}  ENTRIES  LAST ACTIVITY{RESET}")
-        lines.append("─" * 70)
+        # Table headers - no separator line
+        lines.append(f"{GREEN}NAME{' ' * 26}STATUS{' ' * 4}  ENTRIES  ACTIVITY{RESET}")
 
         # Table rows
         for project in projects:
@@ -1678,25 +1684,18 @@ class ResponseFormatter:
             # Entries column (8 chars, right-aligned)
             entries_col = f"{total_entries:>8}"
 
-            # Last activity column (15 chars)
+            # Last activity column (12 chars shortened)
             if last_entry_at:
                 activity = self._format_relative_time(last_entry_at)
             else:
                 activity = "never"
-            activity_col = f"{activity:<15}"
+            activity_col = f"{activity:<12}"
 
             lines.append(f"{name_col}{status_col}{entries_col}  {activity_col}")
 
         lines.append("")
 
-        # Footer: Pagination info
-        if total_pages > 1:
-            next_page = page + 1 if page < total_pages else page
-            lines.append(f"📄 Page {page} of {total_pages} | Use page={next_page} to see more")
-        else:
-            lines.append(f"📄 Page {page} of {total_pages}")
-
-        # Footer: Filter info
+        # Footer: Simplified pagination and filter info
         filter_parts = []
         if filters.get('name'):
             filter_parts.append(f"name=\"{filters['name']}\"")
@@ -1706,15 +1705,7 @@ class ResponseFormatter:
             filter_parts.append(f"tags={filters['tags']}")
         filter_str = " | ".join(filter_parts) if filter_parts else "none"
 
-        order_by = filters.get('order_by', 'last_entry_at')
-        direction = filters.get('direction', 'desc')
-        lines.append(f"🔍 Filter: {filter_str} | Sort: {order_by} ({direction})")
-
-        # Footer: Tip
-        if filters.get('name'):
-            lines.append("💡 Tip: Use filter=\"exact_name\" to see details")
-        else:
-            lines.append("💡 Tip: Add filter=\"scribe\" to narrow results, or filter=\"exact_name\" to see details")
+        lines.append(f"Page {page}/{total_pages} | filter: {filter_str}")
 
         return "\n".join(lines)
 
@@ -2417,42 +2408,109 @@ class ResponseFormatter:
 
     def _format_single_append_entry(self, data: Dict[str, Any], USE_COLORS: bool) -> str:
         """
-        Format single append_entry in concise 4-5 line format.
+        Format single append_entry in optimized readable format.
 
-        Format:
-        ✅ Entry written to progress log
+        SPEC-TOKEN-002 Optimization:
+        - Removed redundant "Entry written to progress log" prefix
+        - Removed redundant project name (already in context)
+        - Shortened timestamp to HH:MM UTC format
+        - Removed bracketed labels [ℹ️], [Agent:], [Project:]
+        - Using relative path (PROGRESS_LOG.md instead of full path)
+        - Filtering default metadata (priority=low, log_type=progress, content_type=log)
 
-           [ℹ️] [2026-01-03 02:46:00 UTC] [Agent: ResearchAgent] Investigation complete
+        New Format:
+        ✅ Investigation complete
+           14:34 UTC | ResearchAgent | phase=research; confidence=0.95
+        📁 PROGRESS_LOG.md
 
            Reasoning:
            ├─ Why: Need to understand append_entry structure
            ├─ What: Analyzed return values, usage patterns
            └─ How: Read source code, traced execution paths
 
-        📁 .scribe/docs/dev_plans/project/PROGRESS_LOG.md
-
         ⏰ Reminders:
            • It's been 15 minutes since the last log entry.
         """
         parts = []
 
-        # Line 1: Success indicator with project name
-        project_name = data.get('project_name', '')
+        # Parse the written_line to extract components
+        written_line = data.get('written_line', '')
+        meta = data.get('meta', {})
+
         if data.get('ok'):
-            if project_name:
-                parts.append(f"✅ Entry written to progress log ({project_name})")
-            else:
-                parts.append("✅ Entry written to progress log")
+            # Extract components from written_line
+            # Format: [emoji] [timestamp] [Agent: name] [Project: name] message | metadata
+            emoji_symbol = "✅"
+            message = ""
+            timestamp_short = ""
+            agent_name = ""
+            metadata_str = ""
+
+            if written_line:
+                # Extract emoji
+                import re
+                emoji_match = re.search(r'\[(.+?)\]', written_line)
+                if emoji_match:
+                    emoji_symbol = emoji_match.group(1)
+
+                # Extract timestamp and convert to HH:MM UTC
+                timestamp_match = re.search(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\]', written_line)
+                if timestamp_match:
+                    full_timestamp = timestamp_match.group(1)
+                    # Extract just HH:MM
+                    time_parts = full_timestamp.split(' ')[1]  # Get "HH:MM:SS"
+                    timestamp_short = time_parts[:5]  # Get "HH:MM"
+
+                # Extract agent name
+                agent_match = re.search(r'\[Agent: ([^\]]+)\]', written_line)
+                if agent_match:
+                    agent_name = agent_match.group(1)
+
+                # Extract message (everything after [Project: ...] and before |)
+                # Pattern: after last ] before | or end of line
+                project_match = re.search(r'\[Project: [^\]]+\]\s*(?:\[ID: [^\]]+\]\s*)?(.+?)(?:\s*\|\s*(.+))?$', written_line)
+                if project_match:
+                    message = project_match.group(1).strip()
+                    metadata_str = project_match.group(2) if project_match.group(2) else ""
+
+                # Filter default metadata
+                if metadata_str:
+                    # Remove default metadata: priority=low, log_type=progress, content_type=log
+                    meta_pairs = [pair.strip() for pair in metadata_str.split(';')]
+                    filtered_pairs = [
+                        pair for pair in meta_pairs
+                        if not any(default in pair for default in [
+                            'priority=low',
+                            'priority=medium',  # Filter medium too as it's default
+                            'log_type=progress',
+                            'content_type=log'
+                        ])
+                    ]
+                    metadata_str = '; '.join(filtered_pairs) if filtered_pairs else ""
+
+            # Line 1: Just emoji and message
+            parts.append(f"{emoji_symbol} {message}")
+
+            # Line 2: Compact metadata line with timestamp, agent, and custom metadata
+            # Only show if there's custom metadata or reasoning block
+            metadata_line_parts = []
+            if timestamp_short:
+                metadata_line_parts.append(f"{timestamp_short} UTC")
+            if agent_name:
+                metadata_line_parts.append(agent_name)
+            if metadata_str:
+                metadata_line_parts.append(metadata_str)
+
+            # Only add metadata line if there's custom metadata beyond timestamp/agent
+            # OR if there will be a reasoning block (to maintain context)
+            has_reasoning = self._parse_reasoning_block(meta) is not None
+
+            if metadata_line_parts and (metadata_str or has_reasoning):
+                parts.append(f"   {' | '.join(metadata_line_parts)}")
         else:
             parts.append("❌ Entry write failed")
 
-        # Line 2: Written line content (indented, subtle)
-        written_line = data.get('written_line', '')
-        if written_line:
-            parts.append(f"   {written_line}")
-
         # Reasoning block (if present in metadata)
-        meta = data.get('meta', {})
         reasoning = self._parse_reasoning_block(meta)
         if reasoning:
             parts.append("")  # Blank line before reasoning
@@ -2464,18 +2522,13 @@ class ResponseFormatter:
             if reasoning.get('how'):
                 parts.append(f"   └─ How: {reasoning['how']}")
 
-        # Blank line
-        parts.append("")
-
-        # Path (with folder emoji)
+        # Path - just filename (PROGRESS_LOG.md) for maximum conciseness
         path = data.get('path', '')
         if path:
-            # Make path repo-relative for conciseness
-            if '/MCP_SPINE/scribe_mcp/' in path:
-                path = path.split('/MCP_SPINE/scribe_mcp/', 1)[1]
-            elif '/.scribe/' in path:
-                path = '.' + path.split('/.scribe/', 1)[1].replace('/.scribe/', '.scribe/')
-            parts.append(f"📁 {path}")
+            # Extract just the filename
+            from pathlib import Path as PathLib
+            path_obj = PathLib(path)
+            parts.append(f"📁 {path_obj.name}")
 
         # Reminders section (ONLY if reminders present)
         reminders = data.get('reminders', [])
@@ -2662,6 +2715,7 @@ class ResponseFormatter:
             session_id = "unknown"
             project_name = None
             agent_id = None
+            repo_root = None  # Will be resolved below
 
             try:
                 import server as server_module
@@ -2681,6 +2735,39 @@ class ResponseFormatter:
                 # Context extraction failed, use defaults (session_id="unknown")
                 pass
 
+            # STEP 1.1: Resolve repo_root and progress_log_path for per-project tool logging
+            # Priority: 1) Project's progress_log_path from DB (ensures correct slugification)
+            #           2) Current repo root for sentinel mode
+            #           3) None (falls back to SCRIBE_ROOT)
+            progress_log_path = None
+            try:
+                import server as server_module
+                storage = getattr(server_module, 'storage_backend', None)
+
+                # Try to get project details from DB
+                if project_name and storage and hasattr(storage, 'fetch_project_sync'):
+                    try:
+                        project_record = storage.fetch_project_sync(project_name)
+                        if project_record:
+                            if hasattr(project_record, 'repo_root') and project_record.repo_root:
+                                repo_root = project_record.repo_root
+                            if hasattr(project_record, 'progress_log_path') and project_record.progress_log_path:
+                                progress_log_path = project_record.progress_log_path
+                    except Exception:
+                        pass  # Project lookup failed, continue to fallback
+
+                # Fallback: use current repo root from repo_config
+                if not repo_root:
+                    try:
+                        from config.repo_config import get_current_repo_config
+                        current_repo_root, _ = get_current_repo_config()
+                        if current_repo_root:
+                            repo_root = str(current_repo_root)
+                    except Exception:
+                        pass  # Repo config failed, repo_root stays None (uses SCRIBE_ROOT)
+            except Exception:
+                pass  # resolution failed entirely, stays None
+
             # Calculate response size for metrics
             import json
             response_size = len(json.dumps(data)) if isinstance(data, dict) else 0
@@ -2694,7 +2781,9 @@ class ResponseFormatter:
                 project_name=project_name,
                 agent_id=agent_id,
                 error_message=data.get('error') if not data.get('ok', True) else None,
-                response_size_bytes=response_size
+                response_size_bytes=response_size,
+                repo_root=repo_root,
+                progress_log_path=progress_log_path
             )
 
             # STEP 1.5: Write to SQL for cross-project analytics
@@ -2716,7 +2805,8 @@ class ResponseFormatter:
                         project_name=project_name,
                         agent_id=agent_id,
                         error_message=data.get('error') if not data.get('ok', True) else None,
-                        response_size_bytes=response_size
+                        response_size_bytes=response_size,
+                        repo_root=repo_root
                     ))
             except Exception as e:
                 # SQL logging is optional, never block tools
@@ -2910,3 +3000,224 @@ def create_pagination_info(page: int, page_size: int, total_count: int) -> Pagin
 
 # Default formatter instance
 default_formatter = ResponseFormatter()
+
+
+# ============================================================================
+# SPEC-TOKEN-003: Global Optimization Utilities
+# ============================================================================
+
+
+def format_compact_json(
+    data: dict,
+    abbreviations: Optional[dict] = None
+) -> str:
+    """
+    Format JSON with abbreviated keys for compact mode.
+
+    This function implements Pattern 2 from SPEC-TOKEN-003: Verbose JSON Keys.
+    Reduces JSON output size by 20-40% through key abbreviation.
+
+    Args:
+        data: Data dictionary to format
+        abbreviations: Custom abbreviation mappings (optional, uses global defaults)
+
+    Returns:
+        Compact JSON string with abbreviated keys
+
+    Examples:
+        >>> data = {"projects": [{"name": "test", "status": "planning"}], "total_count": 1}
+        >>> format_compact_json(data)
+        '{"p":[{"n":"test","s":"planning"}],"tot":1}'
+    """
+    # Global abbreviation mappings (SPEC-TOKEN-003)
+    default_abbreviations = {
+        # Common metadata
+        "ok": "ok",  # Already minimal
+        "status": "s",
+        "message": "msg",
+        "error": "err",
+
+        # Project fields
+        "project": "proj",
+        "projects": "p",
+        "name": "n",
+        "root": "r",
+        "progress_log": "log",
+
+        # Pagination
+        "pagination": "pg",
+        "page": "i",
+        "page_size": "sz",
+        "total_count": "tot",
+        "has_next": "nx",
+        "has_prev": "pv",
+
+        # Timestamps
+        "timestamp": "ts",
+        "created_at": "cr",
+        "updated_at": "up",
+        "last_activity": "act",
+
+        # Entries
+        "entries": "e",
+        "count": "c",
+        "results": "r",
+
+        # Metadata
+        "metadata": "meta",
+        "confidence": "conf",
+        "priority": "pri",
+        "category": "cat",
+    }
+
+    # Merge custom abbreviations if provided
+    abbrev_map = default_abbreviations.copy()
+    if abbreviations:
+        abbrev_map.update(abbreviations)
+
+    def abbreviate_dict(obj):
+        """Recursively abbreviate dictionary keys."""
+        if isinstance(obj, dict):
+            return {
+                abbrev_map.get(k, k): abbreviate_dict(v)
+                for k, v in obj.items()
+            }
+        elif isinstance(obj, list):
+            return [abbreviate_dict(item) for item in obj]
+        else:
+            return obj
+
+    abbreviated = abbreviate_dict(data)
+    return json.dumps(abbreviated, separators=(',', ':'))
+
+
+def format_header(
+    title: str,
+    emoji: Optional[str] = None,
+    metadata: Optional[str] = None,
+    verbosity: int = 1,
+    box_drawing: Optional[bool] = None
+) -> str:
+    """
+    Format header based on verbosity level.
+
+    This function implements Pattern 3 from SPEC-TOKEN-003: Box Drawing Overhead.
+    Reduces header token consumption by 15-30 tokens per output.
+
+    Args:
+        title: Header text
+        emoji: Optional emoji prefix
+        metadata: Optional metadata string (count, page info, etc.)
+        verbosity: Output verbosity level
+            - 0 (minimal): "{emoji} {title}"
+            - 1 (standard): "{emoji} {title} ({metadata})"
+            - 2 (verbose): Box drawing with full details
+        box_drawing: Force enable/disable box drawing (overrides verbosity)
+
+    Returns:
+        Formatted header string
+
+    Examples:
+        >>> format_header("Projects", emoji="📋", metadata="3/109, page 1/37", verbosity=0)
+        '📋 Projects'
+
+        >>> format_header("Projects", emoji="📋", metadata="3/109, page 1/37", verbosity=1)
+        '📋 Projects (3/109, page 1/37)'
+
+        >>> format_header("Projects", emoji="📋", metadata="109 total (Page 1 of 37, showing 3)", verbosity=2)
+        '╔══════════════════════════════════════════════════════════╗\\n║ 📋 PROJECTS - 109 total (Page 1 of 37, showing 3)         ║\\n╚══════════════════════════════════════════════════════════╝'
+    """
+    # Determine if box drawing should be used
+    use_box = box_drawing if box_drawing is not None else (verbosity >= 2)
+
+    # If box drawing explicitly requested, use it regardless of verbosity
+    if use_box:
+        # Build header text
+        header_parts = []
+        if emoji:
+            header_parts.append(emoji)
+        header_parts.append(title.upper())
+        if metadata:
+            header_parts.append("-")
+            header_parts.append(metadata)
+
+        header_text = " ".join(header_parts)
+
+        # Create box with padding
+        box_width = max(60, len(header_text) + 4)
+        top_line = "╔" + "═" * (box_width - 2) + "╗"
+        middle_line = f"║ {header_text:<{box_width - 4}} ║"
+        bottom_line = "╚" + "═" * (box_width - 2) + "╝"
+
+        return f"{top_line}\n{middle_line}\n{bottom_line}"
+
+    # Verbosity 0: Minimal format
+    if verbosity == 0:
+        parts = []
+        if emoji:
+            parts.append(emoji)
+        parts.append(title)
+        return " ".join(parts)
+
+    # Verbosity 1: Standard format with metadata
+    if verbosity == 1:
+        parts = []
+        if emoji:
+            parts.append(emoji)
+        parts.append(title)
+        if metadata:
+            parts.append(f"({metadata})")
+        return " ".join(parts)
+
+    # Fallback: Standard format (verbosity 2 without box_drawing, or other edge cases)
+    parts = []
+    if emoji:
+        parts.append(emoji)
+    parts.append(title)
+    if metadata:
+        parts.append(f"({metadata})")
+    return " ".join(parts)
+
+
+def add_tip(
+    tip_text: str,
+    category: str = "general",
+    show_tips: Optional[bool] = None
+) -> str:
+    """
+    Conditionally add tip based on configuration.
+
+    This function implements Pattern 4 from SPEC-TOKEN-003: Unsolicited Tips.
+    Reduces unnecessary tip output by making tips opt-in via configuration.
+
+    Args:
+        tip_text: Tip content to display
+        category: Tip category (general, navigation, filtering, etc.)
+        show_tips: Override config setting (None = use config default)
+
+    Returns:
+        Formatted tip string or empty string if tips disabled
+
+    Examples:
+        >>> add_tip("Add filter='scribe' to narrow results", show_tips=True)
+        '💡 Tip: Add filter='scribe' to narrow results'
+
+        >>> add_tip("Use verbosity=2 for more detail", show_tips=False)
+        ''
+    """
+    # Determine if tips should be shown
+    if show_tips is None:
+        # Try to load from config
+        try:
+            from scribe_mcp.config.repo_config import get_current_repo_config
+            _, config = get_current_repo_config()
+            show_tips = config.get("display", {}).get("show_tips", False)
+        except Exception:
+            # Default to False (tips off by default per SPEC-TOKEN-003)
+            show_tips = False
+
+    if not show_tips:
+        return ""
+
+    # Format and return tip
+    return f"💡 Tip: {tip_text}"

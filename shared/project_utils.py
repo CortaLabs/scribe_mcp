@@ -10,18 +10,20 @@ from typing import Dict, Tuple, Any, Optional
 
 def detect_project_state(
     project: Dict[str, Any],
-    entry_count: int
+    entry_count: int,
+    progress_log_path: Optional[str] = None,
+    docs_were_generated: bool = False
 ) -> Tuple[str, str]:
     """
     Detect project state using four-state logic with hash comparison.
 
     This function implements hash-based project state detection to fix BUG-001,
     where projects were incorrectly marked as "NEW" after log rotation due to
-    relying on entry_count == 0 instead of baseline hash presence.
+    relying on entry_count == 0 instead of document generation status.
 
     States:
-    - NEW: No baseline hashes AND no entries (truly new project)
-    - EXISTING_LEGACY: No baseline BUT has entries (pre-hash-tracking projects)
+    - NEW: No baseline hashes AND docs were just generated (truly new project)
+    - EXISTING_LEGACY: No baseline BUT docs already existed (pre-hash-tracking or rotated)
     - UNCHANGED: Baseline exists AND baseline == current (no doc modifications)
     - MODIFIED: Baseline exists AND baseline != current (docs changed since baseline)
 
@@ -31,6 +33,8 @@ def detect_project_state(
             - meta.docs.current_hashes: Dict of current doc hashes
             - meta.docs.flags: Dict of modification flags (e.g., architecture_modified)
         entry_count: Number of progress log entries (from backend.count_entries())
+        progress_log_path: Optional path to progress log file (unused, kept for compatibility)
+        docs_were_generated: True if docs were just created in this call, False if they existed
 
     Returns:
         (state, sitrep_message) tuple where:
@@ -80,13 +84,17 @@ def detect_project_state(
 
     # Four-state detection logic
     if not baseline_hashes:
-        # No baseline hashes exist
-        if entry_count == 0:
-            # Truly new project: no baseline AND no entries
+        # No baseline hashes exist - use docs_were_generated to distinguish NEW vs EXISTING
+        # SPEC-SET-001 fix: Use document generation status, not entry_count==0
+        if docs_were_generated:
+            # Documents were just created in this call - truly NEW project
             return ("NEW", "🆕 New project initialized")
         else:
-            # Legacy project: has entries but no baseline (pre-hash-tracking)
-            return ("EXISTING_LEGACY", f"📋 Existing project ({entry_count} entries, pre-hash-tracking)")
+            # Documents already existed - EXISTING project (may be post-rotation or legacy)
+            if entry_count == 0:
+                return ("EXISTING_LEGACY", f"📋 Existing project (0 entries, post-rotation or pre-hash-tracking)")
+            else:
+                return ("EXISTING_LEGACY", f"📋 Existing project ({entry_count} entries, pre-hash-tracking)")
     else:
         # Baseline hashes exist - compare with current
         if baseline_hashes == current_hashes:
