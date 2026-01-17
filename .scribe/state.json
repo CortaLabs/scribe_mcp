@@ -1226,9 +1226,9 @@
         "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "ArchitectAgent"
+        "agent": "Scribe Coder"
       },
-      "author": "ArchitectAgent",
+      "author": "Scribe Coder",
       "description": null,
       "tags": [],
       "meta": {
@@ -4490,9 +4490,9 @@
         "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "ArchitectAgent"
+        "agent": "Scribe Coder"
       },
-      "author": "ArchitectAgent",
+      "author": "Scribe Coder",
       "description": null,
       "tags": [],
       "meta": {
@@ -4642,23 +4642,31 @@
   "recent_tools": [
     {
       "name": "append_entry",
-      "ts": "2026-01-17 14:35:02 UTC"
+      "ts": "2026-01-17 21:38:19 UTC"
+    },
+    {
+      "name": "read_file",
+      "ts": "2026-01-17 21:38:08 UTC"
+    },
+    {
+      "name": "get_project",
+      "ts": "2026-01-17 21:37:12 UTC"
+    },
+    {
+      "name": "read_recent",
+      "ts": "2026-01-17 21:37:03 UTC"
     },
     {
       "name": "set_project",
-      "ts": "2026-01-17 14:25:13 UTC"
+      "ts": "2026-01-17 21:37:03 UTC"
+    },
+    {
+      "name": "list_projects",
+      "ts": "2026-01-17 21:36:49 UTC"
     },
     {
       "name": "manage_docs",
       "ts": "2026-01-17 14:25:10 UTC"
-    },
-    {
-      "name": "read_file",
-      "ts": "2026-01-17 14:22:55 UTC"
-    },
-    {
-      "name": "read_recent",
-      "ts": "2026-01-17 14:22:41 UTC"
     },
     {
       "name": "query_entries",
@@ -4669,21 +4677,13 @@
       "ts": "2026-01-17 14:00:16 UTC"
     },
     {
-      "name": "list_projects",
-      "ts": "2026-01-17 13:22:39 UTC"
-    },
-    {
-      "name": "get_project",
-      "ts": "2026-01-17 09:19:27 UTC"
-    },
-    {
       "name": "rotate_log",
       "ts": "2026-01-08 02:37:58 UTC"
     }
   ],
-  "last_activity_at": "2026-01-17 14:35:02 UTC",
-  "session_started_at": "2026-01-17 10:21:59 UTC",
-  "version": 776,
-  "last_updated_by": "ArchitectAgent",
-  "operation_timestamp": "2026-01-17 14:25:13 UTC"
+  "last_activity_at": "2026-01-17 21:38:19 UTC",
+  "session_started_at": "2026-01-17 21:36:43 UTC",
+  "version": 781,
+  "last_updated_by": "Scribe Coder",
+  "operation_timestamp": "2026-01-17 21:37:03 UTC"
 }
