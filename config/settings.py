@@ -72,6 +72,7 @@ class Settings:
     # Reminder system feature flags
     use_db_cooldown_tracking: bool
     use_session_aware_hashes: bool
+    require_explicit_root: bool
 
     @classmethod
     def load(cls) -> "Settings":
@@ -167,6 +168,9 @@ class Settings:
         use_session_aware_hashes = os.environ.get("SCRIBE_REMINDER_SESSION_HASH", "false").lower() in {
             "1", "true", "yes"
         }
+        require_explicit_root = os.environ.get("SCRIBE_REQUIRE_EXPLICIT_ROOT", "true").lower() in {
+            "1", "true", "yes"
+        }
 
         return cls(
             project_root=project_root,
@@ -204,6 +208,7 @@ class Settings:
             tokenizer_model=tokenizer_model,
             use_db_cooldown_tracking=use_db_cooldown_tracking,
             use_session_aware_hashes=use_session_aware_hashes,
+            require_explicit_root=require_explicit_root,
         )
 
 

@@ -52,23 +52,27 @@ class SQLiteStorage(StorageBackend):
         repo_root: str,
         progress_log_path: str,
         docs_json: Optional[str] = None,
+        bridge_id: Optional[str] = None,
+        bridge_managed: bool = False,
     ) -> ProjectRecord:
         await self._initialise()
         async with self._write_lock:
             await self._execute(
             """
-            INSERT INTO scribe_projects (name, repo_root, progress_log_path, docs_json)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO scribe_projects (name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(name)
             DO UPDATE SET repo_root = excluded.repo_root,
                           progress_log_path = excluded.progress_log_path,
-                          docs_json = excluded.docs_json;
+                          docs_json = excluded.docs_json,
+                          bridge_id = excluded.bridge_id,
+                          bridge_managed = excluded.bridge_managed;
             """,
-            (name, repo_root, progress_log_path, docs_json),
+            (name, repo_root, progress_log_path, docs_json, bridge_id, 1 if bridge_managed else 0),
         )
         row = await self._fetchone(
             """
-            SELECT id, name, repo_root, progress_log_path, docs_json
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
             FROM scribe_projects
             WHERE name = ?;
             """,
@@ -80,13 +84,15 @@ class SQLiteStorage(StorageBackend):
             repo_root=row["repo_root"],
             progress_log_path=row["progress_log_path"],
             docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+            bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+            bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
         )
 
     async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
         await self._initialise()
         row = await self._fetchone(
             """
-            SELECT id, name, repo_root, progress_log_path, docs_json
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
             FROM scribe_projects
             WHERE name = ?;
             """,
@@ -100,13 +106,61 @@ class SQLiteStorage(StorageBackend):
             repo_root=row["repo_root"],
             progress_log_path=row["progress_log_path"],
             docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+            bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+            bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
         )
+
+    def fetch_project_sync(self, name: str) -> Optional[ProjectRecord]:
+        """Synchronous version of fetch_project for use in finalize_tool_response.
+
+        This method is designed for tool logging where we need to resolve the
+        project's repo_root but can't use async/await. Uses synchronous sqlite3.
+
+        Args:
+            name: Project name to fetch
+
+        Returns:
+            ProjectRecord if found, None otherwise
+
+        Thread Safety:
+            Uses synchronous sqlite3 connection with WAL mode for safe concurrent access.
+        """
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self._path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+
+            cursor = conn.execute(
+                """
+                SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                FROM scribe_projects
+                WHERE name = ?;
+                """,
+                (name,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row:
+                return None
+            return ProjectRecord(
+                id=row["id"],
+                name=row["name"],
+                repo_root=row["repo_root"],
+                progress_log_path=row["progress_log_path"],
+                docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+                bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+                bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
+            )
+        except Exception:
+            return None
 
     async def list_projects(self) -> List[ProjectRecord]:
         await self._initialise()
         rows = await self._fetchall(
             """
-            SELECT id, name, repo_root, progress_log_path, docs_json
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
             FROM scribe_projects
             ORDER BY name;
             """
@@ -120,6 +174,46 @@ class SQLiteStorage(StorageBackend):
                     repo_root=row["repo_root"],
                     progress_log_path=row["progress_log_path"],
                     docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+                    bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+                    bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
+                )
+            )
+        return records
+
+    async def list_projects_by_repo(self, repo_root: str) -> List[ProjectRecord]:
+        """Return projects scoped to a specific repository root.
+
+        Args:
+            repo_root: Absolute path to repository root (will be normalized)
+
+        Returns:
+            List of projects whose repo_root matches the given path.
+        """
+        await self._initialise()
+        # Normalize the path for consistent matching
+        from pathlib import Path
+        normalized_root = str(Path(repo_root).resolve())
+
+        rows = await self._fetchall(
+            """
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+            FROM scribe_projects
+            WHERE repo_root = ?
+            ORDER BY name;
+            """,
+            (normalized_root,),
+        )
+        records: List[ProjectRecord] = []
+        for row in rows:
+            records.append(
+                ProjectRecord(
+                    id=row["id"],
+                    name=row["name"],
+                    repo_root=row["repo_root"],
+                    progress_log_path=row["progress_log_path"],
+                    docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+                    bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+                    bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
                 )
             )
         return records
@@ -174,6 +268,16 @@ class SQLiteStorage(StorageBackend):
 
             return remaining["count"] == 0
 
+    async def update_project_docs(self, name: str, docs_json: str) -> bool:
+        """Update only the docs_json field for a project."""
+        await self._initialise()
+        async with self._write_lock:
+            await self._execute(
+                "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
+                (docs_json, name),
+            )
+        return True
+
     async def insert_entry(
         self,
         *,
@@ -190,6 +294,7 @@ class SQLiteStorage(StorageBackend):
         category: Optional[str] = None,
         tags: Optional[str] = None,
         confidence: Optional[float] = None,
+        log_type: Optional[str] = None,
     ) -> None:
         await self._initialise()
         ts_iso = ts.isoformat()
@@ -207,12 +312,16 @@ class SQLiteStorage(StorageBackend):
             confidence = meta.get("confidence", 1.0)
         elif confidence is None:
             confidence = 1.0
+        if log_type is None and meta:
+            log_type = meta.get("log_type", "progress")
+        elif log_type is None:
+            log_type = "progress"
         async with self._write_lock:
             await self._execute(
                 """
                 INSERT OR IGNORE INTO scribe_entries
-                    (id, project_id, ts, emoji, agent, message, meta, raw_line, sha256, ts_iso, priority, category, tags, confidence)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    (id, project_id, ts, emoji, agent, message, meta, raw_line, sha256, ts_iso, priority, category, tags, confidence, log_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     entry_id,
@@ -229,6 +338,7 @@ class SQLiteStorage(StorageBackend):
                     category,
                     tags,
                     confidence,
+                    log_type,
                 ),
             )
             await self._execute(
@@ -377,6 +487,17 @@ class SQLiteStorage(StorageBackend):
         if min_confidence is not None:
             clauses.append("confidence >= ?")
             params.append(min_confidence)
+
+        # Add log_type filter (can be single string or list)
+        log_type = filters.get("log_type")
+        if log_type:
+            if isinstance(log_type, str):
+                clauses.append("log_type = ?")
+                params.append(log_type)
+            elif isinstance(log_type, (list, tuple)):
+                placeholders = ",".join("?" * len(log_type))
+                clauses.append(f"log_type IN ({placeholders})")
+                params.extend(log_type)
 
         where_clause = " AND ".join(clauses)
 
@@ -548,6 +669,17 @@ class SQLiteStorage(StorageBackend):
             clauses.append("confidence >= ?")
             params.append(min_confidence)
 
+        # Add log_type filter (can be single string or list)
+        log_type = filters.get("log_type")
+        if log_type:
+            if isinstance(log_type, str):
+                clauses.append("log_type = ?")
+                params.append(log_type)
+            elif isinstance(log_type, (list, tuple)):
+                placeholders = ",".join("?" * len(log_type))
+                clauses.append(f"log_type IN ({placeholders})")
+                params.extend(log_type)
+
         where_clause = " AND ".join(clauses)
         row = await self._fetchone(
             f"""
@@ -676,7 +808,8 @@ class SQLiteStorage(StorageBackend):
                         meta TEXT,
                         raw_line TEXT NOT NULL,
                         sha256 TEXT NOT NULL,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        log_type TEXT DEFAULT 'progress'
                     );
                     """,
                     """
@@ -1071,6 +1204,26 @@ class SQLiteStorage(StorageBackend):
                         VALUES (new.id, new.document_type, new.section_id, new.content);
                     END
                     """,
+                    # Bridge Registry Tables
+                    """
+                    CREATE TABLE IF NOT EXISTS scribe_bridges (
+                        bridge_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        version TEXT NOT NULL,
+                        manifest_json TEXT NOT NULL,
+                        state TEXT NOT NULL CHECK (state IN ('registered', 'active', 'inactive', 'error', 'unregistered')) DEFAULT 'registered',
+                        health_json TEXT,
+                        registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        last_health_check TEXT,
+                        last_error TEXT
+                    );
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_bridges_state ON scribe_bridges(state);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at);
+                    """,
                 ]
             )
             # Ensure legacy databases have the newer scribe_projects columns
@@ -1087,11 +1240,17 @@ class SQLiteStorage(StorageBackend):
             await self._ensure_column("scribe_projects", "last_status_change", "TEXT")
             await self._ensure_column("scribe_projects", "tags", "TEXT")
             await self._ensure_column("scribe_projects", "meta", "TEXT")
+            # Bridge ownership columns for Phase 3
+            await self._ensure_column("scribe_projects", "bridge_id", "TEXT")
+            await self._ensure_column("scribe_projects", "bridge_managed", "INTEGER DEFAULT 0")
+            await self._execute("CREATE INDEX IF NOT EXISTS idx_projects_bridge ON scribe_projects(bridge_id)", ())
             # Ensure scribe_entries has metadata columns for categorization and prioritization
             await self._ensure_column("scribe_entries", "priority", "TEXT")
             await self._ensure_column("scribe_entries", "category", "TEXT")
             await self._ensure_column("scribe_entries", "tags", "TEXT")
             await self._ensure_column("scribe_entries", "confidence", "REAL DEFAULT 1.0")
+            await self._ensure_column("scribe_entries", "log_type", "TEXT DEFAULT 'progress'")
+            # Note: Run scripts/backfill_log_type.py manually to populate log_type from meta
             await self._migrate_document_sections()
             await self._ensure_column("document_changes", "project_root", "TEXT")
             await self._ensure_column("document_changes", "file_path", "TEXT")
@@ -1108,6 +1267,11 @@ class SQLiteStorage(StorageBackend):
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_priority_ts ON scribe_entries(priority, ts_iso DESC);")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_category_ts ON scribe_entries(category, ts_iso DESC);")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);")
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_log_type ON scribe_entries(project_id, log_type, ts_iso DESC);")
+
+            # Migration: Add repo_root column to tool_calls for per-project/repo tool logging
+            await self._ensure_column("tool_calls", "repo_root", "TEXT")
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);")
 
             # Migration: Add docs_json column for manage_docs functionality (BUG-MANAGE-DOCS-001)
             await self.migrate_add_docs_json_column()
@@ -1119,6 +1283,30 @@ class SQLiteStorage(StorageBackend):
                 await self.backfill_docs_json_from_state(state_path)
 
             self._initialised = True
+
+    async def _backfill_log_type_from_meta(self) -> None:
+        """Backfill log_type column from meta JSON field for existing entries."""
+        await asyncio.to_thread(self._backfill_log_type_from_meta_sync)
+
+    def _backfill_log_type_from_meta_sync(self) -> None:
+        """Sync version of log_type backfill migration."""
+        conn = self._connect()
+        try:
+            # Update log_type from meta.log_type where it exists and log_type is still default
+            # This is idempotent - only updates entries where log_type hasn't been set properly
+            conn.execute("""
+                UPDATE scribe_entries
+                SET log_type = json_extract(meta, '$.log_type')
+                WHERE json_extract(meta, '$.log_type') IS NOT NULL
+                  AND (log_type IS NULL OR log_type = 'progress')
+                  AND json_extract(meta, '$.log_type') != 'progress';
+            """)
+            conn.commit()
+        except Exception:
+            # Silently ignore if migration fails (e.g., no entries, column doesn't exist yet)
+            pass
+        finally:
+            conn.close()
 
     async def _migrate_document_sections(self) -> None:
         await asyncio.to_thread(self._migrate_document_sections_sync)
@@ -2121,7 +2309,8 @@ class SQLiteStorage(StorageBackend):
         project_name: Optional[str] = None,
         agent_id: Optional[str] = None,
         error_message: Optional[str] = None,
-        response_size_bytes: Optional[int] = None
+        response_size_bytes: Optional[int] = None,
+        repo_root: Optional[str] = None
     ) -> None:
         """Record a tool call to the database for analytics.
 
@@ -2138,6 +2327,7 @@ class SQLiteStorage(StorageBackend):
             agent_id: Optional agent identifier
             error_message: Optional error details if status=error
             response_size_bytes: Optional response payload size for cost tracking
+            repo_root: Optional repository root path for per-repo tool logging
         """
         await self._initialise()
         async with self._write_lock:
@@ -2146,11 +2336,11 @@ class SQLiteStorage(StorageBackend):
                     """
                     INSERT INTO tool_calls (
                         session_id, tool_name, timestamp, duration_ms, status,
-                        format_requested, project_name, agent_id, error_message, response_size_bytes
-                    ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+                        format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
+                    ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (session_id, tool_name, duration_ms, status,
-                     format_requested, project_name, agent_id, error_message, response_size_bytes)
+                     format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root)
                 )
             except Exception as e:
                 # Log error but don't raise - tool logging should never block tool execution
@@ -2166,7 +2356,8 @@ class SQLiteStorage(StorageBackend):
         project_name: Optional[str] = None,
         agent_id: Optional[str] = None,
         error_message: Optional[str] = None,
-        response_size_bytes: Optional[int] = None
+        response_size_bytes: Optional[int] = None,
+        repo_root: Optional[str] = None
     ) -> None:
         """Synchronous version of record_tool_call for background thread execution.
 
@@ -2184,6 +2375,7 @@ class SQLiteStorage(StorageBackend):
             agent_id: Optional agent identifier
             error_message: Optional error details if status=error
             response_size_bytes: Optional response payload size
+            repo_root: Optional repository root path for per-repo tool logging
 
         Thread Safety:
             SQLite with WAL mode supports concurrent writes from multiple threads.
@@ -2204,11 +2396,11 @@ class SQLiteStorage(StorageBackend):
                 """
                 INSERT INTO tool_calls (
                     session_id, tool_name, timestamp, duration_ms, status,
-                    format_requested, project_name, agent_id, error_message, response_size_bytes
-                ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+                    format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
+                ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (session_id, tool_name, duration_ms, status,
-                 format_requested, project_name, agent_id, error_message, response_size_bytes)
+                 format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root)
             )
             conn.commit()
             conn.close()
@@ -2332,3 +2524,105 @@ class SQLiteStorage(StorageBackend):
             result["p95_duration_ms"] = None
 
         return result
+
+    # Bridge management methods
+    async def insert_bridge(
+        self,
+        bridge_id: str,
+        name: str,
+        version: str,
+        manifest_json: str,
+        state: str
+    ) -> None:
+        """Insert new bridge record."""
+        await self._initialise()
+        await self._execute(
+            """
+            INSERT INTO scribe_bridges (bridge_id, name, version, manifest_json, state)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (bridge_id, name, version, manifest_json, state)
+        )
+
+    async def update_bridge_state(self, bridge_id: str, state: str) -> None:
+        """Update bridge state."""
+        await self._initialise()
+        await self._execute(
+            """
+            UPDATE scribe_bridges
+            SET state = ?
+            WHERE bridge_id = ?
+            """,
+            (state, bridge_id)
+        )
+
+    async def update_bridge_health(
+        self,
+        bridge_id: str,
+        health_json: str,
+        error: Optional[str] = None
+    ) -> None:
+        """Update bridge health status."""
+        await self._initialise()
+        await self._execute(
+            """
+            UPDATE scribe_bridges
+            SET health_json = ?,
+                last_health_check = CURRENT_TIMESTAMP,
+                last_error = ?
+            WHERE bridge_id = ?
+            """,
+            (health_json, error, bridge_id)
+        )
+
+    async def fetch_bridge(self, bridge_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch bridge by ID."""
+        await self._initialise()
+        row = await self._fetchone(
+            """
+            SELECT bridge_id, name, version, manifest_json, state,
+                   health_json, registered_at, last_health_check, last_error
+            FROM scribe_bridges
+            WHERE bridge_id = ?
+            """,
+            (bridge_id,)
+        )
+        return dict(row) if row else None
+
+    async def list_bridges(self, state: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List bridges, optionally filtered by state."""
+        await self._initialise()
+
+        if state:
+            rows = await self._fetchall(
+                """
+                SELECT bridge_id, name, version, manifest_json, state,
+                       health_json, registered_at, last_health_check, last_error
+                FROM scribe_bridges
+                WHERE state = ?
+                ORDER BY registered_at DESC
+                """,
+                (state,)
+            )
+        else:
+            rows = await self._fetchall(
+                """
+                SELECT bridge_id, name, version, manifest_json, state,
+                       health_json, registered_at, last_health_check, last_error
+                FROM scribe_bridges
+                ORDER BY registered_at DESC
+                """
+            )
+
+        return [dict(row) for row in rows]
+
+    async def delete_bridge(self, bridge_id: str) -> None:
+        """Delete bridge record."""
+        await self._initialise()
+        await self._execute(
+            """
+            DELETE FROM scribe_bridges
+            WHERE bridge_id = ?
+            """,
+            (bridge_id,)
+        )

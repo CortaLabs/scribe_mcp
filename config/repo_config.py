@@ -7,7 +7,6 @@ and load per-repository configuration, making it a true drop-in MCP solution.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import yaml
 from dataclasses import dataclass, field

@@ -9,7 +9,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Protocol, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Protocol, Union, cast, get_origin, get_args
 
 # Ensure the repository root (which contains the `scribe_mcp` package) is on sys.path.
 # This allows running `python server.py` or `python -m server` from within the package directory.
@@ -24,6 +24,13 @@ try:  # pragma: no cover - optional dependency
     _MCP_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency
     _MCP_AVAILABLE = False
+
+# Bridge tool extension support (optional)
+try:
+    from scribe_mcp.bridges.tools import get_tool_registry
+    BRIDGES_AVAILABLE = True
+except ImportError:
+    BRIDGES_AVAILABLE = False
 
     class _ServerStub:
         def __init__(self, name: str) -> None:
@@ -139,6 +146,86 @@ if _MCP_AVAILABLE:
             Server._scribe_tool_registry = {}
             Server._scribe_tool_defs = {}
 
+        def _build_schema_from_signature(func: Callable) -> Dict[str, Any]:
+            """Build JSON Schema from function signature with type hints."""
+            import typing
+            sig = inspect.signature(func)
+            properties = {}
+            required = []
+
+            # Use get_type_hints to resolve string annotations (from __future__ import annotations)
+            try:
+                type_hints = typing.get_type_hints(func)
+            except Exception:
+                type_hints = {}
+
+            for param_name, param in sig.parameters.items():
+                # Skip special parameters
+                if param_name in ("_kwargs", "kwargs") and param.kind == inspect.Parameter.VAR_KEYWORD:
+                    continue
+                if param_name in ("args",) and param.kind == inspect.Parameter.VAR_POSITIONAL:
+                    continue
+
+                # Determine if required (no default value)
+                has_default = param.default != inspect.Parameter.empty
+                if not has_default and param_name not in ("doc",):  # doc is technically required but batch doesn't use it
+                    required.append(param_name)
+
+                # Build property schema from type hint
+                param_schema = {"type": "string"}  # Default fallback
+
+                # Get resolved annotation from type_hints (handles string annotations)
+                annotation = type_hints.get(param_name, param.annotation)
+                if annotation != inspect.Parameter.empty and annotation is not None:
+                    # Handle Optional types (Union with None)
+                    origin = getattr(annotation, "__origin__", None)
+                    args = getattr(annotation, "__args__", ())
+
+                    if origin is Union:
+                        # Optional[X] is Union[X, None]
+                        non_none_types = [t for t in args if t is not type(None)]
+                        if non_none_types:
+                            annotation = non_none_types[0]
+                            # Re-compute origin for the inner type
+                            origin = getattr(annotation, "__origin__", None)
+
+                    # Map Python types to JSON Schema types
+                    if annotation is str or annotation == str:
+                        param_schema = {"type": "string"}
+                    elif annotation is int or annotation == int:
+                        param_schema = {"type": "integer"}
+                    elif annotation is float or annotation == float:
+                        param_schema = {"type": "number"}
+                    elif annotation is bool or annotation == bool:
+                        param_schema = {"type": "boolean"}
+                    elif origin is list or annotation is list:
+                        param_schema = {"type": "array"}
+                    elif origin is dict or annotation is dict:
+                        param_schema = {"type": "object"}
+                    elif hasattr(annotation, "__name__") and annotation.__name__ == "Dict":
+                        param_schema = {"type": "object"}
+                    elif hasattr(annotation, "__name__") and annotation.__name__ == "List":
+                        param_schema = {"type": "array"}
+                    else:
+                        # Unknown type, allow anything
+                        param_schema = {}
+
+                properties[param_name] = param_schema
+
+            # Special handling for manage_docs: make doc_category optional when action is batch
+            # This is a workaround since we can't make it conditionally required
+            if func.__name__ == "manage_docs" and "doc_category" in required:
+                required.remove("doc_category")
+
+            schema = {
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": True,
+            }
+            if required:
+                schema["required"] = required
+            return schema
+
         def _tool_decorator(
             func: Callable[..., Awaitable[Any]] | None = None,
             *,
@@ -149,11 +236,11 @@ if _MCP_AVAILABLE:
         ):
             def register(target: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
                 tool_name = name or target.__name__
-                schema = input_schema or {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": True,
-                }
+                # Build schema from function signature if not explicitly provided
+                if input_schema is None:
+                    schema = _build_schema_from_signature(target)
+                else:
+                    schema = input_schema
                 tool_description = description or (inspect.getdoc(target) or "")
                 Server._scribe_tool_registry[tool_name] = target
                 Server._scribe_tool_defs[tool_name] = mcp_types.Tool(
@@ -179,6 +266,18 @@ if _MCP_AVAILABLE:
         async def _call_tool(name: str, arguments: Dict[str, Any], **kwargs: Any) -> Any:
             registry = getattr(Server, "_scribe_tool_registry", {})
             func = registry.get(name)
+
+            # Check for bridge custom tools (format: bridge_id:tool_name)
+            if not func and ":" in name and BRIDGES_AVAILABLE:
+                try:
+                    tool_registry = get_tool_registry()
+                    parts = name.split(":", 1)
+                    if len(parts) == 2:
+                        bridge_id, tool_name = parts
+                        func = tool_registry.get_custom_tool(bridge_id, tool_name)
+                except Exception:
+                    pass  # Fall through to error handling
+
             if not func:
                 raise ValueError(f"Unknown tool '{name}'")
 
@@ -299,8 +398,61 @@ if _MCP_AVAILABLE:
             if not isinstance(context_payload, dict):
                 context_payload = {}
 
+            def _extract_request_repo_root() -> Optional[str]:
+                try:
+                    request_context = app.request_context
+                except Exception:
+                    return None
+                if not request_context:
+                    return None
+                meta = getattr(request_context, "meta", None)
+                if not meta:
+                    return None
+                if isinstance(meta, dict):
+                    for key in ("repo_root", "workspace_root", "cwd"):
+                        value = meta.get(key)
+                        if value:
+                            return str(value)
+                else:
+                    for key in ("repo_root", "workspace_root", "cwd"):
+                        value = getattr(meta, key, None)
+                        if value:
+                            return str(value)
+                return None
+
+            def _normalize_repo_root(value: Any) -> Optional[str]:
+                if not value:
+                    return None
+                try:
+                    root_path = Path(str(value)).expanduser()
+                except (TypeError, ValueError):
+                    return None
+                if not root_path.is_absolute():
+                    root_path = (settings.project_root / root_path).resolve()
+                else:
+                    root_path = root_path.resolve()
+                return str(root_path)
+
             if not context_payload.get("repo_root"):
-                context_payload["repo_root"] = str(settings.project_root)
+                request_repo_root = _extract_request_repo_root()
+                if request_repo_root:
+                    try:
+                        request_path = Path(request_repo_root).expanduser()
+                        if request_path.is_absolute():
+                            from scribe_mcp.config.repo_config import RepoDiscovery
+                            candidate_root = RepoDiscovery.find_repo_root(request_path)
+                            if candidate_root and candidate_root.exists():
+                                context_payload["repo_root"] = str(candidate_root.resolve())
+                    except Exception:
+                        pass
+
+            repo_root_hint = _normalize_repo_root(context_payload.get("repo_root"))
+            if not repo_root_hint and isinstance(arguments, dict):
+                repo_root_hint = _normalize_repo_root(
+                    arguments.get("root") or arguments.get("repo_root")
+                )
+            if repo_root_hint:
+                context_payload["repo_root"] = repo_root_hint
 
             if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
                 transport_fallback = (
@@ -326,12 +478,34 @@ if _MCP_AVAILABLE:
                     )
                     if existing and existing.get("session_id"):
                         context_payload["session_id"] = existing["session_id"]
+                    if existing and not context_payload.get("repo_root"):
+                        context_payload["repo_root"] = _normalize_repo_root(existing.get("repo_root"))
                 if not context_payload.get("session_id"):
                     # NO SILENT ERRORS - let it fail loudly
                     session_id = await router_context_manager.get_or_create_session_id(
                         context_payload["transport_session_id"]
                     )
                     context_payload["session_id"] = session_id
+
+            if not context_payload.get("repo_root"):
+                backend = storage_backend
+                if backend and context_payload.get("session_id"):
+                    project_name = None
+                    if hasattr(backend, "get_session_project"):
+                        project_name = await backend.get_session_project(
+                            context_payload.get("session_id")
+                        )
+                    if not project_name and isinstance(arguments, dict):
+                        project_name = arguments.get("project") or arguments.get("name")
+                    if project_name and hasattr(backend, "fetch_project"):
+                        project_record = await backend.fetch_project(str(project_name))
+                        if project_record:
+                            context_payload["repo_root"] = _normalize_repo_root(
+                                project_record.repo_root
+                            )
+
+            if not context_payload.get("repo_root"):
+                context_payload["repo_root"] = str(settings.project_root.resolve())
 
             if context_payload.get("mode") not in {"sentinel", "project"}:
                 # Project-scoped tools that should always run in project mode
@@ -486,6 +660,58 @@ async def _startup() -> None:
         print(f"⚠️  Plugin initialization failed: {e}")
         print("   💡 Continuing without plugins (vector search will not be available)")
 
+    # Initialize Bridge System (optional feature)
+    bridge_registry = None
+    if BRIDGES_AVAILABLE and storage_backend:
+        try:
+            from scribe_mcp.bridges.registry import BridgeRegistry
+            from scribe_mcp.bridges.health import BridgeHealthMonitor, set_health_monitor
+
+            # Task Package 1.1: Create BridgeRegistry
+            bridge_registry = BridgeRegistry(
+                storage_backend=storage_backend,
+                config_dir=Path(".scribe/config/bridges")
+            )
+            print("🌉 BridgeRegistry initialized")
+
+            # Task Package 1.2: Discover and register manifests
+            manifests = bridge_registry.discover_manifests()
+            bridges_activated = 0
+            bridges_total = len(manifests)
+
+            for manifest_path in manifests:
+                try:
+                    # Load, register, and activate each bridge
+                    manifest = bridge_registry.load_manifest(manifest_path)
+                    await bridge_registry.register_bridge(manifest)
+                    await bridge_registry.activate_bridge(manifest.bridge_id)
+                    print(f"   ✅ Registered & activated bridge: {manifest.bridge_id}")
+                    bridges_activated += 1
+                except Exception as bridge_error:
+                    print(f"   ⚠️  Failed to register bridge from {manifest_path}: {bridge_error}")
+                    # Continue with next manifest
+
+            # Print summary
+            if bridges_total > 0:
+                print(f"🌉 Bridge system initialized ({bridges_activated}/{bridges_total} bridges active)")
+            else:
+                print("🌉 Bridge system initialized (no manifests found)")
+
+            # Task Package 1.3: Start health monitor background task
+            if bridge_registry:
+                health_monitor = BridgeHealthMonitor(
+                    registry=bridge_registry,
+                    check_interval=60.0
+                )
+                set_health_monitor(health_monitor)
+                asyncio.create_task(health_monitor.start())
+                print("🏥 Bridge health monitor started (60s interval)")
+
+        except Exception as e:
+            print(f"⚠️  Bridge system initialization failed: {e}")
+            print("   💡 Continuing without bridge support")
+            bridge_registry = None
+
     # Initialize AgentContextManager for agent-scoped project context
     if storage_backend and state_manager:
         agent_context_manager = init_agent_context_manager(storage_backend, state_manager)
@@ -505,9 +731,30 @@ async def _startup() -> None:
         asyncio.create_task(_session_cleanup_task(agent_context_manager))
         print("🧹 Session cleanup task started")
 
+    # Register bridge custom tools with MCP server
+    if BRIDGES_AVAILABLE:
+        try:
+            tool_registry = get_tool_registry()
+            custom_tools = tool_registry.list_all_custom_tools()
+
+            for tool_info in custom_tools:
+                full_name = tool_info["full_name"]
+                bridge_id = tool_info["bridge_id"]
+                tool_name = tool_info["tool_name"]
+
+                # Get the actual implementation
+                impl = tool_registry.get_custom_tool(bridge_id, tool_name)
+                if impl:
+                    # Register with MCP server
+                    # The tool name will be prefixed: council_mcp:custom_audit
+                    Server._scribe_tool_registry[full_name] = impl
+                    print(f"🔧 Registered bridge tool: {full_name}")
+        except Exception as e:
+            print(f"⚠️  Bridge tool registration failed: {e}")
+            print("   💡 Continuing without bridge tools")
+
     # Replay any uncommitted journal entries for crash recovery (all projects)
     from scribe_mcp.utils.files import WriteAheadLog
-    from scribe_mcp.tools.project_utils import load_active_project
     from scribe_mcp.tools.list_projects import list_projects
 
     try:
@@ -517,7 +764,13 @@ async def _startup() -> None:
 
         # Method 1: Try to get list of all configured projects
         try:
-            projects_result = await list_projects()
+            # list_projects defaults to format="readable", which returns an MCP CallToolResult wrapper
+            # (Issue #9962 fix). For internal server startup we need a plain dict payload.
+            projects_result = await list_projects(
+                format="structured",
+                limit=1000,
+                include_test=True,
+            )
             available_projects = projects_result.get("projects", [])
             for project_info in available_projects:
                 project_name = project_info.get("name")
