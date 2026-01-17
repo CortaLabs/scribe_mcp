@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "created_timestamp": "2025-10-24 11:35:00 UTC",
-  "last_updated": "2026-01-04T06:02:59.130783 UTC",
+  "last_updated": "2026-01-17T10:30:19.459037 UTC",
   "projects": {
     "enhanced-rotation-test": {
       "created_timestamp": "2025-10-24T12:05:59.361388 UTC",
@@ -978,6 +978,63 @@
       },
       "rotation_ids": [
         "39decf1e-7bd8-40ba-a962-88f504957106"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "test_bug_001_rotation_136553505924608": {
+      "created_timestamp": "2026-01-08T01:20:53.644112 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-08 01:20:53 UTC",
+      "hash_chain": {
+        "root_hash": "6c34ebd762cd81cf5366c8e07220e0fef2af5195831192d4df2544a5dd0525cf",
+        "current_sequence": 1,
+        "last_hash": "6c34ebd762cd81cf5366c8e07220e0fef2af5195831192d4df2544a5dd0525cf"
+      },
+      "rotation_ids": [
+        "f18784f7-0c0f-4e0d-b472-61a16cf439f6"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "test_bug_001_rotation_132808858282112": {
+      "created_timestamp": "2026-01-08T01:22:19.035558 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-08 01:22:19 UTC",
+      "hash_chain": {
+        "root_hash": "91589f79164df7e3c2f1a5cf53eb6f49bb087bbb02fd2ce2ee053256d56103ba",
+        "current_sequence": 1,
+        "last_hash": "91589f79164df7e3c2f1a5cf53eb6f49bb087bbb02fd2ce2ee053256d56103ba"
+      },
+      "rotation_ids": [
+        "5318c96d-b937-4051-9e64-bf527de5c172"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "test_bug_001_rotation_128696997459360": {
+      "created_timestamp": "2026-01-17T10:30:19.429848 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-17 10:30:19 UTC",
+      "hash_chain": {
+        "root_hash": "dd496da503cc93811f33f585002a363df2d25c5d0ce6daf3997487cfcec55c6d",
+        "current_sequence": 1,
+        "last_hash": "dd496da503cc93811f33f585002a363df2d25c5d0ce6daf3997487cfcec55c6d"
+      },
+      "rotation_ids": [
+        "dfaa40bb-01c3-4692-ae49-f1193239cd4a"
       ],
       "log_stats": {},
       "settings": {

@@ -1,16 +1,16 @@
 {
-  "current_project": "external_project",
+  "current_project": "test_compact",
   "projects": {
     "enhanced-rotation-test": {
       "name": "enhanced-rotation-test",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/a9ef5092-2281-4569-9bc8-a4a87fb1a81a",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/a9ef5092-2281-4569-9bc8-a4a87fb1a81a/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/a9ef5092-2281-4569-9bc8-a4a87fb1a81a/.scribe/docs/dev_plans/enhanced_rotation_test",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/a9ef5092-2281-4569-9bc8-a4a87fb1a81a/.scribe/docs/dev_plans/enhanced_rotation_test/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/a9ef5092-2281-4569-9bc8-a4a87fb1a81a/.scribe/docs/dev_plans/enhanced_rotation_test/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/a9ef5092-2281-4569-9bc8-a4a87fb1a81a/.scribe/docs/dev_plans/enhanced_rotation_test/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/a9ef5092-2281-4569-9bc8-a4a87fb1a81a/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md"
       },
       "defaults": {
         "emoji": "\ud83e\uddea",
@@ -18,7 +18,15 @@
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md"
+        }
+      }
     },
     "metadata-test": {
       "name": "metadata-test",
@@ -247,201 +255,289 @@
     },
     "external_project": {
       "name": "external_project",
-      "root": "/tmp/pytest-of-austin/pytest-165/test_set_project_allows_extern0/external_repo",
-      "progress_log": "/tmp/pytest-of-austin/pytest-165/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/pytest-of-austin/pytest-165/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project",
+      "root": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo",
+      "progress_log": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project",
       "docs": {
-        "architecture": "/tmp/pytest-of-austin/pytest-165/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/pytest-of-austin/pytest-165/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PHASE_PLAN.md",
-        "checklist": "/tmp/pytest-of-austin/pytest-165/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/CHECKLIST.md",
-        "progress_log": "/tmp/pytest-of-austin/pytest-165/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PROGRESS_LOG.md"
+        "architecture": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PHASE_PLAN.md",
+        "checklist": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/CHECKLIST.md",
+        "progress_log": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PHASE_PLAN.md",
+          "checklist": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/CHECKLIST.md",
+          "progress_log": "/tmp/pytest-of-austin/pytest-220/test_set_project_allows_extern0/external_repo/.scribe/docs/dev_plans/external_project/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_new_project": {
       "name": "test_new_project",
-      "root": "/tmp/test_set_project_iq94_z20",
-      "progress_log": "/tmp/test_set_project_iq94_z20/.scribe/docs/dev_plans/test_new_project/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_iq94_z20/.scribe/docs/dev_plans/test_new_project",
+      "root": "/tmp/test_set_project_15pasbfp",
+      "progress_log": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project",
       "docs": {
-        "architecture": "/tmp/test_set_project_iq94_z20/.scribe/docs/dev_plans/test_new_project/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_iq94_z20/.scribe/docs/dev_plans/test_new_project/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_iq94_z20/.scribe/docs/dev_plans/test_new_project/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_iq94_z20/.scribe/docs/dev_plans/test_new_project/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_15pasbfp/.scribe/docs/dev_plans/test_new_project/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_template_info": {
       "name": "test_template_info",
-      "root": "/tmp/test_set_project_7bu4ex2e",
-      "progress_log": "/tmp/test_set_project_7bu4ex2e/.scribe/docs/dev_plans/test_template_info/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_7bu4ex2e/.scribe/docs/dev_plans/test_template_info",
+      "root": "/tmp/test_set_project_5rr0k2px",
+      "progress_log": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info",
       "docs": {
-        "architecture": "/tmp/test_set_project_7bu4ex2e/.scribe/docs/dev_plans/test_template_info/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_7bu4ex2e/.scribe/docs/dev_plans/test_template_info/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_7bu4ex2e/.scribe/docs/dev_plans/test_template_info/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_7bu4ex2e/.scribe/docs/dev_plans/test_template_info/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_5rr0k2px/.scribe/docs/dev_plans/test_template_info/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_next_steps": {
       "name": "test_next_steps",
-      "root": "/tmp/test_set_project_g6wmpghg",
-      "progress_log": "/tmp/test_set_project_g6wmpghg/.scribe/docs/dev_plans/test_next_steps/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_g6wmpghg/.scribe/docs/dev_plans/test_next_steps",
+      "root": "/tmp/test_set_project_6zu7vr21",
+      "progress_log": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps",
       "docs": {
-        "architecture": "/tmp/test_set_project_g6wmpghg/.scribe/docs/dev_plans/test_next_steps/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_g6wmpghg/.scribe/docs/dev_plans/test_next_steps/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_g6wmpghg/.scribe/docs/dev_plans/test_next_steps/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_g6wmpghg/.scribe/docs/dev_plans/test_next_steps/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_6zu7vr21/.scribe/docs/dev_plans/test_next_steps/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_existing_project": {
       "name": "test_existing_project",
-      "root": "/tmp/test_set_project_w3s2p324",
-      "progress_log": "/tmp/test_set_project_w3s2p324/.scribe/docs/dev_plans/test_existing_project/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_w3s2p324/.scribe/docs/dev_plans/test_existing_project",
+      "root": "/tmp/test_set_project_cxhf3cvv",
+      "progress_log": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project",
       "docs": {
-        "architecture": "/tmp/test_set_project_w3s2p324/.scribe/docs/dev_plans/test_existing_project/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_w3s2p324/.scribe/docs/dev_plans/test_existing_project/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_w3s2p324/.scribe/docs/dev_plans/test_existing_project/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_w3s2p324/.scribe/docs/dev_plans/test_existing_project/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_cxhf3cvv/.scribe/docs/dev_plans/test_existing_project/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_activity": {
       "name": "test_activity",
-      "root": "/tmp/test_set_project__bx6w1v5",
-      "progress_log": "/tmp/test_set_project__bx6w1v5/.scribe/docs/dev_plans/test_activity/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project__bx6w1v5/.scribe/docs/dev_plans/test_activity",
+      "root": "/tmp/test_set_project_bqg5_ksl",
+      "progress_log": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity",
       "docs": {
-        "architecture": "/tmp/test_set_project__bx6w1v5/.scribe/docs/dev_plans/test_activity/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project__bx6w1v5/.scribe/docs/dev_plans/test_activity/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project__bx6w1v5/.scribe/docs/dev_plans/test_activity/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project__bx6w1v5/.scribe/docs/dev_plans/test_activity/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_bqg5_ksl/.scribe/docs/dev_plans/test_activity/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_custom_content": {
       "name": "test_custom_content",
-      "root": "/tmp/test_set_project_w9pj_0ii",
-      "progress_log": "/tmp/test_set_project_w9pj_0ii/.scribe/docs/dev_plans/test_custom_content/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_w9pj_0ii/.scribe/docs/dev_plans/test_custom_content",
+      "root": "/tmp/test_set_project_iidja9xi",
+      "progress_log": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content",
       "docs": {
-        "architecture": "/tmp/test_set_project_w9pj_0ii/.scribe/docs/dev_plans/test_custom_content/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_w9pj_0ii/.scribe/docs/dev_plans/test_custom_content/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_w9pj_0ii/.scribe/docs/dev_plans/test_custom_content/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_w9pj_0ii/.scribe/docs/dev_plans/test_custom_content/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_iidja9xi/.scribe/docs/dev_plans/test_custom_content/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_empty_log": {
       "name": "test_empty_log",
-      "root": "/tmp/test_set_project_6gkugleg",
-      "progress_log": "/tmp/test_set_project_6gkugleg/.scribe/docs/dev_plans/test_empty_log/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_6gkugleg/.scribe/docs/dev_plans/test_empty_log",
+      "root": "/tmp/test_set_project_o4w5x08e",
+      "progress_log": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log",
       "docs": {
-        "architecture": "/tmp/test_set_project_6gkugleg/.scribe/docs/dev_plans/test_empty_log/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_6gkugleg/.scribe/docs/dev_plans/test_empty_log/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_6gkugleg/.scribe/docs/dev_plans/test_empty_log/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_6gkugleg/.scribe/docs/dev_plans/test_empty_log/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_o4w5x08e/.scribe/docs/dev_plans/test_empty_log/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_with_entries": {
       "name": "test_with_entries",
-      "root": "/tmp/test_set_project_suxmb8_g",
-      "progress_log": "/tmp/test_set_project_suxmb8_g/.scribe/docs/dev_plans/test_with_entries/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_suxmb8_g/.scribe/docs/dev_plans/test_with_entries",
+      "root": "/tmp/test_set_project_hd7x0j_s",
+      "progress_log": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries",
       "docs": {
-        "architecture": "/tmp/test_set_project_suxmb8_g/.scribe/docs/dev_plans/test_with_entries/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_suxmb8_g/.scribe/docs/dev_plans/test_with_entries/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_suxmb8_g/.scribe/docs/dev_plans/test_with_entries/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_suxmb8_g/.scribe/docs/dev_plans/test_with_entries/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_hd7x0j_s/.scribe/docs/dev_plans/test_with_entries/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_structured": {
       "name": "test_structured",
-      "root": "/tmp/test_set_project_nqtvzo8d",
-      "progress_log": "/tmp/test_set_project_nqtvzo8d/.scribe/docs/dev_plans/test_structured/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_nqtvzo8d/.scribe/docs/dev_plans/test_structured",
+      "root": "/tmp/test_set_project_eiplqcie",
+      "progress_log": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured",
       "docs": {
-        "architecture": "/tmp/test_set_project_nqtvzo8d/.scribe/docs/dev_plans/test_structured/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_nqtvzo8d/.scribe/docs/dev_plans/test_structured/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_nqtvzo8d/.scribe/docs/dev_plans/test_structured/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_nqtvzo8d/.scribe/docs/dev_plans/test_structured/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_eiplqcie/.scribe/docs/dev_plans/test_structured/PROGRESS_LOG.md"
+        }
+      }
     },
     "test_compact": {
       "name": "test_compact",
-      "root": "/tmp/test_set_project_22c_s8ip",
-      "progress_log": "/tmp/test_set_project_22c_s8ip/.scribe/docs/dev_plans/test_compact/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/test_set_project_22c_s8ip/.scribe/docs/dev_plans/test_compact",
+      "root": "/tmp/test_set_project_e2n0_9d6",
+      "progress_log": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact",
       "docs": {
-        "architecture": "/tmp/test_set_project_22c_s8ip/.scribe/docs/dev_plans/test_compact/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/test_set_project_22c_s8ip/.scribe/docs/dev_plans/test_compact/PHASE_PLAN.md",
-        "checklist": "/tmp/test_set_project_22c_s8ip/.scribe/docs/dev_plans/test_compact/CHECKLIST.md",
-        "progress_log": "/tmp/test_set_project_22c_s8ip/.scribe/docs/dev_plans/test_compact/PROGRESS_LOG.md"
+        "architecture": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/PHASE_PLAN.md",
+        "checklist": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/CHECKLIST.md",
+        "progress_log": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "TestAgent"
       },
       "author": "TestAgent",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/PHASE_PLAN.md",
+          "checklist": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/CHECKLIST.md",
+          "progress_log": "/tmp/test_set_project_e2n0_9d6/.scribe/docs/dev_plans/test_compact/PROGRESS_LOG.md"
+        }
+      }
     },
     "scribe_mcp": {
       "name": "scribe_mcp",
@@ -458,62 +554,1138 @@
         "emoji": "\u2139\ufe0f",
         "agent": "Scribe"
       }
+    },
+    "test_format_fixes_95b03f3a": {
+      "name": "test_format_fixes_95b03f3a",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_95b03f3a/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_95b03f3a",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_95b03f3a/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_95b03f3a/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_95b03f3a/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_95b03f3a/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_rotation_128143491277856": {
+      "name": "test_bug_001_rotation_128143491277856",
+      "root": "/tmp/tmpuidkdjyn",
+      "progress_log": "/tmp/tmpuidkdjyn/.scribe/docs/dev_plans/test_bug_001_rotation_128143491277856/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpuidkdjyn/.scribe/docs/dev_plans/test_bug_001_rotation_128143491277856",
+      "docs": {
+        "architecture": "/tmp/tmpuidkdjyn/.scribe/docs/dev_plans/test_bug_001_rotation_128143491277856/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpuidkdjyn/.scribe/docs/dev_plans/test_bug_001_rotation_128143491277856/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpuidkdjyn/.scribe/docs/dev_plans/test_bug_001_rotation_128143491277856/CHECKLIST.md",
+        "progress_log": "/tmp/tmpuidkdjyn/.scribe/docs/dev_plans/test_bug_001_rotation_128143491277856/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_rotation_134205403488992": {
+      "name": "test_bug_001_rotation_134205403488992",
+      "root": "/tmp/tmpbjmi12rl",
+      "progress_log": "/tmp/tmpbjmi12rl/.scribe/docs/dev_plans/test_bug_001_rotation_134205403488992/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpbjmi12rl/.scribe/docs/dev_plans/test_bug_001_rotation_134205403488992",
+      "docs": {
+        "architecture": "/tmp/tmpbjmi12rl/.scribe/docs/dev_plans/test_bug_001_rotation_134205403488992/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpbjmi12rl/.scribe/docs/dev_plans/test_bug_001_rotation_134205403488992/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpbjmi12rl/.scribe/docs/dev_plans/test_bug_001_rotation_134205403488992/CHECKLIST.md",
+        "progress_log": "/tmp/tmpbjmi12rl/.scribe/docs/dev_plans/test_bug_001_rotation_134205403488992/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_af3c1177": {
+      "name": "test_format_fixes_af3c1177",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_af3c1177/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_af3c1177",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_af3c1177/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_af3c1177/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_af3c1177/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_af3c1177/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_e836e12d": {
+      "name": "test_format_fixes_e836e12d",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e836e12d/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e836e12d",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e836e12d/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e836e12d/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e836e12d/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e836e12d/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_96b83691": {
+      "name": "test_format_fixes_96b83691",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_96b83691/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_96b83691",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_96b83691/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_96b83691/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_96b83691/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_96b83691/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_225497ba": {
+      "name": "test_format_fixes_225497ba",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_225497ba/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_225497ba",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_225497ba/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_225497ba/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_225497ba/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_225497ba/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_a24db2d3": {
+      "name": "test_format_fixes_a24db2d3",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_a24db2d3/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_a24db2d3",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_a24db2d3/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_a24db2d3/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_a24db2d3/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_a24db2d3/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_1957929a": {
+      "name": "test_format_fixes_1957929a",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_1957929a/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_1957929a",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_1957929a/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_1957929a/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_1957929a/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_1957929a/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_8efb73ba": {
+      "name": "test_format_fixes_8efb73ba",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_8efb73ba/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_8efb73ba",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_8efb73ba/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_8efb73ba/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_8efb73ba/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_8efb73ba/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_3b85df60": {
+      "name": "test_format_fixes_3b85df60",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3b85df60/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3b85df60",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3b85df60/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3b85df60/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3b85df60/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3b85df60/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_894e4e99": {
+      "name": "test_format_fixes_894e4e99",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_894e4e99/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_894e4e99",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_894e4e99/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_894e4e99/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_894e4e99/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_894e4e99/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_e992ed88": {
+      "name": "test_format_fixes_e992ed88",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e992ed88/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e992ed88",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e992ed88/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e992ed88/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e992ed88/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e992ed88/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_21aa80cc": {
+      "name": "test_format_fixes_21aa80cc",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_21aa80cc/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_21aa80cc",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_21aa80cc/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_21aa80cc/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_21aa80cc/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_21aa80cc/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_c75af25d": {
+      "name": "test_format_fixes_c75af25d",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c75af25d/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c75af25d",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c75af25d/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c75af25d/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c75af25d/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c75af25d/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_b656076b": {
+      "name": "test_format_fixes_b656076b",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_b656076b/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_b656076b",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_b656076b/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_b656076b/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_b656076b/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_b656076b/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_096f8a02": {
+      "name": "test_format_fixes_096f8a02",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_096f8a02/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_096f8a02",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_096f8a02/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_096f8a02/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_096f8a02/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_096f8a02/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_86ae7259": {
+      "name": "test_format_fixes_86ae7259",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_86ae7259/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_86ae7259",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_86ae7259/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_86ae7259/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_86ae7259/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_86ae7259/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_d46601ff": {
+      "name": "test_format_fixes_d46601ff",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d46601ff/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d46601ff",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d46601ff/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d46601ff/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d46601ff/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d46601ff/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_c6510cf4": {
+      "name": "test_format_fixes_c6510cf4",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c6510cf4/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c6510cf4",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c6510cf4/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c6510cf4/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c6510cf4/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c6510cf4/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_4ff0d882": {
+      "name": "test_format_fixes_4ff0d882",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4ff0d882/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4ff0d882",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4ff0d882/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4ff0d882/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4ff0d882/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4ff0d882/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_4d69a765": {
+      "name": "test_format_fixes_4d69a765",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4d69a765/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4d69a765",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4d69a765/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4d69a765/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4d69a765/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4d69a765/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_4599369a": {
+      "name": "test_format_fixes_4599369a",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4599369a/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4599369a",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4599369a/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4599369a/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4599369a/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_4599369a/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_c4407e96": {
+      "name": "test_format_fixes_c4407e96",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c4407e96/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c4407e96",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c4407e96/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c4407e96/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c4407e96/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_c4407e96/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_e661b065": {
+      "name": "test_format_fixes_e661b065",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e661b065/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e661b065",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e661b065/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e661b065/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e661b065/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e661b065/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_0ed08d61": {
+      "name": "test_format_fixes_0ed08d61",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_0ed08d61/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_0ed08d61",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_0ed08d61/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_0ed08d61/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_0ed08d61/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_0ed08d61/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_new_128138891174384": {
+      "name": "test_bug_001_new_128138891174384",
+      "root": "/tmp/tmpad99gq63",
+      "progress_log": "/tmp/tmpad99gq63/.scribe/docs/dev_plans/test_bug_001_new_128138891174384/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpad99gq63/.scribe/docs/dev_plans/test_bug_001_new_128138891174384",
+      "docs": {
+        "architecture": "/tmp/tmpad99gq63/.scribe/docs/dev_plans/test_bug_001_new_128138891174384/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpad99gq63/.scribe/docs/dev_plans/test_bug_001_new_128138891174384/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpad99gq63/.scribe/docs/dev_plans/test_bug_001_new_128138891174384/CHECKLIST.md",
+        "progress_log": "/tmp/tmpad99gq63/.scribe/docs/dev_plans/test_bug_001_new_128138891174384/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_rotation_128778569360016": {
+      "name": "test_bug_001_rotation_128778569360016",
+      "root": "/tmp/tmp92bmx4ft",
+      "progress_log": "/tmp/tmp92bmx4ft/.scribe/docs/dev_plans/test_bug_001_rotation_128778569360016/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmp92bmx4ft/.scribe/docs/dev_plans/test_bug_001_rotation_128778569360016",
+      "docs": {
+        "architecture": "/tmp/tmp92bmx4ft/.scribe/docs/dev_plans/test_bug_001_rotation_128778569360016/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmp92bmx4ft/.scribe/docs/dev_plans/test_bug_001_rotation_128778569360016/PHASE_PLAN.md",
+        "checklist": "/tmp/tmp92bmx4ft/.scribe/docs/dev_plans/test_bug_001_rotation_128778569360016/CHECKLIST.md",
+        "progress_log": "/tmp/tmp92bmx4ft/.scribe/docs/dev_plans/test_bug_001_rotation_128778569360016/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_rotation_136553505924608": {
+      "name": "test_bug_001_rotation_136553505924608",
+      "root": "/tmp/tmp0z4gbpn4",
+      "progress_log": "/tmp/tmp0z4gbpn4/.scribe/docs/dev_plans/test_bug_001_rotation_136553505924608/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmp0z4gbpn4/.scribe/docs/dev_plans/test_bug_001_rotation_136553505924608",
+      "docs": {
+        "architecture": "/tmp/tmp0z4gbpn4/.scribe/docs/dev_plans/test_bug_001_rotation_136553505924608/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmp0z4gbpn4/.scribe/docs/dev_plans/test_bug_001_rotation_136553505924608/PHASE_PLAN.md",
+        "checklist": "/tmp/tmp0z4gbpn4/.scribe/docs/dev_plans/test_bug_001_rotation_136553505924608/CHECKLIST.md",
+        "progress_log": "/tmp/tmp0z4gbpn4/.scribe/docs/dev_plans/test_bug_001_rotation_136553505924608/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_new_136553505564960": {
+      "name": "test_bug_001_new_136553505564960",
+      "root": "/tmp/tmp54o608hw",
+      "progress_log": "/tmp/tmp54o608hw/.scribe/docs/dev_plans/test_bug_001_new_136553505564960/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmp54o608hw/.scribe/docs/dev_plans/test_bug_001_new_136553505564960",
+      "docs": {
+        "architecture": "/tmp/tmp54o608hw/.scribe/docs/dev_plans/test_bug_001_new_136553505564960/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmp54o608hw/.scribe/docs/dev_plans/test_bug_001_new_136553505564960/PHASE_PLAN.md",
+        "checklist": "/tmp/tmp54o608hw/.scribe/docs/dev_plans/test_bug_001_new_136553505564960/CHECKLIST.md",
+        "progress_log": "/tmp/tmp54o608hw/.scribe/docs/dev_plans/test_bug_001_new_136553505564960/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_rotation_132808858282112": {
+      "name": "test_bug_001_rotation_132808858282112",
+      "root": "/tmp/tmphdl023_s",
+      "progress_log": "/tmp/tmphdl023_s/.scribe/docs/dev_plans/test_bug_001_rotation_132808858282112/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmphdl023_s/.scribe/docs/dev_plans/test_bug_001_rotation_132808858282112",
+      "docs": {
+        "architecture": "/tmp/tmphdl023_s/.scribe/docs/dev_plans/test_bug_001_rotation_132808858282112/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmphdl023_s/.scribe/docs/dev_plans/test_bug_001_rotation_132808858282112/PHASE_PLAN.md",
+        "checklist": "/tmp/tmphdl023_s/.scribe/docs/dev_plans/test_bug_001_rotation_132808858282112/CHECKLIST.md",
+        "progress_log": "/tmp/tmphdl023_s/.scribe/docs/dev_plans/test_bug_001_rotation_132808858282112/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_bug_001_new_132808855636928": {
+      "name": "test_bug_001_new_132808855636928",
+      "root": "/tmp/tmpg1gyhlpx",
+      "progress_log": "/tmp/tmpg1gyhlpx/.scribe/docs/dev_plans/test_bug_001_new_132808855636928/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpg1gyhlpx/.scribe/docs/dev_plans/test_bug_001_new_132808855636928",
+      "docs": {
+        "architecture": "/tmp/tmpg1gyhlpx/.scribe/docs/dev_plans/test_bug_001_new_132808855636928/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpg1gyhlpx/.scribe/docs/dev_plans/test_bug_001_new_132808855636928/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpg1gyhlpx/.scribe/docs/dev_plans/test_bug_001_new_132808855636928/CHECKLIST.md",
+        "progress_log": "/tmp/tmpg1gyhlpx/.scribe/docs/dev_plans/test_bug_001_new_132808855636928/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_f3daabd9": {
+      "name": "test_format_fixes_f3daabd9",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_f3daabd9/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_f3daabd9",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_f3daabd9/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_f3daabd9/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_f3daabd9/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_f3daabd9/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_3c8b202c": {
+      "name": "test_format_fixes_3c8b202c",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3c8b202c/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3c8b202c",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3c8b202c/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3c8b202c/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3c8b202c/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_3c8b202c/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_494889ee": {
+      "name": "test_format_fixes_494889ee",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_494889ee/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_494889ee",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_494889ee/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_494889ee/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_494889ee/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_494889ee/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_57e07e93": {
+      "name": "test_format_fixes_57e07e93",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_57e07e93/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_57e07e93",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_57e07e93/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_57e07e93/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_57e07e93/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_57e07e93/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_13348e88": {
+      "name": "test_format_fixes_13348e88",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_13348e88/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_13348e88",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_13348e88/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_13348e88/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_13348e88/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_13348e88/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_d38432e0": {
+      "name": "test_format_fixes_d38432e0",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d38432e0/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d38432e0",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d38432e0/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d38432e0/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d38432e0/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_d38432e0/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_dd6bfca2": {
+      "name": "test_format_fixes_dd6bfca2",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_dd6bfca2/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_dd6bfca2",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_dd6bfca2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_dd6bfca2/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_dd6bfca2/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_dd6bfca2/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_847a34da": {
+      "name": "test_format_fixes_847a34da",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_847a34da/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_847a34da",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_847a34da/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_847a34da/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_847a34da/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_847a34da/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_67aac82d": {
+      "name": "test_format_fixes_67aac82d",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67aac82d/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67aac82d",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67aac82d/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67aac82d/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67aac82d/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67aac82d/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_format_fixes_09ee4492": {
+      "name": "test_format_fixes_09ee4492",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_09ee4492/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_e7df0fd8": {
+      "name": "test_format_fixes_e7df0fd8",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_e7df0fd8/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_fcd08d37": {
+      "name": "test_format_fixes_fcd08d37",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcd08d37/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_fcc0f9a1": {
+      "name": "test_format_fixes_fcc0f9a1",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_fcc0f9a1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_72aef196": {
+      "name": "test_format_fixes_72aef196",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_72aef196/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_7a0d5584": {
+      "name": "test_format_fixes_7a0d5584",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_7a0d5584/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_33f9ce95": {
+      "name": "test_format_fixes_33f9ce95",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_33f9ce95/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_cf8ba4d1": {
+      "name": "test_format_fixes_cf8ba4d1",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_cf8ba4d1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_format_fixes_67115a52": {
+      "name": "test_format_fixes_67115a52",
+      "root": "/tmp",
+      "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52",
+      "docs": {
+        "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/PHASE_PLAN.md",
+        "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/CHECKLIST.md",
+        "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/PHASE_PLAN.md",
+          "checklist": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/CHECKLIST.md",
+          "progress_log": "/tmp/.scribe/docs/dev_plans/test_format_fixes_67115a52/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_bug_001_rotation_139998500757360": {
+      "name": "test_bug_001_rotation_139998500757360",
+      "root": "/tmp/tmptbyp6yc1",
+      "progress_log": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360",
+      "docs": {
+        "architecture": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/PHASE_PLAN.md",
+        "checklist": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/CHECKLIST.md",
+        "progress_log": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/PHASE_PLAN.md",
+          "checklist": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/CHECKLIST.md",
+          "progress_log": "/tmp/tmptbyp6yc1/.scribe/docs/dev_plans/test_bug_001_rotation_139998500757360/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_bug_001_new_139991055863360": {
+      "name": "test_bug_001_new_139991055863360",
+      "root": "/tmp/tmp7jrh8s2r",
+      "progress_log": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360",
+      "docs": {
+        "architecture": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/PHASE_PLAN.md",
+        "checklist": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/CHECKLIST.md",
+        "progress_log": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/PHASE_PLAN.md",
+          "checklist": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/CHECKLIST.md",
+          "progress_log": "/tmp/tmp7jrh8s2r/.scribe/docs/dev_plans/test_bug_001_new_139991055863360/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_bug_001_rotation_128696997459360": {
+      "name": "test_bug_001_rotation_128696997459360",
+      "root": "/tmp/tmpx9slvdx8",
+      "progress_log": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360",
+      "docs": {
+        "architecture": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/CHECKLIST.md",
+        "progress_log": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/PHASE_PLAN.md",
+          "checklist": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/CHECKLIST.md",
+          "progress_log": "/tmp/tmpx9slvdx8/.scribe/docs/dev_plans/test_bug_001_rotation_128696997459360/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "test_bug_001_new_128696978176752": {
+      "name": "test_bug_001_new_128696978176752",
+      "root": "/tmp/tmpvc0afbpx",
+      "progress_log": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752",
+      "docs": {
+        "architecture": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/CHECKLIST.md",
+        "progress_log": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/PHASE_PLAN.md",
+          "checklist": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/CHECKLIST.md",
+          "progress_log": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "recent_projects": [
-    "external_project",
-    "enhanced-rotation-test",
     "test_compact",
     "test_structured",
-    "test_with_entries"
+    "test_with_entries",
+    "test_empty_log",
+    "test_custom_content"
   ],
   "session_projects": {},
   "session_modes": {},
   "recent_tools": [
     {
-      "name": "read_file",
-      "ts": "2026-01-07 12:27:13 UTC"
-    },
-    {
-      "name": "vector_index_status",
-      "ts": "2026-01-06 10:02:48 UTC"
-    },
-    {
-      "name": "retrieve_by_uuid",
-      "ts": "2026-01-06 10:02:48 UTC"
-    },
-    {
-      "name": "vector_search",
-      "ts": "2026-01-06 10:02:48 UTC"
-    },
-    {
       "name": "generate_doc_templates",
-      "ts": "2026-01-06 10:01:59 UTC"
+      "ts": "2026-01-17 10:30:25 UTC"
     },
     {
       "name": "set_project",
-      "ts": "2026-01-06 10:01:59 UTC"
+      "ts": "2026-01-17 10:30:25 UTC"
     },
     {
-      "name": "read_recent",
-      "ts": "2026-01-06 10:01:08 UTC"
-    },
-    {
-      "name": "query_entries",
-      "ts": "2026-01-06 10:01:07 UTC"
+      "name": "rotate_log",
+      "ts": "2026-01-17 10:30:19 UTC"
     },
     {
       "name": "append_entry",
-      "ts": "2026-01-06 10:01:07 UTC"
+      "ts": "2026-01-17 10:30:19 UTC"
     },
     {
       "name": "list_projects",
-      "ts": "2026-01-06 10:00:55 UTC"
+      "ts": "2026-01-12 22:38:49 UTC"
+    },
+    {
+      "name": "vector_index_status",
+      "ts": "2026-01-08 07:47:30 UTC"
+    },
+    {
+      "name": "retrieve_by_uuid",
+      "ts": "2026-01-08 07:47:30 UTC"
+    },
+    {
+      "name": "vector_search",
+      "ts": "2026-01-08 07:47:30 UTC"
+    },
+    {
+      "name": "read_recent",
+      "ts": "2026-01-08 07:46:20 UTC"
+    },
+    {
+      "name": "read_file",
+      "ts": "2026-01-08 07:46:20 UTC"
     }
   ],
-  "last_activity_at": "2026-01-07 12:27:13 UTC",
-  "session_started_at": "2026-01-07 10:34:27 UTC",
-  "version": 328,
-  "last_updated_by": "Scribe",
-  "operation_timestamp": "2026-01-06 10:01:59 UTC"
+  "last_activity_at": "2026-01-17 10:30:25 UTC",
+  "session_started_at": "2026-01-17 10:30:19 UTC",
+  "version": 478,
+  "last_updated_by": "TestAgent",
+  "operation_timestamp": "2026-01-17 10:30:25 UTC"
 }
