@@ -274,6 +274,39 @@ If available in this repo, you may also have:
 - ~20% overhead when dependency analysis enabled
 - <20ms boundary checking overhead
 
+### 🗄️ Database Abstraction Layer (MANDATORY)
+
+**NEVER use direct SQL in tools.** All database operations MUST go through `StorageBackend` (`storage/base.py`).
+
+**Canonical API (`storage/base.py`):**
+
+| Method | Purpose |
+|--------|---------|
+| `upsert_project(name, repo_root, progress_log_path, docs_json)` | Create/update project |
+| `fetch_project(name)` | Get project by name |
+| `list_projects()` | List all projects |
+| `delete_project(name)` | Delete project |
+| `update_project_docs(name, docs_json)` | Update only docs_json field |
+| `insert_entry(...)` | Add log entry |
+| `fetch_recent_entries(...)` | Get recent entries |
+| `query_entries(...)` | Search entries |
+
+**Why this matters:**
+- Direct `_execute()` calls bypass the abstraction layer
+- Changes won't work across backends (SQLite/Postgres)
+- No write locking, no initialization checks
+- Schema migrations won't apply
+
+**Violation pattern (❌ NEVER DO THIS):**
+```python
+await backend._execute("UPDATE scribe_projects SET docs_json = ?", ...)
+```
+
+**Correct pattern (✅ ALWAYS DO THIS):**
+```python
+await backend.update_project_docs(project_name, docs_json)
+```
+
 **Important:**
 
 * Do not invent new tool behaviors or `manage_docs` actions.

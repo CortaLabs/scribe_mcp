@@ -25,10 +25,10 @@ Scribe MCP 2.1.1 introduces foundational document lifecycle upgrades, including 
 - **Config-Driven Colors**: Enable/disable via `use_ansi_colors: true` in `.scribe/config/scribe.yaml`
 - **5-Char Line Padding**: Consistent line number width for improved readability
 
-Structured edits are now the default path: agents express intent, the server compiles and applies deterministic mutations, and diagnostics remain explicit. Structural actions no longer auto-heal doc targets; if a doc key is not registered, the action fails with `DOC_NOT_FOUND` rather than redirecting the write.
+Structured edits are now the default path: agents express intent, the server compiles and applies deterministic mutations, and diagnostics remain explicit. Structural actions no longer auto-heal doc targets; if `doc_name` is not registered, the action fails with `DOC_NOT_FOUND` rather than redirecting the write.
 
-- `manage_docs` now supports **apply_patch** (structured by default) and **replace_range** for precise edits.
-- `apply_patch` supports `edit` payloads in structured mode; `patch_mode="unified"` opts into raw unified diffs.
+- `manage_docs` now supports **apply_patch** and **replace_range** for precise edits.
+- `apply_patch` auto-detects mode: unified when `patch` provided, structured when `edit` provided.
 - `patch_source_hash` enforces stale-source protection for patches.
 - Reminder system teaches **scaffold-only** `replace_section`, preferring structured/line edits.
 - New doc lifecycle actions: `normalize_headers`, `generate_toc`, `create_doc`, `validate_crosslinks`.
@@ -36,7 +36,7 @@ Structured edits are now the default path: agents express intent, the server com
 - `validate_crosslinks` is read-only diagnostics (no write, no doc_updates log).
 - `normalize_headers` supports ATX headers with or without space and Setext (`====` / `----`), skipping fenced code blocks. Output is canonical ATX.
 - `generate_toc` uses GitHub-style anchors (NFKD normalization, ASCII folding, emoji removal, punctuation collapse, de-duped suffixes).
-- Structural actions validate doc keys against the registry and fail hard on unknown docs (no silent redirects).
+- Structural actions validate `doc_name` against the registry and fail hard on unknown docs (no silent redirects).
 
 **New: `read_file` - Complete Code Intelligence System (Phase 5)**
 
@@ -93,11 +93,11 @@ Parameters: `path`, `mode` (scan_only/chunk/page/line_range/search), `structure_
 - Vector indexing now prefers registry-managed docs only; log/rotated-log files are excluded from doc indexing.
 - Reindex supports `--rebuild` (clear index), `--safe` (low-thread fallback), and `--wait-for-drain` to block until embeddings are written.
 
-Example (structured default):
+Example (structured mode with edit):
 ```json
 {
   "action": "apply_patch",
-  "doc": "architecture",
+  "doc_name": "architecture",
   "edit": {
     "type": "replace_range",
     "start_line": 12,
@@ -107,13 +107,12 @@ Example (structured default):
 }
 ```
 
-Example (unified diff mode, compiler output only):
+Example (unified diff mode - auto-detected when patch provided):
 ```json
 {
   "action": "apply_patch",
-  "doc": "architecture",
-  "patch": "<compiler output>",
-  "patch_mode": "unified"
+  "doc_name": "architecture",
+  "patch": "<compiler output>"
 }
 ```
 
@@ -443,6 +442,12 @@ python -m scribe_mcp.scripts.scribe "Starting frontend work" \
 - 📊 **Relevance Scoring** - 0.0-1.0 quality filtering
 - 🎯 **Code Reference Verification** - Validate referenced code exists
 - 📅 **Temporal Filtering** - Search by time ranges ("last_30d", "last_7d")
+
+### 📝 Documentation Management
+**Structured doc editing with full schema exposure**:
+- 🔧 **Complete MCP Schema** - All `manage_docs` parameters properly exposed via JSON Schema
+- 🎯 **Type-Safe Operations** - Proper parameter typing for reliable tool discovery and validation
+- 📋 **Action-Driven Interface** - Atomic updates for architecture, phase plans, checklists, and research docs
 
 ### 💾 Bulletproof Storage
 - **🗄️ Multi-Backend Support** - SQLite (zero-config) + PostgreSQL (enterprise)

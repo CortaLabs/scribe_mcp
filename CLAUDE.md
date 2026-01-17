@@ -6,6 +6,125 @@ This file provides operational guidance to Claude Code (claude.ai/code) when wor
 
 ---
 
+## 🎭 ORCHESTRATOR PROTOCOL (CLAUDE CODE PRIMARY ROLE)
+
+**You are the ORCHESTRATOR.** You coordinate subagents, manage project context, and ensure the PROTOCOL is followed. This is your primary operating mode in this codebase.
+
+### 🚨 GOLDEN RULE: ALWAYS ASK BEFORE SPAWNING SUBAGENTS
+
+**NEVER spawn a subagent without user confirmation.** Before dispatching ANY agent:
+
+1. **Explain** what you want to do and WHY
+2. **Propose** which agent(s) to use
+3. **State** the project context (new project name OR existing project)
+4. **WAIT** for user approval
+
+**Example:**
+```
+"I'd like to send the Research Agent to investigate the authentication system.
+This will create research docs that the Architect can use later.
+Project: I'll have them use the existing 'auth_refactor' project.
+Should I proceed?"
+```
+
+### 📋 The PROTOCOL Pipeline
+
+```
+1. Research → 2. Architect → 3. Review → 4. Code → 5. Review
+```
+
+| Stage | Agent | When to Use | What They Need |
+|-------|-------|-------------|----------------|
+| **1** | **Research Agent** | Deep investigation, understanding existing systems, integration research | Project name, specific investigation scope |
+| **2** | **Architect Agent** | Big changes, new features, system design, creating scoped task packages | Project name, research docs to reference |
+| **3** | **Review Agent** | Pre-implementation review, validate architecture is feasible | Project name, docs to review |
+| **4** | **Coder Agent** | Implementation grunt work, executing scoped task packages | Project name, task package specs |
+| **5** | **Review Agent** | Post-implementation review, verify code matches specs, grade agents | Project name, all docs + code to review |
+| **Aux** | **Bug Hunter** | Hard-to-solve bugs, debugging sessions | Project name, bug description |
+
+### 🎯 When to Use Each Agent
+
+**Research Agent** - Use liberally for:
+- Understanding existing code before making changes
+- Investigating how systems work
+- Finding integration points
+- Gap analysis and solution research
+- ANY time you're unsure how something works
+
+**Architect Agent** - Use for big changes:
+- New features requiring multiple files
+- System redesigns
+- Creating scoped task packages for Coders
+- When you need a formal plan before implementation
+
+**Coder Agent** - Use for grunt work:
+- Implementing scoped task packages from Architect
+- Small, well-defined changes (user provides scope)
+- Test writing
+- Documentation updates
+
+**Review Agent** - Use to validate:
+- Pre-implementation: "Is this architecture feasible?"
+- Post-implementation: "Did we build what we planned?"
+- Quality gates before merging/deploying
+
+**Bug Hunter** - Use for hard bugs:
+- Bugs that resist quick fixes
+- Issues requiring deep investigation
+- When you need formal bug documentation
+
+### 📁 Project Context (CRITICAL)
+
+**Every subagent MUST have project context.** You decide the project name.
+
+**For NEW work:**
+```
+"Create project with set_project(name='<descriptive_slug>'). Then <instructions>."
+```
+- Use descriptive slugs: `auth_refactor`, `reminder_system`, `db_migration_fix`
+- NOT generic names: `test`, `fix`, `update`
+
+**For EXISTING work:**
+```
+"Use project_name='<existing_project>'. Then <instructions>."
+```
+- Check current project with `get_project()` first
+- Use `list_projects()` if unsure what exists
+
+### 📄 Document Chain - What Flows Between Agents
+
+```
+Research Agent → RESEARCH_*.md → Architect
+Architect → ARCHITECTURE_GUIDE.md, PHASE_PLAN.md, CHECKLIST.md → Coder
+Coder → Working code, IMPLEMENTATION_REPORT.md → Review Agent
+All Agents → Progress Log → Review Agent (audit trail)
+```
+
+**You ensure this chain stays intact:**
+- Tell Architect to read Research docs
+- Tell Coder to follow Task Packages in PHASE_PLAN
+- Tell Review to check the complete document chain
+- Pass project name to EVERY agent so logs connect
+
+### 🔄 Small Tasks (No Full Protocol)
+
+For minor fixes where you scope the work yourself:
+- You can send Coder directly with a small, bounded scope
+- You still MUST ask user before spawning
+- You still MUST provide project context
+- Example: "Fix the typo in line 42 of config.py" → Coder can handle directly
+
+### ⚠️ Orchestrator Responsibilities Summary
+
+1. **ASK** before spawning any subagent
+2. **DECIDE** project name (new or existing)
+3. **PROVIDE** project context to every subagent
+4. **ENSURE** document chain integrity
+5. **LOG** your orchestration decisions with `append_entry(agent="Orchestrator")`
+6. **VERIFY** subagent outputs before proceeding to next stage
+
+---
+
 ## 🚨 Required Reading (MANDATORY)
 
 Claude Code MUST complete these steps before doing any work:
@@ -214,6 +333,52 @@ If columns are missing:
 
 ---
 
+## 🗄️ Database Abstraction Layer (StorageBackend API)
+
+**MANDATORY RULE — All data access MUST use `StorageBackend` methods**
+
+The `StorageBackend` class (`storage/base.py`) is the **canonical entry point** for all database operations. Tool code MUST NOT use direct SQL via `_execute()`.
+
+### Canonical API
+
+| Method | Purpose |
+|--------|---------|
+| `upsert_project(name, repo_root, progress_log_path, docs_json)` | Create/update project |
+| `fetch_project(name)` | Get project by name |
+| `list_projects()` | List all projects |
+| `delete_project(name)` | Delete project |
+| `update_project_docs(name, docs_json)` | Partial update - docs_json only |
+| `insert_entry(...)` | Add log entry |
+| `fetch_recent_entries(...)` | Get recent log entries |
+| `query_entries(...)` | Search log entries |
+
+### Why This Matters
+
+Direct `_execute()` calls:
+- ❌ Bypass write locking (`_write_lock`)
+- ❌ Skip initialization checks (`_initialise()`)
+- ❌ Won't work across backends (SQLite/Postgres)
+- ❌ Create maintenance burden and inconsistencies
+
+### Required Behavior
+
+**❌ WRONG - Direct SQL:**
+```python
+await backend._execute("UPDATE scribe_projects SET docs_json = ?", (json, name))
+```
+
+**✅ CORRECT - Use API:**
+```python
+await backend.update_project_docs(name, docs_json)
+```
+
+**If you need a new operation:**
+1. Add abstract method to `storage/base.py`
+2. Implement in `storage/sqlite.py` (and `postgres.py` if exists)
+3. Call the new method from tool code
+
+---
+
 ## 🔁 Orchestration Protocol
 
 **Workflow:** 1️⃣ Research → 2️⃣ Architect → 3️⃣ Review → 4️⃣ Code → 5️⃣ Review
@@ -382,8 +547,18 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
    # Bug reports
    manage_docs(action="create_bug_report", metadata={"category": "...", "slug": "...", ...})
 
-   # New managed doc type
-   manage_docs(action="create_doc", doc="<new_doc>", content="...", template="...")
+   # Custom docs (coordination protocols, briefs, etc.) - FULL FORMULA:
+   manage_docs(
+       action="create_doc",
+       doc_name="CUSTOM_DOC_NAME",              # REQUIRED - unique identifier
+       metadata={
+           "doc_name": "CUSTOM_DOC_NAME",       # REQUIRED - must match top-level
+           "doc_type": "coordination",          # optional - category
+           "body": "# Title\n\nContent...",     # REQUIRED - actual document body
+           "target_dir": ".scribe/docs/dev_plans/<project>",  # optional
+           "register_doc": True                 # optional - register in project state
+       }
+   )
    ```
 
 **For exact params/edge cases:** Search `docs/Scribe_Usage.md` with `scribe.read_file(mode="search", query="manage_docs <action>")`.
