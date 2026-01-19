@@ -48,10 +48,12 @@ async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str
 
     # Merge docs from baseline_hashes with live project.docs registry
     # This ensures newly registered docs appear in the list
+    # Filter out keys starting with '_' (metadata like _hashes)
     all_doc_keys = set(baseline_hashes.keys())
     if project_data:
         live_docs = project_data.get("docs") or {}
-        all_doc_keys.update(live_docs.keys())
+        # Exclude metadata keys (start with '_')
+        all_doc_keys.update(k for k in live_docs.keys() if not k.startswith("_"))
 
     # Build doc list with modification flags
     base_docs = ["architecture", "phase_plan", "checklist", "progress_log"]
