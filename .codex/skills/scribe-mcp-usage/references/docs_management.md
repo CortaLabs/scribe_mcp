@@ -24,12 +24,12 @@
 - `append` - Append content to document or section
 - `status_update` - Update checklist item status
 
-**DEPRECATED ACTIONS** (5 actions - still work but route to `create` with `doc_type`):
-- `create_doc` → `create(doc_type="custom")`
-- `create_research_doc` → `create(doc_type="research")`
-- `create_bug_report` → `create(doc_type="bug")`
-- `create_review_report` → `create(doc_type="review")`
-- `create_agent_report_card` → `create(doc_type="agent_card")`
+**DEPRECATED ACTIONS** (5 actions - still work but route to `create` with `doc_type` in metadata):
+- `create_doc` → `create(metadata={"doc_type": "custom", ...})`
+- `create_research_doc` → `create(metadata={"doc_type": "research", ...})`
+- `create_bug_report` → `create(metadata={"doc_type": "bug", ...})`
+- `create_review_report` → `create(metadata={"doc_type": "review", ...})`
+- `create_agent_report_card` → `create(metadata={"doc_type": "agent_card", ...})`
 
 **HIDDEN ACTIONS** (7 actions - supported but not promoted, for backwards compatibility):
 - `normalize_headers` - Normalize markdown headers to ATX format
@@ -62,13 +62,13 @@
 manage_docs(action="create_research_doc", doc_name="RESEARCH_AUTH", metadata={"research_goal": "..."})
 
 # NEW: create with doc_type
-manage_docs(action="create", doc_name="RESEARCH_AUTH", doc_type="research", metadata={"research_goal": "..."})
+manage_docs(action="create", doc_name="RESEARCH_AUTH", metadata={"doc_type": "research", "research_goal": "..."})
 
 # OLD: create_bug_report
 manage_docs(action="create_bug_report", metadata={"category": "logic", "slug": "auth_bug", ...})
 
 # NEW: create with doc_type
-manage_docs(action="create", doc_type="bug", metadata={"category": "logic", "slug": "auth_bug", ...})
+manage_docs(action="create", metadata={"doc_type": "bug", "category": "logic", "slug": "auth_bug", ...})
 ```
 
 #### `replace_section`
@@ -107,20 +107,20 @@ manage_docs(action="create", doc_type="bug", metadata={"category": "logic", "slu
 
 The following actions are **DEPRECATED** but still work. They automatically route to the unified `create` action with appropriate `doc_type`:
 
-#### `create_research_doc` → `create(doc_type="research")`
-**Migration:** Use `manage_docs(action="create", doc_type="research", ...)` instead.
+#### `create_research_doc` → `create(metadata={"doc_type": "research"})`
+**Migration:** Use `manage_docs(action="create", doc_name="RESEARCH_...", metadata={"doc_type": "research", ...})` instead.
 
-#### `create_bug_report` → `create(doc_type="bug")`
-**Migration:** Use `manage_docs(action="create", doc_type="bug", ...)` instead.
+#### `create_bug_report` → `create(metadata={"doc_type": "bug"})`
+**Migration:** Use `manage_docs(action="create", metadata={"doc_type": "bug", ...})` instead.
 
-#### `create_review_report` → `create(doc_type="review")`
-**Migration:** Use `manage_docs(action="create", doc_type="review", ...)` instead.
+#### `create_review_report` → `create(metadata={"doc_type": "review"})`
+**Migration:** Use `manage_docs(action="create", metadata={"doc_type": "review", ...})` instead.
 
-#### `create_agent_report_card` → `create(doc_type="agent_card")`
-**Migration:** Use `manage_docs(action="create", doc_type="agent_card", ...)` instead.
+#### `create_agent_report_card` → `create(metadata={"doc_type": "agent_card"})`
+**Migration:** Use `manage_docs(action="create", metadata={"doc_type": "agent_card", ...})` instead.
 
-#### `create_doc` → `create(doc_type="custom")`
-**Migration:** Use `manage_docs(action="create", doc_type="custom", ...)` instead.
+#### `create_doc` → `create(metadata={"doc_type": "custom"})`
+**Migration:** Use `manage_docs(action="create", doc_name="...", metadata={"doc_type": "custom", "body": "..."})` instead.
 
 **Note:** All deprecated actions accept the same parameters as before, but internally route to the new `create` action. See the `create` action documentation above for detailed parameter specifications.
 
@@ -191,19 +191,22 @@ await manage_docs(
     metadata={"status": "done", "proof": "code_review_completed"}
 )
 
-# Create research document (NEW SYNTAX)
+# Create research document (NEW SYNTAX - doc_type goes IN metadata)
 await manage_docs(
     action="create",
     doc_name="RESEARCH_AUTH_SYSTEM_20251102",
-    doc_type="research",
-    metadata={"research_goal": "Analyze authentication flow", "confidence_areas": ["security"]}
+    metadata={
+        "doc_type": "research",  # REQUIRED: specifies document type
+        "research_goal": "Analyze authentication flow",
+        "confidence_areas": ["security"]
+    }
 )
 
-# Create bug report (NEW SYNTAX)
+# Create bug report (NEW SYNTAX - doc_type goes IN metadata)
 await manage_docs(
     action="create",
-    doc_type="bug",
     metadata={
+        "doc_type": "bug",  # REQUIRED: specifies document type
         "category": "database",
         "slug": "connection_leak",
         "severity": "high",
@@ -212,12 +215,14 @@ await manage_docs(
     }
 )
 
-# Create custom document (NEW SYNTAX)
+# Create custom document (NEW SYNTAX - doc_type goes IN metadata)
 await manage_docs(
     action="create",
     doc_name="COORDINATION_PROTOCOL",
-    doc_type="custom",
-    metadata={"body": "# Coordination Protocol\n\n..."}
+    metadata={
+        "doc_type": "custom",  # REQUIRED: specifies document type
+        "body": "# Coordination Protocol\n\n..."
+    }
 )
 
 # Apply unified patch (patch_mode defaults to "unified" when patch is provided)

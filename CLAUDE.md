@@ -539,30 +539,30 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
    # If you don't know IDs: manage_docs(action="list_checklist_items", doc="checklist")
    ```
 
-4. **Creating new managed docs** (NEW SYNTAX using unified `create` action)
+4. **Creating new managed docs** (NEW SYNTAX - doc_type goes IN metadata)
    ```python
-   # Research docs (NEW)
-   manage_docs(action="create", doc_name="RESEARCH_<topic>_<YYYYMMDD>", doc_type="research", metadata={...})
+   # Research docs (doc_type inside metadata)
+   manage_docs(action="create", doc_name="RESEARCH_<topic>_<YYYYMMDD>", metadata={"doc_type": "research", ...})
 
-   # Bug reports (NEW)
-   manage_docs(action="create", doc_type="bug", metadata={"category": "...", "slug": "...", ...})
+   # Bug reports (doc_type inside metadata)
+   manage_docs(action="create", metadata={"doc_type": "bug", "category": "...", "slug": "...", ...})
 
-   # Custom docs (coordination protocols, briefs, etc.) - FULL FORMULA (NEW):
+   # Custom docs (coordination protocols, briefs, etc.) - FULL FORMULA:
    manage_docs(
        action="create",
        doc_name="CUSTOM_DOC_NAME",              # REQUIRED - unique identifier
-       doc_type="custom",                       # NEW - replaces action="create_doc"
        metadata={
-           "body": "# Title\n\nContent...",     # REQUIRED - actual document body
+           "doc_type": "custom",                # REQUIRED - specifies document type
+           "body": "# Title\n\nContent...",     # REQUIRED for custom - actual document body
            "target_dir": ".scribe/docs/dev_plans/<project>",  # optional
            "register_doc": True                 # optional - register in project state
        }
    )
 
    # OLD SYNTAX STILL WORKS (deprecated but backwards compatible):
-   # manage_docs(action="create_research_doc", ...) → routes to create(doc_type="research")
-   # manage_docs(action="create_bug_report", ...) → routes to create(doc_type="bug")
-   # manage_docs(action="create_doc", ...) → routes to create(doc_type="custom")
+   # manage_docs(action="create_research_doc", ...) → routes to create with doc_type="research" in metadata
+   # manage_docs(action="create_bug_report", ...) → routes to create with doc_type="bug" in metadata
+   # manage_docs(action="create_doc", ...) → routes to create with doc_type="custom" in metadata
    ```
 
 **For exact params/edge cases:** Search `docs/Scribe_Usage.md` with `scribe.read_file(mode="search", query="manage_docs <action>")`.
