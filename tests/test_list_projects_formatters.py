@@ -77,14 +77,14 @@ class TestFormatProjectsTable:
             filters=filters
         )
 
-        # Verify header
-        assert "📋 PROJECTS - 15 total (Page 1 of 3, showing 5)" in result
+        # Verify header (optimized format)
+        assert "📋 Projects (5/15, page 1/3)" in result
 
-        # Verify table headers
+        # Verify table headers (optimized format)
         assert "NAME" in result
         assert "STATUS" in result
         assert "ENTRIES" in result
-        assert "LAST ACTIVITY" in result
+        assert "ACTIVITY" in result  # Changed from "LAST ACTIVITY"
 
         # Verify active project marker
         assert "⭐ scribe_tool_output_refine" in result
@@ -92,10 +92,8 @@ class TestFormatProjectsTable:
         # Verify non-active project has proper spacing
         assert "  scribe_sentinel_concurrency" in result
 
-        # Verify footer
-        assert "📄 Page 1 of 3 | Use page=2 to see more" in result
-        assert "🔍 Filter: none | Sort: last_entry_at (desc)" in result
-        assert "💡 Tip:" in result
+        # Verify footer (optimized format - tips removed)
+        assert "Page 1/3 | filter: none" in result
 
     def test_active_project_marking(self):
         """Test that active project gets ⭐ marker."""
@@ -174,9 +172,8 @@ class TestFormatProjectsTable:
 
         result = formatter.format_projects_table(projects, None, pagination, filters)
 
-        # Should not show "Use page=2" for single page
-        assert "📄 Page 1 of 1" in result
-        assert "Use page=" not in result
+        # Optimized format - simplified pagination
+        assert "Page 1/1" in result
 
 
 class TestFormatProjectDetail:
@@ -454,7 +451,7 @@ class TestIntegrationScenarios:
         # Note: This test passes if config has use_ansi_colors: false
         # The actual color support depends on runtime config, so we just verify
         # that the formatter handles the USE_COLORS property correctly
-        assert "📋 PROJECTS" in result  # Verify basic formatting works
+        assert "📋 Projects" in result  # Verify basic formatting works (optimized header)
 
     def test_long_project_name_truncation(self):
         """Test that long project names are properly truncated."""

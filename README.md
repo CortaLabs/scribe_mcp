@@ -25,10 +25,10 @@ Scribe MCP 2.1.1 introduces foundational document lifecycle upgrades, including 
 - **Config-Driven Colors**: Enable/disable via `use_ansi_colors: true` in `.scribe/config/scribe.yaml`
 - **5-Char Line Padding**: Consistent line number width for improved readability
 
-Structured edits are now the default path: agents express intent, the server compiles and applies deterministic mutations, and diagnostics remain explicit. Structural actions no longer auto-heal doc targets; if a doc key is not registered, the action fails with `DOC_NOT_FOUND` rather than redirecting the write.
+Structured edits are now the default path: agents express intent, the server compiles and applies deterministic mutations, and diagnostics remain explicit. Structural actions no longer auto-heal doc targets; if `doc_name` is not registered, the action fails with `DOC_NOT_FOUND` rather than redirecting the write.
 
-- `manage_docs` now supports **apply_patch** (structured by default) and **replace_range** for precise edits.
-- `apply_patch` supports `edit` payloads in structured mode; `patch_mode="unified"` opts into raw unified diffs.
+- `manage_docs` now supports **apply_patch** and **replace_range** for precise edits.
+- `apply_patch` auto-detects mode: unified when `patch` provided, structured when `edit` provided.
 - `patch_source_hash` enforces stale-source protection for patches.
 - Reminder system teaches **scaffold-only** `replace_section`, preferring structured/line edits.
 - New doc lifecycle actions: `normalize_headers`, `generate_toc`, `create_doc`, `validate_crosslinks`.
@@ -36,18 +36,68 @@ Structured edits are now the default path: agents express intent, the server com
 - `validate_crosslinks` is read-only diagnostics (no write, no doc_updates log).
 - `normalize_headers` supports ATX headers with or without space and Setext (`====` / `----`), skipping fenced code blocks. Output is canonical ATX.
 - `generate_toc` uses GitHub-style anchors (NFKD normalization, ASCII folding, emoji removal, punctuation collapse, de-duped suffixes).
-- Structural actions validate doc keys against the registry and fail hard on unknown docs (no silent redirects).
-- `read_file` tool provides repo-scoped file reads with scan/chunk/page/search modes and provenance logging.
+- Structural actions validate `doc_name` against the registry and fail hard on unknown docs (no silent redirects).
+
+**New: `read_file` - Complete Code Intelligence System (Phase 5)**
+
+The `read_file` tool is now a comprehensive code intelligence platform for Python and Markdown files, providing SWE agents with instant codebase understanding without reading full files:
+
+**Python Intelligence:**
+- **Full Signature Extraction**: Captures complete function/method signatures with type hints, default values, and return types
+  - Example: `async def fetch_project(self, name: str) -> Optional[ProjectRecord]`
+- **Line Range Analysis**: Shows start-end lines for every class, function, and method with line counts for complexity assessment
+  - Example: `async def _initialise(self) -> None (lines 645-1121 (477))` - instantly identifies a 477-line method needing refactoring
+- **Class Structure Display**: Shows class hierarchy with first 10 methods by default, including async markers
+- **Structure Filtering**: Regex-based search to find specific classes or functions
+  - Example: `structure_filter="validate"` finds all validation functions with full signatures
+- **Structure Pagination**: Browse large classes page-by-page (default: 10 items/page)
+  - Navigate through a 62-method class: page 1 shows methods 1-10, page 2 shows 11-20, etc.
+- **Dependency Analysis**: Static import analysis with resolved paths for local modules
+
+**Markdown Intelligence:**
+- **Heading Extraction**: Complete document outline with all heading levels and line numbers
+- **Quick Navigation**: Jump directly to specific sections using extracted line numbers
+
+**Complete Workflow Example:**
+```python
+# Step 1: Find the class (scan_only mode - zero content, pure metadata)
+read_file(path="storage/sqlite.py", mode="scan_only", structure_filter="SQLiteStorage")
+# → Shows: class SQLiteStorage at lines 32-2334 (2303 lines)
+#          Methods (page 1 of 7, showing 1-10 of 62)
+
+# Step 2: Browse methods with pagination
+read_file(path="storage/sqlite.py", mode="scan_only",
+          structure_filter="SQLiteStorage", structure_page=2)
+# → Methods 11-20 with full signatures and line ranges
+#   Found: async def fetch_recent_entries(self) -> List[Dict[str, Any]] (lines 338-427 (90))
+
+# Step 3: Read exact method implementation
+read_file(path="storage/sqlite.py", mode="line_range", start_line=338, end_line=427)
+# → Full method code for analysis
+
+# Step 4: Edit with confidence
+Edit(file_path="storage/sqlite.py", old_string="...", new_string="...")
+```
+
+**Key Benefits:**
+- **Token Efficiency**: Get complete structural overview without reading full file content
+- **Instant Complexity Assessment**: Line counts reveal 477-line monsters needing refactoring
+- **Type-Aware Navigation**: Full signatures show exactly how to call each function
+- **Regex Precision**: Find all functions matching `^_validate.*|^_sanitize` in seconds
+- **Pagination for Scale**: Browse classes with 50+ methods without overwhelming output
+
+Parameters: `path`, `mode` (scan_only/chunk/page/line_range/search), `structure_filter`, `structure_page`, `structure_page_size`, `include_dependencies`, `format`
+
 - `scribe_doctor` reports repo root, config, plugin status, and vector readiness for faster diagnostics.
 - `manage_docs` now supports semantic search via `action="search"` with `search_mode="semantic"`, including doc/log separation and `doc_k`/`log_k` overrides.
 - Vector indexing now prefers registry-managed docs only; log/rotated-log files are excluded from doc indexing.
 - Reindex supports `--rebuild` (clear index), `--safe` (low-thread fallback), and `--wait-for-drain` to block until embeddings are written.
 
-Example (structured default):
+Example (structured mode with edit):
 ```json
 {
   "action": "apply_patch",
-  "doc": "architecture",
+  "doc_name": "architecture",
   "edit": {
     "type": "replace_range",
     "start_line": 12,
@@ -57,13 +107,12 @@ Example (structured default):
 }
 ```
 
-Example (unified diff mode, compiler output only):
+Example (unified diff mode - auto-detected when patch provided):
 ```json
 {
   "action": "apply_patch",
-  "doc": "architecture",
-  "patch": "<compiler output>",
-  "patch_mode": "unified"
+  "doc_name": "architecture",
+  "patch": "<compiler output>"
 }
 ```
 
@@ -393,6 +442,12 @@ python -m scribe_mcp.scripts.scribe "Starting frontend work" \
 - 📊 **Relevance Scoring** - 0.0-1.0 quality filtering
 - 🎯 **Code Reference Verification** - Validate referenced code exists
 - 📅 **Temporal Filtering** - Search by time ranges ("last_30d", "last_7d")
+
+### 📝 Documentation Management
+**Structured doc editing with full schema exposure**:
+- 🔧 **Complete MCP Schema** - All `manage_docs` parameters properly exposed via JSON Schema
+- 🎯 **Type-Safe Operations** - Proper parameter typing for reliable tool discovery and validation
+- 📋 **Action-Driven Interface** - Atomic updates for architecture, phase plans, checklists, and research docs
 
 ### 💾 Bulletproof Storage
 - **🗄️ Multi-Backend Support** - SQLite (zero-config) + PostgreSQL (enterprise)

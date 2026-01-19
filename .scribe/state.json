@@ -1,5 +1,5 @@
 {
-  "current_project": "scribe_tool_output_refinement",
+  "current_project": "mybb-forge-v2",
   "projects": {
     "scribe_mcp": {
       "name": "scribe_mcp",
@@ -70,565 +70,2040 @@
       "author": "Scribe",
       "description": null,
       "tags": []
+    },
+    "scribe_systematic_audit_1": {
+      "name": "scribe_systematic_audit_1",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "scribe_systematic_audit_1_phase5_tool_output": {
+      "name": "scribe_systematic_audit_1_phase5_tool_output",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "phase5_test_project_a1": {
+      "name": "phase5_test_project_a1",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "phase5_test_project_a1_struct": {
+      "name": "phase5_test_project_a1_struct",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_struct/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_struct",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_struct/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_struct/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_struct/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_struct/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "phase5_test_project_a1_compact": {
+      "name": "phase5_test_project_a1_compact",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_compact/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_compact",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_compact/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_compact/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_compact/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/phase5_test_project_a1_compact/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "scribe_manage_docs_implementation": {
+      "name": "scribe_manage_docs_implementation",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_manage_docs_implementation/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_manage_docs_implementation",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_manage_docs_implementation/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_manage_docs_implementation/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_manage_docs_implementation/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_manage_docs_implementation/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "review_agent_validation_test": {
+      "name": "review_agent_validation_test",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/review_agent_validation_test/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/review_agent_validation_test",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/review_agent_validation_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/review_agent_validation_test/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/review_agent_validation_test/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/review_agent_validation_test/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "quick_validation_688d6828": {
+      "name": "quick_validation_688d6828",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/quick_validation_688d6828/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/quick_validation_688d6828",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/quick_validation_688d6828/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/quick_validation_688d6828/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/quick_validation_688d6828/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/quick_validation_688d6828/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "scribe_project_sitrep_hash_comparison": {
+      "name": "scribe_project_sitrep_hash_comparison",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_project_sitrep_hash_comparison/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_project_sitrep_hash_comparison",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_project_sitrep_hash_comparison/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_project_sitrep_hash_comparison/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_project_sitrep_hash_comparison/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_project_sitrep_hash_comparison/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "manage_docs_testing_playground": {
+      "name": "manage_docs_testing_playground",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_testing_playground/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_testing_playground",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_testing_playground/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_testing_playground/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_testing_playground/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_testing_playground/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "custom_doc_edit_test": {
+      "name": "custom_doc_edit_test",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/custom_doc_edit_test/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/custom_doc_edit_test",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/custom_doc_edit_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/custom_doc_edit_test/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/custom_doc_edit_test/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/custom_doc_edit_test/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "scribe_mcp_enhancement": {
+      "name": "scribe_mcp_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "test_db_upsert_debug": {
+      "name": "test_db_upsert_debug",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_db_upsert_debug/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_db_upsert_debug",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_db_upsert_debug/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_db_upsert_debug/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_db_upsert_debug/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_db_upsert_debug/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "read_file_enhancement": {
+      "name": "read_file_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": []
+    },
+    "doc_param_refactor_test": {
+      "name": "doc_param_refactor_test",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_param_refactor_test/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "scribe-haiku-audit-1": {
+      "name": "scribe-haiku-audit-1",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_haiku_audit_1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "agentkit_audit": {
+      "name": "agentkit_audit",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "doc_registration_fix": {
+      "name": "doc_registration_fix",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/doc_registration_fix/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_mcp_v2": {
+      "name": "council_mcp_v2",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_v2/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "agentkit_init_interactive_fix": {
+      "name": "agentkit_init_interactive_fix",
+      "root": "/home/austin/projects/MCP_SPINE/agentkit",
+      "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_init_interactive_fix/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "agentkit_sdk_skill": {
+      "name": "agentkit_sdk_skill",
+      "root": "/home/austin/projects/MCP_SPINE/agentkit",
+      "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "emoji": "\ud83d\udce6",
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": "Create a comprehensive Codex skill for downstream projects that import AgentKit (SDK-style guide with plugin architecture, config, workflows).",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_sdk_skill/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "fix_read_recent_project_resolution": {
+      "name": "fix_read_recent_project_resolution",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": "Fix read_recent/query_entries project resolution so explicit project arg works across repos and does not default to current repo/project.",
+      "tags": [
+        "bugfix",
+        "logging",
+        "project-resolution"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/fix_read_recent_project_resolution/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "agentkit_faiss_alignment": {
+      "name": "agentkit_faiss_alignment",
+      "root": "/home/austin/projects/MCP_SPINE/agentkit",
+      "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "Fix FAISS and storage alignment issues identified in council_mcp research report",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit_faiss_alignment/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_mcp": {
+      "name": "council_mcp",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "agentkit": {
+      "name": "agentkit",
+      "root": "/home/austin/projects/MCP_SPINE/agentkit",
+      "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/agentkit/.scribe/docs/dev_plans/agentkit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_mcp_bridge_api": {
+      "name": "council_mcp_bridge_api",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_bridge_api/PROGRESS_LOG.md",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_bridge_api/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_bridge_api/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_bridge_api/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_bridge_api/PROGRESS_LOG.md",
+        "REVIEW_STAGE5_BRIDGE_REGISTRY_20260111": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_bridge_api/reviews/REVIEW_STAGE5_BRIDGE_REGISTRY_20260111.md"
+      }
+    },
+    "council_scribe_bridge": {
+      "name": "council_scribe_bridge",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_scribe_bridge/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "list_projects_root_filter_fix": {
+      "name": "list_projects_root_filter_fix",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/list_projects_root_filter_fix/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_audit": {
+      "name": "council_audit",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_council_audit": {
+      "name": "council_council_audit",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_council_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_mcp_audit": {
+      "name": "council_mcp_audit",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_web_ui": {
+      "name": "council_web_ui",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_web_ui/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_mcp_template_hardening": {
+      "name": "council_mcp_template_hardening",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent"
+      },
+      "author": "ReviewAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/council_mcp_template_hardening/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "agentkit_memory_decay": {
+      "name": "agentkit_memory_decay",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agentkit_memory_decay/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_agentkit_memory_decay_integration": {
+      "name": "council_agentkit_memory_decay_integration",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent"
+      },
+      "author": "ReviewAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_agentkit_memory_decay_integration/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_memory_decay": {
+      "name": "council_memory_decay",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "atlas"
+      },
+      "author": "atlas",
+      "description": "Integration of AgentKit V2 memory decay system with Council MCP",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_memory_decay/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "outside_repo_test": {
+      "name": "outside_repo_test",
+      "root": "/tmp/scribe_outside_repo_test",
+      "progress_log": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test",
+      "docs": {
+        "architecture": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/PHASE_PLAN.md",
+        "checklist": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/CHECKLIST.md",
+        "progress_log": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/PHASE_PLAN.md",
+          "checklist": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/CHECKLIST.md",
+          "progress_log": "/tmp/scribe_outside_repo_test/.scribe/docs/dev_plans/outside_repo_test/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "Council_MCP_Cleanup_1": {
+      "name": "Council_MCP_Cleanup_1",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp_cleanup_1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "Council_WebUI_Design_Standards": {
+      "name": "Council_WebUI_Design_Standards",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_webui_design_standards/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "scribe_mcp_repair_2": {
+      "name": "scribe_mcp_repair_2",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_mcp_repair_2/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "bridge_api_hardening": {
+      "name": "bridge_api_hardening",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bridge_api_hardening/PROGRESS_LOG.md",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bridge_api_hardening/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bridge_api_hardening/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bridge_api_hardening/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bridge_api_hardening/PROGRESS_LOG.md",
+        "REVIEW_PHASE23_FINAL_20260116": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bridge_api_hardening/review.md"
+      }
+    },
+    "council_systematic_audit_1": {
+      "name": "council_systematic_audit_1",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_systematic_audit_1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "claude_md_templating": {
+      "name": "claude_md_templating",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/claude_md_templating/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_hooks_system": {
+      "name": "council_hooks_system",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "Claude Code hooks integration with Council/Scribe MCPs - automatic audit logging, orchestration enforcement, context injection",
+      "tags": [
+        "hooks",
+        "claude-code",
+        "audit",
+        "infrastructure",
+        "scribe-bridge"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hooks_system/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb-playground": {
+      "name": "mybb-playground",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "AI-assisted MyBB development toolkit - MCP server, template/style sync, plugin scaffolding",
+      "tags": [
+        "mybb",
+        "mcp",
+        "php",
+        "python",
+        "forum"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "disk-sync": {
+      "name": "disk-sync",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/disk_sync/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_cache_refresh_research": {
+      "name": "mybb_cache_refresh_research",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_cache_refresh_research/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_theme_research": {
+      "name": "mybb_theme_research",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_theme_research/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb-ecosystem-audit": {
+      "name": "mybb-ecosystem-audit",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent-Phase3"
+      },
+      "author": "ReviewAgent-Phase3",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_ecosystem_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_mcp_phase3a_tests": {
+      "name": "mybb_mcp_phase3a_tests",
+      "root": "/home/austin/projects/MyBB_Playground/mybb_mcp",
+      "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3a_tests/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_phase3c_test_fix": {
+      "name": "mybb_phase3c_test_fix",
+      "root": "/home/austin/projects/MyBB_Playground/mybb_mcp",
+      "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "Fix broken Phase 3c moderation and user management test suite by correcting mocking patterns",
+      "tags": [
+        "testing",
+        "bugfix",
+        "phase3c"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_phase3c_test_fix/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_mcp_phase3": {
+      "name": "mybb_mcp_phase3",
+      "root": "/home/austin/projects/MyBB_Playground/mybb_mcp",
+      "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent-Phase3"
+      },
+      "author": "ReviewAgent-Phase3",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_phase3/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_mcp_plugin_testing": {
+      "name": "mybb_mcp_plugin_testing",
+      "root": "/home/austin/projects/MyBB_Playground/mybb_mcp",
+      "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe Coder"
+      },
+      "author": "Scribe Coder",
+      "description": "Testing and documenting MyBB MCP plugin and hook management tools",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_plugin_testing/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_mcp_testing": {
+      "name": "mybb_mcp_testing",
+      "root": "/home/austin/projects/MyBB_Playground/mybb_mcp",
+      "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_mcp_testing/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb_sync_safeguards": {
+      "name": "mybb_sync_safeguards",
+      "root": "/home/austin/projects/MyBB_Playground/mybb_mcp",
+      "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ArchitectAgent"
+      },
+      "author": "ArchitectAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/mybb_mcp/.scribe/docs/dev_plans/mybb_sync_safeguards/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb-mcp-sync-safeguards": {
+      "name": "mybb-mcp-sync-safeguards",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_mcp_sync_safeguards/PROGRESS_LOG.md",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_mcp_sync_safeguards/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_mcp_sync_safeguards/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_mcp_sync_safeguards/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_mcp_sync_safeguards/PROGRESS_LOG.md",
+        "layer2_pause_resume": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_mcp_sync_safeguards/layer2_pause_resume.md"
+      }
+    },
+    "mybb-sync-safeguards": {
+      "name": "mybb-sync-safeguards",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent-SyncSafeguards"
+      },
+      "author": "ReviewAgent-SyncSafeguards",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_sync_safeguards/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "plugin-theme-manager": {
+      "name": "plugin-theme-manager",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_theme_manager/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb-playground-docs": {
+      "name": "mybb-playground-docs",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent-DocsAudit"
+      },
+      "author": "ReviewAgent-DocsAudit",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground_docs/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "phptpl-modernization": {
+      "name": "phptpl-modernization",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/phptpl_modernization/PROGRESS_LOG.md",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/phptpl_modernization/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/phptpl_modernization/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/phptpl_modernization/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/phptpl_modernization/PROGRESS_LOG.md",
+        "IMPLEMENTATION_REPORT_20260118_1059": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/phptpl_modernization/IMPLEMENTATION_REPORT_20260118_1059.md"
+      }
+    },
+    "cortex": {
+      "name": "cortex",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "cortex-audit": {
+      "name": "cortex-audit",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/cortex_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "invite-system": {
+      "name": "invite-system",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md",
+        "usercp_navigation_fix": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/usercp_navigation_fix.md"
+      }
+    },
+    "manage-docs-ux-fix": {
+      "name": "manage-docs-ux-fix",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "Fix manage_docs slugging, path resolution, and improve UX via reminders",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_ux_fix/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "slugify_standardization": {
+      "name": "slugify_standardization",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/slugify_standardization/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "mybb-forge-v2": {
+      "name": "mybb-forge-v2",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "agent_ux_overhaul": {
+      "name": "agent_ux_overhaul",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "recent_projects": [
-    "scribe_tool_output_refinement",
-    "scribe_sentinel_concurrency_v1",
-    "sentinel",
-    "scribe_mcp"
+    "mybb-forge-v2",
+    "agent_ux_overhaul",
+    "invite-system",
+    "scribe_mcp",
+    "slugify_standardization"
   ],
   "session_projects": {
-    "9fbde202-a7d6-475b-90a5-e4ec9ac736fe": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+    "61c3e1d7-6d68-44f5-8354-e1483d8be1a6": {
+      "name": "invite-system",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
+        }
+      }
     },
-    "a0921c1c-f545-43b9-a1d5-f2facf73f907": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+    "814c113c-2f9a-4778-8e21-1030a682a5ae": {
+      "name": "invite-system",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
+        }
+      }
     },
-    "be7345ca-1958-407c-a764-f69e447453e2": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+    "36a6280b-d9b5-4f3f-9cbc-a6f156673e44": {
+      "name": "mybb-forge-v2",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
-      "description": null,
-      "tags": []
+      "description": "Git subtree and configuration system for private plugin/theme repos",
+      "tags": [
+        "git-subtree",
+        "configuration",
+        "yaml",
+        "env",
+        "plugin-attribution"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
+        }
+      }
     },
-    "9f817eb0-2ca5-4b76-9d9e-0ff49dccdb0a": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+    "6a43fd92-66fd-4178-acf1-34d35ef91e47": {
+      "name": "invite-system",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
+        }
+      }
     },
-    "b92c1279-d631-4edc-9d11-123301f26edb": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+    "0360c4a9-22e9-4da6-9a1a-fc6658db5d63": {
+      "name": "mybb-forge-v2",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
+        }
+      }
     },
-    "b6d52fd0-fae0-4fb4-8fe0-d0d24a9b1e7c": {
-      "name": "scribe_tool_output_refinement",
+    "a63effad-4196-411d-8c3c-cd91f3f2b379": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "3c9f6b21",
+            "phase_plan": "e99f59b9",
+            "checklist": "197f0bc9"
+          },
+          "current_hashes": {
+            "architecture": "3c9f6b21",
+            "phase_plan": "e99f59b9",
+            "checklist": "197f0bc9"
+          }
+        }
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
-      "description": null,
-      "tags": []
+      "description": "Comprehensive fix for slugify inconsistency and manage_docs usability - make tools just work for agents without documentation dependency",
+      "tags": [
+        "slugify",
+        "manage_docs",
+        "agent_ux",
+        "consistency",
+        "architecture"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "3c9f6b21",
+              "phase_plan": "e99f59b9",
+              "checklist": "197f0bc9"
+            },
+            "current_hashes": {
+              "architecture": "3c9f6b21",
+              "phase_plan": "e99f59b9",
+              "checklist": "197f0bc9"
+            }
+          }
+        }
+      }
     },
-    "4b1efd2c-12cf-449e-b0f8-ff39535a36f6": {
-      "name": "scribe_sentinel_concurrency_v1",
+    "b498a83e-8d79-4f3f-833e-9a658b7938a9": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     },
-    "d27ce6df-ec39-4839-be8e-663d1c634ed1": {
-      "name": "scribe_tool_output_refinement",
+    "8d400eb6-8d1c-4683-9f91-a4e07f9fae87": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     },
-    "ab7d85ff-c222-4f86-a80f-916e78a54db8": {
-      "name": "scribe_sentinel_concurrency_v1",
+    "14f87e5f-301d-4fcd-9945-142e919c0cc5": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     },
-    "2939fab0-af08-4f92-938a-e4964e6f416d": {
-      "name": "scribe_tool_output_refinement",
+    "44bda144-e771-48d8-889f-9c028f208fa6": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     },
-    "cc83a6a3-cb47-48c1-bda4-94b98138ed77": {
-      "name": "scribe_sentinel_concurrency_v1",
+    "1c0fad10-13d9-48bd-a9e3-e178782633d2": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     },
-    "5f7bcc64-ac96-4ea4-a167-bf90a792e634": {
-      "name": "scribe_sentinel_concurrency_v1",
+    "f1909ced-a149-4a70-a648-a500c0f1911d": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     },
-    "0ac7e066-b2d4-42a2-b588-555490bd53a1": {
-      "name": "scribe_tool_output_refinement",
+    "d13441bf-fa72-4c4a-a481-3d289980e8c1": {
+      "name": "agent_ux_overhaul",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
       "description": null,
-      "tags": []
-    },
-    "e3224334-ba99-4c64-acb3-996b7729803d": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "26ce864f-3c44-41a8-945e-20ce0553a065": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "6292f458-6e87-4371-b951-ea65fb790df7": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "1aa8a674-8fd9-4f41-a3f0-3ffa61063876": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "a04d2435-bc68-481c-a221-93f9809616ef": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "b73122bc-6b2e-427d-b579-54223411d904": {
-      "name": "sentinel",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sentinel/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sentinel",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sentinel/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sentinel/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sentinel/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sentinel/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "50d157bc-afd1-47dc-ba23-f57caf0d2d89": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "6460fab8-cc5d-4e95-8533-e56380031612": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "2c9245f0-7b42-43f1-a9d1-5e8e0bbf0758": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "494c06df-3cea-4bfd-ad58-fc4702761146": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "58d0b425-0eb8-4960-a29b-6b00324d979d": {
-      "name": "scribe_sentinel_concurrency_v1",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_sentinel_concurrency_v1/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "14376dfb-d6c5-4384-a2f9-d1b143b874fc": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "8c2257ff-c205-4d93-aa17-1c79a0b8ee0c": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
-    },
-    "664cacb2-44e6-4884-a1e8-4b55809c7d97": {
-      "name": "scribe_tool_output_refinement",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement",
-      "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
-      },
-      "defaults": {
-        "agent": "Scribe"
-      },
-      "author": "Scribe",
-      "description": null,
-      "tags": []
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "session_modes": {
-    "5f7bcc64-ac96-4ea4-a167-bf90a792e634": "project",
-    "0ac7e066-b2d4-42a2-b588-555490bd53a1": "project",
-    "e3224334-ba99-4c64-acb3-996b7729803d": "project",
-    "26ce864f-3c44-41a8-945e-20ce0553a065": "project",
-    "6292f458-6e87-4371-b951-ea65fb790df7": "project",
-    "1aa8a674-8fd9-4f41-a3f0-3ffa61063876": "project",
-    "a04d2435-bc68-481c-a221-93f9809616ef": "project",
-    "b73122bc-6b2e-427d-b579-54223411d904": "project",
-    "50d157bc-afd1-47dc-ba23-f57caf0d2d89": "project",
-    "6460fab8-cc5d-4e95-8533-e56380031612": "project",
-    "2c9245f0-7b42-43f1-a9d1-5e8e0bbf0758": "project",
-    "494c06df-3cea-4bfd-ad58-fc4702761146": "project",
-    "58d0b425-0eb8-4960-a29b-6b00324d979d": "project",
-    "14376dfb-d6c5-4384-a2f9-d1b143b874fc": "project",
-    "8c2257ff-c205-4d93-aa17-1c79a0b8ee0c": "project",
-    "664cacb2-44e6-4884-a1e8-4b55809c7d97": "project"
+    "61c3e1d7-6d68-44f5-8354-e1483d8be1a6": "project",
+    "814c113c-2f9a-4778-8e21-1030a682a5ae": "project",
+    "36a6280b-d9b5-4f3f-9cbc-a6f156673e44": "project",
+    "6a43fd92-66fd-4178-acf1-34d35ef91e47": "project",
+    "0360c4a9-22e9-4da6-9a1a-fc6658db5d63": "project",
+    "a63effad-4196-411d-8c3c-cd91f3f2b379": "project",
+    "b498a83e-8d79-4f3f-833e-9a658b7938a9": "project",
+    "8d400eb6-8d1c-4683-9f91-a4e07f9fae87": "project",
+    "14f87e5f-301d-4fcd-9945-142e919c0cc5": "project",
+    "44bda144-e771-48d8-889f-9c028f208fa6": "project",
+    "1c0fad10-13d9-48bd-a9e3-e178782633d2": "project",
+    "f1909ced-a149-4a70-a648-a500c0f1911d": "project",
+    "d13441bf-fa72-4c4a-a481-3d289980e8c1": "project"
   },
   "recent_tools": [
     {
+      "name": "read_file",
+      "ts": "2026-01-19 09:15:02 UTC"
+    },
+    {
       "name": "append_entry",
-      "ts": "2026-01-03 11:15:14 UTC"
-    },
-    {
-      "name": "list_projects",
-      "ts": "2026-01-03 11:14:56 UTC"
-    },
-    {
-      "name": "get_project",
-      "ts": "2026-01-03 11:12:52 UTC"
+      "ts": "2026-01-19 09:14:57 UTC"
     },
     {
       "name": "set_project",
-      "ts": "2026-01-03 11:12:45 UTC"
-    },
-    {
-      "name": "read_file",
-      "ts": "2026-01-03 10:56:04 UTC"
+      "ts": "2026-01-19 09:12:42 UTC"
     },
     {
       "name": "read_recent",
-      "ts": "2026-01-03 10:23:04 UTC"
+      "ts": "2026-01-19 09:12:39 UTC"
     },
     {
       "name": "manage_docs",
-      "ts": "2026-01-03 10:15:27 UTC"
+      "ts": "2026-01-19 09:11:16 UTC"
     },
     {
-      "name": "generate_doc_templates",
-      "ts": "2026-01-03 09:14:29 UTC"
+      "name": "list_projects",
+      "ts": "2026-01-19 09:10:53 UTC"
     },
     {
       "name": "query_entries",
-      "ts": "2026-01-03 07:24:23 UTC"
+      "ts": "2026-01-19 09:01:09 UTC"
     },
     {
-      "name": "vector_search",
-      "ts": "2026-01-02 09:20:27 UTC"
+      "name": "get_project",
+      "ts": "2026-01-19 08:53:24 UTC"
+    },
+    {
+      "name": "generate_doc_templates",
+      "ts": "2026-01-19 08:24:11 UTC"
+    },
+    {
+      "name": "delete_project",
+      "ts": "2026-01-19 00:57:10 UTC"
     }
   ],
-  "last_activity_at": "2026-01-03 11:15:14 UTC",
-  "session_started_at": "2026-01-03 00:43:44 UTC",
-  "version": 200,
+  "last_activity_at": "2026-01-19 09:15:02 UTC",
+  "session_started_at": "2026-01-18 22:18:28 UTC",
+  "version": 1122,
   "last_updated_by": "Scribe",
-  "operation_timestamp": "2026-01-03 11:12:46 UTC"
+  "operation_timestamp": "2026-01-19 09:12:43 UTC"
 }

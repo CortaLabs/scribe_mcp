@@ -25,6 +25,50 @@ def _get_context():
     return context
 
 
+def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[str, Any]]) -> str:
+    """Build a human-readable message from event_type and data.
+
+    Instead of terse messages like "scope_violation", creates descriptive ones like:
+    "Scope violation: absolute_path_not_allowlisted - /path/to/file.py"
+    """
+    if not event_type:
+        return "sentinel_event"
+
+    # Handle known event types with specific formatting
+    if event_type == "scope_violation" and isinstance(data, dict):
+        reason = data.get("reason", "unknown")
+        path = data.get("path", "")
+        tool_name = data.get("tool_name", "")
+
+        # Build descriptive message
+        parts = [f"Scope violation: {reason}"]
+        if path:
+            # Truncate long paths for readability
+            display_path = path if len(path) <= 60 else f"...{path[-57:]}"
+            parts.append(f"path={display_path}")
+        if tool_name:
+            parts.append(f"tool={tool_name}")
+        return " | ".join(parts)
+
+    if event_type == "read_file_error" and isinstance(data, dict):
+        reason = data.get("reason", "unknown")
+        path = data.get("path", "")
+        parts = [f"Read file error: {reason}"]
+        if path:
+            display_path = path if len(path) <= 60 else f"...{path[-57:]}"
+            parts.append(f"path={display_path}")
+        return " | ".join(parts)
+
+    # Generic fallback: use event_type but try to extract key info from data
+    if isinstance(data, dict):
+        # Try common keys that might contain useful info
+        for key in ["reason", "error", "title", "description"]:
+            if key in data and data[key]:
+                return f"{event_type}: {data[key]}"
+
+    return event_type
+
+
 @app.tool()
 async def append_event(
     message: Optional[str] = None,
@@ -51,7 +95,8 @@ async def append_event(
         if not payload_message and isinstance(data, dict):
             payload_message = data.get("message") or data.get("event") or None
         if not payload_message:
-            payload_message = event_type or "sentinel_event"
+            # Build descriptive message from event_type and data instead of terse event_type
+            payload_message = _build_descriptive_message(event_type, data)
         meta_payload = meta if isinstance(meta, dict) else {}
         if isinstance(data, dict):
             meta_payload = {**meta_payload, **data}

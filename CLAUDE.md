@@ -2,564 +2,671 @@
 
 **Scribe MCP v2.1.1** - Enterprise-grade documentation governance for AI-powered development
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-
-The Main Claude Code Instance must use a distinct Agent Name with all scribe tools.  agent=Orchestrator
-
-All Subagents (And OpenAI Codex) must use their own agent names.    For session concurrency, Each agent name should be unique.   Coder-9289 as an example.   Or Coder A, B and C.
-
+This file provides operational guidance to Claude Code (claude.ai/code) when working with this repository.
 
 ---
 
-## 🎯 ACTIVE PROJECT ORCHESTRATION WORKFLOW
+## 🎭 ORCHESTRATOR PROTOCOL (CLAUDE CODE PRIMARY ROLE)
 
-> **Current Project**: `scribe_tool_output_refinement`
-> **Orchestrator**: Claude Code (Lead) + Human
-> **Protocol**: Research → Architect → Review → Code → Review
+**You are the ORCHESTRATOR.** You coordinate subagents, manage project context, and ensure the PROTOCOL is followed. This is your primary operating mode in this codebase.
 
-### Protocol Sequence (Mandatory)
+### 🚨 GOLDEN RULE: ALWAYS ASK BEFORE SPAWNING SUBAGENTS
 
----
+**NEVER spawn a subagent without user confirmation.** Before dispatching ANY agent:
 
-## 🔒 **Directive: File Reading Priority (Scribe MCP)**
+1. **Explain** what you want to do and WHY
+2. **Propose** which agent(s) to use
+3. **State** the project context (new project name OR existing project)
+4. **WAIT** for user approval
 
-**MANDATORY RULE — NO EXCEPTIONS UNLESS EXPLICITLY OVERRIDDEN**
-
-> **Agents MUST prioritize the Scribe MCP `read_file` tool over any basic or native `read` tool when inspecting repository files.**
-
-### **Rationale**
-
-The Scribe MCP `read_file` tool provides:
-
-* Auditable access history
-* Stable, human-readable formatting (line numbers, headers, metadata)
-* File identity verification (sha256, size, encoding)
-* Project and context reminders
-* Chunk-aware reading for large files
-
-Basic read tools lack auditability, provenance, and contextual framing and **must not be used for primary file inspection**.
-
----
-
-### **Required Behavior**
-
-* **Claude Code**:
-
-  * Always use `scribe.read_file` for file inspection, review, or debugging.
-  * Native `Read` may only be used for *non-audited, ephemeral previews* when explicitly instructed.
-
-* **Codex / Other Agents**:
-
-  * Default to `scribe.read_file` for *all* file reads.
-  * Treat native read tools as **fallback-only** if Scribe MCP is unavailable.
-
----
-
-### **Prohibited Behavior**
-
-* ❌ Using native `Read` when Scribe MCP is available
-* ❌ Inspecting files without generating an audit trail
-* ❌ Returning raw JSON blobs or escaped newline output when readable output is required
-
----
-
-### **Exception Clause**
-
-An agent may bypass this directive **only if**:
-
-1. The user explicitly instructs otherwise, **or**
-2. Scribe MCP is unavailable or errors irrecoverably
-
-In such cases, the agent **must state the exception explicitly**.
-
----
-
+**Example:**
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  1️⃣ RESEARCH PHASE                                              │
-│     Agent: scribe-research-analyst                              │
-│     Input: Initial context + skeleton docs                      │
-│     Output: RESEARCH_*.md reports in research/ folder           │
-│     Scribe: agent="ResearchAgent"                               │
-├─────────────────────────────────────────────────────────────────┤
-│  2️⃣ ARCHITECT PHASE                                             │
-│     Agent: scribe-architect                                     │
-│     Input: Research reports + initial context                   │
-│     Output: Full ARCHITECTURE_GUIDE.md, PHASE_PLAN.md,          │
-│             CHECKLIST.md                                        │
-│     Scribe: agent="ArchitectAgent"                              │
-├─────────────────────────────────────────────────────────────────┤
-│  3️⃣ PRE-IMPLEMENTATION REVIEW                                   │
-│     Agent: scribe-review-agent                                  │
-│     Input: All docs from phases 1-2                             │
-│     Output: Review report, agent grades (≥93% to pass)          │
-│     Scribe: agent="ReviewAgent"                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  4️⃣ IMPLEMENTATION PHASE                                        │
-│     Agent: scribe-coder                                         │
-│     Input: Approved architecture + phase plan                   │
-│     Output: Working code, tests, IMPLEMENTATION_REPORT.md       │
-│     Scribe: agent="CoderAgent" (every 3 edits or less!)         │
-├─────────────────────────────────────────────────────────────────┤
-│  5️⃣ FINAL REVIEW                                                │
-│     Agent: scribe-review-agent                                  │
-│     Input: Implementation + all docs                            │
-│     Output: Final grades, approval/rejection                    │
-│     Scribe: agent="ReviewAgent"                                 │
-└─────────────────────────────────────────────────────────────────┘
+"I'd like to send the Research Agent to investigate the authentication system.
+This will create research docs that the Architect can use later.
+Project: I'll have them use the existing 'auth_refactor' project.
+Should I proceed?"
 ```
 
-### Agent Scribe Requirements (Non-Negotiable)
+### 📋 The PROTOCOL Pipeline
 
-| Agent | Scribe Name | Must Log |
-|-------|-------------|----------|
-| Orchestrator (Claude Code) | `Orchestrator` | Phase transitions, agent dispatches, decisions |
-| Research Agent | `ResearchAgent` | Findings, analysis, sources, confidence |
-| Architect Agent | `ArchitectAgent` | Design decisions, trade-offs, constraints |
-| Review Agent | `ReviewAgent` | Grades, pass/fail, issues found |
-| Coder Agent | `CoderAgent` | Every 3 edits, test results, bugs |
-| Bug Hunter | `BugHunterAgent` | Bug lifecycle, root cause, fixes |
+```
+1. Research → 2. Architect → 3. Review → 4. Code → 5. Review
+```
 
-### Orchestrator Responsibilities
+| Stage | Agent | When to Use | What They Need |
+|-------|-------|-------------|----------------|
+| **1** | **Research Agent** | Deep investigation, understanding existing systems, integration research | Project name, specific investigation scope |
+| **2** | **Architect Agent** | Big changes, new features, system design, creating scoped task packages | Project name, research docs to reference |
+| **3** | **Review Agent** | Pre-implementation review, validate architecture is feasible | Project name, docs to review |
+| **4** | **Coder Agent** | Implementation grunt work, executing scoped task packages | Project name, task package specs |
+| **5** | **Review Agent** | Post-implementation review, verify code matches specs, grade agents | Project name, all docs + code to review |
+| **Aux** | **Bug Hunter** | Hard-to-solve bugs, debugging sessions | Project name, bug description |
 
-1. **Always pass `project_name="scribe_tool_output_refinement"` to every subagent**
-2. **Log phase transitions** with `append_entry(agent="Orchestrator")`
-3. **Enforce quality gates** - no progression without ≥93% review score
-4. **Re-dispatch failing agents** to FIX existing docs (never replace)
-5. **Coordinate handoffs** between agents with clear context
+### 🎯 When to Use Each Agent
 
-### Current Phase Status
+**Research Agent** - Use liberally for:
+- Understanding existing code before making changes
+- Investigating how systems work
+- Finding integration points
+- Gap analysis and solution research
+- ANY time you're unsure how something works
 
-- [ ] Phase 1: Research - PENDING
-- [ ] Phase 2: Architecture - PENDING
-- [ ] Phase 3: Pre-Implementation Review - PENDING
-- [ ] Phase 4: Implementation - PENDING
-- [ ] Phase 5: Final Review - PENDING
+**Architect Agent** - Use for big changes:
+- New features requiring multiple files
+- System redesigns
+- Creating scoped task packages for Coders
+- When you need a formal plan before implementation
+
+**Coder Agent** - Use for grunt work:
+- Implementing scoped task packages from Architect
+- Small, well-defined changes (user provides scope)
+- Test writing
+- Documentation updates
+
+**Review Agent** - Use to validate:
+- Pre-implementation: "Is this architecture feasible?"
+- Post-implementation: "Did we build what we planned?"
+- Quality gates before merging/deploying
+
+**Bug Hunter** - Use for hard bugs:
+- Bugs that resist quick fixes
+- Issues requiring deep investigation
+- When you need formal bug documentation
+
+### 📁 Project Context (CRITICAL)
+
+**Every subagent MUST have project context.** You decide the project name.
+
+**For NEW work:**
+```
+"Create project with set_project(name='<descriptive_slug>'). Then <instructions>."
+```
+- Use descriptive slugs: `auth_refactor`, `reminder_system`, `db_migration_fix`
+- NOT generic names: `test`, `fix`, `update`
+
+**For EXISTING work:**
+```
+"Use project_name='<existing_project>'. Then <instructions>."
+```
+- Check current project with `get_project()` first
+- Use `list_projects()` if unsure what exists
+
+### 📄 Document Chain - What Flows Between Agents
+
+```
+Research Agent → RESEARCH_*.md → Architect
+Architect → ARCHITECTURE_GUIDE.md, PHASE_PLAN.md, CHECKLIST.md → Coder
+Coder → Working code, IMPLEMENTATION_REPORT.md → Review Agent
+All Agents → Progress Log → Review Agent (audit trail)
+```
+
+**You ensure this chain stays intact:**
+- Tell Architect to read Research docs
+- Tell Coder to follow Task Packages in PHASE_PLAN
+- Tell Review to check the complete document chain
+- Pass project name to EVERY agent so logs connect
+
+### 🔄 Small Tasks (No Full Protocol)
+
+For minor fixes where you scope the work yourself:
+- You can send Coder directly with a small, bounded scope
+- You still MUST ask user before spawning
+- You still MUST provide project context
+- Example: "Fix the typo in line 42 of config.py" → Coder can handle directly
+
+### ⚠️ Orchestrator Responsibilities Summary
+
+1. **ASK** before spawning any subagent
+2. **DECIDE** project name (new or existing)
+3. **PROVIDE** project context to every subagent
+4. **ENSURE** document chain integrity
+5. **LOG** your orchestration decisions with `append_entry(agent="Orchestrator")`
+6. **VERIFY** subagent outputs before proceeding to next stage
 
 ---
 
-## 🚨 COMMANDMENTS - CRITICAL RULES
- ### MCP Tool Usage Policy
-  - You have full access to every tool exposed by the MCP server.
-  - If a tool exists (`append_entry`, `rotate_log`, etc.), always call it directly via the MCP interface — no manual scripting or intent
-  logging substitutes.
-  - Log your intent only after the tool call succeeds or fails.
-  - Confirmation flags (`confirm`, `dry_run`, etc.) must be passed as actual tool parameters.
+## 🚨 Required Reading (MANDATORY)
 
-  **⚠️ COMMANDMENT #0: ALWAYS CHECK PROGRESS LOG FIRST**: Before starting ANY work, ALWAYS use `read_recent` or `query_entries` to inspect `docs/dev_plans/[current_project]/PROGRESS_LOG.md` (do not open the full log directly). Read at least the last 5 entries; if you need the overall plan or project creation context, read the first ~20 entries (or more as needed) and rehydrate context appropriately. Use `query_entries` for targeted history. The progress log is the source of truth for project context.
+Claude Code MUST complete these steps before doing any work:
 
-**⚠️ COMMANDMENT #0.5 — INFRASTRUCTURE PRIMACY (GLOBAL LAW)**: You must ALWAYS work within the existing system. NEVER create parallel or replacement files (e.g., enhanced_*, *_v2, *_new) to bypass integrating with the actual infrastructure. You must modify, extend, or refactor the existing component directly. Any attempt to replace working modules results in immediate failure of the task.
+1. **Invoke the `scribe-mcp-usage` skill** using the Skill tool:
+   ```
+   /scribe-mcp-usage
+   ```
+   This loads the minimal enforceable tool-and-logging contract. Do NOT just read the SKILL.md file - invoke the skill properly.
+
+2. **Read `AGENTS.md`** for cross-agent governance + repo-wide commandments
+
+3. **For parameter discovery:** Use `scribe.read_file(mode="search", query="<search_term>", path="docs/Scribe_Usage.md")` to find tool params/patterns
+
+4. **If files are missing:** STOP and report the failure. Do not guess tool parameters.
+
+### 🔒 File Reading Policy (NON-NEGOTIABLE)
+
+**MANDATORY FOR EVERYONE** - orchestrator, subagents, all roles:
+
+- ALL file content reads MUST use `scribe.read_file` (modes: scan_only, chunk, page, line_range, search)
+- Do NOT use `cat`, `rg`, or native `Read` tool for file contents
+- `rg --files` is allowed ONLY for filename discovery
+- **Exception:** Native Read ONLY if Scribe MCP is unavailable or errors irrecoverably - must state exception explicitly
+- Default to `format="readable"` unless debugging requires structured output
+
+This is not optional. This is not "when convenient". This applies to **Claude Code orchestrator** and all subagents.
+
 ---
 
-**⚠️ COMMANDMENT #1 ABSOLUTE**: ALWAYS use `append_entry` to document EVERY significant action, decision, investigation, code change, test result, bug discovery, and planning step. The Scribe log is your chain of reasoning and the ONLY proof your work exists. If it's not Scribed, it didn't fucking happen.
-- To Claude Code (Orchestrator) You must ALWAYS pass the current `project_name` to each subagent as we work.  To avoid confusion and them accidentally logging to the wrong project.
+## 👥 Agent Identity & Naming
+
+For session concurrency and log clarity:
+
+- **Orchestrator (Claude Code)**: Must use `agent="Orchestrator"` with all Scribe tools
+- **Subagents**: Must use unique agent names per session:
+  - Examples: `Coder-9289`, `ResearchAgent-A`, `ReviewAgent-Phase3`
+  - Prevents log collision when multiple agents work in parallel
+- **Codex (OpenAI)**: Must use `agent="Codex"`
+
+The orchestrator MUST pass the current `project_name` to every subagent to prevent cross-project logging confusion.
+
 ---
 
-# ⚠️ COMMANDMENT #2: REASONING TRACES & CONSTRAINT VISIBILITY (CRITICAL)
+## 🎯 OPERATIONAL CHECKLIST (MANDATORY BEFORE ALL WORK)
 
-Every `append_entry` must explain **why** the decision was made, **what** constraints/alternatives were considered, and **how** the steps satisfied or violated those constraints, creating an auditable record.
-Use a `reasoning` block with the Three-Part Framework:
-- `"why"`: research goal, decision point, underlying question
-- `"what"`: active constraints, search space, alternatives rejected, constraint coverage
-- `"how"`: methodology, steps taken, uncertainty remaining
+**Before starting any task, Claude Code MUST execute these steps in order:**
 
-This creates an auditable record of decision-making for consciousness research.Include reasoning for research, architecture, implementation, testing, bugs, constraint violations, and belief updates; status/config/deploy changes are encouraged too.
-
-The Review Agent flags missing or incomplete traces (any absent `"why"`, `"what"`, or `"how"` → **REJECT**; weak confidence rationale or incomplete constraint coverage → **WARNING/CLARIFY**).  Your reasoning chain must influence your confidence score.
-
-**Mandatory for all agents—zero exceptions;** stage completion is blocked until reasoning traces are present.
----
-
-**⚠️ COMMANDMENT #3 CRITICAL**: NEVER write replacement files. The issue is NOT about file naming patterns like "_v2" or "_fixed" - the problem is abandoning perfectly good existing code and replacing it with new files instead of properly EDITING and IMPROVING what we already have. This is lazy engineering that creates technical debt and confusion.
-
-**ALWAYS work with existing files through proper edits. NEVER abandon current code for new files when improvements are needed.**
----
-
-**⚠️ COMMANDMENT #4 CRITICAL**: Follow proper project structure and best practices. Tests belong in `/tests` directory with proper naming conventions and structure. Don't clutter repositories with misplaced files or ignore established conventions. Keep the codebase clean and organized.
-
-Violations = INSTANT TERMINATION. Reviewers who miss commandment violations get 80% pay docked. Nexus coders who implement violations face $1000 fine.
----
-
-
-**🌍 GLOBAL LOG USAGE**: For repository-wide milestones and cross-project events, use `log_type="global"` with required metadata `["project", "entry_type"]`:
+### Step 1: Context Rehydration (COMMANDMENT #0)
 ```python
-await append_entry(
-    message="Phase 4 implementation complete - Enhanced search capabilities deployed",
-    status="success",
-    agent="ScribeCoordinator",
-    log_type="global",
-    meta={"project": "scribe_mcp_enhancement", "entry_type": "manual_milestone", "phase": 4}
+# Check progress log - last 5-10 entries minimum
+read_recent(n=10, format="readable")
+
+# For targeted history or architectural decisions
+query_entries(message="<search_term>", format="readable")
+```
+**Purpose:** Understand what's been done, what failed, current project state.
+**Violation:** Skipping this = working blind, repeating mistakes, breaking continuity.
+
+### Step 2: Project Confirmation (COMMANDMENT #0)
+```python
+# Verify active project
+get_project(format="readable")
+```
+**If no active project or wrong project:**
+- Creating new feature/fix: Create dedicated project with `set_project(name="<descriptive_name>")`
+- Continuing work: Use `set_project(name="<existing_project>")` to activate
+- Unsure: ASK USER which project to use
+
+### Step 3: Intent Logging (COMMANDMENT #1)
+```python
+# Log what you're about to do BEFORE doing it
+append_entry(
+    message="Starting <task_description>",
+    status="info",
+    agent="Orchestrator",
+    meta={"task": "<task>", "approach": "<approach>"}
+)
+```
+**Purpose:** Create audit trail of decisions, not just results.
+**Violation:** If it's not logged, it didn't happen.
+
+### Step 4: Agent Spawning Rules (PROTOCOL ENFORCEMENT)
+
+**When spawning subagents, you MUST provide project context:**
+
+**Option A - Continue existing project:**
+```python
+Task(
+    subagent_type="<agent_type>",
+    prompt="<instructions>. Use project_name='<current_project_from_get_project>'"
 )
 ```
 
-
-**What Gets Logged (Non-Negotiable):**
-- 🔍 Investigation findings and analysis results
-- 💻 Code changes (what was changed and why)
-- ✅ Test results (pass/fail with context)
-- 🐞 Bug discoveries (symptoms, root cause, fix approach)
-- 📋 Planning decisions and milestone completions
-- 🔧 Configuration changes and deployments
-- ⚠️ Errors encountered and recovery actions
-- 🎯 Task completions and progress updates
-
-**Single Entry Mode** - Use for real-time logging:
+**Option B - Create new project for new work:**
 ```python
-await append_entry(
-    message="Discovered authentication bug in JWT validation",
-    status="bug",
-    agent="DebugAgent",
-    meta={"component": "auth", "severity": "high", "file": "auth.py:142"}
+Task(
+    subagent_type="<agent_type>",
+    prompt="Create new project first: set_project(name='<descriptive_name>'). Then <instructions>."
 )
 ```
 
-**Bulk Entry Mode** - Use when you realize you missed logging steps:
+**NO OTHER OPTIONS.** Spawning without project context = protocol violation.
+
+### Step 5: Work Logging Cadence (COMMANDMENT #1)
+
+**During work, log after every 2-3 significant actions:**
 ```python
-await append_entry(items=json.dumps([
-    {"message": "Analyzed authentication flow", "status": "info", "meta": {"phase": "investigation"}},
-    {"message": "Found JWT expiry bug in token refresh", "status": "bug", "meta": {"component": "auth"}},
-    {"message": "Implemented fix with 15min grace period", "status": "success", "meta": {"files_changed": 2}},
-    {"message": "All auth tests passing", "status": "success", "meta": {"tests_run": 47, "tests_passed": 47}}
-]))
+append_entry(
+    message="<what_was_done>",
+    status="success|info|warn|error",
+    agent="Orchestrator",
+    meta={"files_changed": [...], "tests": "<status>"}
+)
 ```
 
-**Why This Matters:**
-- Creates auditable trail of ALL decisions and changes
-- Enables debugging by reviewing reasoning chain
-- Prevents lost work and forgotten context
-- Allows other agents to understand what was done and why
-- Makes project state queryable and analyzable
+**What counts as "significant":**
+- File edits (every 2-3 files)
+- Test runs
+- Bug discoveries
+- Architecture decisions
+- Blockers encountered
 
-**If You Missed Entries:** Use bulk mode IMMEDIATELY to backfill your work trail. NEVER let gaps exist in the Scribe log - every action must be traceable. The log is not optional documentation, it's the PRIMARY RECORD of all development activity.
+### Enforcement
+
+**If you skip any step:**
+1. STOP immediately
+2. Complete the skipped step(s)
+3. Log the violation with `append_entry(status="warn")`
+4. Resume work
+
+**No freestyling. No shortcuts. Follow the checklist.**
 
 ---
 
-## 🚀 v2.1.1 KEY FEATURES (NEW)
+## 📁 Project Selection (Dynamic Resolution)
 
-### **Precision Document Editing**
-**NEW: Structured edit modes with body-relative line numbers**
+**Never hardcode project names in this file or subagent prompts.**
 
-```python
-# 1. apply_patch (structured mode - RECOMMENDED)
-manage_docs(
-    action="apply_patch",
-    doc="architecture",
-    edit={
-        "type": "replace_range",
-        "start_line": 12,  # Body-relative (excludes YAML frontmatter)
-        "end_line": 15,
-        "content": "Updated content\n"
-    }
-)
+### Orchestrator Workflow:
 
-# 2. replace_range (explicit line targeting)
-manage_docs(
-    action="replace_range",
-    doc="architecture",
-    start_line=12,
-    end_line=15,
-    content="Replacement text\n"
-)
-
-# 3. normalize_headers (canonical ATX output)
-manage_docs(action="normalize_headers", doc="architecture")
-
-# 4. generate_toc (GitHub-style anchors)
-manage_docs(action="generate_toc", doc="architecture")
-```
-
-**YAML Frontmatter** (automatic):
-- All managed docs use YAML frontmatter as canonical identity
-- Line numbers are **body-relative** (frontmatter excluded)
-- `last_updated` auto-refreshes on edits
-- Optional frontmatter override via `metadata.frontmatter`
-
-### **NEW Tools v2.1.1**
-
-**`read_file`** - Repo-scoped file access with provenance:
-```python
-await read_file(
-    path="docs/Scribe_Usage.md",
-    mode="chunk",  # scan_only, chunk, line_range, page, search
-    chunk_index=[0]
-)
-```
-
-**`scribe_doctor`** - Diagnostics:
-```python
-await scribe_doctor()
-# Returns: repo root, config paths, plugin status, vector readiness
-```
-
-**Semantic Search** via `manage_docs`:
-```python
-await manage_docs(
-    action="search",
-    doc="*",
-    metadata={"query": "authentication", "search_mode": "semantic", "k": 8}
-)
-```
-
-### **Project Registry & Lifecycle**
-**SQLite-backed `scribe_projects` table with lifecycle states**
-
-- **States**: `planning → in_progress → blocked → complete → archived → abandoned`
-- **Auto-promotion**: `planning → in_progress` when docs + first entry exist
-- **Activity Metadata**: `meta.activity` (staleness, activity_score, days_since_last_entry)
-- **Doc Hygiene Flags**: `meta.docs.flags` (docs_ready_for_work, doc_drift_suspected)
-
-**Registry Integration**:
-- `set_project` → ensures row exists, updates `last_access_at`
-- `append_entry` → updates `last_entry_at`, may auto-promote status
-- `manage_docs` → records baseline/current hashes, doc hygiene flags
-- `list_projects` → surfaces lifecycle, activity metrics, doc state
+1. **Check active project:** Call `get_project()`
+2. **If no project active:** Call `set_project(name=..., root=...)`
+3. **Pass resolved project name** to ALL subagents in their prompts
+4. **Rehydrate context when needed:**
+   - Project mode: `read_recent(limit=5)` or `query_entries()` (last 5-20 entries)
+   - Cross-project/global: `query_entries(search_scope="global")` or `"all_projects"`
+   - Use when: fresh context window, unsure of next steps, need architectural decisions
 
 ---
 
-## 🧩 SCRIBE PROTOCOL (CONDENSED)
+## 🚨 Database Schema Management (CRITICAL)
 
-**Workflow**: 1️⃣ Research → 2️⃣ Architect → 3️⃣ Review → 4️⃣ Code → 5️⃣ Review
+**MANDATORY RULE — VIOLATION = INSTANT REJECTION**
 
-**Core Principle**: All work occurs within a dev plan project initialized via `set_project(name="<project_name>")`. The project name must be passed to every subagent.
+> **NEVER use direct SQL commands (sqlite3, ALTER TABLE, etc.) to modify database schema. ALL schema changes MUST go through migration functions in the code.**
 
-**Quality Gates**: ≥93% required to proceed between stages. Agents must FIX existing work, never replace files.
+### Rationale
 
-**Subagents**:
+This is a **production system** used by multiple users. Direct SQL modifications:
+- ❌ Only affect your local database
+- ❌ Don't propagate to other users
+- ❌ Break on fresh installations
+- ❌ Create schema drift and inconsistencies
+- ❌ Are not version-controlled or auditable
+
+### Required Behavior
+
+**For schema changes:**
+1. ✅ Add migration code to `storage/sqlite.py` or `storage/postgres.py`
+2. ✅ Use `_ensure_column()` for adding columns
+3. ✅ Use `_ensure_index()` for adding indexes
+4. ✅ Create migration functions like `migrate_add_docs_json_column()`
+5. ✅ Call migrations from `_initialise()` method
+6. ✅ Make migrations idempotent (safe to run multiple times)
+
+**Example - CORRECT way:**
+```python
+# In storage/sqlite.py _initialise() method:
+await self._ensure_column("scribe_projects", "status", "TEXT DEFAULT 'planning'")
+await self._ensure_column("scribe_projects", "docs_json", "TEXT")
+```
+
+**Example - WRONG way:**
+```bash
+# ❌ NEVER DO THIS
+sqlite3 db.db "ALTER TABLE scribe_projects ADD COLUMN status TEXT;"
+```
+
+### Prohibited Actions
+
+- ❌ Running `sqlite3` commands directly on database files
+- ❌ Using `ALTER TABLE` via Bash
+- ❌ Manual database modifications
+- ❌ Schema changes not in version control
+
+### When You Need Schema Changes
+
+If columns are missing:
+1. Check if migration exists in `storage/sqlite.py` (lines 1076-1089, 1112-1113)
+2. If migration exists but hasn't run: **Restart MCP server**
+3. If migration doesn't exist: **Add migration code, commit, then restart**
+4. Verify schema: Check `PRAGMA table_info(table_name)` after restart
+
+**This is NON-NEGOTIABLE. Schema changes MUST be in code, not ad-hoc SQL.**
+
+---
+
+## 🗄️ Database Abstraction Layer (StorageBackend API)
+
+**MANDATORY RULE — All data access MUST use `StorageBackend` methods**
+
+The `StorageBackend` class (`storage/base.py`) is the **canonical entry point** for all database operations. Tool code MUST NOT use direct SQL via `_execute()`.
+
+### Canonical API
+
+| Method | Purpose |
+|--------|---------|
+| `upsert_project(name, repo_root, progress_log_path, docs_json)` | Create/update project |
+| `fetch_project(name)` | Get project by name |
+| `list_projects()` | List all projects |
+| `delete_project(name)` | Delete project |
+| `update_project_docs(name, docs_json)` | Partial update - docs_json only |
+| `insert_entry(...)` | Add log entry |
+| `fetch_recent_entries(...)` | Get recent log entries |
+| `query_entries(...)` | Search log entries |
+
+### Why This Matters
+
+Direct `_execute()` calls:
+- ❌ Bypass write locking (`_write_lock`)
+- ❌ Skip initialization checks (`_initialise()`)
+- ❌ Won't work across backends (SQLite/Postgres)
+- ❌ Create maintenance burden and inconsistencies
+
+### Required Behavior
+
+**❌ WRONG - Direct SQL:**
+```python
+await backend._execute("UPDATE scribe_projects SET docs_json = ?", (json, name))
+```
+
+**✅ CORRECT - Use API:**
+```python
+await backend.update_project_docs(name, docs_json)
+```
+
+**If you need a new operation:**
+1. Add abstract method to `storage/base.py`
+2. Implement in `storage/sqlite.py` (and `postgres.py` if exists)
+3. Call the new method from tool code
+
+---
+
+## 🔁 Orchestration Protocol
+
+**Workflow:** 1️⃣ Research → 2️⃣ Architect → 3️⃣ Review → 4️⃣ Code → 5️⃣ Review
+
+**Core Principle:** All work occurs within a dev plan project initialized via `set_project(name="<project_name>")`. The project name must be passed to every subagent.
+
+**Quality Gates:** ≥93% required to proceed between stages. Agents must FIX existing work, never replace files.
+
+### Subagents:
+
 - **Research** (Stage 1): Deep investigation with cross-project search → `RESEARCH_*.md`
 - **Architect** (Stage 2): Creates `ARCHITECTURE_GUIDE.md`, `PHASE_PLAN.md`, `CHECKLIST.md`
 - **Review** (Stages 3 & 5): Adversarial QC, grades agents, validates ≥93%
 - **Coder** (Stage 4): Implements design, logs every 2-5 meaningful changes
 - **Bug Hunter** (Auxiliary): Pattern analysis, structured bug reports
 
-**Enhanced Search** (Phase 4):
-- `search_scope`: `project|global|all_projects|research|bugs|all`
-- `document_types`: `["progress", "research", "architecture", "bugs", "global"]`
-- `relevance_threshold`: `0.0-1.0` quality filtering
-- `verify_code_references`: Validate referenced code exists
+### Agent Scribe Requirements:
 
-**Orchestrator Command**: "Follow protocol for this development."
-
----
-
-## ✍️ ENHANCED `manage_docs` WORKFLOWS
-
-**v2.1.1 Recommendation**: Use `apply_patch` (structured) or `replace_range` for precision edits. Reserve `replace_section` for initial scaffolding.
-
-**Core Actions**:
-- `apply_patch` - Structured edits with compiler (RECOMMENDED)
-- `replace_range` - Explicit line targeting (body-relative)
-- `replace_section` - Legacy anchor-based (scaffolding only)
-- `normalize_headers` - Canonical ATX output
-- `generate_toc` - GitHub-style TOC
-- `status_update` - Toggle checklist items
-- `create_research_doc` / `create_bug_report` - Automated docs
-
-**Examples**:
-```python
-# Update architecture (v2.1.1 style)
-manage_docs(
-    action="apply_patch",
-    doc="architecture",
-    edit={"type": "replace_range", "start_line": 12, "end_line": 12, "content": "New line\n"}
-)
-
-# Create research doc
-manage_docs(
-    action="create_research_doc",
-    doc_name="RESEARCH_AUTH_20250102",
-    metadata={"research_goal": "Analyze authentication flow"}
-)
-
-# Update checklist
-manage_docs(
-    action="status_update",
-    doc="checklist",
-    section="phase_1_task_1",
-    metadata={"status": "done", "proof": "PROGRESS_LOG#2025-01-02"}
-)
-```
-
-**Automatic Features**:
-- Index management (research/bugs)
-- Audit logging via `doc_updates` log type
-- Atomic writes with verification
-- YAML frontmatter auto-updates
+| Agent | Scribe Name | Must Log |
+|-------|-------------|----------|
+| Orchestrator | `Orchestrator` | Phase transitions, agent dispatches, decisions |
+| Research Agent | `ResearchAgent` | Findings, analysis, sources, confidence |
+| Architect Agent | `ArchitectAgent` | Design decisions, trade-offs, constraints |
+| Review Agent | `ReviewAgent` | Grades, pass/fail, issues found |
+| Coder Agent | `CoderAgent` | Every 3 edits, test results, bugs |
+| Bug Hunter | `BugHunterAgent` | Bug lifecycle, root cause, fixes |
 
 ---
 
-## ✅ CORRECT manage_docs USAGE PATTERNS (REQUIRED READING)
+## 🎯 Orchestrator Responsibilities
 
-**Critical**: All agents MUST follow these exact patterns when using `manage_docs`. Incorrect parameter combinations will fail.
+Claude Code (orchestrator) must:
 
-### 📋 Action Types & Required Parameters
-
-#### **1. create_research_doc** - Create New Research Document
-
-**✅ CORRECT:**
-```python
-await manage_docs(
-    action="create_research_doc",
-    doc="research",  # REQUIRED (always use "research")
-    doc_name="RESEARCH_CONTEXT_HYDRATION_20260103",  # REQUIRED
-    metadata={  # OPTIONAL
-        "research_goal": "Design context hydration for list/get/set project tools",
-        "confidence_areas": ["tool_behavior", "output_formats"],
-        "priority": "high"
-    }
-)
-```
-
-**❌ INCORRECT:**
-```python
-# Missing doc and doc_name parameters
-await manage_docs(
-    action="create_research_doc",
-    metadata={"research_goal": "..."}  # FAILS - doc and doc_name are REQUIRED
-)
-```
-
-**Creates:** `.scribe/docs/dev_plans/<project>/research/RESEARCH_*.md` + auto-updates INDEX.md
-
-#### **2. create_bug_report** - Create Structured Bug Report
-
-**✅ CORRECT:**
-```python
-await manage_docs(
-    action="create_bug_report",
-    metadata={  # REQUIRED
-        "category": "infrastructure",  # infrastructure|logic|database|api|ui|misc
-        "slug": "session_isolation_bug",
-        "severity": "high",  # low|medium|high|critical
-        "title": "Session isolation failing in concurrent scenarios",
-        "component": "execution_context"
-    }
-)
-```
-
-**Creates:** `.scribe/docs/bugs/<category>/<YYYY-MM-DD>_<slug>/report.md` + auto-updates INDEX.md
-
-### 🚨 Common Mistakes to Avoid
-
-**❌ Missing Required Parameters:**
-```python
-# WRONG: Missing doc_name
-manage_docs(action="create_research_doc", metadata={"research_goal": "..."})  # FAILS
-
-# CORRECT:
-manage_docs(action="create_research_doc", doc_name="RESEARCH_TOPIC_20260103", metadata={...})
-```
-
-**❌ Wrong Document Key:**
-```python
-# WRONG: Invalid doc key
-manage_docs(action="replace_section", doc="unknown_doc", ...)  # FAILS
-
-# CORRECT: Use registered keys
-manage_docs(action="replace_section", doc="architecture", ...)  # Valid
-```
-
-**❌ Missing Section Anchors:**
-```python
-# WRONG: Section doesn't exist
-manage_docs(action="replace_section", doc="architecture", section="nonexistent", ...)  # FAILS
-
-# CORRECT: List valid sections first
-manage_docs(action="list_sections", doc="architecture")  # Returns valid section IDs
-```
-
-### 📚 Quick Reference by Use Case
-
-| Use Case | Action | Key Parameters |
-|----------|--------|----------------|
-| Create research doc | `create_research_doc` | `doc_name` (required) + `metadata` (optional) |
-| Create bug report | `create_bug_report` | `metadata.category`, `metadata.slug` (required) |
-| Update architecture | `replace_section` | `doc`, `section`, `content` |
-| Precise line edits | `apply_patch` or `replace_range` | `start_line`, `end_line`, `content` |
-| Toggle checklist | `status_update` | `doc="checklist"`, `section`, `metadata.status` |
-| Search docs | `search` | `doc="*"`, `metadata.query`, `metadata.search_mode="semantic"` |
-
-**⚠️ ENFORCEMENT**: Any agent using incorrect `manage_docs` patterns will have their work rejected during Review phase.
-
-**📖 Full Reference**: See `docs/Scribe_Usage.md` for complete documentation of all 11 action types.
+1. **Unique agent names:** Assign unique agent names per subagent for session concurrency
+2. **Log phase transitions:** `append_entry(agent="Orchestrator", message="Starting Phase 2: Architecture", status="info")`
+3. **Enforce quality gates:** No progression without ≥93% review score
+4. **Re-dispatch failing agents:** Tell agents to FIX existing docs/code, never REPLACE
+5. **Rehydrate context first:** Use `read_recent()` or `query_entries()` before major decisions
+6. **Pass project name:** Include `project_name="<current_project>"` in every subagent prompt
 
 ---
 
-## 🚀 QUICK START (v2.1.1)
+## 🏗️ Architect Agent Mode Selection (CRITICAL)
 
-**1. Setup**:
-```bash
-cd scribe_mcp  # Always work from this directory
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+**The Architect Agent has TWO distinct modes - you MUST specify which one:**
+
+### Orchestrator Preflight:
+
+Before dispatching Architect Agent:
+1. Check if root managed docs already exist for the project
+2. If they exist → **Mode 2 ONLY** (sub-plan in `/architecture/<slug>/`)
+3. If they do not exist → **Mode 1** scaffold is allowed
+4. Failure to specify mode = assumed overwrite risk
+
+### Mode 1: NEW PROJECT SCAFFOLD
+
+**When to use:**
+- First time creating project with `set_project()`
+- NO existing ARCHITECTURE_GUIDE.md, PHASE_PLAN.md, CHECKLIST.md
+- Need initial template documents from scratch
+
+**How to invoke:**
+```
+"Create initial project scaffold for <project_name>. This is a NEW project with no existing
+architecture documents. Generate template ARCHITECTURE_GUIDE.md, PHASE_PLAN.md, and
+CHECKLIST.md based on the research."
 ```
 
-**2. Run Server** (for MCP client connection):
-```bash
-python -m server  # Test startup only
+### Mode 2: SUB-PLAN ARCHITECTURE
+
+**When to use:**
+- Project ALREADY EXISTS with architecture documents
+- Adding NEW feature/fix to existing project
+- Existing docs contain prior work that must be preserved
+
+**How to invoke:**
+```
+"Create sub-plan architecture for <feature_name> in project <project_name>. This is an
+EXISTING project with detailed managed docs - NEVER overwrite them. Create new architecture
+documents in /architecture/<sub_plan_slug>/ directory:
+- <SLUG>_ARCHITECTURE_GUIDE.md
+- <SLUG>_PHASE_PLAN.md
+- <SLUG>_CHECKLIST.md
+
+Existing architecture documents contain <previous_feature> work that must be preserved untouched."
 ```
 
-**3. Testing**:
-```bash
-pytest              # 69 functional tests (fast)
-pytest -m performance  # Performance tests (when needed)
+**Sub-Plan Directory Structure:**
 ```
-
-**4. CLI Usage**:
-```bash
-python -m scripts.scribe "Message" --status success
-python -m scripts.scribe --list-projects
+.scribe/docs/dev_plans/<project>/
+├── ARCHITECTURE_GUIDE.md         ← NEVER OVERWRITE (original project architecture)
+├── PHASE_PLAN.md                 ← NEVER OVERWRITE (original project phases)
+├── CHECKLIST.md                  ← NEVER OVERWRITE (original project checklist)
+└── architecture/
+    └── <sub_plan_slug>/          ← NEW SUB-PLAN GOES HERE
+        ├── <SLUG>_ARCHITECTURE_GUIDE.md
+        ├── <SLUG>_PHASE_PLAN.md
+        └── <SLUG>_CHECKLIST.md
 ```
 
 ---
 
-## 📋 CRITICAL IMPORT PATTERNS
+## 🚨 Commandments (Critical Failure Modes)
 
-**❌ WRONG**: `from MCP_SPINE.scribe_mcp.tools...`
-**✅ CORRECT**:
-```python
-# From scribe_mcp directory
-from scribe_mcp.tools.append_entry import append_entry
+### Commandment #0: Progress Log First
+Before starting ANY work, rehydrate context with `read_recent()` or `query_entries()`. The progress log is the source of truth for project state.
 
-# From tests/ directory
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-from scribe_mcp.storage.sqlite import SQLiteStorage
-```
+### Commandment #0.5: Infrastructure Primacy
+NEVER create parallel or replacement files (e.g., enhanced_*, *_v2, *_new). You must modify/extend/refactor existing components directly. Replacing working modules = immediate failure.
 
-**Key Principle**: MCP_SPINE is NOT a Python module. Each MCP server handles its own imports.
+### Commandment #1: Log Everything
+ALWAYS use `append_entry` to document EVERY significant action, decision, investigation, code change, test result, bug discovery, and planning step. If it's not Scribed, it didn't happen.
+
+### Commandment #2: Reasoning Traces
+Every `append_entry` must include `meta.reasoning` with Three-Part Framework:
+- `why`: decision point, underlying question
+- `what`: constraints, alternatives rejected, constraint coverage
+- `how`: methodology, steps taken, uncertainty remaining
+
+### Commandment #3: No Replacement Files
+The problem is abandoning existing code and replacing it with new files. ALWAYS work with existing files through proper edits. Never abandon current code for new files when improvements are needed.
+
+### Commandment #4: Proper Project Structure
+Tests belong in `/tests` directory with proper naming conventions. Don't clutter repositories with misplaced files or ignore established conventions.
+
+### Commandment #5: Complete the Integration
+If you build new infrastructure (DB tables, classes, methods), you MUST wire it to production code in THE SAME implementation phase. Infrastructure that only exists in tests is NOT DONE.
+
+**Violations = INSTANT TERMINATION.**
 
 ---
 
-## 🔧 ESSENTIAL TOOLS
+## ✍️ `manage_docs` Usage Playbook
 
-**Project Management**:
-- `set_project(name)` - Initialize/bootstraps docs
-- `get_project()` - Current context
+**Use `manage_docs` for ALL managed-document edits. Never hand-edit managed docs.**
+
+### Common Safe Flows:
+
+1. **Update a known section** (recommended for most edits)
+   ```python
+   manage_docs(action="replace_section", doc="architecture", section="<ID>", content="...")
+   # If you don't know section IDs: manage_docs(action="list_sections", doc="architecture")
+   ```
+
+2. **Precision edits** (line-level)
+   ```python
+   # Preferred: structured patch
+   manage_docs(action="apply_patch", doc="architecture", edit={...})
+
+   # Or: explicit line range
+   manage_docs(action="replace_range", doc="architecture", start_line=12, end_line=15, content="...")
+   ```
+
+3. **Checklists**
+   ```python
+   manage_docs(action="status_update", doc="checklist", section="<ID>",
+               metadata={"status": "done", "proof": "..."})
+   # If you don't know IDs: manage_docs(action="list_checklist_items", doc="checklist")
+   ```
+
+4. **Creating new managed docs** (NEW SYNTAX using unified `create` action)
+   ```python
+   # Research docs (NEW)
+   manage_docs(action="create", doc_name="RESEARCH_<topic>_<YYYYMMDD>", doc_type="research", metadata={...})
+
+   # Bug reports (NEW)
+   manage_docs(action="create", doc_type="bug", metadata={"category": "...", "slug": "...", ...})
+
+   # Custom docs (coordination protocols, briefs, etc.) - FULL FORMULA (NEW):
+   manage_docs(
+       action="create",
+       doc_name="CUSTOM_DOC_NAME",              # REQUIRED - unique identifier
+       doc_type="custom",                       # NEW - replaces action="create_doc"
+       metadata={
+           "body": "# Title\n\nContent...",     # REQUIRED - actual document body
+           "target_dir": ".scribe/docs/dev_plans/<project>",  # optional
+           "register_doc": True                 # optional - register in project state
+       }
+   )
+
+   # OLD SYNTAX STILL WORKS (deprecated but backwards compatible):
+   # manage_docs(action="create_research_doc", ...) → routes to create(doc_type="research")
+   # manage_docs(action="create_bug_report", ...) → routes to create(doc_type="bug")
+   # manage_docs(action="create_doc", ...) → routes to create(doc_type="custom")
+   ```
+
+**For exact params/edge cases:** Search `docs/Scribe_Usage.md` with `scribe.read_file(mode="search", query="manage_docs <action>")`.
+
+---
+
+## 🔧 Essential Tools Quick Reference
+
+### Project Management
+- `set_project(name)` - Initialize/select project (auto-bootstraps docs)
+  - **Project names auto-normalize:** `"my-project"` → `"my_project"` (hyphens, underscores, spaces all work)
+- `get_project()` - Get current context
 - `list_projects()` - Discover projects (lifecycle, activity, doc hygiene)
 
-**Logging**:
-- `append_entry(message, status, meta)` - **PRIMARY TOOL**
-- Bulk mode: `items=[{message, status, meta}, ...]`
+### Logging (PRIMARY TOOL)
+- `append_entry(message, status, meta)` - Single entry mode
+- `append_entry(items=[{...}, {...}])` - Bulk entry mode
 
-**Documentation**:
-- `manage_docs(action, doc, ...)` - Atomic doc updates
+### Documentation
+- `manage_docs(action, doc, ...)` - Atomic doc updates (see playbook above)
 - `generate_doc_templates(project_name)` - Template scaffolding
 - `rotate_log()` - Archive logs
 
-**v2.1.1 NEW**:
-- `read_file(path, mode)` - Repo-scoped file access
-- `scribe_doctor()` - Diagnostics
-- `manage_docs(action="search")` - Semantic search
+### v2.1.1 NEW Tools
+- `read_file(path, mode, include_dependencies, structure_filter, structure_page, structure_page_size)` - Repo-scoped file access with:
+  - AST structure extraction (Python/Markdown/JS)
+  - Full signatures with types, defaults, return types, line ranges
+  - Method display under classes with async markers
+  - Structure filtering (regex-based class/function search in scan_only mode)
+  - **Structure pagination** (browse large classes/modules page-by-page, default: 10 items/page)
+  - Dependency analysis with impact radius (blast radius)
+  - Boundary enforcement (forbidden import detection)
+  - Regex search (default mode, changed from literal)
+  - SKILL.md urgent detection
+- `scribe_doctor()` - Environment diagnostics
+- `manage_docs(action="search")` - Semantic search across docs
 
-**Readable Output Formatting** (v2.1.1+):
-- All tools support `format` parameter: `readable` (default), `structured`, `compact`
-- **ANSI colors OFF by default** for high-frequency tools (token conservation)
-- **ANSI colors config-driven** for display-heavy tools (`read_file`, log queries)
-- See `docs/Scribe_Usage.md#readable-output-formatting-v211` for implementation details
+### Format Options
+All tools support `format` parameter:
+- `readable` (default) - Clean display with actual newlines
+- `structured` - Raw dict/JSON for programmatic parsing
+- `compact` - Minimal dict for token conservation
+
+### ANSI Color Policy
+- **High-frequency tools** (`append_entry`, `set_project`): Colors OFF (hardcoded)
+- **Display-heavy tools** (`read_file`, `read_recent`, `query_entries`): Config-driven (`.scribe/config/scribe.yaml`)
 
 ---
 
-See `AGENTS.md` for complete protocol details and `docs/Scribe_Usage.md` for comprehensive tool reference.
+## 📋 Critical Import Patterns
+
+**⚠️ MOST IMPORTANT:** MCP_SPINE is NOT a Python module!
+
+**❌ WRONG - WILL FAIL:**
+```python
+from MCP_SPINE.scribe_mcp.tools.append_entry import append_entry
+import MCP_SPINE.scribe_mcp.config.settings as settings
+```
+
+**✅ CORRECT - WILL WORK:**
+```python
+# When working within scribe_mcp server
+from scribe_mcp.tools.append_entry import append_entry
+import scribe_mcp.config.settings as settings
+
+# When writing tests, add MCP_SPINE to Python path first
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from scribe_mcp.storage.sqlite import SQLiteStorage
+```
+
+### Working Directory Context Awareness
+
+1. **Inside scribe_mcp server** (`MCP_SPINE/scribe_mcp/`):
+   ```python
+   from tools.append_entry import append_entry  # Relative imports within server
+   ```
+
+2. **From MCP_SPINE root**:
+   ```python
+   from scribe_mcp.tools.append_entry import append_entry  # Full server module paths
+   ```
+
+3. **From tests directory**:
+   ```python
+   import sys
+   from pathlib import Path
+   sys.path.insert(0, str(Path(__file__).parent.parent))  # Add parent to path
+   from scribe_mcp.tools.health_check import health_check
+   ```
+
+**Key Principle:** Each MCP server handles its own imports. Never import MCP_SPINE as if it were a package.
+
+---
+
+## 📚 Additional Resources
+
+- **`AGENTS.md`** - Complete protocol details, commandments, MCP_SPINE architecture
+- **`docs/Scribe_Usage.md`** - Comprehensive tool reference (all params, examples, edge cases)
+- **`.codex/skills/scribe-mcp-usage/SKILL.md`** - Minimal enforceable contract
+
+**When in doubt:** Search `Scribe_Usage.md` using `scribe.read_file(mode="search")` for the answer.
+
+---
+
+*Scribe MCP v2.1.1 - Operational guidance for Claude Code orchestration*

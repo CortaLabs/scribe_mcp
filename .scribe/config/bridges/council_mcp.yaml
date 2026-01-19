@@ -1,0 +1,114 @@
+# Council MCP Bridge Manifest
+#
+# This manifest configures the Council MCP integration with Scribe.
+# Council MCP is a multi-agent orchestration system that coordinates
+# specialized agents for complex development workflows.
+#
+# Usage:
+#   1. Copy this file to .scribe/config/bridges/council_mcp.yaml
+#   2. Implement CouncilBridgePlugin (see examples/council_bridge.py)
+#   3. Register: scribe-admin bridge register --manifest .scribe/config/bridges/council_mcp.yaml
+#   4. Activate: scribe-admin bridge activate council_mcp
+
+# =============================================================================
+# REQUIRED FIELDS
+# =============================================================================
+
+bridge_id: council_mcp
+name: Council MCP Bridge
+version: 1.0.0
+description: Multi-agent orchestration bridge that connects Council MCP with Scribe for comprehensive logging, project management, and decision documentation.
+author: Scribe Team
+
+# =============================================================================
+# PERMISSIONS
+# =============================================================================
+# Council needs broad access to coordinate multiple agents across projects
+
+permissions:
+  - read:all_projects      # Read logs from any project
+  - write:own_projects     # Write to Council-created projects
+  - create:projects        # Create new projects for workflows
+
+# =============================================================================
+# PROJECT CONFIGURATION
+# =============================================================================
+# Council creates projects for multi-agent workflows
+
+project_config:
+  can_create_projects: true
+  project_prefix: "council_"        # Projects named: council_<name>
+  auto_tag:
+    - council                       # Mark as Council-managed
+    - multi-agent                   # Indicate multi-agent workflow
+    - automated                     # Flag as automated work
+  default_metadata:
+    orchestrator: council_mcp
+    workflow_type: multi_agent
+
+# =============================================================================
+# HOOKS CONFIGURATION
+# =============================================================================
+# Council uses hooks to enrich entries and track agent activity
+
+hooks:
+  pre_append:
+    callback_type: async
+    timeout_ms: 5000
+    critical: false                 # Don't block append if hook fails
+  post_append:
+    callback_type: async
+    timeout_ms: 5000
+    critical: false
+  pre_project_create:
+    callback_type: async
+    timeout_ms: 5000
+    critical: false
+  post_project_create:
+    callback_type: async
+    timeout_ms: 5000
+    critical: false
+
+# =============================================================================
+# CUSTOM LOG TYPES (optional)
+# =============================================================================
+# Council can define custom log types for specialized tracking
+
+log_config:
+  council_decisions:
+    log_type: council_decisions
+    path_template: "{docs_dir}/COUNCIL_DECISIONS.md"
+    format: markdown
+    metadata_requirements:
+      - decision_type
+      - participating_agents
+    description: Log of council decisions and rationale
+
+# =============================================================================
+# VALIDATION
+# =============================================================================
+
+validation:
+  mode: lenient                     # Flexible for multi-agent scenarios
+  # schema: null
+  # custom_validator: null
+
+# =============================================================================
+# COMPATIBILITY
+# =============================================================================
+
+min_scribe_version: "2.1.0"
+# max_scribe_version: null
+
+# =============================================================================
+# DOCUMENTATION
+# =============================================================================
+# Additional metadata for bridge discovery and documentation
+
+tags:
+  - orchestration
+  - multi-agent
+  - council
+
+repository: https://github.com/your-org/council-mcp
+documentation: https://github.com/your-org/council-mcp#scribe-integration

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.utils.time import parse_utc, utcnow
+from scribe_mcp.utils.slug import normalize_project_input
 
 
 TOOL_HISTORY_LIMIT = 10
@@ -34,7 +35,16 @@ class State:
     def get_project(self, name: Optional[str]) -> Optional[Dict[str, Any]]:
         if not name:
             return None
-        return self.projects.get(name)
+        # Try exact match first
+        if name in self.projects:
+            return self.projects[name]
+
+        # Try canonical match (flexible lookup for existing projects)
+        canonical = normalize_project_input(name)
+        if canonical and canonical != name and canonical in self.projects:
+            return self.projects[canonical]
+
+        return None
 
     def get_session_project(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not session_id:

@@ -1,0 +1,432 @@
+spec_id: SPEC-ROTATE-001
+title: Atomic Fallback Rotation with Transaction Semantics
+category: correctness
+priority: P0
+status: proposed
+affected_file: tools/rotate_log.py
+affected_lines: 1021-1063
+ticket_tags:
+  - atomicity
+  - data_integrity
+  - error_handling
+  - technical_debt
+
+# ============================================================================
+# PROBLEM STATEMENT
+# ============================================================================
+
+current_behavior:
+  description: |
+    Fallback rotation path performs NON-ATOMIC operations:
+    1. Rename original log to archive (Line 1033)
+    2. Write new log header (Lines 1036-1050)
+
+    If step 2 fails, system is in inconsistent state:
+    - Original log exists at archive_path ✅
+    - New log at log_path is MISSING ❌
+    - Subsequent append_entry calls will fail
+    - Manual intervention required for recovery
+
+  code_location:
+    file: tools/rotate_log.py
+    function: _execute_rotation_with_fallbacks
+    lines: 1021-1063
+    context: "Fallback rotation when primary rotate_file() fails"
+
+  failure_scenarios:
+    - scenario: "Disk full during header write"
+      probability: medium
+      consequence: "log_path missing, append_entry fails, data loss risk"
+
+    - scenario: "Permission error on write_text()"
+      probability: low
+      consequence: "log_path missing, application hangs on logging"
+
+    - scenario: "Process killed between rename and write"
+      probability: low
+      consequence: "log_path missing, requires manual file creation"
+
+    - scenario: "Filesystem error during write"
+      probability: medium
+      consequence: "log_path may be empty or incomplete"
+
+  test_reproduction:
+    method: "Simulate write failure between rename and write_text"
+    code: |
+      # Mock write_text to fail
+      with patch.object(Path, 'write_text', side_effect=OSError("Disk full")):
+          result = await rotate_log(confirm=True)
+
+      # Verify inconsistent state
+      assert archive_path.exists()  # ✅ Original moved
+      assert not log_path.exists()   # ❌ New file missing
+
+# ============================================================================
+# PROPOSED SOLUTION
+# ============================================================================
+
+proposed_behavior:
+  description: |
+    Two-phase commit with atomic guarantees:
+    1. Prepare: Write new log to temporary file
+    2. Commit: Rename original → archive, temp → original
+    3. Rollback (on failure): Restore original log
+
+    System maintains consistency regardless of failure point.
+
+  atomicity_guarantee: |
+    At any point in the operation, log_path contains valid log:
+    - Before commit: Original log
+    - After commit: New log with header
+    - During failure: Original log (rolled back)
+
+  implementation_strategy:
+    phase_1_prepare:
+      - action: "Write new log header to temp file"
+        code: "temp_path = log_path.with_suffix('.rotation_tmp')"
+        validation: "Verify temp_path.exists() and content valid"
+
+    phase_2_commit:
+      - action: "Rename original log to archive"
+        code: "log_path.rename(archive_path)"
+        rollback: "Rename archive back if next step fails"
+
+      - action: "Rename temp file to log_path"
+        code: "temp_path.rename(log_path)"
+        rollback: "Delete temp if exists, restore from archive"
+
+    phase_3_cleanup:
+      - action: "Delete temp file if it exists"
+        code: "temp_path.unlink(missing_ok=True)"
+        note: "Best-effort cleanup, doesn't affect atomicity"
+
+  rollback_logic: |
+    def rollback_rotation(log_path, archive_path, temp_path):
+        \"\"\"Restore system to pre-rotation state.\"\"\"
+        try:
+            # If archive exists but log doesn't, restore it
+            if archive_path.exists() and not log_path.exists():
+                archive_path.rename(log_path)
+
+            # Clean up temp file
+            if temp_path.exists():
+                temp_path.unlink()
+        except Exception as rollback_error:
+            # Log rollback failure but don't raise
+            # System may require manual intervention
+            logger.error(f"Rollback failed: {rollback_error}")
+
+# ============================================================================
+# IMPLEMENTATION SPEC
+# ============================================================================
+
+implementation_code: |
+  # Replace lines 1021-1063 in _execute_rotation_with_fallbacks
+
+  try:
+      fallback_suffix = operation.get(
+          "suffix",
+          f"rotated-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+      )
+      archive_path = log_path.with_suffix(
+          f".{fallback_suffix}{log_path.suffix}"
+      )
+      temp_path = log_path.with_suffix('.rotation_tmp')
+
+      # PHASE 1: Prepare new log file
+      try:
+          timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+          project_name = project.get("name", "Unknown Project")
+          header = (
+              "# Progress Log\n\n"
+              "## Rotation Notice\n"
+              f"Previous log was archived to: {archive_path.name}\n\n"
+              f"Rotation Time: {timestamp}\n"
+              f"Project: {project_name}\n\n"
+              "---\n\n"
+          )
+          await asyncio.to_thread(lambda: temp_path.write_text(header))
+      except Exception as prepare_error:
+          # Preparation failed - no state change, safe to fail
+          raise RuntimeError(f"Failed to prepare rotation temp file: {prepare_error}")
+
+      # PHASE 2: Atomic commit
+      try:
+          # Step 2.1: Move original to archive
+          await asyncio.to_thread(lambda: log_path.rename(archive_path))
+
+          # Step 2.2: Install new log from temp
+          try:
+              await asyncio.to_thread(lambda: temp_path.rename(log_path))
+          except Exception as install_error:
+              # Installation failed - rollback rename
+              try:
+                  await asyncio.to_thread(lambda: archive_path.rename(log_path))
+              except Exception as rollback_error:
+                  # Critical: both archive and original may be inaccessible
+                  raise RuntimeError(
+                      f"CRITICAL: Rollback failed after install error. "
+                      f"Install error: {install_error}, "
+                      f"Rollback error: {rollback_error}"
+                  )
+              raise RuntimeError(f"Failed to install new log: {install_error}")
+
+      except Exception as commit_error:
+          # Commit phase failed - attempt cleanup
+          try:
+              if temp_path.exists():
+                  await asyncio.to_thread(lambda: temp_path.unlink())
+          except Exception:
+              pass  # Best-effort cleanup
+          raise
+
+      # PHASE 3: Cleanup (best-effort)
+      try:
+          if temp_path.exists():
+              await asyncio.to_thread(lambda: temp_path.unlink())
+      except Exception:
+          pass  # Temp file cleanup is non-critical
+
+      # Success path - return fallback result
+      fallback_result = {
+          "log_type": log_type,
+          "status": "rotated_fallback",
+          "dry_run": False,
+          "original_path": str(log_path),
+          "archive_path": str(archive_path),
+          "fallback_method": True,
+          "healed_error": True,
+          "atomic_commit": True
+      }
+      execution_results.append(fallback_result)
+      successful_rotations.append(fallback_result)
+
+  except Exception as fallback_error:
+      # All fallback attempts failed
+      error_result = {
+          "log_type": log_type,
+          "status": "failed",
+          "error": str(fallback_error),
+          "healing_attempted": True,
+          "healing_failed": True,
+          "requires_manual_intervention": "CRITICAL" in str(fallback_error)
+      }
+      failed_rotations.append(error_result)
+      execution_results.append(error_result)
+
+# ============================================================================
+# VERIFICATION PLAN
+# ============================================================================
+
+verification_tests:
+  - test_id: ROTATE-001-001
+    name: "Normal fallback rotation succeeds"
+    scenario: "Primary rotation fails, fallback completes successfully"
+    setup: |
+      - Mock rotate_file() to raise exception
+      - Prepare valid log file with entries
+    action: "Call rotate_log(confirm=True)"
+    assertions:
+      - archive_path.exists()
+      - log_path.exists()
+      - log_path content matches header template
+      - result["status"] == "rotated_fallback"
+      - result["atomic_commit"] == True
+
+  - test_id: ROTATE-001-002
+    name: "Temp file write failure (prepare phase)"
+    scenario: "Cannot write temp file - operation fails cleanly"
+    setup: |
+      - Mock temp_path.write_text() to raise OSError
+    action: "Call rotate_log(confirm=True)"
+    assertions:
+      - log_path.exists() and unchanged
+      - archive_path does not exist
+      - temp_path does not exist
+      - result["status"] == "failed"
+
+  - test_id: ROTATE-001-003
+    name: "Install failure with successful rollback"
+    scenario: "Temp→log rename fails, archive→log restore succeeds"
+    setup: |
+      - Allow temp file creation
+      - Mock temp_path.rename(log_path) to raise OSError
+      - Allow archive_path.rename(log_path) to succeed
+    action: "Call rotate_log(confirm=True)"
+    assertions:
+      - log_path.exists() and contains original content
+      - archive_path does not exist
+      - temp_path does not exist
+      - result["status"] == "failed"
+      - error message includes "Failed to install new log"
+
+  - test_id: ROTATE-001-004
+    name: "CRITICAL: Rollback failure"
+    scenario: "Both install and rollback fail - requires intervention"
+    setup: |
+      - Mock temp_path.rename(log_path) to raise OSError
+      - Mock archive_path.rename(log_path) to raise OSError
+    action: "Call rotate_log(confirm=True)"
+    assertions:
+      - result["status"] == "failed"
+      - result["requires_manual_intervention"] == True
+      - error message includes "CRITICAL"
+      - error message includes both install and rollback errors
+
+  - test_id: ROTATE-001-005
+    name: "Process kill simulation (integration test)"
+    scenario: "Kill process at various points, verify consistency"
+    iterations:
+      - point: "After temp file write"
+        expected: "log_path unchanged, temp_path orphaned (cleanup on next run)"
+      - point: "After archive rename, before install"
+        expected: "log_path missing, archive exists (rollback on next run)"
+      - point: "After install rename"
+        expected: "log_path exists with new content, temp orphaned"
+    manual_verification: |
+      Use fault injection to kill process at each point.
+      Verify system can recover (either automatically or with warning).
+
+# ============================================================================
+# ROLLOUT PLAN
+# ============================================================================
+
+deployment_strategy:
+  phase_1_implementation:
+    - task: "Implement atomic fallback in feature branch"
+      assignee: "CoderAgent"
+      estimate: "2 hours"
+
+    - task: "Write verification tests (5 tests)"
+      assignee: "CoderAgent"
+      estimate: "2 hours"
+
+    - task: "Add rollback logging and monitoring"
+      assignee: "CoderAgent"
+      estimate: "1 hour"
+
+  phase_2_testing:
+    - task: "Unit tests for all failure scenarios"
+      coverage_target: "100% of fallback path"
+
+    - task: "Integration tests with fault injection"
+      scenarios: "Process kill, disk full, permission errors"
+
+    - task: "Performance regression testing"
+      baseline: "Current fallback performance"
+      target: "No more than 10% slowdown"
+
+  phase_3_rollout:
+    - step: "Deploy to dev environment"
+      monitoring: "Watch for rollback attempts, verify no data loss"
+
+    - step: "Canary deployment (10% of prod traffic)"
+      duration: "1 week"
+      rollback_trigger: "Any data loss incidents or rollback failures"
+
+    - step: "Full production deployment"
+      prerequisites:
+        - Zero rollback failures in canary
+        - All verification tests passing
+        - Manual review of implementation by ReviewAgent
+
+# ============================================================================
+# SUCCESS METRICS
+# ============================================================================
+
+success_criteria:
+  correctness:
+    - metric: "Zero data loss incidents in fallback path"
+      target: "100%"
+
+    - metric: "Successful rollback on install failure"
+      target: "100%"
+
+    - metric: "No orphaned temp files after normal operation"
+      target: "100%"
+
+  performance:
+    - metric: "Fallback rotation latency"
+      baseline: "~50ms (current non-atomic version)"
+      target: "<60ms (max 20% regression)"
+
+    - metric: "Disk I/O operations"
+      baseline: "2 operations (rename + write)"
+      target: "4 operations (write_temp + rename + rename + cleanup)"
+
+  observability:
+    - metric: "Rollback attempts logged"
+      target: "100% with ERROR level"
+
+    - metric: "Critical rollback failures escalated"
+      target: "100% with CRITICAL level + alert"
+
+# ============================================================================
+# RISK ASSESSMENT
+# ============================================================================
+
+risks:
+  - risk_id: RISK-001
+    description: "Temp file orphaning due to crash"
+    probability: medium
+    impact: low
+    mitigation: |
+      - Add cleanup on next rotation (detect orphaned .rotation_tmp files)
+      - Document temp file naming convention
+      - Add monitoring for orphaned temp files
+
+  - risk_id: RISK-002
+    description: "Rollback failure leaves system in critical state"
+    probability: low
+    impact: critical
+    mitigation: |
+      - Extensive testing of rollback scenarios
+      - Manual intervention documentation
+      - Alerting on CRITICAL rollback failures
+      - Regular backup of log files
+
+  - risk_id: RISK-003
+    description: "Performance regression in fallback path"
+    probability: low
+    impact: medium
+    mitigation: |
+      - Fallback only triggered when primary rotation fails
+      - Additional I/O minimal compared to rotation cost
+      - Performance testing before deployment
+
+# ============================================================================
+# NOTES & REFERENCES
+# ============================================================================
+
+notes: |
+  This spec addresses a CRITICAL atomicity violation discovered during
+  systematic audit of rotate_log.py (Wave 1, ResearchAgent-D-RotateLog).
+
+  The current implementation (lines 1021-1063) performs non-atomic
+  operations that can leave the system in an inconsistent state on
+  failure. This spec provides a production-ready atomic implementation
+  with comprehensive rollback semantics.
+
+  The proposed solution adds minimal overhead (2 extra rename operations)
+  while guaranteeing system consistency under all failure scenarios.
+
+references:
+  - audit_report: "wiki/tools/rotate_log.md"
+  - discovery_date: "2026-01-05"
+  - discoverer: "ResearchAgent-D-RotateLog"
+  - priority_rationale: "P0 due to data integrity risk"
+  - affected_systems: "All projects using log rotation"
+
+related_specs:
+  - spec: "SPEC-FILES-002"
+    title: "Transaction semantics for file operations"
+    status: "proposed"
+    note: "rotate_log.py fallback should use shared transaction wrapper"
+
+  - spec: "SPEC-AUDIT-003"
+    title: "Rotation history verification"
+    status: "proposed"
+    note: "Add verification that all rotations completed atomically"
+
+---
+# END SPEC-ROTATE-001

@@ -45,14 +45,16 @@ class ReminderContext:
     project_name: Optional[str]
     project_root: Optional[str]
     agent_id: Optional[str]
-    total_entries: int
-    minutes_since_log: Optional[float]
-    last_log_time: Optional[datetime]
-    docs_status: Dict[str, str]
-    docs_changed: List[str]
-    current_phase: Optional[str]
-    session_age_minutes: Optional[float]
+    session_id: Optional[str] = None
+    total_entries: int = 0
+    minutes_since_log: Optional[float] = None
+    last_log_time: Optional[datetime] = None
+    docs_status: Dict[str, str] = field(default_factory=dict)
+    docs_changed: List[str] = field(default_factory=list)
+    current_phase: Optional[str] = None
+    session_age_minutes: Optional[float] = None
     variables: Dict[str, Any] = field(default_factory=dict)
+    operation_status: Optional[str] = None  # "success", "failure", or None for neutral
 
 
 @dataclass
@@ -66,10 +68,13 @@ class ReminderHistory:
 class ReminderEngine:
     """Advanced reminder engine with localization and intelligent selection."""
 
-    def __init__(self, config_path: Optional[str] = None):
-        self.config_path = config_path or "config/reminder_config.json"
-        self.reminders_path: Optional[str] = None
-        self.rules_path: Optional[str] = None
+    def __init__(self, config_path: Optional[str] = None, storage: Optional[Any] = None):
+        # Resolve config path: try repo .scribe/config/ first, fallback to package config/
+        if config_path is None:
+            config_path = self._resolve_config_path()
+        self.config_path = config_path
+        self.reminders_path: Optional[Path] = None
+        self.rules_path: Optional[Path] = None
 
         self.config: Dict[str, Any] = {}
         self.reminders: Dict[str, Any] = {}
@@ -81,10 +86,31 @@ class ReminderEngine:
         self.fallback_language = "en-US"
 
         self.history = ReminderHistory()
-        self._cooldown_cache_path: Optional[Path] = None
-        self._cooldown_cache_dirty = False
+        self.storage = storage  # Injected storage backend for DB-based cooldown tracking
 
         self._load_configuration()
+
+    def _resolve_config_path(self) -> str:
+        """Resolve reminder config path with repo .scribe/config/ priority.
+
+        Search order:
+        1. repo_root/.scribe/config/reminder_config.json (repo-specific)
+        2. package config/reminder_config.json (package defaults)
+        """
+        # Try repo .scribe/config/ first
+        try:
+            from scribe_mcp.config.repo_config import RepoDiscovery
+            repo_root = RepoDiscovery.find_repo_root()
+            if repo_root:
+                repo_config = repo_root / ".scribe" / "config" / "reminder_config.json"
+                if repo_config.exists():
+                    return str(repo_config)
+        except Exception:
+            pass  # Fall through to package default
+
+        # Fallback to package config (resolved relative to package, not CWD)
+        package_config = settings.project_root / "config" / "reminder_config.json"
+        return str(package_config)
 
     def _load_configuration(self) -> None:
         """Load all configuration files."""
@@ -101,8 +127,6 @@ class ReminderEngine:
 
             self._load_reminders()
             self._load_rules()
-            self._configure_cooldown_cache()
-            self._load_cooldown_cache()
 
         except Exception as e:
             print(f"Warning: Failed to load reminder configuration: {e}")
@@ -182,90 +206,6 @@ class ReminderEngine:
 
         self.history.last_cleanup = now
 
-        # Keep the persisted cooldown cache bounded as well.
-        self._cleanup_cooldown_cache()
-        self._save_cooldown_cache()
-
-    def _configure_cooldown_cache(self) -> None:
-        override = os.environ.get("SCRIBE_REMINDER_CACHE_PATH")
-        if override:
-            self._cooldown_cache_path = Path(override).expanduser()
-            return
-
-        behavior = self.config.get("behavior", {}) if isinstance(self.config, dict) else {}
-        path_raw = behavior.get("cooldown_cache_path", "data/reminder_cooldowns.json")
-        path_obj = Path(path_raw).expanduser()
-        if not path_obj.is_absolute():
-            path_obj = (settings.project_root / path_obj).resolve()
-        self._cooldown_cache_path = path_obj
-
-    def _load_cooldown_cache(self) -> None:
-        behavior = self.config.get("behavior", {}) if isinstance(self.config, dict) else {}
-        enabled = bool(behavior.get("persist_cooldowns", True))
-        if not enabled or not self._cooldown_cache_path:
-            return
-
-        try:
-            path = self._cooldown_cache_path
-            if not path.exists():
-                return
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            entries = raw.get("entries", raw) if isinstance(raw, dict) else {}
-            if not isinstance(entries, dict):
-                return
-
-            loaded: Dict[str, datetime] = {}
-            for key, ts in entries.items():
-                if not isinstance(key, str) or not isinstance(ts, str):
-                    continue
-                try:
-                    dt = datetime.fromisoformat(ts)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    else:
-                        dt = dt.astimezone(timezone.utc)
-                    loaded[key] = dt
-                except ValueError:
-                    continue
-
-            if loaded:
-                self.history.reminder_hashes.update(loaded)
-        except Exception:
-            return
-
-    def _save_cooldown_cache(self) -> None:
-        behavior = self.config.get("behavior", {}) if isinstance(self.config, dict) else {}
-        enabled = bool(behavior.get("persist_cooldowns", True))
-        if not enabled or not self._cooldown_cache_path or not self._cooldown_cache_dirty:
-            return
-
-        try:
-            path = self._cooldown_cache_path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "version": 1,
-                "written_at": datetime.now(timezone.utc).isoformat(),
-                "entries": {k: v.isoformat() for k, v in self.history.reminder_hashes.items()},
-            }
-            tmp = path.with_suffix(path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-            tmp.replace(path)
-            self._cooldown_cache_dirty = False
-        except Exception:
-            return
-
-    def _cleanup_cooldown_cache(self) -> None:
-        behavior = self.config.get("behavior", {}) if isinstance(self.config, dict) else {}
-        retention_minutes = int(behavior.get("cooldown_cache_retention_minutes", 24 * 60))
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=max(1, retention_minutes))
-        before = len(self.history.reminder_hashes)
-        self.history.reminder_hashes = {
-            k: v for k, v in self.history.reminder_hashes.items()
-            if v >= cutoff
-        }
-        if len(self.history.reminder_hashes) != before:
-            self._cooldown_cache_dirty = True
-
     def reset_cooldowns(self, *, project_root: str, agent_id: Optional[str] = None) -> int:
         prefix = f"{project_root}|"
         if agent_id:
@@ -274,40 +214,80 @@ class ReminderEngine:
         keys = [k for k in self.history.reminder_hashes.keys() if k.startswith(prefix)]
         for key in keys:
             self.history.reminder_hashes.pop(key, None)
-        if keys:
-            self._cooldown_cache_dirty = True
-            self._save_cooldown_cache()
         return len(keys)
 
     def _get_reminder_hash(self, reminder_key: str, variables: Dict[str, Any]) -> str:
-        """Generate a stable fingerprint for reminder cooldown checks."""
-        project_root = str(variables.get("project_root") or "")
-        agent_id = str(variables.get("agent_id") or "")
-        tool_name = str(variables.get("tool_name") or "")
-        return f"{project_root}|{agent_id}|{tool_name}|{reminder_key}"
+        """Generate hash for reminder deduplication.
 
-    def _should_show_reminder(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
-        """Check if reminder should be shown based on rules."""
+        Uses session_id when use_session_aware_hashes flag is enabled.
+        Falls back to legacy format for backward compatibility.
+        """
+        use_session_hash = getattr(settings, 'use_session_aware_hashes', False)
+        session_id = str(variables.get("session_id") or "")
+
+        if use_session_hash and session_id:
+            # Session-aware hash (new behavior)
+            parts = [
+                session_id,
+                str(variables.get("project_root") or ""),
+                str(variables.get("agent_id") or ""),
+                str(variables.get("tool_name") or ""),
+                reminder_key
+            ]
+        else:
+            # Legacy hash (backward compatible)
+            parts = [
+                str(variables.get("project_root") or ""),
+                str(variables.get("agent_id") or ""),
+                str(variables.get("tool_name") or ""),
+                reminder_key
+            ]
+
+        return hashlib.md5("|".join(parts).encode()).hexdigest()
+
+    async def _should_show_reminder(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
+        """Check if reminder should be shown based on rules.
+
+        Failure-priority logic: When operation_status == "failure", cooldowns are bypassed
+        to ensure critical reminders are shown on tool failures.
+        """
 
         # Tool suppression
         if context.tool_name in reminder.tools_suppressed:
             return False
 
-        # Cooldown check
-        cooldown_minutes = reminder.cooldown_minutes
-        if cooldown_minutes <= 0 and reminder.category == "teaching":
-            cooldown_minutes = int(self.config.get("behavior", {}).get("default_teaching_cooldown_minutes", 10))
+        # Failure-priority logic: bypass cooldowns on failures
+        is_failure = context.operation_status == "failure"
 
-        if cooldown_minutes > 0:
-            reminder_hash = self._get_reminder_hash(reminder.key, reminder.variables)
-            last_shown = self.history.reminder_hashes.get(reminder_hash)
-            if last_shown:
-                cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
-                if last_shown > cooldown_cutoff:
-                    return False
+        # Cooldown check (bypassed for failures)
+        if not is_failure:
+            cooldown_minutes = reminder.cooldown_minutes
+            if cooldown_minutes <= 0 and reminder.category == "teaching":
+                cooldown_minutes = int(self.config.get("behavior", {}).get("default_teaching_cooldown_minutes", 10))
 
-        # Teaching session limits
-        if reminder.category == "teaching":
+            if cooldown_minutes > 0:
+                reminder_hash = self._get_reminder_hash(reminder.key, reminder.variables)
+
+                # Use DB if available, fallback to in-memory
+                if self.storage:
+                    session_id = reminder.variables.get("session_id", "")
+                    in_cooldown = await self.storage.check_reminder_cooldown(
+                        session_id=session_id,
+                        reminder_hash=reminder_hash,
+                        cooldown_minutes=cooldown_minutes
+                    )
+                    if in_cooldown:
+                        return False
+                else:
+                    # Fallback to in-memory (legacy)
+                    last_shown = self.history.reminder_hashes.get(reminder_hash)
+                    if last_shown:
+                        cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+                        if last_shown > cooldown_cutoff:
+                            return False
+
+        # Teaching session limits (bypassed for failures)
+        if not is_failure and reminder.category == "teaching":
             session_key = f"{context.tool_name}:{reminder.key}"
             sessions_used = self.history.teaching_sessions.get(session_key, 0)
             max_sessions = self.config.get("behavior", {}).get("max_teaching_reminders_per_session", 3)
@@ -371,6 +351,7 @@ class ReminderEngine:
             "project_name": context.project_name or "No project",
             "project_root": context.project_root or "",
             "agent_id": context.agent_id or "",
+            "session_id": context.session_id or "",
             "tool_name": context.tool_name,
             "total_entries": context.total_entries,
             "minutes": int(context.minutes_since_log or 0),
@@ -435,23 +416,43 @@ class ReminderEngine:
                         candidates.append(reminder)
 
         # Add teaching reminders
-        teaching_reminders = self._generate_teaching_reminders(context)
+        teaching_reminders = await self._generate_teaching_reminders(context)
         candidates.extend(teaching_reminders)
 
         # Filter and select best reminders
-        selected = self._select_reminders(candidates, context)
+        selected = await self._select_reminders(candidates, context)
 
         # Track shown reminders
         for reminder in selected:
             reminder_hash = self._get_reminder_hash(reminder.key, reminder.variables)
-            self.history.reminder_hashes[reminder_hash] = datetime.now(timezone.utc)
-            self._cooldown_cache_dirty = True
+
+            # Use DB if available (best-effort; reminders should never block tool execution)
+            if self.storage:
+                session_id = reminder.variables.get("session_id", "")
+                project_root = reminder.variables.get("project_root", "")
+                agent_id = reminder.variables.get("agent_id", "")
+                tool_name = reminder.variables.get("tool_name", "")
+
+                try:
+                    await self.storage.record_reminder_shown(
+                        session_id=session_id,
+                        reminder_hash=reminder_hash,
+                        project_root=project_root,
+                        agent_id=agent_id,
+                        tool_name=tool_name,
+                        reminder_key=reminder.key,
+                        operation_status=context.operation_status or "neutral",
+                    )
+                except Exception:
+                    # Fallback to in-memory (legacy) on storage errors.
+                    self.history.reminder_hashes[reminder_hash] = datetime.now(timezone.utc)
+            else:
+                # Fallback to in-memory (legacy)
+                self.history.reminder_hashes[reminder_hash] = datetime.now(timezone.utc)
 
             if reminder.category == "teaching":
                 session_key = f"{context.tool_name}:{reminder.key}"
                 self.history.teaching_sessions[session_key] = self.history.teaching_sessions.get(session_key, 0) + 1
-
-        self._save_cooldown_cache()
 
         # Apply formatting
         use_short = self.config.get("formatting", {}).get("use_short_templates", True)
@@ -496,7 +497,7 @@ class ReminderEngine:
             cooldown_minutes=rule_data.get("cooldown_minutes", 0)
         )
 
-    def _generate_teaching_reminders(self, context: ReminderContext) -> List[ReminderInstance]:
+    async def _generate_teaching_reminders(self, context: ReminderContext) -> List[ReminderInstance]:
         """Generate teaching reminders based on context."""
         teaching = []
 
@@ -507,18 +508,21 @@ class ReminderEngine:
         for rule_name, rule_data in teaching_rules.items():
             if self._evaluate_rule_conditions(rule_data.get("triggers", []), context):
                 reminder = self._create_reminder_from_rule(rule_name, rule_data, context)
-                if reminder and self._should_show_reminder(reminder, context):
+                if reminder and await self._should_show_reminder(reminder, context):
                     teaching.append(reminder)
 
         return teaching
 
-    def _select_reminders(self, candidates: List[ReminderInstance], context: ReminderContext) -> List[ReminderInstance]:
+    async def _select_reminders(self, candidates: List[ReminderInstance], context: ReminderContext) -> List[ReminderInstance]:
         """Select the best reminders based on priority and rules."""
         if not candidates:
             return []
 
         # Filter out suppressed reminders
-        filtered = [r for r in candidates if self._should_show_reminder(r, context)]
+        filtered = []
+        for r in candidates:
+            if await self._should_show_reminder(r, context):
+                filtered.append(r)
 
         # Sort by priority
         priority_order = self.config.get("selection", {}).get("priority_order", [])

@@ -12,8 +12,11 @@ from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.shared.logging_utils import resolve_log_definition
+from scribe_mcp.shared.project_utils import detect_project_state
 from scribe_mcp.config import log_config as log_config_module
 from scribe_mcp.utils.logs import parse_log_line, read_all_lines
+from scribe_mcp.utils.slug import normalize_project_input
+from datetime import datetime, timezone
 
 
 class _GetProjectHelper(LoggingToolMixin):
@@ -25,18 +28,59 @@ _GET_PROJECT_HELPER = _GetProjectHelper()
 _PROJECT_REGISTRY = ProjectRegistry()
 
 
-async def _compute_doc_status(project_name: str) -> Dict[str, Any]:
+async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Compute comprehensive document status for SITREP enhancement.
+
+    Args:
+        project_name: Name of the project
+        project_data: Optional project dict with live 'docs' mapping from state_manager
+
+    Returns:
+        Dict containing flags, hashes, counts, doc list with modification indicators
+    """
     info = _PROJECT_REGISTRY.get_project(project_name)
     if not info:
         return {}
     docs_meta = (info.meta or {}).get("docs") or {}
     flags = docs_meta.get("flags") or {}
+    baseline_hashes = docs_meta.get("baseline_hashes") or {}
+    current_hashes = docs_meta.get("current_hashes") or {}
+
+    # Merge docs from baseline_hashes with live project.docs registry
+    # This ensures newly registered docs appear in the list
+    # Filter out keys starting with '_' (metadata like _hashes)
+    all_doc_keys = set(baseline_hashes.keys())
+    if project_data:
+        live_docs = project_data.get("docs") or {}
+        # Exclude metadata keys (start with '_')
+        all_doc_keys.update(k for k in live_docs.keys() if not k.startswith("_"))
+
+    # Build doc list with modification flags
+    base_docs = ["architecture", "phase_plan", "checklist", "progress_log"]
+    custom_docs = [doc for doc in all_doc_keys if doc not in base_docs]
+
+    doc_list = []
+    for doc_key in sorted(all_doc_keys):
+        is_modified = flags.get(f"{doc_key}_modified", False)
+        # Use different indicator for docs only in live registry (not in baseline_hashes)
+        if doc_key in baseline_hashes:
+            flag = "✏️" if is_modified else "✓"
+        else:
+            flag = "📄"  # Registered but no baseline hash yet
+        doc_list.append(f"{flag} {doc_key}")
+
     return {
         "flags": flags,
-        "baseline_hashes": docs_meta.get("baseline_hashes") or {},
-        "current_hashes": docs_meta.get("current_hashes") or {},
+        "baseline_hashes": baseline_hashes,
+        "current_hashes": current_hashes,
         "last_update_at": docs_meta.get("last_update_at"),
         "update_count": docs_meta.get("update_count"),
+        # SITREP enhancements
+        "total_docs": len(all_doc_keys),
+        "base_docs": len([d for d in base_docs if d in all_doc_keys]),
+        "custom_docs": len(custom_docs),
+        "doc_list": doc_list,
     }
 
 
@@ -127,6 +171,133 @@ async def _read_recent_progress_entries(progress_log_path: str, limit: int = 5) 
         return []
 
 
+async def _read_recent_entries_from_db(
+    project_name: str,
+    limit: int = 5,
+    log_types: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Read last N entries from database (preferred over file-based).
+
+    Args:
+        project_name: Name of the project
+        limit: Maximum number of recent entries to return
+        log_types: Filter by log types (default: progress, bugs, security)
+
+    Returns:
+        List of entry dicts with timestamp, emoji, agent, message
+    """
+    try:
+        import server as server_module
+        backend = server_module.storage_backend
+        if not backend:
+            return []
+
+        project_record = await backend.fetch_project(project_name)
+        if not project_record:
+            return []
+
+        # Default to meaningful log types (exclude tool_logs)
+        # Include both singular and plural variants for compatibility
+        if log_types is None:
+            log_types = ["progress", "bugs", "bug", "security"]
+
+        entries = await backend.fetch_recent_entries(
+            project=project_record,
+            limit=limit,
+            filters={"log_type": log_types}
+        )
+
+        # Format entries for display
+        result = []
+        for entry in entries:
+            result.append({
+                "emoji": entry.get("emoji", "ℹ️"),
+                "timestamp": entry.get("ts_iso") or entry.get("ts", ""),
+                "agent": entry.get("agent", "unknown"),
+                "message": entry.get("message", "")
+            })
+
+        return result
+
+    except Exception:
+        return []
+
+
+async def _format_readable_sitrep(
+    project_name: str,
+    state: str,
+    sitrep_message: str,
+    entry_count: int,
+    timestamps: Dict[str, Any],
+    doc_status: Dict[str, Any],
+    recent_entries: List[Dict[str, Any]]
+) -> str:
+    """
+    Format project SITREP as compact list box (~150-200 tokens).
+
+    Args:
+        project_name: Project name
+        state: Project state (NEW, EXISTING_LEGACY, UNCHANGED, MODIFIED)
+        sitrep_message: Human-readable status message
+        entry_count: Total number of progress log entries
+        timestamps: Dict with created_at, last_entry_at, current_time
+        doc_status: Doc status from _compute_doc_status
+        recent_entries: List of recent log entries (2-5)
+
+    Returns:
+        Formatted readable box string
+    """
+    # Build header with state
+    header = f"📋 {project_name} ({state})"
+
+    # Build info lines
+    lines = []
+    lines.append("╔" + "═" * (len(header) + 2) + "╗")
+    lines.append(f"║ {header} ║")
+    lines.append("╠" + "═" * (len(header) + 2) + "╣")
+
+    # Timestamps
+    if timestamps.get("created_at"):
+        created = timestamps["created_at"][:19] if isinstance(timestamps["created_at"], str) else str(timestamps["created_at"])[:19]
+        lines.append(f"║ Created: {created} UTC")
+
+    if timestamps.get("last_entry_at"):
+        last_entry = timestamps["last_entry_at"][:19] if isinstance(timestamps["last_entry_at"], str) else str(timestamps["last_entry_at"])[:19]
+        lines.append(f"║ Last Entry: {last_entry} UTC")
+
+    # Entry count
+    lines.append(f"║ Entries: {entry_count} total")
+
+    # Doc counts
+    total_docs = doc_status.get("total_docs", 0)
+    base_docs = doc_status.get("base_docs", 0)
+    custom_docs = doc_status.get("custom_docs", 0)
+    if total_docs > 0:
+        lines.append(f"║ Docs: {total_docs} ({base_docs} base + {custom_docs} custom)")
+
+        # Doc list (2 per line for compact display)
+        doc_list = doc_status.get("doc_list", [])
+        for i in range(0, len(doc_list), 2):
+            doc_line = "  ".join(doc_list[i:i+2])
+            lines.append(f"║   {doc_line}")
+
+    # Recent entries section
+    if recent_entries:
+        lines.append("╠" + "═" * (len(header) + 2) + "╣")
+        lines.append(f"║ Recent Entries (last {len(recent_entries)}):")
+        for entry in recent_entries:
+            # Format: [emoji] Message (truncate if very long, but NO truncation per user requirement)
+            emoji = entry.get("emoji", "ℹ️")
+            message = entry.get("message", "")
+            lines.append(f"║ [{emoji}] {message}")
+
+    # Footer
+    lines.append("╚" + "═" * (len(header) + 2) + "╝")
+
+    return "\n".join(lines)
+
+
 async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
     """
     Gather document information for a project.
@@ -179,12 +350,13 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.tool()
-async def get_project(project: Optional[str] = None, format: str = "structured") -> Dict[str, Any]:
+async def get_project(project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
     """Return the active project selection, resolving defaults when necessary.
 
     Args:
         project: Optional project name to retrieve
         format: Output format - "readable" (human-friendly), "structured" (full JSON), "compact" (minimal)
+        verbose: If True, include recent log entries in readable format (default: False)
     """
     state_snapshot = await server_module.state_manager.record_tool("get_project")
     agent_identity = server_module.get_agent_identity()
@@ -220,6 +392,10 @@ async def get_project(project: Optional[str] = None, format: str = "structured")
             exec_context = server_module.get_execution_context()
         except Exception:
             exec_context = None
+
+    # Normalize project input to handle hyphens, underscores, mixed case
+    if project:
+        project = normalize_project_input(project) or project
 
     if project:
         # Attempt to load explicit project request
@@ -293,47 +469,86 @@ async def get_project(project: Optional[str] = None, format: str = "structured")
     try:
         if current_name:
             response.setdefault("meta", {})
-            response["meta"]["docs_status"] = await _compute_doc_status(current_name)
+            response["meta"]["docs_status"] = await _compute_doc_status(current_name, target_project)
             response["meta"]["log_entry_counts"] = await _compute_log_counts(response)
     except Exception:
         pass
 
-    # Handle readable format with context hydration
+    # Integrate state detection and SITREP data (Phase 4.2)
+    state = "UNKNOWN"
+    sitrep_message = ""
+    entry_count = 0
+    timestamps = {}
+
+    try:
+        if current_name:
+            # Get entry count from backend (Phase 4.2)
+            # Only count meaningful log types: progress, bugs, security (NOT tool_logs)
+            backend = server_module.storage_backend
+            # Fetch project record first to get proper ProjectRecord object
+            project_record = await backend.fetch_project(current_name) if backend else None
+            entry_count = await backend.count_entries(
+                project_record,
+                filters={"log_type": ["progress", "bugs", "bug", "security"]}
+            ) if project_record else 0
+
+            # Detect project state (Phase 4.1 integration)
+            state, sitrep_message = detect_project_state(response, entry_count)
+
+            # Get timestamps from registry
+            registry_info = _PROJECT_REGISTRY.get_project(current_name)
+            timestamps = {
+                "created_at": registry_info.created_at.isoformat() if registry_info and registry_info.created_at else None,
+                "last_entry_at": registry_info.last_entry_at.isoformat() if registry_info and registry_info.last_entry_at else None,
+                "current_time": datetime.now(timezone.utc).isoformat()
+            }
+
+            # Add to response metadata
+            response["meta"]["state"] = state
+            response["meta"]["sitrep_message"] = sitrep_message
+            response["meta"]["entry_count"] = entry_count
+            response["meta"]["timestamps"] = timestamps
+    except Exception:
+        pass
+
+    # Handle readable format with enhanced SITREP (Phase 4.2)
     if format == "readable":
         from utils.response import default_formatter
 
-        # Read last 5 progress log entries (COMPLETE, no truncation!)
-        recent_entries = await _read_recent_progress_entries(
-            target_project.get("progress_log", ""),
-            limit=5
-        )
+        # Read recent entries from DB only if verbose=True
+        recent_entries = []
+        if verbose and current_name:
+            recent_entries = await _read_recent_entries_from_db(
+                current_name,
+                limit=3  # Use 3 for compact display (~150-200 tokens)
+            )
 
-        # Gather doc info
-        docs_info = await _gather_doc_info(target_project)
+        # Get doc status with counts and list (pass target_project for live docs registry)
+        doc_status = await _compute_doc_status(current_name, target_project) if current_name else {}
 
-        # Get activity summary from registry
-        registry_info = _PROJECT_REGISTRY.get_project(current_name) if current_name else None
-
-        activity_summary = {
-            "total_entries": registry_info.total_entries if registry_info else 0,
-            "last_entry_at": registry_info.last_entry_at if registry_info else None,
-            "status": registry_info.status if registry_info else "unknown"
-        }
-
-        # Format using context formatter
-        readable_content = default_formatter.format_project_context(
-            target_project,
-            recent_entries,
-            docs_info,
-            activity_summary
+        # Format SITREP using new compact formatter
+        readable_content = await _format_readable_sitrep(
+            project_name=current_name or "unknown",
+            state=state,
+            sitrep_message=sitrep_message,
+            entry_count=entry_count,
+            timestamps=timestamps,
+            doc_status=doc_status,
+            recent_entries=recent_entries
         )
 
         payload = {
             "ok": True,
             "project": response,
+            "state": state,
+            "sitrep_message": sitrep_message,
+            "entry_count": entry_count,
+            "timestamps": timestamps,
             "recent_entries": recent_entries,
             "readable_content": readable_content
         }
+        if context.reminders:
+            payload["reminders"] = list(context.reminders)
 
         return await default_formatter.finalize_tool_response(
             payload,
@@ -341,7 +556,47 @@ async def get_project(project: Optional[str] = None, format: str = "structured")
             tool_name="get_project"
         )
 
-    # For structured/compact formats, continue with existing logic
+    # For structured/compact formats with enhanced SITREP (Phase 4.2)
+    if format in ["structured", "json", "compact"]:
+        # Get recent entries from DB for JSON format
+        recent_entries = await _read_recent_entries_from_db(
+            current_name,
+            limit=5
+        ) if current_name else []
+
+        # Get doc status (pass target_project for live docs registry)
+        doc_status = await _compute_doc_status(current_name, target_project) if current_name else {}
+
+        # Build enhanced payload
+        payload = {
+            "ok": True,
+            "project": response,
+            "recent_projects": recent_projects,
+            # SITREP enhancements
+            "state": state,
+            "sitrep_message": sitrep_message,
+            "entry_count": entry_count,
+            "timestamps": timestamps,
+            "docs": {
+                "total": doc_status.get("total_docs", 0),
+                "base": doc_status.get("base_docs", 0),
+                "custom": doc_status.get("custom_docs", 0),
+                "list": doc_status.get("doc_list", [])
+            },
+            "recent_entries": recent_entries,
+        }
+
+        # Add pagination info for recent_entries
+        from utils.estimator import PaginationCalculator
+        calc = PaginationCalculator()
+        page = 1  # Default to page 1
+        page_size = 5
+        pagination_info = calc.create_pagination_info(page, page_size, len(recent_entries))
+        payload["pagination"] = pagination_info.to_dict() if hasattr(pagination_info, 'to_dict') else pagination_info
+
+        return _GET_PROJECT_HELPER.apply_context_payload(payload, context)
+
+    # Fallback for unknown formats
     payload = {
         "ok": True,
         "project": response,

@@ -1,0 +1,501 @@
+###############################################################################
+# SPEC-PKG-002: Import Standards and Circular Dependency Prevention
+###############################################################################
+#
+# Purpose: Define import patterns and standards to prevent problematic
+#          circular dependencies while allowing acceptable patterns
+#
+# Status: DRAFT
+# Version: 1.0.0
+# Created: 2026-01-05
+# Team: D - Circular Dependency Detective
+# Phase: 3 (Packaging & Import Analysis)
+#
+###############################################################################
+
+metadata:
+  spec_id: SPEC-PKG-002
+  title: Import Standards and Circular Dependency Prevention
+  category: architecture
+  priority: medium
+  status: draft
+  created: 2026-01-05
+  team: circular_deps
+  related_specs:
+    - SPEC-PKG-001  # Package structure (Team C)
+    - SPEC-PKG-003  # sys.path analysis (Team A)
+    - SPEC-PKG-004  # Import graph (Team B)
+
+###############################################################################
+# ACCEPTABLE CIRCULAR DEPENDENCY PATTERNS
+###############################################################################
+
+acceptable_patterns:
+  plugin_registration:
+    description: "Late-binding plugin registration pattern (tools ↔ server)"
+    status: ACCEPTABLE
+    severity: P2
+    use_case: "MCP framework decorator registration"
+    example: |
+      # server.py (line 458, after app initialization)
+      from scribe_mcp import tools  # noqa: E402  # isort:skip
+
+      # tools/*.py (module level, before server imports tools)
+      from scribe_mcp.server import app
+
+      @app.tool()
+      async def my_tool():
+          pass
+
+    requirements:
+      - Late import MUST occur after app initialization
+      - Late import MUST have noqa marker and comment
+      - Plugin modules MUST import server at module level
+      - All plugins registered via tools/__init__.py
+
+    linting_rules:
+      - allow_late_import: "server.py imports tools after line 400"
+      - require_comment: "Late imports must have explanatory comment"
+      - require_noqa: "Late imports must have noqa: E402 marker"
+
+    migration_impact: none
+    decoupling_recommended: false
+
+  function_level_lazy_imports:
+    description: "Function-level lazy imports to break circular dependencies"
+    status: ACCEPTABLE
+    severity: P2
+    use_case: "Shared utilities accessing tool functions"
+    example: |
+      # shared/logging_utils.py
+      def resolve_logging_context(...):
+          # Lazy import to avoid circular import
+          from scribe_mcp.tools.project_utils import load_project_config
+          project = load_project_config(project_name)
+          return project
+
+      # tools/append_entry.py (module level)
+      from scribe_mcp.shared.logging_utils import resolve_logging_context
+
+    requirements:
+      - Lazy import MUST be inside function, not at module level
+      - Lazy import MUST have explanatory comment
+      - Comment MUST mention "circular import" or "lazy import"
+      - Module-level import in opposite direction is allowed
+
+    linting_rules:
+      - require_comment: "Function-level imports must explain why lazy"
+      - disallow_module_level_bidirectional: "No bidirectional module-level imports"
+      - require_lazy_keyword: "Comment must contain 'lazy' or 'circular'"
+
+    migration_impact: low  # Import paths change but pattern remains valid
+    decoupling_recommended: false
+
+  optional_enhancement_with_fallback:
+    description: "Optional enhancement imports with graceful fallback"
+    status: ACCEPTABLE
+    severity: P3
+    use_case: "Enhanced functionality with backward compatibility"
+    example: |
+      # utils/parameter_validator.py
+      def _parse_metadata_str(metadata_str):
+          # Try using parameter_normalizer first (preferred method)
+          try:
+              from scribe_mcp.tools.base.parameter_normalizer import normalize_dict_param
+              normalized = normalize_dict_param(metadata_str, field_name)
+              if isinstance(normalized, dict):
+                  return normalized, None
+          except (ValueError, ImportError):
+              pass
+
+          # Fallback to direct JSON parsing
+          try:
+              parsed = json.loads(metadata_str)
+              return parsed, None
+          except json.JSONDecodeError:
+              pass
+
+    requirements:
+      - Import MUST be wrapped in try/except
+      - Must catch ImportError explicitly
+      - MUST have fallback implementation
+      - Fallback MUST provide equivalent functionality
+
+    linting_rules:
+      - require_exception_handling: "Optional imports must catch ImportError"
+      - require_fallback: "Optional imports must have fallback code path"
+      - require_comment: "Explain preferred vs fallback behavior"
+
+    migration_impact: none
+    decoupling_recommended: false
+
+###############################################################################
+# PROHIBITED CIRCULAR DEPENDENCY PATTERNS
+###############################################################################
+
+prohibited_patterns:
+  module_level_bidirectional:
+    description: "Bidirectional module-level imports"
+    status: PROHIBITED
+    severity: P0
+    example: |
+      # BAD: module_a.py
+      from module_b import some_function
+
+      # BAD: module_b.py
+      from module_a import other_function
+
+      # This causes ImportError at runtime
+
+    why_prohibited:
+      - Causes import-time errors
+      - Unpredictable initialization order
+      - Difficult to debug
+      - Cannot be resolved without refactoring
+
+    prevention:
+      - Use function-level lazy imports
+      - Extract shared interface layer
+      - Use dependency injection
+      - Restructure module boundaries
+
+    linting_rules:
+      - error_on_bidirectional_module_import: true
+      - enforce_acyclic_module_graph: true
+
+  implicit_circular_without_protection:
+    description: "Circular imports without lazy binding or comments"
+    status: PROHIBITED
+    severity: P1
+    example: |
+      # BAD: No comment, no protection
+      def some_function():
+          from other_module import something  # WHY? No explanation!
+
+    why_prohibited:
+      - Intent unclear
+      - Maintenance risk
+      - May hide architectural issues
+      - Difficult for code reviewers
+
+    prevention:
+      - Add explanatory comments
+      - Use one of the acceptable patterns
+      - Document why circular dependency is necessary
+
+    linting_rules:
+      - require_comment_on_function_imports: true
+      - warn_on_unexplained_lazy_import: true
+
+###############################################################################
+# IMPORT ORGANIZATION STANDARDS
+###############################################################################
+
+import_organization:
+  order:
+    description: "Standard import order to minimize circular dependencies"
+    sections:
+      1_future:
+        description: "__future__ imports"
+        example: "from __future__ import annotations"
+
+      2_stdlib:
+        description: "Standard library imports"
+        example: "import os, sys, json"
+
+      3_third_party:
+        description: "Third-party library imports"
+        example: "from mcp.server import Server"
+
+      4_local_absolute:
+        description: "Local package imports (absolute)"
+        order:
+          - "scribe_mcp.config"
+          - "scribe_mcp.storage"
+          - "scribe_mcp.db"
+          - "scribe_mcp.utils"
+          - "scribe_mcp.shared"
+          - "scribe_mcp.tools.base"
+          - "scribe_mcp.tools"
+          - "scribe_mcp.server"
+        rationale: "Import from least dependent to most dependent layers"
+
+      5_local_relative:
+        description: "Relative imports within same package"
+        example: "from . import constants"
+
+      6_lazy_imports:
+        description: "Lazy imports inside functions"
+        location: "Inside function bodies where needed"
+        comment_required: true
+
+  dependency_layers:
+    description: "Dependency hierarchy to prevent circular imports"
+    layers:
+      layer_0_config:
+        modules: ["config.*"]
+        may_import: ["stdlib", "third_party"]
+        may_not_import: ["tools.*", "shared.*", "server"]
+        rationale: "Config is foundation, no dependencies on business logic"
+
+      layer_1_storage:
+        modules: ["storage.*", "db.*"]
+        may_import: ["config.*", "stdlib", "third_party"]
+        may_not_import: ["tools.*", "shared.*", "server"]
+        rationale: "Storage layer is infrastructure, independent of tools"
+
+      layer_2_utils:
+        modules: ["utils.*"]
+        may_import: ["config.*", "storage.*", "stdlib", "third_party"]
+        may_not_import: ["tools.*", "server"]
+        exceptions:
+          - module: "utils.parameter_validator"
+            may_lazy_import: ["tools.base.parameter_normalizer"]
+            pattern: "optional_enhancement_with_fallback"
+        rationale: "Utils provide common functionality, mostly independent"
+
+      layer_3_shared:
+        modules: ["shared.*"]
+        may_import: ["config.*", "storage.*", "utils.*", "stdlib", "third_party"]
+        may_not_import: ["server"]
+        exceptions:
+          - module: "shared.logging_utils"
+            may_lazy_import: ["tools.project_utils", "tools.agent_project_utils", "tools.constants"]
+            pattern: "function_level_lazy_imports"
+        rationale: "Shared utilities may need tool functions via lazy imports"
+
+      layer_4_tools:
+        modules: ["tools.*"]
+        may_import: ["config.*", "storage.*", "utils.*", "shared.*", "server", "stdlib", "third_party"]
+        may_not_import: []
+        rationale: "Tools are business logic layer, can import from all lower layers"
+
+      layer_5_server:
+        modules: ["server"]
+        may_import: ["config.*", "storage.*", "utils.*", "shared.*", "stdlib", "third_party"]
+        exceptions:
+          - may_late_import: ["tools"]
+            pattern: "plugin_registration"
+            after_line: 400
+        rationale: "Server orchestrates everything, tools imported after initialization"
+
+###############################################################################
+# LINTING RULES FOR ENFORCEMENT
+###############################################################################
+
+linting_rules:
+  circular_dependency_detection:
+    enabled: true
+    rules:
+      - rule: detect_bidirectional_module_imports
+        severity: error
+        message: "Bidirectional module-level imports detected. Use function-level lazy imports or refactor."
+
+      - rule: require_lazy_import_comments
+        severity: warning
+        message: "Function-level imports must have explanatory comments mentioning 'lazy' or 'circular'"
+
+      - rule: enforce_layer_dependencies
+        severity: error
+        message: "Module imports from prohibited layer. See dependency_layers in SPEC-PKG-002."
+
+      - rule: require_noqa_for_late_imports
+        severity: warning
+        message: "Late imports (E402) must have noqa marker and explanatory comment"
+
+      - rule: detect_missing_fallback
+        severity: error
+        message: "Optional enhancement imports must have fallback implementation"
+
+  import_order_validation:
+    enabled: true
+    rules:
+      - rule: enforce_import_sections
+        severity: warning
+        message: "Imports should follow standard order: future, stdlib, third-party, local"
+
+      - rule: sort_imports_alphabetically
+        severity: info
+        message: "Imports within each section should be sorted alphabetically"
+
+  exception_handling:
+    enabled: true
+    rules:
+      - rule: require_importerror_in_try_except
+        severity: error
+        message: "Try/except around imports must catch ImportError"
+        applies_to: "optional_enhancement_with_fallback pattern"
+
+###############################################################################
+# TOOLING RECOMMENDATIONS
+###############################################################################
+
+recommended_tools:
+  static_analysis:
+    - tool: flake8
+      plugins:
+        - flake8-import-order
+        - flake8-comprehensions
+      config: |
+        [flake8]
+        max-line-length = 120
+        import-order-style = google
+        application-import-names = scribe_mcp
+
+    - tool: pylint
+      config: |
+        [MASTER]
+        init-hook='import sys; sys.path.insert(0, "/path/to/scribe_mcp")'
+
+        [DESIGN]
+        max-parents=10  # Allow plugin pattern
+
+    - tool: isort
+      config: |
+        [settings]
+        profile = black
+        known_first_party = scribe_mcp
+        skip_gitignore = true
+        # Allow late imports in server.py
+        skip = server.py
+
+  custom_linters:
+    - name: circular_dependency_checker
+      description: "Custom script to detect circular imports not caught by standard tools"
+      implementation: "Python script using AST and networkx for graph analysis"
+      checks:
+        - Bidirectional module-level imports
+        - Missing lazy import comments
+        - Layer dependency violations
+
+    - name: lazy_import_validator
+      description: "Validate that lazy imports follow acceptable patterns"
+      checks:
+        - Function-level lazy imports have explanatory comments
+        - Try/except lazy imports have fallback code
+        - Late imports have noqa markers
+
+###############################################################################
+# MIGRATION STRATEGY
+###############################################################################
+
+migration_strategy:
+  src_layout_impact:
+    description: "Impact of migrating to src/ layout on circular dependencies"
+    findings:
+      - All acceptable patterns remain valid after migration
+      - Only import paths need updating (scribe_mcp.* → scribe.*)"
+      - No architectural changes required
+      - Lazy binding patterns compatible with src/ structure
+
+    migration_steps:
+      1_update_import_paths:
+        description: "Update import paths in all circular dependency sites"
+        affected_files:
+          - server.py (line 458)
+          - shared/logging_utils.py (lines 161, 167, 214, 487, 550)
+          - utils/parameter_validator.py (line 208)
+        effort: "2-3 hours"
+
+      2_verify_patterns:
+        description: "Verify lazy binding patterns still work after migration"
+        tests:
+          - Run import tests
+          - Verify plugin registration works
+          - Test lazy import fallbacks
+        effort: "1 hour"
+
+      3_update_comments:
+        description: "Update comments if import paths change significantly"
+        effort: "30 minutes"
+
+    total_effort: "3-4 hours"
+    risk_level: low
+
+###############################################################################
+# FUTURE IMPROVEMENTS
+###############################################################################
+
+future_improvements:
+  potential_refactorings:
+    extract_project_interface:
+      description: "Extract project utilities to shared interface"
+      impact: "Would eliminate CD-002 (shared ↔ tools)"
+      effort: "6-8 hours"
+      priority: low
+      rationale: "Current lazy import pattern works well, low ROI for refactoring"
+
+    dependency_injection:
+      description: "Use dependency injection for project functions"
+      impact: "Would eliminate CD-002 (shared ↔ tools)"
+      effort: "8-10 hours"
+      priority: low
+      rationale: "High effort, current pattern is maintainable"
+
+    extract_parameter_normalizer:
+      description: "Move parameter_normalizer to shared utilities"
+      impact: "Would eliminate CD-003 (utils ↔ tools.base)"
+      effort: "2-3 hours"
+      priority: very_low
+      rationale: "CD-003 may not be true circularity, verify with Team B first"
+
+  monitoring:
+    description: "Ongoing monitoring for new circular dependencies"
+    recommendations:
+      - Add pre-commit hook running circular dependency checker
+      - Include import graph visualization in CI/CD
+      - Review import patterns during code reviews
+      - Update this spec when new patterns emerge
+
+###############################################################################
+# REFERENCES
+###############################################################################
+
+references:
+  internal:
+    - document: "wiki/analysis/circular_dependencies.md"
+      description: "Detailed analysis of all circular dependencies found"
+
+    - document: "phase_3_coordination.md"
+      description: "Team coordination and scope boundaries"
+
+  external:
+    - title: "Circular Imports in Python"
+      url: "https://docs.python.org/3/faq/programming.html#what-are-the-best-practices-for-using-import-in-a-module"
+
+    - title: "Plugin Architecture Patterns"
+      url: "https://python-patterns.guide/gang-of-four/composition-over-inheritance/"
+
+    - title: "Import System Best Practices"
+      url: "https://peps.python.org/pep-0008/#imports"
+
+###############################################################################
+# APPROVAL & SIGN-OFF
+###############################################################################
+
+approval:
+  created_by:
+    agent: ResearchAgent-Phase3-CircularDeps
+    date: 2026-01-05
+
+  status: draft
+
+  requires_approval_from:
+    - role: Review Agent
+      reason: "Validate standards are comprehensive and enforceable"
+
+    - role: Architect Agent
+      reason: "Confirm standards align with architectural vision"
+
+    - team: Team C (Migration Architect)
+      reason: "Ensure compatibility with src/ migration plans"
+
+  changelog:
+    - version: 1.0.0
+      date: 2026-01-05
+      author: ResearchAgent-Phase3-CircularDeps
+      changes:
+        - Initial specification based on Phase 3 circular dependency analysis
+        - Defined 3 acceptable patterns and 2 prohibited patterns
+        - Established dependency layer hierarchy
+        - Created linting rules and tooling recommendations

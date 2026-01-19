@@ -352,5 +352,247 @@ Example proof format:
 8. ✅ Visual validation passed for all tools
 9. ✅ Release v2.2.0 deployed successfully
 10. ✅ No critical bugs reported in first week of production use
+11. ✅ Session-aware reminder system deployed (Phase 6 complete)
 
 ---
+
+## Phase 6 — Session-Aware Reminder System (DB Integration)
+<!-- ID: phase_6 -->
+
+### Stage 1: Schema Migration (Non-Breaking)
+
+#### Code Implementation
+- [ ] `reminder_history` table added to `storage/sqlite.py` schema
+- [ ] Table has 10 columns: id, session_id, reminder_hash, project_root, agent_id, tool_name, reminder_key, shown_at, operation_status, context_metadata
+- [ ] Foreign key constraint: `session_id → scribe_sessions.session_id ON DELETE CASCADE`
+- [ ] CHECK constraint: `operation_status IN ('success', 'failure', 'neutral')`
+- [ ] Index created: `idx_reminder_history_session_hash` (session_id, reminder_hash)
+- [ ] Index created: `idx_reminder_history_shown_at` (shown_at)
+- [ ] Index created: `idx_reminder_history_session_tool` (session_id, tool_name)
+
+#### Testing
+- [ ] Schema test: `tests/storage/test_sqlite.py::test_reminder_history_schema` passing
+- [ ] Table creation verified on fresh DB init
+- [ ] FK cascade delete verified (delete session → reminders deleted)
+- [ ] Indexes verified with `EXPLAIN QUERY PLAN` (proof: query plan output)
+- [ ] All 69 existing functional tests pass unchanged
+
+#### Acceptance
+- [ ] Schema migration complete (proof: pytest output)
+- [ ] No regressions in existing tests (proof: full test suite passes)
+- [ ] Code review approved (proof: PR approval)
+- [ ] Merged to main (proof: commit SHA)
+
+---
+
+### Stage 2: Storage Methods Implementation
+
+#### Code Implementation
+- [ ] Method implemented: `SQLiteStorage.upsert_reminder_shown(session_id, reminder_hash, project_root, agent_id, tool_name, reminder_key, operation_status, context_metadata)`
+- [ ] Method implemented: `SQLiteStorage.check_reminder_cooldown(session_id, reminder_hash, cooldown_minutes) -> bool`
+- [ ] Method implemented: `SQLiteStorage.cleanup_reminder_history(cutoff_hours) -> int`
+- [ ] JSON serialization for context_metadata handled correctly
+- [ ] Async/await pattern with connection pooling used
+- [ ] Feature flag added: `config/reminder_config.json` → `"use_db_cooldown_tracking": false`
+
+#### Testing
+- [ ] Test file created: `tests/storage/test_reminder_storage.py`
+- [ ] Test: `test_upsert_reminder_shown_success` passing
+- [ ] Test: `test_upsert_reminder_shown_with_metadata` passing
+- [ ] Test: `test_check_reminder_cooldown_active` passing
+- [ ] Test: `test_check_reminder_cooldown_expired` passing
+- [ ] Test: `test_cleanup_reminder_history` passing
+- [ ] Test: `test_cleanup_preserves_recent_entries` passing
+- [ ] 100% code coverage for new storage methods
+
+#### Acceptance
+- [ ] All storage method tests passing (proof: pytest output)
+- [ ] Feature flag defaults to False (proof: config file content)
+- [ ] Code review approved (proof: PR approval)
+- [ ] Merged to main (proof: commit SHA)
+
+---
+
+### Stage 3: Hash Refactoring (Backward Compatible)
+
+#### Code Implementation
+- [ ] `_get_reminder_hash()` signature updated: `session_id: Optional[str] = None` parameter added
+- [ ] Conditional logic implemented: DB mode (5-part hash) vs File mode (4-part hash)
+- [ ] DB mode hash format: `{session_id}|{project_root}|{agent_id}|{tool_name}|{reminder_key}`
+- [ ] File mode hash format: `{project_root}|{agent_id}|{tool_name}|{reminder_key}` (legacy)
+- [ ] Hash generation call sites updated to pass `session_id`
+- [ ] `generate_reminders()` accepts and forwards `session_id` parameter
+
+#### Testing
+- [ ] Test: `test_hash_generation_db_mode` passing (5-part hash with session_id)
+- [ ] Test: `test_hash_generation_file_mode` passing (4-part hash without session_id)
+- [ ] Test: `test_hash_generation_backward_compat` passing (session_id=None → file mode)
+- [ ] Test: `test_hash_format_switches_with_feature_flag` passing
+- [ ] All existing reminder tests pass with `use_db_cooldown_tracking=False`
+
+#### Acceptance
+- [ ] Hash generation tests all passing (proof: pytest output)
+- [ ] No regressions in existing tests (proof: all 69 tests pass)
+- [ ] Code review approved (proof: PR approval)
+- [ ] Merged to main (proof: commit SHA)
+
+---
+
+### Stage 4: Session Integration
+
+#### Code Implementation
+- [ ] `reminders.py::get_reminders()` extracts `session_id` from state
+- [ ] `reminder_engine.py::generate_reminders()` accepts `session_id` parameter
+- [ ] All tool call sites updated to pass state with session_id
+- [ ] Function implemented: `should_reset_reminder_cooldowns(current_session_id, last_session_id, session_age_minutes, idle_minutes) -> bool`
+- [ ] 3 reset triggers implemented: session ID change, 10-minute idle, 24-hour age
+- [ ] Function implemented: `get_session_metadata(session_id) -> Dict[str, Any]`
+- [ ] Session metadata queries `scribe_sessions` table for timestamps
+- [ ] In-memory `ReminderHistory` dict cleared on reset
+
+#### Testing
+- [ ] Test file created: `tests/test_reminder_session_isolation.py`
+- [ ] Test: `test_reminder_appears_in_different_sessions` passing
+- [ ] Test: `test_cooldown_resets_on_10min_idle` passing
+- [ ] Test: `test_cooldown_resets_on_session_change` passing
+- [ ] Test: `test_cooldown_resets_on_24hour_age` passing
+- [ ] Test: `test_session_metadata_calculation` passing
+
+#### Acceptance
+- [ ] Session isolation tests all passing (proof: pytest output)
+- [ ] Same reminder appears in session1 and session2 (proof: test output)
+- [ ] Cooldowns reset properly on idle/session change (proof: test output)
+- [ ] Code review approved (proof: PR approval)
+- [ ] Merged to main (proof: commit SHA)
+
+---
+
+### Stage 5: Failure Context Propagation
+
+#### Code Implementation
+- [ ] Tool updated: `tools/append_entry.py` - try/except/finally with operation_status
+- [ ] Tool updated: `tools/read_file.py` - try/except/finally with operation_status
+- [ ] All 14 tools updated with operation_status tracking
+- [ ] `get_reminders()` signature updated: `operation_status: str = "neutral"` parameter
+- [ ] `reminder_engine.generate_reminders()` accepts operation_status parameter
+- [ ] Failure-priority logic implemented: `if operation_status == "failure": in_cooldown = False`
+- [ ] Max 3 reminders limit enforced even for failures
+
+#### Testing
+- [ ] Test file created: `tests/test_reminder_failure_priority.py`
+- [ ] Test: `test_failure_bypasses_cooldown` passing
+- [ ] Test: `test_success_respects_cooldown` passing
+- [ ] Test: `test_neutral_maintains_default_behavior` passing
+- [ ] Test: `test_max_3_reminders_even_on_failure` passing
+- [ ] Test: `test_operation_status_propagation` passing
+
+#### Acceptance
+- [ ] Failure priority tests all passing (proof: pytest output)
+- [ ] Failure reminders bypass cooldown (proof: test output)
+- [ ] Success reminders respect cooldown (proof: test output)
+- [ ] Code review approved (proof: PR approval)
+- [ ] Merged to main (proof: commit SHA)
+
+---
+
+### Stage 6: DB Mode Activation (Production Rollout)
+
+#### Pre-Deployment
+- [ ] Feature flag changed: `config/reminder_config.json` → `"use_db_cooldown_tracking": true`
+- [ ] File archived: `data/reminder_cooldowns.json` → `data/reminder_cooldowns.json.archive-{timestamp}`
+- [ ] All 69 functional tests pass with DB mode enabled
+- [ ] All new reminder tests pass with DB mode enabled
+- [ ] Performance test: cooldown check <5ms p95 (proof: perf test results)
+- [ ] Performance test: reminder insert <3ms p95 (proof: perf test results)
+
+#### Deployment
+- [ ] Deployed to staging environment (proof: deployment log)
+- [ ] Staging monitored for 4 hours (proof: monitoring dashboard)
+- [ ] No errors in staging (proof: error log review)
+- [ ] Deployed to production (proof: deployment log, timestamp)
+
+#### Post-Deployment Monitoring (48 hours)
+- [ ] Error logs reviewed - no reminder-related failures (proof: log analysis)
+- [ ] DB query performance monitored - <5ms p95 maintained (proof: metrics dashboard)
+- [ ] Reminder delivery rate stable - no regressions (proof: analytics)
+- [ ] Session isolation verified in production (proof: DB query showing different sessions)
+
+#### Acceptance
+- [ ] Production deployment successful (proof: deployment log)
+- [ ] 48-hour monitoring complete with no issues (proof: monitoring report)
+- [ ] Performance SLAs met (proof: metrics dashboard)
+- [ ] No rollback required (proof: deployment remains active)
+
+---
+
+### Stage 7: Cleanup (Post-Validation)
+
+**Note:** This stage occurs 2 weeks after Stage 6 deployment
+
+#### Code Cleanup
+- [ ] Method removed: `ReminderEngine._load_cooldown_cache()`
+- [ ] Method removed: `ReminderEngine._save_cooldown_cache()`
+- [ ] Method removed: `ReminderEngine._cleanup_cooldown_cache()`
+- [ ] Attribute removed: `ReminderEngine._cooldown_cache_path`
+- [ ] Feature flag removed: `config/reminder_config.json` → `use_db_cooldown_tracking` deleted
+- [ ] Conditional logic removed: `_get_reminder_hash()` simplified to DB mode only
+- [ ] Docstrings updated to reflect DB-only mode
+
+#### Documentation
+- [ ] ARCHITECTURE_GUIDE.md updated - migration language removed
+- [ ] Tool documentation updated - DB-backed reminder system documented
+- [ ] README updated - session isolation behavior added
+- [ ] Migration complete announcement published
+
+#### Testing
+- [ ] All tests pass with simplified code (proof: pytest output)
+- [ ] No feature flag references remain in codebase (proof: grep search)
+- [ ] Code coverage maintained or improved (proof: coverage report)
+
+#### Acceptance
+- [ ] File-based code fully removed (proof: code review)
+- [ ] Feature flag fully removed (proof: config file review)
+- [ ] Documentation complete (proof: doc review)
+- [ ] All tests passing (proof: pytest output)
+- [ ] Code is simpler and more maintainable (proof: LOC reduction, cyclomatic complexity)
+
+---
+
+## Phase 6 Success Criteria
+
+**Functional Requirements:**
+- [ ] Reminders reset when `session_id` changes
+- [ ] Reminders reset after 10-minute idle period
+- [ ] Same reminder can appear in different sessions for same project+agent+tool
+- [ ] Failure-triggered reminders bypass cooldown within session
+- [ ] Success-triggered reminders respect standard cooldown
+- [ ] Session isolation working in production
+
+**Performance Requirements:**
+- [ ] Cooldown check queries: <5ms (p95) (proof: performance test results)
+- [ ] Reminder insert operations: <3ms (p95) (proof: performance test results)
+- [ ] TTL cleanup: <100ms for 10k rows (proof: cleanup test results)
+- [ ] No memory leaks: stable after 24-hour run (proof: memory profiler)
+
+**Testing Requirements:**
+- [ ] All existing reminder tests pass unchanged (proof: pytest output)
+- [ ] Session isolation tests verify cross-session behavior (proof: test output)
+- [ ] Failure priority tests confirm cooldown bypass (proof: test output)
+- [ ] Performance tests validate query SLAs (proof: perf test JSON results)
+- [ ] Integration tests cover all tool integration points (proof: test coverage report)
+
+**Documentation Requirements:**
+- [ ] ARCHITECTURE_GUIDE.md Section 9 complete (proof: 612 lines added)
+- [ ] PHASE_PLAN.md Phase 6 complete (proof: 7 stages documented)
+- [ ] CHECKLIST.md Phase 6 complete (proof: this section)
+- [ ] All architectural decisions logged (proof: PROGRESS_LOG.md entries)
+
+**Deployment Requirements:**
+- [ ] Zero production incidents during rollout (proof: incident log)
+- [ ] Clean migration with rollback plan validated (proof: rollback test in staging)
+- [ ] 2-week production validation complete (proof: monitoring report)
+- [ ] File-based code removed after validation (proof: git log)
+
+---
+
+**End of Checklist**

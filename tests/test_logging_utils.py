@@ -22,6 +22,7 @@ from scribe_mcp.shared.logging_utils import (
     resolve_log_definition,
     resolve_logging_context,
 )
+from scribe_mcp.storage.models import ProjectRecord
 
 
 def test_normalize_metadata_with_dict() -> None:
@@ -207,3 +208,53 @@ async def test_resolve_logging_context_requires_project(monkeypatch: pytest.Monk
             agent_id=None,
             explicit_project=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_resolve_logging_context_explicit_project_uses_storage_backend() -> None:
+    class DummyState:
+        current_project = None
+        recent_projects: List[str] = []
+
+        def get_session_project(self, session_key: Optional[str]) -> Optional[Dict[str, Any]]:
+            return None
+
+    class DummyStateManager:
+        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
+            return {"tool": tool_name}
+
+        async def load(self) -> Any:
+            return DummyState()
+
+    class DummyBackend:
+        async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+            if name != "council_mcp_v2":
+                return None
+            return ProjectRecord(
+                id=1,
+                name="council_mcp_v2",
+                repo_root="/tmp/council_mcp_v2",
+                progress_log_path="/tmp/council_mcp_v2/PROGRESS_LOG.md",
+                docs_json='{"progress_log":"/tmp/council_mcp_v2/PROGRESS_LOG.md"}',
+            )
+
+    class DummyServerModule:
+        state_manager = DummyStateManager()
+        storage_backend = DummyBackend()
+
+        @staticmethod
+        def get_execution_context() -> Any:
+            return SimpleNamespace(mode="project", stable_session_id="session-1")
+
+    context = await resolve_logging_context(
+        tool_name="read_recent",
+        server_module=DummyServerModule(),
+        explicit_project="council_mcp_v2",
+        require_project=True,
+    )
+
+    assert context.project is not None
+    assert context.project["name"] == "council_mcp_v2"
+    assert context.project["root"] == "/tmp/council_mcp_v2"
+    assert context.project["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"
+    assert context.project["docs"]["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"

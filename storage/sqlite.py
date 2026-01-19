@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,9 +20,14 @@ from scribe_mcp.storage.models import (
 )
 from scribe_mcp.utils.time import format_utc, utcnow
 from scribe_mcp.utils.search import message_matches
+from scribe_mcp.utils.slug import normalize_project_input
 
 SQLITE_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MS = 5000
+
+# Performance monitoring configuration (Stage 6)
+SLOW_QUERY_THRESHOLD_MS = 5.0  # Log warnings for queries slower than 5ms
+logger = logging.getLogger(__name__)
 
 
 class SQLiteStorage(StorageBackend):
@@ -45,22 +52,28 @@ class SQLiteStorage(StorageBackend):
         name: str,
         repo_root: str,
         progress_log_path: str,
+        docs_json: Optional[str] = None,
+        bridge_id: Optional[str] = None,
+        bridge_managed: bool = False,
     ) -> ProjectRecord:
         await self._initialise()
         async with self._write_lock:
             await self._execute(
             """
-            INSERT INTO scribe_projects (name, repo_root, progress_log_path)
-            VALUES (?, ?, ?)
+            INSERT INTO scribe_projects (name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(name)
             DO UPDATE SET repo_root = excluded.repo_root,
-                          progress_log_path = excluded.progress_log_path;
+                          progress_log_path = excluded.progress_log_path,
+                          docs_json = excluded.docs_json,
+                          bridge_id = excluded.bridge_id,
+                          bridge_managed = excluded.bridge_managed;
             """,
-            (name, repo_root, progress_log_path),
+            (name, repo_root, progress_log_path, docs_json, bridge_id, 1 if bridge_managed else 0),
         )
         row = await self._fetchone(
             """
-            SELECT id, name, repo_root, progress_log_path
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
             FROM scribe_projects
             WHERE name = ?;
             """,
@@ -71,18 +84,36 @@ class SQLiteStorage(StorageBackend):
             name=row["name"],
             repo_root=row["repo_root"],
             progress_log_path=row["progress_log_path"],
+            docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+            bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+            bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
         )
 
     async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
         await self._initialise()
+        # Try exact match first
         row = await self._fetchone(
             """
-            SELECT id, name, repo_root, progress_log_path
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
             FROM scribe_projects
             WHERE name = ?;
             """,
             (name,),
         )
+
+        # If not found, try canonical match (flexible lookup for existing projects)
+        if not row:
+            canonical = normalize_project_input(name)
+            if canonical and canonical != name:
+                row = await self._fetchone(
+                    """
+                    SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                    FROM scribe_projects
+                    WHERE name = ?;
+                    """,
+                    (canonical,),
+                )
+
         if not row:
             return None
         return ProjectRecord(
@@ -90,13 +121,78 @@ class SQLiteStorage(StorageBackend):
             name=row["name"],
             repo_root=row["repo_root"],
             progress_log_path=row["progress_log_path"],
+            docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+            bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+            bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
         )
+
+    def fetch_project_sync(self, name: str) -> Optional[ProjectRecord]:
+        """Synchronous version of fetch_project for use in finalize_tool_response.
+
+        This method is designed for tool logging where we need to resolve the
+        project's repo_root but can't use async/await. Uses synchronous sqlite3.
+
+        Args:
+            name: Project name to fetch
+
+        Returns:
+            ProjectRecord if found, None otherwise
+
+        Thread Safety:
+            Uses synchronous sqlite3 connection with WAL mode for safe concurrent access.
+        """
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self._path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+
+            # Try exact match first
+            cursor = conn.execute(
+                """
+                SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                FROM scribe_projects
+                WHERE name = ?;
+                """,
+                (name,),
+            )
+            row = cursor.fetchone()
+
+            # If not found, try canonical match (flexible lookup for existing projects)
+            if not row:
+                canonical = normalize_project_input(name)
+                if canonical and canonical != name:
+                    cursor = conn.execute(
+                        """
+                        SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                        FROM scribe_projects
+                        WHERE name = ?;
+                        """,
+                        (canonical,),
+                    )
+                    row = cursor.fetchone()
+
+            conn.close()
+
+            if not row:
+                return None
+            return ProjectRecord(
+                id=row["id"],
+                name=row["name"],
+                repo_root=row["repo_root"],
+                progress_log_path=row["progress_log_path"],
+                docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+                bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+                bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
+            )
+        except Exception:
+            return None
 
     async def list_projects(self) -> List[ProjectRecord]:
         await self._initialise()
         rows = await self._fetchall(
             """
-            SELECT id, name, repo_root, progress_log_path
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
             FROM scribe_projects
             ORDER BY name;
             """
@@ -109,6 +205,47 @@ class SQLiteStorage(StorageBackend):
                     name=row["name"],
                     repo_root=row["repo_root"],
                     progress_log_path=row["progress_log_path"],
+                    docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+                    bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+                    bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
+                )
+            )
+        return records
+
+    async def list_projects_by_repo(self, repo_root: str) -> List[ProjectRecord]:
+        """Return projects scoped to a specific repository root.
+
+        Args:
+            repo_root: Absolute path to repository root (will be normalized)
+
+        Returns:
+            List of projects whose repo_root matches the given path.
+        """
+        await self._initialise()
+        # Normalize the path for consistent matching
+        from pathlib import Path
+        normalized_root = str(Path(repo_root).resolve())
+
+        rows = await self._fetchall(
+            """
+            SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+            FROM scribe_projects
+            WHERE repo_root = ?
+            ORDER BY name;
+            """,
+            (normalized_root,),
+        )
+        records: List[ProjectRecord] = []
+        for row in rows:
+            records.append(
+                ProjectRecord(
+                    id=row["id"],
+                    name=row["name"],
+                    repo_root=row["repo_root"],
+                    progress_log_path=row["progress_log_path"],
+                    docs_json=row["docs_json"] if "docs_json" in row.keys() else None,
+                    bridge_id=row["bridge_id"] if "bridge_id" in row.keys() else None,
+                    bridge_managed=bool(row["bridge_managed"]) if "bridge_managed" in row.keys() else False,
                 )
             )
         return records
@@ -163,6 +300,16 @@ class SQLiteStorage(StorageBackend):
 
             return remaining["count"] == 0
 
+    async def update_project_docs(self, name: str, docs_json: str) -> bool:
+        """Update only the docs_json field for a project."""
+        await self._initialise()
+        async with self._write_lock:
+            await self._execute(
+                "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
+                (docs_json, name),
+            )
+        return True
+
     async def insert_entry(
         self,
         *,
@@ -179,6 +326,7 @@ class SQLiteStorage(StorageBackend):
         category: Optional[str] = None,
         tags: Optional[str] = None,
         confidence: Optional[float] = None,
+        log_type: Optional[str] = None,
     ) -> None:
         await self._initialise()
         ts_iso = ts.isoformat()
@@ -196,12 +344,16 @@ class SQLiteStorage(StorageBackend):
             confidence = meta.get("confidence", 1.0)
         elif confidence is None:
             confidence = 1.0
+        if log_type is None and meta:
+            log_type = meta.get("log_type", "progress")
+        elif log_type is None:
+            log_type = "progress"
         async with self._write_lock:
             await self._execute(
                 """
                 INSERT OR IGNORE INTO scribe_entries
-                    (id, project_id, ts, emoji, agent, message, meta, raw_line, sha256, ts_iso, priority, category, tags, confidence)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    (id, project_id, ts, emoji, agent, message, meta, raw_line, sha256, ts_iso, priority, category, tags, confidence, log_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     entry_id,
@@ -218,6 +370,7 @@ class SQLiteStorage(StorageBackend):
                     category,
                     tags,
                     confidence,
+                    log_type,
                 ),
             )
             await self._execute(
@@ -366,6 +519,17 @@ class SQLiteStorage(StorageBackend):
         if min_confidence is not None:
             clauses.append("confidence >= ?")
             params.append(min_confidence)
+
+        # Add log_type filter (can be single string or list)
+        log_type = filters.get("log_type")
+        if log_type:
+            if isinstance(log_type, str):
+                clauses.append("log_type = ?")
+                params.append(log_type)
+            elif isinstance(log_type, (list, tuple)):
+                placeholders = ",".join("?" * len(log_type))
+                clauses.append(f"log_type IN ({placeholders})")
+                params.extend(log_type)
 
         where_clause = " AND ".join(clauses)
 
@@ -537,6 +701,17 @@ class SQLiteStorage(StorageBackend):
             clauses.append("confidence >= ?")
             params.append(min_confidence)
 
+        # Add log_type filter (can be single string or list)
+        log_type = filters.get("log_type")
+        if log_type:
+            if isinstance(log_type, str):
+                clauses.append("log_type = ?")
+                params.append(log_type)
+            elif isinstance(log_type, (list, tuple)):
+                placeholders = ",".join("?" * len(log_type))
+                clauses.append(f"log_type IN ({placeholders})")
+                params.extend(log_type)
+
         where_clause = " AND ".join(clauses)
         row = await self._fetchone(
             f"""
@@ -649,7 +824,8 @@ class SQLiteStorage(StorageBackend):
                         repo_root TEXT NOT NULL,
                         progress_log_path TEXT NOT NULL,
                         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        docs_json TEXT
                     );
                     """,
                     """
@@ -664,7 +840,8 @@ class SQLiteStorage(StorageBackend):
                         meta TEXT,
                         raw_line TEXT NOT NULL,
                         sha256 TEXT NOT NULL,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        log_type TEXT DEFAULT 'progress'
                     );
                     """,
                     """
@@ -968,6 +1145,62 @@ class SQLiteStorage(StorageBackend):
                         UNIQUE(project_id, file_path)
                     );
                     """,
+                    """
+                    CREATE TABLE IF NOT EXISTS reminder_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL,
+                        reminder_hash TEXT NOT NULL,
+                        project_root TEXT,
+                        agent_id TEXT,
+                        tool_name TEXT,
+                        reminder_key TEXT,
+                        shown_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        operation_status TEXT NOT NULL DEFAULT 'neutral' CHECK (operation_status IN ('success', 'failure', 'neutral')),
+                        context_metadata TEXT,
+                        FOREIGN KEY (session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
+                    );
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_reminder_history_session_hash
+                        ON reminder_history(session_id, reminder_hash);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_reminder_history_shown_at
+                        ON reminder_history(shown_at);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_reminder_history_session_tool
+                        ON reminder_history(session_id, tool_name);
+                    """,
+                    # Tool Calls Tracking Table (for direct logging without recursion)
+                    """
+                    CREATE TABLE IF NOT EXISTS tool_calls (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id TEXT NOT NULL,
+                        tool_name TEXT NOT NULL,
+                        timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        duration_ms REAL,
+                        status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'error', 'partial')),
+                        format_requested TEXT,
+                        project_name TEXT,
+                        agent_id TEXT,
+                        error_message TEXT,
+                        response_size_bytes INTEGER,
+                        FOREIGN KEY (session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
+                    );
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);
+                    """,
                     # Document Management 2.0 Indexes
                     "CREATE INDEX IF NOT EXISTS idx_document_sections_project ON document_sections(project_id);",
                     "CREATE INDEX IF NOT EXISTS idx_document_sections_updated ON document_sections(updated_at);",
@@ -1003,13 +1236,33 @@ class SQLiteStorage(StorageBackend):
                         VALUES (new.id, new.document_type, new.section_id, new.content);
                     END
                     """,
+                    # Bridge Registry Tables
+                    """
+                    CREATE TABLE IF NOT EXISTS scribe_bridges (
+                        bridge_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        version TEXT NOT NULL,
+                        manifest_json TEXT NOT NULL,
+                        state TEXT NOT NULL CHECK (state IN ('registered', 'active', 'inactive', 'error', 'unregistered')) DEFAULT 'registered',
+                        health_json TEXT,
+                        registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        last_health_check TEXT,
+                        last_error TEXT
+                    );
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_bridges_state ON scribe_bridges(state);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at);
+                    """,
                 ]
             )
             # Ensure legacy databases have the newer scribe_projects columns
             await self._ensure_column("scribe_projects", "repo_root", "TEXT")
             await self._ensure_column("scribe_projects", "progress_log_path", "TEXT")
-            await self._ensure_column("scribe_projects", "status", "TEXT DEFAULT 'planning'")
-            await self._ensure_column("scribe_projects", "phase", "TEXT DEFAULT 'setup'")
+            await self._ensure_column("scribe_projects", "status", "TEXT")
+            await self._ensure_column("scribe_projects", "phase", "TEXT")
             await self._ensure_column("scribe_projects", "confidence", "REAL DEFAULT 0.0")
             await self._ensure_column("scribe_projects", "completed_at", "TIMESTAMP")
             await self._ensure_column("scribe_projects", "last_activity", "TIMESTAMP")
@@ -1019,11 +1272,17 @@ class SQLiteStorage(StorageBackend):
             await self._ensure_column("scribe_projects", "last_status_change", "TEXT")
             await self._ensure_column("scribe_projects", "tags", "TEXT")
             await self._ensure_column("scribe_projects", "meta", "TEXT")
+            # Bridge ownership columns for Phase 3
+            await self._ensure_column("scribe_projects", "bridge_id", "TEXT")
+            await self._ensure_column("scribe_projects", "bridge_managed", "INTEGER DEFAULT 0")
+            await self._execute("CREATE INDEX IF NOT EXISTS idx_projects_bridge ON scribe_projects(bridge_id)", ())
             # Ensure scribe_entries has metadata columns for categorization and prioritization
-            await self._ensure_column("scribe_entries", "priority", "TEXT DEFAULT 'medium'")
+            await self._ensure_column("scribe_entries", "priority", "TEXT")
             await self._ensure_column("scribe_entries", "category", "TEXT")
             await self._ensure_column("scribe_entries", "tags", "TEXT")
             await self._ensure_column("scribe_entries", "confidence", "REAL DEFAULT 1.0")
+            await self._ensure_column("scribe_entries", "log_type", "TEXT DEFAULT 'progress'")
+            # Note: Run scripts/backfill_log_type.py manually to populate log_type from meta
             await self._migrate_document_sections()
             await self._ensure_column("document_changes", "project_root", "TEXT")
             await self._ensure_column("document_changes", "file_path", "TEXT")
@@ -1040,7 +1299,46 @@ class SQLiteStorage(StorageBackend):
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_priority_ts ON scribe_entries(priority, ts_iso DESC);")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_category_ts ON scribe_entries(category, ts_iso DESC);")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);")
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_log_type ON scribe_entries(project_id, log_type, ts_iso DESC);")
+
+            # Migration: Add repo_root column to tool_calls for per-project/repo tool logging
+            await self._ensure_column("tool_calls", "repo_root", "TEXT")
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);")
+
+            # Migration: Add docs_json column for manage_docs functionality (BUG-MANAGE-DOCS-001)
+            await self.migrate_add_docs_json_column()
+
+            # Backfill docs_json from state.json for existing projects
+            from pathlib import Path
+            state_path = Path(self._path).parent / "state.json"
+            if state_path.exists():
+                await self.backfill_docs_json_from_state(state_path)
+
             self._initialised = True
+
+    async def _backfill_log_type_from_meta(self) -> None:
+        """Backfill log_type column from meta JSON field for existing entries."""
+        await asyncio.to_thread(self._backfill_log_type_from_meta_sync)
+
+    def _backfill_log_type_from_meta_sync(self) -> None:
+        """Sync version of log_type backfill migration."""
+        conn = self._connect()
+        try:
+            # Update log_type from meta.log_type where it exists and log_type is still default
+            # This is idempotent - only updates entries where log_type hasn't been set properly
+            conn.execute("""
+                UPDATE scribe_entries
+                SET log_type = json_extract(meta, '$.log_type')
+                WHERE json_extract(meta, '$.log_type') IS NOT NULL
+                  AND (log_type IS NULL OR log_type = 'progress')
+                  AND json_extract(meta, '$.log_type') != 'progress';
+            """)
+            conn.commit()
+        except Exception:
+            # Silently ignore if migration fails (e.g., no entries, column doesn't exist yet)
+            pass
+        finally:
+            conn.close()
 
     async def _migrate_document_sections(self) -> None:
         await asyncio.to_thread(self._migrate_document_sections_sync)
@@ -1103,7 +1401,9 @@ class SQLiteStorage(StorageBackend):
         conn = self._connect()
         try:
             cursor = conn.execute(f"PRAGMA table_info({table});")
-            existing = {row["name"] for row in cursor.fetchall()}
+            # PRAGMA table_info returns tuples: (cid, name, type, notnull, dflt_value, pk)
+            # Column name is at index 1
+            existing = {row[1] for row in cursor.fetchall()}
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
                 conn.commit()
@@ -1133,6 +1433,115 @@ class SQLiteStorage(StorageBackend):
                 # Old schema detected - drop table so it can be recreated with new schema
                 conn.execute("DROP TABLE agent_sessions;")
                 conn.commit()
+        finally:
+            conn.close()
+
+    async def migrate_add_docs_json_column(self) -> bool:
+        """
+        Idempotent migration: Add docs_json column to scribe_projects table.
+
+        This migration adds the docs_json TEXT column needed for manage_docs
+        document registration functionality (BUG-MANAGE-DOCS-001 fix).
+
+        Returns:
+            True if column was added or already exists
+
+        Raises:
+            Exception if migration fails
+        """
+        return await asyncio.to_thread(self._migrate_add_docs_json_column_sync)
+
+    def _migrate_add_docs_json_column_sync(self) -> bool:
+        """Synchronous implementation of docs_json column migration."""
+        conn = self._connect()
+        try:
+            # Check if column already exists
+            cursor = conn.execute("PRAGMA table_info(scribe_projects);")
+            columns = cursor.fetchall()
+            column_names = [col[1] for col in columns]
+
+            if 'docs_json' in column_names:
+                logger.info("docs_json column already exists - migration already applied")
+                return True
+
+            # Add the column
+            conn.execute("ALTER TABLE scribe_projects ADD COLUMN docs_json TEXT;")
+            conn.commit()
+            logger.info("Successfully added docs_json column to scribe_projects table")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add docs_json column: {e}")
+            raise
+        finally:
+            conn.close()
+
+    async def backfill_docs_json_from_state(self, state_path: Path) -> int:
+        """
+        Backfill docs_json from state.json for existing projects.
+
+        This function reads document metadata from state.json and populates
+        the docs_json column for projects that have document mappings but
+        haven't been updated in the database yet.
+
+        Args:
+            state_path: Path to state.json file
+
+        Returns:
+            Number of projects successfully backfilled
+
+        Raises:
+            FileNotFoundError if state.json doesn't exist
+            json.JSONDecodeError if state.json is malformed
+        """
+        return await asyncio.to_thread(self._backfill_docs_json_from_state_sync, state_path)
+
+    def _backfill_docs_json_from_state_sync(self, state_path: Path) -> int:
+        """Synchronous implementation of docs_json backfill."""
+        import json
+
+        # Load state.json
+        if not state_path.exists():
+            logger.warning(f"State file not found: {state_path}")
+            return 0
+
+        try:
+            with open(state_path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse state.json: {e}")
+            raise
+
+        projects = state.get("projects", {})
+        backfilled_count = 0
+
+        conn = self._connect()
+        try:
+            for project_name, project_data in projects.items():
+                docs = project_data.get("docs")
+                if not docs:
+                    continue  # Skip projects without docs
+
+                # Serialize docs to JSON
+                docs_json = json.dumps(docs)
+
+                # Update the project
+                cursor = conn.execute(
+                    "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
+                    (docs_json, project_name)
+                )
+
+                if cursor.rowcount > 0:
+                    backfilled_count += 1
+
+            conn.commit()
+            logger.info(f"Backfilled {backfilled_count} projects with docs_json from state.json")
+            return backfilled_count
+
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to backfill docs_json: {e}")
+            raise
         finally:
             conn.close()
 
@@ -1770,3 +2179,482 @@ class SQLiteStorage(StorageBackend):
                 (batch_size,)
             )
             return cursor.rowcount if cursor else 0
+
+    async def record_reminder_shown(
+        self,
+        session_id: str,
+        reminder_hash: str,
+        project_root: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        tool_name: Optional[str] = None,
+        reminder_key: Optional[str] = None,
+        operation_status: str = "neutral",
+        context_metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record that a reminder was shown in a session (inserts new record).
+
+        Args:
+            session_id: Session identifier (FK to scribe_sessions)
+            reminder_hash: Hash identifying the reminder
+            project_root: Optional project root path
+            agent_id: Optional agent identifier
+            tool_name: Optional tool name (e.g., 'append_entry')
+            reminder_key: Optional reminder key (e.g., 'log_warning')
+            operation_status: Operation status ('success', 'failure', 'neutral')
+            context_metadata: Optional context metadata as dict
+        """
+        # Performance monitoring (Stage 6)
+        start_time = time.perf_counter()
+
+        await self._initialise()
+        async with self._write_lock:
+            context_json = json.dumps(context_metadata or {}, sort_keys=True)
+            await self._execute(
+                """
+                INSERT INTO reminder_history
+                (session_id, reminder_hash, project_root, agent_id, tool_name,
+                 reminder_key, shown_at, operation_status, context_metadata)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?);
+                """,
+                (
+                    session_id,
+                    reminder_hash,
+                    project_root,
+                    agent_id,
+                    tool_name,
+                    reminder_key,
+                    operation_status,
+                    context_json,
+                ),
+            )
+
+        # Log slow queries (Stage 6)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        if elapsed_ms > SLOW_QUERY_THRESHOLD_MS:
+            logger.warning(
+                f"Slow reminder query: record_reminder_shown took {elapsed_ms:.2f}ms "
+                f"(threshold: {SLOW_QUERY_THRESHOLD_MS}ms) [session={session_id[:16]}...]"
+            )
+
+    async def check_reminder_cooldown(
+        self,
+        session_id: str,
+        reminder_hash: str,
+        cooldown_minutes: int = 15,
+    ) -> bool:
+        """Check if a reminder is within its cooldown period for a session.
+
+        Args:
+            session_id: Session identifier
+            reminder_hash: Hash identifying the reminder
+            cooldown_minutes: Cooldown period in minutes (default: 15)
+
+        Returns:
+            True if reminder was shown within cooldown window (suppress),
+            False if reminder can be shown (cooldown expired or never shown)
+        """
+        # Performance monitoring (Stage 6)
+        start_time = time.perf_counter()
+
+        await self._initialise()
+        cutoff_time = f"datetime('now', '-{cooldown_minutes} minutes')"
+
+        row = await self._fetchone(
+            f"""
+            SELECT COUNT(*) as count
+            FROM reminder_history
+            WHERE session_id = ?
+              AND reminder_hash = ?
+              AND shown_at > {cutoff_time};
+            """,
+            (session_id, reminder_hash),
+        )
+
+        result = (row["count"] if row else 0) > 0
+
+        # Log slow queries (Stage 6)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        if elapsed_ms > SLOW_QUERY_THRESHOLD_MS:
+            logger.warning(
+                f"Slow reminder query: check_reminder_cooldown took {elapsed_ms:.2f}ms "
+                f"(threshold: {SLOW_QUERY_THRESHOLD_MS}ms) [session={session_id[:16]}...]"
+            )
+
+        return result
+
+    async def cleanup_reminder_history(
+        self,
+        cutoff_hours: int = 168,
+    ) -> int:
+        """Delete old reminder history entries.
+
+        Args:
+            cutoff_hours: Delete entries older than this (default: 168 = 7 days)
+
+        Returns:
+            Number of entries deleted
+        """
+        # Performance monitoring (Stage 6)
+        start_time = time.perf_counter()
+
+        await self._initialise()
+        async with self._write_lock:
+            # Use direct connection since _execute doesn't return cursor
+            def _cleanup_sync():
+                conn = self._connect()
+                try:
+                    cursor = conn.execute(
+                        """
+                        DELETE FROM reminder_history
+                        WHERE shown_at < datetime('now', ? || ' hours');
+                        """,
+                        (f"-{cutoff_hours}",),
+                    )
+                    deleted = cursor.rowcount
+                    conn.commit()
+                    return deleted
+                finally:
+                    conn.close()
+
+            result = await asyncio.to_thread(_cleanup_sync)
+
+        # Log slow queries (Stage 6) - cleanup has higher threshold (100ms vs 5ms)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        cleanup_threshold_ms = 100.0  # Cleanup allowed to be slower
+        if elapsed_ms > cleanup_threshold_ms:
+            logger.warning(
+                f"Slow reminder query: cleanup_reminder_history took {elapsed_ms:.2f}ms "
+                f"(threshold: {cleanup_threshold_ms}ms) [deleted={result} records]"
+            )
+
+        return result
+
+    # Tool Call Logging Methods (Scope 1: Direct logging without recursion)
+
+    async def record_tool_call(
+        self,
+        session_id: str,
+        tool_name: str,
+        duration_ms: Optional[float] = None,
+        status: str = "success",
+        format_requested: Optional[str] = None,
+        project_name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        response_size_bytes: Optional[int] = None,
+        repo_root: Optional[str] = None
+    ) -> None:
+        """Record a tool call to the database for analytics.
+
+        This method provides direct SQL logging without triggering append_entry,
+        preventing recursion in finalize_tool_response().
+
+        Args:
+            session_id: Session identifier from scribe_sessions table
+            tool_name: Name of the tool that was called
+            duration_ms: Optional execution time in milliseconds
+            status: Tool execution status (success, error, partial)
+            format_requested: Format parameter from tool call (readable/structured/compact)
+            project_name: Optional project context
+            agent_id: Optional agent identifier
+            error_message: Optional error details if status=error
+            response_size_bytes: Optional response payload size for cost tracking
+            repo_root: Optional repository root path for per-repo tool logging
+        """
+        await self._initialise()
+        async with self._write_lock:
+            try:
+                await self._execute(
+                    """
+                    INSERT INTO tool_calls (
+                        session_id, tool_name, timestamp, duration_ms, status,
+                        format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
+                    ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (session_id, tool_name, duration_ms, status,
+                     format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root)
+                )
+            except Exception as e:
+                # Log error but don't raise - tool logging should never block tool execution
+                logger.error(f"Failed to record tool call: {e}")
+
+    def record_tool_call_sync(
+        self,
+        session_id: str,
+        tool_name: str,
+        duration_ms: Optional[float] = None,
+        status: str = "success",
+        format_requested: Optional[str] = None,
+        project_name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        response_size_bytes: Optional[int] = None,
+        repo_root: Optional[str] = None
+    ) -> None:
+        """Synchronous version of record_tool_call for background thread execution.
+
+        This method is designed to be called via asyncio.to_thread() from
+        finalize_tool_response(). It uses synchronous sqlite3 connection
+        instead of aiosqlite for thread-safe execution.
+
+        Args:
+            session_id: Session identifier from scribe_sessions table
+            tool_name: Name of the tool that was called
+            duration_ms: Optional execution time in milliseconds
+            status: Tool execution status (success, error, partial)
+            format_requested: Format parameter from tool call
+            project_name: Optional project context
+            agent_id: Optional agent identifier
+            error_message: Optional error details if status=error
+            response_size_bytes: Optional response payload size
+            repo_root: Optional repository root path for per-repo tool logging
+
+        Thread Safety:
+            SQLite with WAL mode supports concurrent writes from multiple threads.
+            This method acquires a lock via SQLite's internal locking mechanism.
+
+        Error Handling:
+            Exceptions are caught and logged to stderr. SQL logging failures
+            must never propagate to the calling code or block tool execution.
+        """
+        try:
+            # Use synchronous sqlite3 connection (not aiosqlite)
+            import sqlite3
+            conn = sqlite3.connect(str(self._path))
+            conn.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for concurrency
+
+            # Execute insert directly (no await needed)
+            conn.execute(
+                """
+                INSERT INTO tool_calls (
+                    session_id, tool_name, timestamp, duration_ms, status,
+                    format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
+                ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, tool_name, duration_ms, status,
+                 format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root)
+            )
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            # SQL logging is optional, never block or raise
+            import sys
+            print(f"Warning: SQL tool logging failed in background thread: {e}", file=sys.stderr)
+
+    async def get_session_tool_calls(
+        self,
+        session_id: str,
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get tool call history for a session.
+
+        Args:
+            session_id: Session identifier
+            limit: Optional maximum number of results
+
+        Returns:
+            List of tool call records ordered by timestamp (newest first)
+        """
+        await self._initialise()
+
+        query = """
+            SELECT id, tool_name, timestamp, duration_ms, status,
+                   format_requested, project_name, agent_id, error_message, response_size_bytes
+            FROM tool_calls
+            WHERE session_id = ?
+            ORDER BY timestamp DESC
+        """
+
+        if limit:
+            query += f" LIMIT {int(limit)}"
+
+        rows = await self._fetchall(query, (session_id,))
+        return [dict(row) for row in rows]
+
+    async def get_tool_metrics(
+        self,
+        tool_name: Optional[str] = None,
+        project_name: Optional[str] = None,
+        time_range_hours: Optional[int] = 24
+    ) -> Dict[str, Any]:
+        """Get aggregated metrics for tool calls.
+
+        Args:
+            tool_name: Optional tool name filter
+            project_name: Optional project name filter
+            time_range_hours: Time range in hours (default: 24)
+
+        Returns:
+            Dictionary with aggregated metrics:
+            - total_calls: Total number of tool calls
+            - success_count: Number of successful calls
+            - error_count: Number of failed calls
+            - avg_duration_ms: Average execution time
+            - p95_duration_ms: 95th percentile execution time (approximation)
+            - total_response_bytes: Total response size
+        """
+        await self._initialise()
+
+        # Build WHERE clause
+        where_clauses = []
+        params = []
+
+        if tool_name:
+            where_clauses.append("tool_name = ?")
+            params.append(tool_name)
+
+        if project_name:
+            where_clauses.append("project_name = ?")
+            params.append(project_name)
+
+        if time_range_hours:
+            where_clauses.append("timestamp >= datetime('now', ? || ' hours')")
+            params.append(f"-{time_range_hours}")
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        # Main aggregation query
+        row = await self._fetchone(
+            f"""
+            SELECT
+                COUNT(*) as total_calls,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
+                AVG(duration_ms) as avg_duration_ms,
+                SUM(response_size_bytes) as total_response_bytes
+            FROM tool_calls
+            WHERE {where_sql}
+            """,
+            tuple(params)
+        )
+
+        result = dict(row) if row else {
+            "total_calls": 0,
+            "success_count": 0,
+            "error_count": 0,
+            "avg_duration_ms": None,
+            "total_response_bytes": None
+        }
+
+        # Calculate p95 approximation using LIMIT/OFFSET
+        # (SQLite doesn't have percentile_cont, so we approximate)
+        if result["total_calls"] > 0:
+            p95_offset = int(result["total_calls"] * 0.05)  # Skip bottom 5%
+            p95_row = await self._fetchone(
+                f"""
+                SELECT duration_ms
+                FROM tool_calls
+                WHERE {where_sql} AND duration_ms IS NOT NULL
+                ORDER BY duration_ms DESC
+                LIMIT 1 OFFSET ?
+                """,
+                tuple(params + [p95_offset])
+            )
+            result["p95_duration_ms"] = p95_row["duration_ms"] if p95_row else None
+        else:
+            result["p95_duration_ms"] = None
+
+        return result
+
+    # Bridge management methods
+    async def insert_bridge(
+        self,
+        bridge_id: str,
+        name: str,
+        version: str,
+        manifest_json: str,
+        state: str
+    ) -> None:
+        """Insert new bridge record."""
+        await self._initialise()
+        await self._execute(
+            """
+            INSERT INTO scribe_bridges (bridge_id, name, version, manifest_json, state)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (bridge_id, name, version, manifest_json, state)
+        )
+
+    async def update_bridge_state(self, bridge_id: str, state: str) -> None:
+        """Update bridge state."""
+        await self._initialise()
+        await self._execute(
+            """
+            UPDATE scribe_bridges
+            SET state = ?
+            WHERE bridge_id = ?
+            """,
+            (state, bridge_id)
+        )
+
+    async def update_bridge_health(
+        self,
+        bridge_id: str,
+        health_json: str,
+        error: Optional[str] = None
+    ) -> None:
+        """Update bridge health status."""
+        await self._initialise()
+        await self._execute(
+            """
+            UPDATE scribe_bridges
+            SET health_json = ?,
+                last_health_check = CURRENT_TIMESTAMP,
+                last_error = ?
+            WHERE bridge_id = ?
+            """,
+            (health_json, error, bridge_id)
+        )
+
+    async def fetch_bridge(self, bridge_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch bridge by ID."""
+        await self._initialise()
+        row = await self._fetchone(
+            """
+            SELECT bridge_id, name, version, manifest_json, state,
+                   health_json, registered_at, last_health_check, last_error
+            FROM scribe_bridges
+            WHERE bridge_id = ?
+            """,
+            (bridge_id,)
+        )
+        return dict(row) if row else None
+
+    async def list_bridges(self, state: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List bridges, optionally filtered by state."""
+        await self._initialise()
+
+        if state:
+            rows = await self._fetchall(
+                """
+                SELECT bridge_id, name, version, manifest_json, state,
+                       health_json, registered_at, last_health_check, last_error
+                FROM scribe_bridges
+                WHERE state = ?
+                ORDER BY registered_at DESC
+                """,
+                (state,)
+            )
+        else:
+            rows = await self._fetchall(
+                """
+                SELECT bridge_id, name, version, manifest_json, state,
+                       health_json, registered_at, last_health_check, last_error
+                FROM scribe_bridges
+                ORDER BY registered_at DESC
+                """
+            )
+
+        return [dict(row) for row in rows]
+
+    async def delete_bridge(self, bridge_id: str) -> None:
+        """Delete bridge record."""
+        await self._initialise()
+        await self._execute(
+            """
+            DELETE FROM scribe_bridges
+            WHERE bridge_id = ?
+            """,
+            (bridge_id,)
+        )

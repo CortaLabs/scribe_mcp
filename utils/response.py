@@ -568,6 +568,481 @@ class ResponseFormatter:
         else:
             parts.append(content)
 
+        # SPECIAL FILE WARNING (SKILL.md detection) - STERN, NOT SEIZURE
+        special_file = data.get('special_file')
+        if special_file:
+            parts.append("")
+            parts.append("─" * 63)
+            parts.append(f"🚨 {special_file.get('reason', 'SPECIAL FILE DETECTED')}")
+            parts.append("─" * 63)
+            parts.append(f"Urgency: {special_file.get('urgency', 'HIGH')}")
+            parts.append(f"Type: {special_file.get('type', 'unknown')}")
+            parts.append(f"Action Required: {special_file.get('instruction', 'Read file immediately')}")
+            if special_file.get('suggested_action'):
+                parts.append(f"→ {special_file.get('suggested_action')}")
+            parts.append("─" * 63)
+
+        # STRUCTURE ANALYSIS (Python AST, Markdown headings, JS/TS functions)
+        structure = data.get('structure')
+        if structure and structure.get('ok'):
+            parts.append("")
+            parts.append("📋 File Structure:")
+            parts.append("")
+
+            file_type = structure.get('type', 'unknown')
+
+            if file_type == 'python':
+                # Python functions and classes
+                functions = structure.get('functions', [])
+                classes = structure.get('classes', [])
+                total_funcs = structure.get('total_functions', len(functions))
+                total_classes = structure.get('total_classes', len(classes))
+
+                # Get pagination params
+                pagination = data.get('structure_pagination', {})
+                page = pagination.get('page', 1)
+                page_size = pagination.get('page_size', 10)
+
+                # Check if filtering is active
+                is_filtered = structure.get('filtered', False)
+                filter_pattern = structure.get('filter_pattern')
+                filtered_func_count = structure.get('filtered_function_count', 0)
+                filtered_class_count = structure.get('filtered_class_count', 0)
+
+                if is_filtered:
+                    total_matches = filtered_func_count + filtered_class_count
+                    parts.append(f"  🔍 Filtered Results ({total_matches} matches for '{filter_pattern}'):")
+                    if filtered_class_count > 0:
+                        parts.append(f"     Classes: {filtered_class_count}")
+                    if filtered_func_count > 0:
+                        parts.append(f"     Functions: {filtered_func_count}")
+                    parts.append("")
+
+                # Helper function to format a signature
+                def format_signature(params_list, return_type=None):
+                    """Format function/method signature with types and defaults."""
+                    if not params_list:
+                        sig = "()"
+                    else:
+                        param_strs = []
+                        for p in params_list:
+                            param_str = p['name']
+                            if 'type' in p and p['type']:
+                                param_str += f": {p['type']}"
+                            if 'default' in p and p['default']:
+                                param_str += f" = {p['default']}"
+                            param_strs.append(param_str)
+                        sig = f"({', '.join(param_strs)})"
+
+                    if return_type:
+                        sig += f" -> {return_type}"
+                    return sig
+
+                if classes:
+                    # Paginate classes list ONLY if not filtered (when filtered, show all matched classes but paginate their methods)
+                    if is_filtered:
+                        paginated_classes = classes
+                        class_total_pages = 1
+                    else:
+                        class_start = (page - 1) * page_size
+                        class_end = class_start + page_size
+                        paginated_classes = classes[class_start:class_end]
+                        class_total_pages = (total_classes + page_size - 1) // page_size
+
+                    if total_classes > page_size and not is_filtered:
+                        parts.append(f"  Classes (page {page} of {class_total_pages}, showing {class_start + 1}-{min(class_end, total_classes)} of {total_classes}):")
+                    else:
+                        parts.append(f"  Classes ({total_classes} total):")
+
+                    for cls in paginated_classes:
+                        # Format class header with line range
+                        start_line = cls['line']
+                        end_line = cls.get('end_line', start_line)
+                        line_count = end_line - start_line + 1
+                        line_info = f"lines {start_line}-{end_line} ({line_count} lines)" if end_line > start_line else f"line {start_line}"
+                        parts.append(f"    • class {cls['name']} at {line_info}")
+
+                        # Show methods if available (with pagination)
+                        methods = cls.get('methods', [])
+                        method_count = cls.get('method_count', len(methods))
+                        if methods:
+                            # Paginate methods
+                            start_idx = (page - 1) * page_size
+                            end_idx = start_idx + page_size
+                            paginated_methods = methods[start_idx:end_idx]
+                            total_pages = (method_count + page_size - 1) // page_size
+
+                            # Show pagination header if multiple pages
+                            if method_count > page_size:
+                                parts.append(f"        Methods (page {page} of {total_pages}, showing {start_idx + 1}-{min(end_idx, method_count)} of {method_count}):")
+                            else:
+                                parts.append(f"        Methods ({method_count} total):")
+
+                            for method in paginated_methods:
+                                async_prefix = "async " if method.get('is_async') else ""
+                                method_params = method.get('params', [])
+                                method_return = method.get('return_type')
+                                sig = format_signature(method_params, method_return)
+
+                                # Format method line range
+                                m_start = method['line']
+                                m_end = method.get('end_line', m_start)
+                                m_count = m_end - m_start + 1
+                                m_line_info = f"{m_start}-{m_end} ({m_count})" if m_end > m_start else str(m_start)
+
+                                parts.append(f"          {async_prefix}def {method['name']}{sig} (lines {m_line_info})")
+
+                            # Navigation hint for next/previous pages
+                            if total_pages > 1:
+                                nav_hints = []
+                                if page > 1:
+                                    nav_hints.append(f"structure_page={page - 1} for previous")
+                                if page < total_pages:
+                                    nav_hints.append(f"structure_page={page + 1} for next")
+                                if nav_hints:
+                                    parts.append(f"        💡 Use {' or '.join(nav_hints)}")
+                        parts.append("")
+
+                    # Add pagination navigation for classes
+                    if class_total_pages > 1 and not is_filtered:
+                        nav_hints = []
+                        if page > 1:
+                            nav_hints.append(f"structure_page={page - 1}")
+                        if page < class_total_pages:
+                            nav_hints.append(f"structure_page={page + 1}")
+                        if nav_hints:
+                            parts.append(f"    💡 Use {' or '.join(nav_hints)} to navigate")
+                        parts.append("")
+
+                if functions:
+                    # Paginate functions list ONLY if not filtered (when filtered, show all matched functions)
+                    if is_filtered:
+                        paginated_funcs = functions
+                        func_total_pages = 1
+                    else:
+                        func_start = (page - 1) * page_size
+                        func_end = func_start + page_size
+                        paginated_funcs = functions[func_start:func_end]
+                        func_total_pages = (total_funcs + page_size - 1) // page_size
+
+                    if total_funcs > page_size and not is_filtered:
+                        parts.append(f"  Functions (page {page} of {func_total_pages}, showing {func_start + 1}-{min(func_end, total_funcs)} of {total_funcs}):")
+                    else:
+                        parts.append(f"  Functions ({total_funcs} total):")
+
+                    for func in paginated_funcs:
+                        func_params = func.get('params', [])
+                        func_return = func.get('return_type')
+
+                        # Fallback to old args format if params not available
+                        if not func_params and func.get('args'):
+                            sig = f"({', '.join(func['args'])})"
+                        else:
+                            sig = format_signature(func_params, func_return)
+
+                        # Format function line range
+                        f_start = func['line']
+                        f_end = func.get('end_line', f_start)
+                        f_count = f_end - f_start + 1
+                        f_line_info = f"lines {f_start}-{f_end} ({f_count})" if f_end > f_start else f"line {f_start}"
+
+                        async_prefix = "async " if func.get('type') == 'async_function' else ""
+                        parts.append(f"    • {async_prefix}def {func['name']}{sig} at {f_line_info}")
+
+                    # Add pagination navigation for functions
+                    if func_total_pages > 1 and not is_filtered:
+                        nav_hints = []
+                        if page > 1:
+                            nav_hints.append(f"structure_page={page - 1}")
+                        if page < func_total_pages:
+                            nav_hints.append(f"structure_page={page + 1}")
+                        if nav_hints:
+                            parts.append(f"    💡 Use {' or '.join(nav_hints)} to navigate")
+
+                if structure.get('truncated'):
+                    parts.append("")
+                    parts.append("  ⚠️  Structure truncated - use line_range/page mode for full details")
+
+            elif file_type == 'markdown':
+                # Markdown headings
+                headings = structure.get('headings', [])
+                total_headings = structure.get('total_headings', len(headings))
+
+                parts.append(f"  Headings ({total_headings} total):")
+                for heading in headings[:20]:  # Show first 20
+                    indent = "  " * heading['level']
+                    parts.append(f"    {indent}{'#' * heading['level']} {heading['text']} (line {heading['line']})")
+                if total_headings > 20:
+                    parts.append(f"    ... and {total_headings - 20} more headings")
+
+                if structure.get('truncated'):
+                    parts.append("")
+                    parts.append("  ⚠️  Structure truncated - use line_range/page mode for full details")
+
+            elif file_type in {'javascript', 'typescript'}:
+                # JavaScript/TypeScript functions and classes
+                functions = structure.get('functions', [])
+                classes = structure.get('classes', [])
+                total_funcs = structure.get('total_functions', len(functions))
+                total_classes = structure.get('total_classes', len(classes))
+
+                if classes:
+                    parts.append(f"  Classes ({total_classes} total):")
+                    for cls in classes[:10]:
+                        parts.append(f"    • {cls['name']} at line {cls['line']}")
+                    if total_classes > 10:
+                        parts.append(f"    ... and {total_classes - 10} more classes")
+                    parts.append("")
+
+                if functions:
+                    parts.append(f"  Functions ({total_funcs} total):")
+                    for func in functions[:10]:
+                        parts.append(f"    • {func['name']}() at line {func['line']}")
+                    if total_funcs > 10:
+                        parts.append(f"    ... and {total_funcs - 10} more functions")
+
+                if structure.get('truncated'):
+                    parts.append("")
+                    parts.append("  ⚠️  Structure truncated - use line_range/page mode for full details")
+
+        # DEPENDENCIES ANALYSIS (Phase 1+2: Import extraction + resolution)
+        dependencies = data.get('dependencies')
+        if dependencies and not dependencies.get('error'):
+            imports = dependencies.get('imports', [])
+            total_imports = dependencies.get('total_imports', 0)
+            truncated = dependencies.get('truncated', False)
+
+            if imports:
+                parts.append("")
+                parts.append("📦 Dependencies:")
+                parts.append("")
+
+                # Phase 2: Group imports by type for better readability
+                # Check if we have Phase 2 resolution data (import_type field exists)
+                has_resolution = any(imp.get('import_type') is not None for imp in imports)
+
+                if has_resolution:
+                    # Group imports by type
+                    from collections import defaultdict
+                    grouped = defaultdict(list)
+                    for imp in imports:
+                        import_type = imp.get('import_type', 'unresolved')
+                        grouped[import_type].append(imp)
+
+                    # Display in order: stdlib, third_party, local, unresolved
+                    display_limit_per_type = 10
+                    type_order = ['stdlib', 'third_party', 'local', 'unresolved']
+                    type_labels = {
+                        'stdlib': '📚 Standard Library',
+                        'third_party': '📦 Third-Party Packages',
+                        'local': '📁 Local Modules',
+                        'unresolved': '❓ Unresolved'
+                    }
+
+                    for import_type in type_order:
+                        type_imports = grouped.get(import_type, [])
+                        if not type_imports:
+                            continue
+
+                        parts.append(f"  {type_labels[import_type]} ({len(type_imports)}):")
+                        parts.append("")
+
+                        for imp in type_imports[:display_limit_per_type]:
+                            imp_syntax = imp.get('type')  # 'import' or 'from_import'
+                            module = imp.get('module', '')
+                            line = imp.get('line', '?')
+                            names = imp.get('names')
+                            alias = imp.get('alias')
+                            level = imp.get('level', 0)
+                            resolved_path = imp.get('resolved_path')
+                            exists = imp.get('exists')
+
+                            # Format relative imports with dots
+                            if level > 0:
+                                dots = '.' * level
+                                if module:
+                                    module_display = f"{dots}{module}"
+                                else:
+                                    module_display = dots
+                            else:
+                                module_display = module
+
+                            # Build base import statement
+                            if imp_syntax == 'import':
+                                if alias:
+                                    import_stmt = f"import {module_display} as {alias}"
+                                else:
+                                    import_stmt = f"import {module_display}"
+                            elif imp_syntax == 'from_import' and names:
+                                names_str = ', '.join(names[:5])  # Show first 5 names
+                                if len(names) > 5:
+                                    names_str += f", ... ({len(names)} total)"
+                                import_stmt = f"from {module_display} import {names_str}"
+                            else:
+                                import_stmt = f"import {module_display}"
+
+                            # Add resolution info based on type
+                            if import_type == 'stdlib':
+                                parts.append(f"    → {import_stmt} (line {line}) [stdlib]")
+                            elif import_type == 'third_party':
+                                parts.append(f"    → {import_stmt} (line {line}) [third-party]")
+                            elif import_type == 'local':
+                                if resolved_path and exists:
+                                    # Show resolved path (make it relative to workspace for readability)
+                                    parts.append(f"    → {import_stmt} (line {line})")
+                                    parts.append(f"       ✓ {resolved_path}")
+                                elif resolved_path and exists is False:
+                                    # Missing local import
+                                    parts.append(f"    → {import_stmt} (line {line})")
+                                    parts.append(f"       ✗ MISSING: {resolved_path}")
+                                else:
+                                    # Local but couldn't resolve path
+                                    parts.append(f"    → {import_stmt} (line {line}) [local - path unresolved]")
+                            else:  # unresolved
+                                parts.append(f"    → {import_stmt} (line {line}) [unresolved]")
+
+                        if len(type_imports) > display_limit_per_type:
+                            parts.append(f"       ... and {len(type_imports) - display_limit_per_type} more {import_type} imports")
+                        parts.append("")  # Blank line between groups
+
+                else:
+                    # Phase 1 fallback: No resolution data, show simple list
+                    display_limit = 20
+                    for imp in imports[:display_limit]:
+                        imp_type = imp.get('type')
+                        module = imp.get('module', '')
+                        line = imp.get('line', '?')
+                        names = imp.get('names')
+                        alias = imp.get('alias')
+                        level = imp.get('level', 0)
+
+                        # Format relative imports with dots
+                        if level > 0:
+                            dots = '.' * level
+                            if module:
+                                module_display = f"{dots}{module}"
+                            else:
+                                module_display = dots
+                        else:
+                            module_display = module
+
+                        # Format display based on import type
+                        if imp_type == 'import':
+                            if alias:
+                                parts.append(f"    → import {module_display} as {alias} (line {line})")
+                            else:
+                                parts.append(f"    → import {module_display} (line {line})")
+                        elif imp_type == 'from_import' and names:
+                            names_str = ', '.join(names[:5])  # Show first 5 names
+                            if len(names) > 5:
+                                names_str += f", ... ({len(names)} total)"
+                            parts.append(f"    → from {module_display} import {names_str} (line {line})")
+
+                    # Show truncation message if needed
+                    if total_imports > display_limit:
+                        parts.append("")
+                        parts.append(f"    ... and {total_imports - display_limit} more imports")
+
+                if truncated:
+                    parts.append("  ⚠️  Import list truncated at 100 - file may have more imports")
+
+        elif dependencies and dependencies.get('error'):
+            # Show error but don't spam output
+            parts.append("")
+            parts.append(f"📦 Dependencies: Unable to parse imports ({dependencies.get('error', 'unknown error')})")
+
+        # STATIC ANALYSIS DISCLAIMER (Phase 4: Honest framing of limitations)
+        # Show disclaimer when dependencies or impact radius are displayed
+        if (dependencies and not dependencies.get('error')) or (data.get('impact_radius') and not data.get('impact_radius', {}).get('error')):
+            parts.append("")
+            parts.append("ℹ️  Note: Dependencies shown reflect static import analysis only. Runtime dependencies, dynamic imports, and reflection patterns are not detected.")
+
+        # IMPACT RADIUS ANALYSIS (Phase 3: Reverse lookup / cross-file graphing)
+        impact_radius = data.get('impact_radius')
+        if impact_radius and not impact_radius.get('error'):
+            count = impact_radius.get('count', 0)
+            level = impact_radius.get('level', 'low')
+            importers = impact_radius.get('importers', [])
+            truncated = impact_radius.get('truncated', False)
+            perf_warning = impact_radius.get('performance_warning')
+
+            # Only show impact section if file is actually imported somewhere
+            if count > 0:
+                parts.append("")
+
+                # Impact level display with appropriate emoji
+                if level == 'high':
+                    parts.append(f"🚨 Impact Radius: This file is imported by {count} files [HIGH IMPACT]")
+                elif level == 'medium':
+                    parts.append(f"⚠️  Impact Radius: This file is imported by {count} files [MEDIUM IMPACT]")
+                else:
+                    parts.append(f"Impact Radius: This file is imported by {count} files")
+
+                parts.append("")
+
+                # Show importer list
+                if importers:
+                    parts.append("  Files that import this:")
+                    for importer in importers:
+                        parts.append(f"    • {importer}")
+
+                    # Truncation message
+                    if truncated:
+                        remaining = count - len(importers)
+                        parts.append(f"    ... and {remaining} more files")
+
+                # Performance warning if scan was slow
+                if perf_warning:
+                    parts.append("")
+                    parts.append(f"  ⚠️  {perf_warning}")
+
+        elif impact_radius and impact_radius.get('error'):
+            # Show error but don't spam output
+            parts.append("")
+            parts.append(f"Impact Radius: Unable to calculate ({impact_radius.get('error', 'unknown error')})")
+
+        # BOUNDARY VIOLATIONS (Phase 4: Forbidden import pattern detection)
+        boundary_violations = data.get('boundary_violations')
+        if boundary_violations and boundary_violations.get('enabled'):
+            violations = boundary_violations.get('violations', [])
+            if violations:
+                # Count violations by severity
+                errors = [v for v in violations if v.get('severity') == 'error']
+                warnings = [v for v in violations if v.get('severity') == 'warning']
+                infos = [v for v in violations if v.get('severity') == 'info']
+
+                # Build summary
+                parts.append("")
+                summary_parts = []
+                if errors:
+                    summary_parts.append(f"{len(errors)} error{'s' if len(errors) != 1 else ''}")
+                if warnings:
+                    summary_parts.append(f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}")
+                if infos:
+                    summary_parts.append(f"{len(infos)} info")
+
+                parts.append(f"🚫 Boundary Violations: {', '.join(summary_parts)}")
+                parts.append("")
+
+                # Sort violations by severity (errors first, then warnings, then info)
+                severity_order = {'error': 0, 'warning': 1, 'info': 2}
+                sorted_violations = sorted(violations, key=lambda v: severity_order.get(v.get('severity', 'info'), 3))
+
+                # Display each violation
+                for violation in sorted_violations:
+                    severity = violation.get('severity', 'info').upper()
+                    rule_name = violation.get('rule_name', 'Unknown Rule')
+                    violated_import = violation.get('violated_import', '?')
+                    message = violation.get('message', '')
+                    line = violation.get('line', 0)
+
+                    # Severity tag with visual distinction
+                    parts.append(f"  [{severity}] {rule_name}")
+                    parts.append(f"    → {violated_import} (line {line})")
+                    if message:
+                        parts.append(f"    {message}")
+                    parts.append("")  # Blank line between violations
+
         # METADATA AT BOTTOM
         parts.append("")  # Blank line before metadata
         parts.append("─" * 63)  # Separator line
@@ -590,6 +1065,28 @@ class ResponseFormatter:
             metadata_lines.append(f"SHA256: {scan['sha256'][:16]}...")
 
         parts.extend(metadata_lines)
+
+        # Add navigation hints if present (scan_only mode)
+        nav_hints = data.get('navigation_hints')
+        if nav_hints and mode == 'scan_only':
+            parts.append("")
+            parts.append("💡 Navigation Hints:")
+            parts.append(f"   Chunks available: {nav_hints.get('total_chunks', 0)}")
+            parts.append(f"   Suggested chunk size: {nav_hints.get('suggested_chunk_size', 1)}")
+            examples = nav_hints.get('examples', {})
+            if examples:
+                parts.append("   Quick examples:")
+                for mode_name, example in list(examples.items())[:3]:
+                    parts.append(f"     • {example}")
+
+        # Add advanced analysis hint if present (scan_only mode without dependencies)
+        adv_hint = data.get('advanced_analysis_hint')
+        if adv_hint and mode == 'scan_only':
+            parts.append("")
+            parts.append("🔬 Advanced Analysis:")
+            parts.append(f"   {adv_hint.get('message', '')}")
+            if adv_hint.get('example'):
+                parts.append(f"   Example: {adv_hint['example']}")
 
         # Add reminders if present
         reminders = data.get('reminders', [])
@@ -1156,16 +1653,13 @@ class ResponseFormatter:
 
         lines = []
 
-        # Header box
-        header_text = f"📋 PROJECTS - {total_count} total (Page {page} of {total_pages}, showing {len(projects)})"
-        lines.append(f"{CYAN}╔{'═' * 58}╗{RESET}")
-        lines.append(f"{CYAN}║{RESET} {header_text:<56} {CYAN}║{RESET}")
-        lines.append(f"{CYAN}╚{'═' * 58}╝{RESET}")
+        # Header - simplified without box drawing
+        header_text = f"📋 Projects ({len(projects)}/{total_count}, page {page}/{total_pages})"
+        lines.append(header_text)
         lines.append("")
 
-        # Table headers
-        lines.append(f"{GREEN}NAME{' ' * 26}STATUS{' ' * 6}  ENTRIES  LAST ACTIVITY{RESET}")
-        lines.append("─" * 70)
+        # Table headers - no separator line
+        lines.append(f"{GREEN}NAME{' ' * 26}STATUS{' ' * 4}  ENTRIES  ACTIVITY{RESET}")
 
         # Table rows
         for project in projects:
@@ -1190,25 +1684,18 @@ class ResponseFormatter:
             # Entries column (8 chars, right-aligned)
             entries_col = f"{total_entries:>8}"
 
-            # Last activity column (15 chars)
+            # Last activity column (12 chars shortened)
             if last_entry_at:
                 activity = self._format_relative_time(last_entry_at)
             else:
                 activity = "never"
-            activity_col = f"{activity:<15}"
+            activity_col = f"{activity:<12}"
 
             lines.append(f"{name_col}{status_col}{entries_col}  {activity_col}")
 
         lines.append("")
 
-        # Footer: Pagination info
-        if total_pages > 1:
-            next_page = page + 1 if page < total_pages else page
-            lines.append(f"📄 Page {page} of {total_pages} | Use page={next_page} to see more")
-        else:
-            lines.append(f"📄 Page {page} of {total_pages}")
-
-        # Footer: Filter info
+        # Footer: Simplified pagination and filter info
         filter_parts = []
         if filters.get('name'):
             filter_parts.append(f"name=\"{filters['name']}\"")
@@ -1218,15 +1705,7 @@ class ResponseFormatter:
             filter_parts.append(f"tags={filters['tags']}")
         filter_str = " | ".join(filter_parts) if filter_parts else "none"
 
-        order_by = filters.get('order_by', 'last_entry_at')
-        direction = filters.get('direction', 'desc')
-        lines.append(f"🔍 Filter: {filter_str} | Sort: {order_by} ({direction})")
-
-        # Footer: Tip
-        if filters.get('name'):
-            lines.append("💡 Tip: Use filter=\"exact_name\" to see details")
-        else:
-            lines.append("💡 Tip: Add filter=\"scribe\" to narrow results, or filter=\"exact_name\" to see details")
+        lines.append(f"Page {page}/{total_pages} | filter: {filter_str}")
 
         return "\n".join(lines)
 
@@ -1929,42 +2408,109 @@ class ResponseFormatter:
 
     def _format_single_append_entry(self, data: Dict[str, Any], USE_COLORS: bool) -> str:
         """
-        Format single append_entry in concise 4-5 line format.
+        Format single append_entry in optimized readable format.
 
-        Format:
-        ✅ Entry written to progress log
+        SPEC-TOKEN-002 Optimization:
+        - Removed redundant "Entry written to progress log" prefix
+        - Removed redundant project name (already in context)
+        - Shortened timestamp to HH:MM UTC format
+        - Removed bracketed labels [ℹ️], [Agent:], [Project:]
+        - Using relative path (PROGRESS_LOG.md instead of full path)
+        - Filtering default metadata (priority=low, log_type=progress, content_type=log)
 
-           [ℹ️] [2026-01-03 02:46:00 UTC] [Agent: ResearchAgent] Investigation complete
+        New Format:
+        ✅ Investigation complete
+           14:34 UTC | ResearchAgent | phase=research; confidence=0.95
+        📁 PROGRESS_LOG.md
 
            Reasoning:
            ├─ Why: Need to understand append_entry structure
            ├─ What: Analyzed return values, usage patterns
            └─ How: Read source code, traced execution paths
 
-        📁 .scribe/docs/dev_plans/project/PROGRESS_LOG.md
-
         ⏰ Reminders:
            • It's been 15 minutes since the last log entry.
         """
         parts = []
 
-        # Line 1: Success indicator with project name
-        project_name = data.get('project_name', '')
+        # Parse the written_line to extract components
+        written_line = data.get('written_line', '')
+        meta = data.get('meta', {})
+
         if data.get('ok'):
-            if project_name:
-                parts.append(f"✅ Entry written to progress log ({project_name})")
-            else:
-                parts.append("✅ Entry written to progress log")
+            # Extract components from written_line
+            # Format: [emoji] [timestamp] [Agent: name] [Project: name] message | metadata
+            emoji_symbol = "✅"
+            message = ""
+            timestamp_short = ""
+            agent_name = ""
+            metadata_str = ""
+
+            if written_line:
+                # Extract emoji
+                import re
+                emoji_match = re.search(r'\[(.+?)\]', written_line)
+                if emoji_match:
+                    emoji_symbol = emoji_match.group(1)
+
+                # Extract timestamp and convert to HH:MM UTC
+                timestamp_match = re.search(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\]', written_line)
+                if timestamp_match:
+                    full_timestamp = timestamp_match.group(1)
+                    # Extract just HH:MM
+                    time_parts = full_timestamp.split(' ')[1]  # Get "HH:MM:SS"
+                    timestamp_short = time_parts[:5]  # Get "HH:MM"
+
+                # Extract agent name
+                agent_match = re.search(r'\[Agent: ([^\]]+)\]', written_line)
+                if agent_match:
+                    agent_name = agent_match.group(1)
+
+                # Extract message (everything after [Project: ...] and before |)
+                # Pattern: after last ] before | or end of line
+                project_match = re.search(r'\[Project: [^\]]+\]\s*(?:\[ID: [^\]]+\]\s*)?(.+?)(?:\s*\|\s*(.+))?$', written_line)
+                if project_match:
+                    message = project_match.group(1).strip()
+                    metadata_str = project_match.group(2) if project_match.group(2) else ""
+
+                # Filter default metadata
+                if metadata_str:
+                    # Remove default metadata: priority=low, log_type=progress, content_type=log
+                    meta_pairs = [pair.strip() for pair in metadata_str.split(';')]
+                    filtered_pairs = [
+                        pair for pair in meta_pairs
+                        if not any(default in pair for default in [
+                            'priority=low',
+                            'priority=medium',  # Filter medium too as it's default
+                            'log_type=progress',
+                            'content_type=log'
+                        ])
+                    ]
+                    metadata_str = '; '.join(filtered_pairs) if filtered_pairs else ""
+
+            # Line 1: Just emoji and message
+            parts.append(f"{emoji_symbol} {message}")
+
+            # Line 2: Compact metadata line with timestamp, agent, and custom metadata
+            # Only show if there's custom metadata or reasoning block
+            metadata_line_parts = []
+            if timestamp_short:
+                metadata_line_parts.append(f"{timestamp_short} UTC")
+            if agent_name:
+                metadata_line_parts.append(agent_name)
+            if metadata_str:
+                metadata_line_parts.append(metadata_str)
+
+            # Only add metadata line if there's custom metadata beyond timestamp/agent
+            # OR if there will be a reasoning block (to maintain context)
+            has_reasoning = self._parse_reasoning_block(meta) is not None
+
+            if metadata_line_parts and (metadata_str or has_reasoning):
+                parts.append(f"   {' | '.join(metadata_line_parts)}")
         else:
             parts.append("❌ Entry write failed")
 
-        # Line 2: Written line content (indented, subtle)
-        written_line = data.get('written_line', '')
-        if written_line:
-            parts.append(f"   {written_line}")
-
         # Reasoning block (if present in metadata)
-        meta = data.get('meta', {})
         reasoning = self._parse_reasoning_block(meta)
         if reasoning:
             parts.append("")  # Blank line before reasoning
@@ -1976,18 +2522,13 @@ class ResponseFormatter:
             if reasoning.get('how'):
                 parts.append(f"   └─ How: {reasoning['how']}")
 
-        # Blank line
-        parts.append("")
-
-        # Path (with folder emoji)
+        # Path - just filename (PROGRESS_LOG.md) for maximum conciseness
         path = data.get('path', '')
         if path:
-            # Make path repo-relative for conciseness
-            if '/MCP_SPINE/scribe_mcp/' in path:
-                path = path.split('/MCP_SPINE/scribe_mcp/', 1)[1]
-            elif '/.scribe/' in path:
-                path = '.' + path.split('/.scribe/', 1)[1].replace('/.scribe/', '.scribe/')
-            parts.append(f"📁 {path}")
+            # Extract just the filename
+            from pathlib import Path as PathLib
+            path_obj = PathLib(path)
+            parts.append(f"📁 {path_obj.name}")
 
         # Reminders section (ONLY if reminders present)
         reminders = data.get('reminders', [])
@@ -2141,10 +2682,13 @@ class ResponseFormatter:
         tool_name: str = ""
     ) -> Union[Dict[str, Any], "CallToolResult"]:
         """
-        CRITICAL ROUTER: Logs tool call to tool_logs, then formats response.
+        CRITICAL ROUTER: Logs tool call to JSONL and SQL, then formats response.
 
-        This method ensures complete audit trail by logging structured JSON
-        BEFORE formatting for display.
+        This method ensures complete audit trail by logging structured data to:
+        1. JSONL: .scribe/logs/TOOL_LOG.jsonl (via tool_logger.py - synchronous)
+        2. SQL: tool_calls table (via storage.record_tool_call() - async fire-and-forget)
+
+        Uses direct logging to prevent recursion (no append_entry calls).
 
         ISSUE #9962 FIX: When format="readable", we return CallToolResult with
         TextContent ONLY (no structuredContent). This forces Claude Code to
@@ -2161,26 +2705,117 @@ class ResponseFormatter:
             - format="structured"/"compact": Original data dict
             - Fallback to dict if MCP types unavailable
         """
-        # STEP 1: Log to tool_logs (audit trail) - SKIP for append_entry to avoid recursion
-        # append_entry calls finalize_tool_response, which would call append_entry again
-        if tool_name != "append_entry":
-            try:
-                from tools.append_entry import append_entry
+        # STEP 1: Log tool call directly to JSONL and SQL (no recursion)
+        # JSONL: via tool_logger.py (synchronous file write)
+        # SQL: via storage.record_tool_call() (async DB insert for analytics)
+        try:
+            from utils.tool_logger import log_tool_call
 
-                await append_entry(
-                    message=f"Tool call: {tool_name}",
-                    log_type="tool_logs",
-                    meta={
-                        "tool": tool_name,
-                        "format_requested": format,
-                        "response_data": data,
-                        "timestamp": datetime.utcnow().isoformat() + "Z"
-                    },
-                    format="structured"  # Use structured to avoid nested formatting
-                )
+            # Extract session context from server module
+            session_id = "unknown"
+            project_name = None
+            agent_id = None
+            repo_root = None  # Will be resolved below
+
+            try:
+                import server as server_module
+                if hasattr(server_module, "get_execution_context"):
+                    exec_context = server_module.get_execution_context()
+                    if exec_context:
+                        session_id = getattr(exec_context, 'session_id', 'unknown')
+                        # Get project name from affected_dev_projects list (first item if present)
+                        affected_projects = getattr(exec_context, 'affected_dev_projects', [])
+                        if affected_projects and len(affected_projects) > 0:
+                            project_name = affected_projects[0]
+                        # Get agent display name
+                        agent_identity = getattr(exec_context, 'agent_identity', None)
+                        if agent_identity:
+                            agent_id = getattr(agent_identity, 'display_name', None)
+            except Exception:
+                # Context extraction failed, use defaults (session_id="unknown")
+                pass
+
+            # STEP 1.1: Resolve repo_root and progress_log_path for per-project tool logging
+            # Priority: 1) Project's progress_log_path from DB (ensures correct slugification)
+            #           2) Current repo root for sentinel mode
+            #           3) None (falls back to SCRIBE_ROOT)
+            progress_log_path = None
+            try:
+                import server as server_module
+                storage = getattr(server_module, 'storage_backend', None)
+
+                # Try to get project details from DB
+                if project_name and storage and hasattr(storage, 'fetch_project_sync'):
+                    try:
+                        project_record = storage.fetch_project_sync(project_name)
+                        if project_record:
+                            if hasattr(project_record, 'repo_root') and project_record.repo_root:
+                                repo_root = project_record.repo_root
+                            if hasattr(project_record, 'progress_log_path') and project_record.progress_log_path:
+                                progress_log_path = project_record.progress_log_path
+                    except Exception:
+                        pass  # Project lookup failed, continue to fallback
+
+                # Fallback: use current repo root from repo_config
+                if not repo_root:
+                    try:
+                        from config.repo_config import get_current_repo_config
+                        current_repo_root, _ = get_current_repo_config()
+                        if current_repo_root:
+                            repo_root = str(current_repo_root)
+                    except Exception:
+                        pass  # Repo config failed, repo_root stays None (uses SCRIBE_ROOT)
+            except Exception:
+                pass  # resolution failed entirely, stays None
+
+            # Calculate response size for metrics
+            import json
+            response_size = len(json.dumps(data)) if isinstance(data, dict) else 0
+
+            # Log synchronously (tool_logger is sync function)
+            log_tool_call(
+                tool_name=tool_name,
+                session_id=session_id,
+                status="success" if data.get('ok', True) else "error",
+                format_requested=format,
+                project_name=project_name,
+                agent_id=agent_id,
+                error_message=data.get('error') if not data.get('ok', True) else None,
+                response_size_bytes=response_size,
+                repo_root=repo_root,
+                progress_log_path=progress_log_path
+            )
+
+            # STEP 1.5: Write to SQL for cross-project analytics
+            try:
+                import server as server_module
+                storage = getattr(server_module, 'storage_backend', None)
+                if storage and hasattr(storage, 'record_tool_call_sync'):
+                    import asyncio
+                    # Fire-and-forget background task with proper GC protection
+                    # Uses module-level background_tasks set to prevent garbage collection
+                    # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+                    server_module.schedule_background_task(asyncio.to_thread(
+                        storage.record_tool_call_sync,
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        duration_ms=None,  # Will add timing in future enhancement
+                        status="success" if data.get('ok', True) else "error",
+                        format_requested=format,
+                        project_name=project_name,
+                        agent_id=agent_id,
+                        error_message=data.get('error') if not data.get('ok', True) else None,
+                        response_size_bytes=response_size,
+                        repo_root=repo_root
+                    ))
             except Exception as e:
-                # Log failure but don't block response
-                print(f"Warning: Failed to log to tool_logs: {e}")
+                # SQL logging is optional, never block tools
+                import sys
+                print(f"Warning: SQL tool logging failed: {e}", file=sys.stderr)
+        except Exception as e:
+            # Tool logging must never block tool execution
+            import sys
+            print(f"Warning: Tool logging failed: {e}", file=sys.stderr)
 
         # STEP 2: Format based on parameter
         if format == self.FORMAT_READABLE:
@@ -2365,3 +3000,224 @@ def create_pagination_info(page: int, page_size: int, total_count: int) -> Pagin
 
 # Default formatter instance
 default_formatter = ResponseFormatter()
+
+
+# ============================================================================
+# SPEC-TOKEN-003: Global Optimization Utilities
+# ============================================================================
+
+
+def format_compact_json(
+    data: dict,
+    abbreviations: Optional[dict] = None
+) -> str:
+    """
+    Format JSON with abbreviated keys for compact mode.
+
+    This function implements Pattern 2 from SPEC-TOKEN-003: Verbose JSON Keys.
+    Reduces JSON output size by 20-40% through key abbreviation.
+
+    Args:
+        data: Data dictionary to format
+        abbreviations: Custom abbreviation mappings (optional, uses global defaults)
+
+    Returns:
+        Compact JSON string with abbreviated keys
+
+    Examples:
+        >>> data = {"projects": [{"name": "test", "status": "planning"}], "total_count": 1}
+        >>> format_compact_json(data)
+        '{"p":[{"n":"test","s":"planning"}],"tot":1}'
+    """
+    # Global abbreviation mappings (SPEC-TOKEN-003)
+    default_abbreviations = {
+        # Common metadata
+        "ok": "ok",  # Already minimal
+        "status": "s",
+        "message": "msg",
+        "error": "err",
+
+        # Project fields
+        "project": "proj",
+        "projects": "p",
+        "name": "n",
+        "root": "r",
+        "progress_log": "log",
+
+        # Pagination
+        "pagination": "pg",
+        "page": "i",
+        "page_size": "sz",
+        "total_count": "tot",
+        "has_next": "nx",
+        "has_prev": "pv",
+
+        # Timestamps
+        "timestamp": "ts",
+        "created_at": "cr",
+        "updated_at": "up",
+        "last_activity": "act",
+
+        # Entries
+        "entries": "e",
+        "count": "c",
+        "results": "r",
+
+        # Metadata
+        "metadata": "meta",
+        "confidence": "conf",
+        "priority": "pri",
+        "category": "cat",
+    }
+
+    # Merge custom abbreviations if provided
+    abbrev_map = default_abbreviations.copy()
+    if abbreviations:
+        abbrev_map.update(abbreviations)
+
+    def abbreviate_dict(obj):
+        """Recursively abbreviate dictionary keys."""
+        if isinstance(obj, dict):
+            return {
+                abbrev_map.get(k, k): abbreviate_dict(v)
+                for k, v in obj.items()
+            }
+        elif isinstance(obj, list):
+            return [abbreviate_dict(item) for item in obj]
+        else:
+            return obj
+
+    abbreviated = abbreviate_dict(data)
+    return json.dumps(abbreviated, separators=(',', ':'))
+
+
+def format_header(
+    title: str,
+    emoji: Optional[str] = None,
+    metadata: Optional[str] = None,
+    verbosity: int = 1,
+    box_drawing: Optional[bool] = None
+) -> str:
+    """
+    Format header based on verbosity level.
+
+    This function implements Pattern 3 from SPEC-TOKEN-003: Box Drawing Overhead.
+    Reduces header token consumption by 15-30 tokens per output.
+
+    Args:
+        title: Header text
+        emoji: Optional emoji prefix
+        metadata: Optional metadata string (count, page info, etc.)
+        verbosity: Output verbosity level
+            - 0 (minimal): "{emoji} {title}"
+            - 1 (standard): "{emoji} {title} ({metadata})"
+            - 2 (verbose): Box drawing with full details
+        box_drawing: Force enable/disable box drawing (overrides verbosity)
+
+    Returns:
+        Formatted header string
+
+    Examples:
+        >>> format_header("Projects", emoji="📋", metadata="3/109, page 1/37", verbosity=0)
+        '📋 Projects'
+
+        >>> format_header("Projects", emoji="📋", metadata="3/109, page 1/37", verbosity=1)
+        '📋 Projects (3/109, page 1/37)'
+
+        >>> format_header("Projects", emoji="📋", metadata="109 total (Page 1 of 37, showing 3)", verbosity=2)
+        '╔══════════════════════════════════════════════════════════╗\\n║ 📋 PROJECTS - 109 total (Page 1 of 37, showing 3)         ║\\n╚══════════════════════════════════════════════════════════╝'
+    """
+    # Determine if box drawing should be used
+    use_box = box_drawing if box_drawing is not None else (verbosity >= 2)
+
+    # If box drawing explicitly requested, use it regardless of verbosity
+    if use_box:
+        # Build header text
+        header_parts = []
+        if emoji:
+            header_parts.append(emoji)
+        header_parts.append(title.upper())
+        if metadata:
+            header_parts.append("-")
+            header_parts.append(metadata)
+
+        header_text = " ".join(header_parts)
+
+        # Create box with padding
+        box_width = max(60, len(header_text) + 4)
+        top_line = "╔" + "═" * (box_width - 2) + "╗"
+        middle_line = f"║ {header_text:<{box_width - 4}} ║"
+        bottom_line = "╚" + "═" * (box_width - 2) + "╝"
+
+        return f"{top_line}\n{middle_line}\n{bottom_line}"
+
+    # Verbosity 0: Minimal format
+    if verbosity == 0:
+        parts = []
+        if emoji:
+            parts.append(emoji)
+        parts.append(title)
+        return " ".join(parts)
+
+    # Verbosity 1: Standard format with metadata
+    if verbosity == 1:
+        parts = []
+        if emoji:
+            parts.append(emoji)
+        parts.append(title)
+        if metadata:
+            parts.append(f"({metadata})")
+        return " ".join(parts)
+
+    # Fallback: Standard format (verbosity 2 without box_drawing, or other edge cases)
+    parts = []
+    if emoji:
+        parts.append(emoji)
+    parts.append(title)
+    if metadata:
+        parts.append(f"({metadata})")
+    return " ".join(parts)
+
+
+def add_tip(
+    tip_text: str,
+    category: str = "general",
+    show_tips: Optional[bool] = None
+) -> str:
+    """
+    Conditionally add tip based on configuration.
+
+    This function implements Pattern 4 from SPEC-TOKEN-003: Unsolicited Tips.
+    Reduces unnecessary tip output by making tips opt-in via configuration.
+
+    Args:
+        tip_text: Tip content to display
+        category: Tip category (general, navigation, filtering, etc.)
+        show_tips: Override config setting (None = use config default)
+
+    Returns:
+        Formatted tip string or empty string if tips disabled
+
+    Examples:
+        >>> add_tip("Add filter='scribe' to narrow results", show_tips=True)
+        '💡 Tip: Add filter='scribe' to narrow results'
+
+        >>> add_tip("Use verbosity=2 for more detail", show_tips=False)
+        ''
+    """
+    # Determine if tips should be shown
+    if show_tips is None:
+        # Try to load from config
+        try:
+            from scribe_mcp.config.repo_config import get_current_repo_config
+            _, config = get_current_repo_config()
+            show_tips = config.get("display", {}).get("show_tips", False)
+        except Exception:
+            # Default to False (tips off by default per SPEC-TOKEN-003)
+            show_tips = False
+
+    if not show_tips:
+        return ""
+
+    # Format and return tip
+    return f"💡 Tip: {tip_text}"

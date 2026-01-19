@@ -1269,6 +1269,619 @@ Add to `config/log_config.json`:
 - `finalize_tool_response()` always logs to tool_logs first
 - JSONL format for efficient append/query
 
-**All phases**: 
+**All phases**:
 - Change default from `format="structured"` to `format="readable"`
 - Ensure tool_logs capture happens before format conversion
+
+---
+
+## 9. Session-Aware Reminder System Architecture
+<!-- ID: reminder_system_architecture -->
+
+### 9.1 Problem Statement
+
+**Current State:**
+The reminder system uses file-based cooldown tracking (`data/reminder_cooldowns.json`) that persists reminder display history across all agent sessions. Cooldown keys are generated as `{project_root}|{agent_id}|{tool_name}|{reminder_key}` without any session component, causing reminders shown in one context window to be suppressed in completely different contexts when the agent's session resets.
+
+**Critical Gaps:**
+1. **No Session Isolation**: Reminders persist globally across all sessions for the same project+agent+tool combination
+2. **Singleton Pattern**: Global `_reminder_engine` instance in `reminders.py` shared across all sessions
+3. **Missing DB Table**: No `reminder_history` table exists for DB-backed cooldown tracking
+4. **No Failure Context**: Tools don't pass operation success/failure status to reminder system
+5. **Session Tracking Unused**: Existing `agent_sessions` and `scribe_sessions` tables not leveraged by reminder engine
+
+**Architectural Goals:**
+- **Session Isolation**: Cooldowns reset when session_id changes or 10-minute idle threshold crossed
+- **DB Integration**: Migrate from file-based to database-backed tracking using new `reminder_history` table
+- **Failure Priority**: Surface reminders primarily on tool failures, lower priority on successes
+- **Backward Compatible**: Existing reminder definitions and selection logic unchanged
+
+### 9.2 Database Schema Design
+
+**New Table: `reminder_history`**
+
+```sql
+CREATE TABLE IF NOT EXISTS reminder_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    reminder_hash TEXT NOT NULL,
+    project_root TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    reminder_key TEXT NOT NULL,
+    shown_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    operation_status TEXT CHECK (operation_status IN ('success', 'failure', 'neutral')) DEFAULT 'neutral',
+    context_metadata TEXT,  -- JSON blob for additional context
+    FOREIGN KEY(session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_history_session_hash
+    ON reminder_history(session_id, reminder_hash);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_history_shown_at
+    ON reminder_history(shown_at);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_history_session_tool
+    ON reminder_history(session_id, tool_name);
+```
+
+**Schema Rationale:**
+- `session_id`: Links to `scribe_sessions.session_id` for automatic cleanup on session delete
+- `reminder_hash`: New format includes session_id: `{session_id}|{project_root}|{agent_id}|{tool_name}|{reminder_key}`
+- Denormalized fields (`project_root`, `agent_id`, `tool_name`, `reminder_key`): Enable querying without hash parsing
+- `operation_status`: Enables failure-triggered reminder priority logic
+- `context_metadata`: JSON storage for future enhancements (e.g., reminder fatigue tracking)
+- `shown_at`: UTC timestamp for TTL cleanup and cooldown calculations
+
+**Index Strategy:**
+- `idx_reminder_history_session_hash`: Primary lookup for "has this reminder been shown in this session?"
+- `idx_reminder_history_shown_at`: TTL cleanup queries (delete entries older than N days)
+- `idx_reminder_history_session_tool`: Analytics queries (reminder frequency per tool per session)
+
+### 9.3 Session Reset Strategy
+
+**Hybrid Approach: Time-Based + Context-Based**
+
+```python
+def should_reset_reminder_cooldowns(current_session_id: str, last_session_id: str,
+                                    session_age_minutes: float, idle_minutes: float) -> bool:
+    """
+    Determine if reminder cooldowns should reset.
+
+    Reset Triggers:
+    1. Session ID changed (explicit context reset)
+    2. Idle time >= 10 minutes (implicit context boundary)
+    3. Session age > 24 hours (long-running session cleanup)
+
+    Args:
+        current_session_id: Active session UUID
+        last_session_id: Previous session UUID (from reminder engine state)
+        session_age_minutes: Time since session_started_at
+        idle_minutes: Time since last_active_at
+
+    Returns:
+        True if cooldowns should reset, False otherwise
+    """
+    # Trigger 1: Explicit session change
+    if current_session_id != last_session_id:
+        return True
+
+    # Trigger 2: Idle boundary crossed (10-minute context window)
+    if idle_minutes >= 10.0:
+        return True
+
+    # Trigger 3: Long-running session cleanup (prevent unbounded growth)
+    if session_age_minutes >= (24 * 60):
+        return True
+
+    return False
+```
+
+**Session Metadata Integration:**
+
+```python
+# In RouterContextManager.get_or_create_session_id()
+async def get_session_metadata(session_id: str) -> Dict[str, Any]:
+    """Retrieve session age and idle time from scribe_sessions table."""
+    session = await storage.get_session_by_id(session_id)
+    now = datetime.now(timezone.utc)
+    started_at = datetime.fromisoformat(session["started_at"])
+    last_active_at = datetime.fromisoformat(session["last_active_at"])
+
+    return {
+        "session_age_minutes": (now - started_at).total_seconds() / 60,
+        "idle_minutes": (now - last_active_at).total_seconds() / 60,
+        "started_at": started_at,
+        "last_active_at": last_active_at
+    }
+```
+
+**Reset Implementation:**
+- When `should_reset_reminder_cooldowns()` returns `True`, reminder engine clears in-memory `ReminderHistory` dict
+- DB rows remain (for analytics), but cooldown checks filter by current `session_id` only
+- Idle time updated via `scribe_sessions.last_active_at` heartbeat (already implemented in execution_context)
+
+### 9.4 Hash Generation Refactoring
+
+**Current Implementation (File-Based):**
+```python
+# utils/reminder_engine.py:282-287
+def _get_reminder_hash(self, reminder_key: str, variables: Dict[str, Any]) -> str:
+    project_root = str(variables.get("project_root") or "")
+    agent_id = str(variables.get("agent_id") or "")
+    tool_name = str(variables.get("tool_name") or "")
+    return f"{project_root}|{agent_id}|{tool_name}|{reminder_key}"
+```
+
+**New Implementation (DB-Backed with Session):**
+```python
+def _get_reminder_hash(self, reminder_key: str, variables: Dict[str, Any],
+                       session_id: Optional[str] = None) -> str:
+    """
+    Generate session-aware reminder hash for cooldown tracking.
+
+    Args:
+        reminder_key: Unique reminder identifier from reminder definitions
+        variables: Context variables (project_root, agent_id, tool_name)
+        session_id: Current session UUID (required for DB mode, optional for migration)
+
+    Returns:
+        Composite hash string for cooldown deduplication
+
+    Hash Format (DB Mode):
+        {session_id}|{project_root}|{agent_id}|{tool_name}|{reminder_key}
+
+    Hash Format (Legacy File Mode - backward compatibility):
+        {project_root}|{agent_id}|{tool_name}|{reminder_key}
+    """
+    project_root = str(variables.get("project_root") or "")
+    agent_id = str(variables.get("agent_id") or "")
+    tool_name = str(variables.get("tool_name") or "")
+
+    # DB mode: Include session_id for session isolation
+    if session_id and self.config.get("use_db_cooldown_tracking", False):
+        return f"{session_id}|{project_root}|{agent_id}|{tool_name}|{reminder_key}"
+
+    # Legacy file mode: Maintain backward compatibility
+    return f"{project_root}|{agent_id}|{tool_name}|{reminder_key}"
+```
+
+**Migration Strategy:**
+1. **Phase 1**: Add `session_id` parameter with feature flag `use_db_cooldown_tracking=False` (file mode default)
+2. **Phase 2**: Implement DB storage methods, enable flag for testing
+3. **Phase 3**: Default to DB mode (`use_db_cooldown_tracking=True`), archive old file
+4. **Phase 4**: Remove file-based code after validation period
+
+### 9.5 Storage Layer Integration
+
+**New Methods in `storage/sqlite.py`:**
+
+```python
+async def upsert_reminder_shown(
+    self,
+    session_id: str,
+    reminder_hash: str,
+    project_root: str,
+    agent_id: str,
+    tool_name: str,
+    reminder_key: str,
+    operation_status: str = "neutral",
+    context_metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Record a reminder display in the current session.
+
+    Args:
+        session_id: Active session UUID
+        reminder_hash: Full hash including session_id
+        project_root, agent_id, tool_name, reminder_key: Denormalized components
+        operation_status: 'success', 'failure', or 'neutral'
+        context_metadata: Optional JSON blob for analytics
+    """
+    async with self.connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO reminder_history
+                (session_id, reminder_hash, project_root, agent_id, tool_name,
+                 reminder_key, shown_at, operation_status, context_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, reminder_hash, project_root, agent_id, tool_name,
+             reminder_key, datetime.now(timezone.utc).isoformat(),
+             operation_status, json.dumps(context_metadata) if context_metadata else None)
+        )
+        await conn.commit()
+
+async def check_reminder_cooldown(
+    self,
+    session_id: str,
+    reminder_hash: str,
+    cooldown_minutes: int
+) -> bool:
+    """
+    Check if reminder is still in cooldown period for this session.
+
+    Args:
+        session_id: Active session UUID
+        reminder_hash: Full hash to check
+        cooldown_minutes: Cooldown duration from reminder config
+
+    Returns:
+        True if reminder should be suppressed (still in cooldown), False if can show
+    """
+    async with self.connection() as conn:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+        cursor = await conn.execute(
+            """
+            SELECT COUNT(*) FROM reminder_history
+            WHERE session_id = ?
+              AND reminder_hash = ?
+              AND shown_at > ?
+            """,
+            (session_id, reminder_hash, cutoff.isoformat())
+        )
+        row = await cursor.fetchone()
+        return row[0] > 0 if row else False
+
+async def cleanup_reminder_history(self, cutoff_hours: int = 168) -> int:
+    """
+    Remove old reminder history entries (TTL cleanup).
+
+    Args:
+        cutoff_hours: Delete entries older than this (default: 7 days)
+
+    Returns:
+        Number of rows deleted
+    """
+    async with self.connection() as conn:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=cutoff_hours)
+        cursor = await conn.execute(
+            "DELETE FROM reminder_history WHERE shown_at < ?",
+            (cutoff.isoformat(),)
+        )
+        await conn.commit()
+        return cursor.rowcount
+```
+
+**Integration with Execution Context:**
+
+```python
+# In shared/execution_context.py
+class ExecutionContext:
+    def __init__(self, storage_backend: Optional[StorageBackend] = None):
+        self._storage_backend = storage_backend
+        self.session_id: Optional[str] = None  # Set via get_or_create_session_id()
+
+    async def record_reminder_shown(
+        self,
+        reminder_hash: str,
+        operation_status: str = "neutral",
+        **context
+    ) -> None:
+        """Convenience method to record reminder display in current session."""
+        if self.session_id and self._storage_backend:
+            await self._storage_backend.upsert_reminder_shown(
+                session_id=self.session_id,
+                reminder_hash=reminder_hash,
+                operation_status=operation_status,
+                **context
+            )
+```
+
+### 9.6 Tool Integration Pattern
+
+**Failure Context Propagation:**
+
+```python
+# Example: tools/append_entry.py
+async def append_entry(message: str, status: str = "info", ...) -> str:
+    """Append log entry with failure-aware reminder generation."""
+    operation_status = "neutral"
+
+    try:
+        # Main tool logic
+        result = await _write_entry_to_log(...)
+        operation_status = "success"
+        return finalize_tool_response(result, format=format)
+
+    except Exception as e:
+        operation_status = "failure"
+        logger.error(f"append_entry failed: {e}")
+        raise
+
+    finally:
+        # Generate reminders with operation context
+        if state and state.project_name:
+            reminders = get_reminders(
+                project=state.project_name,
+                tool_name="append_entry",
+                state=state,
+                operation_status=operation_status  # NEW PARAMETER
+            )
+            if reminders and format == "readable":
+                # Reminders appended to readable output
+                pass
+```
+
+**Modified `get_reminders()` Signature:**
+
+```python
+# In reminders.py
+def get_reminders(
+    project: str,
+    tool_name: str,
+    state: Any,
+    operation_status: str = "neutral"  # NEW
+) -> List[str]:
+    """
+    Generate reminders with operation status awareness.
+
+    Args:
+        project: Project name
+        tool_name: Tool identifier
+        state: Project state object
+        operation_status: 'success', 'failure', or 'neutral'
+
+    Returns:
+        List of reminder strings to display
+
+    Behavior:
+        - Failure reminders prioritized (always shown if applicable)
+        - Success reminders lower priority (respect cooldowns strictly)
+        - Neutral reminders (default behavior, backward compatible)
+    """
+    context = _build_legacy_context(state, tool_name, operation_status)
+    engine = _get_engine()
+
+    # Pass session_id from execution context to engine
+    session_id = getattr(state, "session_id", None)
+
+    return engine.generate_reminders(
+        context=context,
+        session_id=session_id,
+        operation_status=operation_status
+    )
+```
+
+**Priority Logic in ReminderEngine:**
+
+```python
+class ReminderEngine:
+    def generate_reminders(
+        self,
+        context: ReminderContext,
+        session_id: Optional[str] = None,
+        operation_status: str = "neutral"
+    ) -> List[str]:
+        """Generate reminders with failure-triggered priority."""
+
+        # Build candidate list
+        candidates = self._select_candidate_reminders(context)
+
+        # Filter by cooldown (session-aware)
+        available = []
+        for reminder in candidates:
+            hash_key = self._get_reminder_hash(
+                reminder.key,
+                context.variables,
+                session_id=session_id
+            )
+
+            # Failure-triggered reminders bypass cooldown
+            if operation_status == "failure":
+                in_cooldown = False  # Always show on failures
+            else:
+                in_cooldown = await self._check_db_cooldown(
+                    session_id, hash_key, reminder.cooldown_minutes
+                )
+
+            if not in_cooldown:
+                available.append(reminder)
+
+        # Select final set (max 3, prioritize by score)
+        return self._format_final_reminders(available[:3])
+```
+
+### 9.7 Migration Plan
+
+**Stage 1: Schema Migration (Non-Breaking)**
+- Add `reminder_history` table to SQLite schema
+- Add indexes for efficient queries
+- No behavior changes to reminder system
+- **Validation**: `pytest storage/test_sqlite.py::test_reminder_history_schema`
+
+**Stage 2: Storage Methods Implementation**
+- Implement `upsert_reminder_shown()`, `check_reminder_cooldown()`, `cleanup_reminder_history()`
+- Add feature flag `use_db_cooldown_tracking=False` (disabled by default)
+- **Validation**: Unit tests for new storage methods
+
+**Stage 3: Hash Refactoring (Backward Compatible)**
+- Update `_get_reminder_hash()` to accept `session_id` parameter
+- Maintain file-based behavior when `use_db_cooldown_tracking=False`
+- **Validation**: Existing reminder tests pass unchanged
+
+**Stage 4: Session Integration**
+- Pass `session_id` from execution context to reminder engine
+- Implement session reset logic (`should_reset_reminder_cooldowns()`)
+- **Validation**: Session isolation tests (same reminder appears in different sessions)
+
+**Stage 5: Failure Context Propagation**
+- Add `operation_status` parameter to all tool reminder calls
+- Implement failure-triggered priority logic
+- **Validation**: Failure reminders bypass cooldown, success reminders respect cooldown
+
+**Stage 6: DB Mode Activation**
+- Set `use_db_cooldown_tracking=True` as default
+- Archive `data/reminder_cooldowns.json` to `data/reminder_cooldowns.json.archive`
+- Monitor for 48 hours in production
+- **Validation**: No regression in reminder delivery, DB queries <5ms
+
+**Stage 7: Cleanup**
+- Remove file-based cooldown code after 2-week validation period
+- Remove feature flag `use_db_cooldown_tracking`
+- Update documentation to reflect DB-only mode
+
+**Rollback Strategy:**
+- Stage 6 rollback: Set `use_db_cooldown_tracking=False`, restore archived file
+- Stage 7 rollback: Revert commits, redeploy previous version
+
+### 9.8 Performance Considerations
+
+**Query Performance Targets:**
+- Cooldown check: <5ms per reminder (indexed lookup on `session_id` + `reminder_hash`)
+- Reminder insert: <3ms per display (single row insert)
+- TTL cleanup: <100ms for 10k rows (indexed on `shown_at`)
+
+**Optimization Strategies:**
+1. **Batch Inserts**: Record multiple reminder displays in single transaction
+2. **Connection Pooling**: Reuse DB connections across tool calls (already implemented in `sqlite.py`)
+3. **In-Memory Caching**: Session-level cache for "already shown" checks (reduce DB hits)
+4. **Periodic Cleanup**: Run `cleanup_reminder_history()` daily via background task
+
+**Memory Impact:**
+- `reminder_history` table: ~200 bytes/row
+- Expected growth: 50 reminders/session × 10 sessions/day = 500 rows/day = 100KB/day
+- TTL cleanup (7 days): Max ~3500 rows = 700KB (negligible)
+
+### 9.9 Testing Strategy
+
+**Unit Tests:**
+```python
+# tests/test_reminder_db_integration.py
+
+async def test_reminder_session_isolation():
+    """Verify same reminder can appear in different sessions."""
+    session1 = "session-uuid-1"
+    session2 = "session-uuid-2"
+
+    # Show reminder in session 1
+    await storage.upsert_reminder_shown(session1, "hash1", ...)
+
+    # Check cooldown in session 1 (should be active)
+    assert await storage.check_reminder_cooldown(session1, "hash1", 60) == True
+
+    # Check cooldown in session 2 (should be inactive - different session)
+    assert await storage.check_reminder_cooldown(session2, "hash1", 60) == False
+
+async def test_session_reset_on_idle():
+    """Verify cooldowns reset after 10-minute idle period."""
+    session_id = "session-uuid-1"
+
+    # Simulate reminder shown
+    await storage.upsert_reminder_shown(session_id, "hash1", ...)
+
+    # Immediately check (should be in cooldown)
+    assert await storage.check_reminder_cooldown(session_id, "hash1", 60) == True
+
+    # Simulate 10-minute idle by backdating shown_at
+    # (Test helper to modify shown_at timestamp)
+    await _backdate_reminder_shown(session_id, "hash1", minutes=11)
+
+    # Check cooldown after idle period (should be expired)
+    assert await storage.check_reminder_cooldown(session_id, "hash1", 10) == False
+
+async def test_failure_priority_bypasses_cooldown():
+    """Verify failure-triggered reminders shown despite cooldown."""
+    engine = ReminderEngine()
+    context = ReminderContext(...)
+    session_id = "session-uuid-1"
+
+    # Show reminder once
+    reminders = engine.generate_reminders(context, session_id, operation_status="neutral")
+    assert len(reminders) > 0
+
+    # Immediately try again with success status (should be suppressed)
+    reminders = engine.generate_reminders(context, session_id, operation_status="success")
+    assert len(reminders) == 0
+
+    # Try again with failure status (should bypass cooldown)
+    reminders = engine.generate_reminders(context, session_id, operation_status="failure")
+    assert len(reminders) > 0
+```
+
+**Integration Tests:**
+```python
+# tests/integration/test_reminder_tool_integration.py
+
+async def test_append_entry_failure_shows_reminders():
+    """Verify append_entry failure triggers appropriate reminders."""
+    # Simulate append_entry failure (invalid project)
+    with pytest.raises(Exception):
+        await append_entry(message="test", project="nonexistent")
+
+    # Check that reminder was shown in output
+    # (Test helper to capture tool output)
+    output = get_last_tool_output()
+    assert "Remember to set_project" in output  # Example reminder
+```
+
+**Performance Tests:**
+```python
+async def test_cooldown_check_performance():
+    """Verify cooldown checks meet <5ms SLA."""
+    session_id = "session-uuid-1"
+
+    # Insert 100 reminders
+    for i in range(100):
+        await storage.upsert_reminder_shown(session_id, f"hash{i}", ...)
+
+    # Measure cooldown check time
+    start = time.perf_counter()
+    for i in range(100):
+        await storage.check_reminder_cooldown(session_id, f"hash{i}", 60)
+    elapsed = time.perf_counter() - start
+
+    avg_time_ms = (elapsed / 100) * 1000
+    assert avg_time_ms < 5.0, f"Avg cooldown check: {avg_time_ms:.2f}ms (SLA: <5ms)"
+```
+
+### 9.10 Risk Assessment
+
+**Technical Risks:**
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| DB query latency exceeds 5ms | Medium | Comprehensive indexing, connection pooling, in-memory caching layer |
+| Session ID not available in legacy code paths | High | Feature flag for gradual rollout, fallback to file mode if session_id=None |
+| Reminder history table grows unbounded | Low | Automated TTL cleanup (7 days), ON DELETE CASCADE for session cleanup |
+| Migration breaks existing reminder tests | Medium | Backward-compatible hash generation, feature flag allows A/B testing |
+| Failure priority logic causes reminder spam | Medium | Cooldown still enforced within session, max 3 reminders per tool call |
+
+**Operational Risks:**
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| File-based cache corruption during migration | Low | Archive file before migration, feature flag rollback available |
+| Session table not populated in all environments | Medium | Execution context auto-creates sessions, graceful degradation to file mode |
+| 10-minute idle threshold too aggressive | Low | Configurable via `reminder_config.json`, can tune post-deployment |
+
+### 9.11 Success Criteria
+
+**Functional Requirements:**
+- ✅ Reminders reset when `session_id` changes
+- ✅ Reminders reset after 10-minute idle period
+- ✅ Same reminder can appear in different sessions for same project+agent+tool
+- ✅ Failure-triggered reminders bypass cooldown within session
+- ✅ Success-triggered reminders respect standard cooldown
+
+**Performance Requirements:**
+- ✅ Cooldown check queries: <5ms (p95)
+- ✅ Reminder insert operations: <3ms (p95)
+- ✅ TTL cleanup: <100ms for 10k rows
+- ✅ No memory leaks (stable after 24-hour run)
+
+**Testing Requirements:**
+- ✅ All existing reminder tests pass unchanged
+- ✅ Session isolation tests verify cross-session behavior
+- ✅ Failure priority tests confirm cooldown bypass
+- ✅ Performance tests validate query SLAs
+- ✅ Integration tests cover all tool integration points
+
+**Documentation Requirements:**
+- ✅ Architecture guide updated with schema, session logic, migration plan (this document)
+- ✅ Phase plan includes sequential implementation stages
+- ✅ Checklist contains all acceptance criteria and validation steps
+
+---
+
+**End of Architecture Guide**

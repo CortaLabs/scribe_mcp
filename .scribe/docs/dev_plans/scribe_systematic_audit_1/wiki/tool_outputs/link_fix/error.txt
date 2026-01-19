@@ -1,0 +1,4 @@
+ERROR: Tool 'link_fix' not allowed in project mode
+
+This tool appears to require Sentinel Mode (stateless/no active project).
+Cannot test in sandbox project context.

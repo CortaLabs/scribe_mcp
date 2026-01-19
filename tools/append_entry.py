@@ -49,6 +49,14 @@ from scribe_mcp.utils.error_handler import ErrorHandler, ExceptionHealer
 from scribe_mcp.security.sandbox import PermissionError as SandboxPermissionError
 from scribe_mcp.utils.response import default_formatter
 
+# Bridge hooks integration (graceful fallback if bridges module unavailable)
+try:
+    from scribe_mcp.bridges.hooks import get_hook_manager
+    BRIDGE_HOOKS_AVAILABLE = True
+except ImportError:
+    BRIDGE_HOOKS_AVAILABLE = False
+    get_hook_manager = None
+
 # Import validation helpers for backwards-compatible test globals.
 from . import manage_docs_validation as _manage_docs_validation  # noqa: F401
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
@@ -717,6 +725,7 @@ async def _process_single_entry(
                         meta=meta_payload,
                         raw_line=line or "",
                         sha256=sha_value,
+                        log_type=entry_log_type,
                     )
             except Exception:
                 # Database mirror failures should never block logging.
@@ -2145,6 +2154,24 @@ async def _append_bulk_entries(
         # Process each item with enhanced error handling (sequential)
         processing_info = {"parallel_processing": False, "items_processed": len(items)}
 
+    # Execute pre_append hooks on all items before processing
+    if BRIDGE_HOOKS_AVAILABLE and get_hook_manager:
+        try:
+            hook_manager = get_hook_manager()
+            # Call pre_append hook for each item to allow bridges to modify entries
+            for i, item in enumerate(items):
+                try:
+                    items[i] = await hook_manager.execute_pre_append(item)
+                except Exception as hook_error:
+                    # Critical hooks will raise RuntimeError, others are logged
+                    print(f"⚠️  Pre-append hook failed for item {i}: {hook_error}")
+                    # If it's a RuntimeError (critical hook failure), propagate it
+                    if isinstance(hook_error, RuntimeError):
+                        raise
+        except Exception as hooks_error:
+            # If hooks are completely broken, log but continue
+            print(f"⚠️  Bridge hooks unavailable or failed: {hooks_error}")
+
     for i, item in enumerate(items):
         try:
             # Validate required fields
@@ -2266,6 +2293,7 @@ async def _append_bulk_entries(
                     "meta": meta_payload,
                     "raw_line": line,
                     "sha256": sha_value,
+                    "log_type": entry_log_type,
                     "index": i
                 })
 
@@ -2292,7 +2320,24 @@ async def _append_bulk_entries(
                         meta=db_entry["meta"],
                         raw_line=db_entry["raw_line"],
                         sha256=db_entry["sha256"],
+                        log_type=db_entry.get("log_type", "progress"),
                     )
+
+            # Execute post_append hooks after successful database write
+            if BRIDGE_HOOKS_AVAILABLE and get_hook_manager:
+                try:
+                    hook_manager = get_hook_manager()
+                    # Notify bridges of successful entries (fire-and-forget)
+                    for db_entry in batch_db_entries:
+                        try:
+                            await hook_manager.execute_post_append(db_entry)
+                        except Exception as hook_error:
+                            # Post hooks are non-blocking, just log errors
+                            print(f"⚠️  Post-append hook failed: {hook_error}")
+                except Exception as hooks_error:
+                    # If hooks are completely broken, log but continue
+                    print(f"⚠️  Bridge post hooks unavailable or failed: {hooks_error}")
+
         except Exception as exc:
             # Mark all items in this batch as failed
             for db_entry in batch_db_entries:

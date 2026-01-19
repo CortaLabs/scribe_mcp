@@ -1,0 +1,8 @@
+delete_project Tool Notes:
+- Does NOT support format parameter (returns structured JSON only)
+- No readable or compact modes
+- 515 characters (structured JSON)
+- Requires confirm=true parameter to execute
+- Supports mode="archive" (default) or mode="permanent"
+- Returns detailed results: archive location, deleted files, warnings
+- Warning present: "Cannot check for active agent sessions in current implementation"

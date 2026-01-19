@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp.utils.time import format_utc, utcnow
+from scribe_mcp.utils.slug import normalize_project_input
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -95,6 +96,9 @@ def _validate_search_parameters(
     with bulletproof parameter validation and healing.
     """
     try:
+        # Normalize project name input to handle any format (hyphens, underscores, mixed case)
+        normalized_project = normalize_project_input(project) if project else project
+
         # Apply Phase 1 BulletproofParameterCorrector for initial parameter healing
         healed_params = {}
         healing_applied = False
@@ -178,9 +182,9 @@ def _validate_search_parameters(
             healing_applied = True
 
         # Heal string parameters
-        if project:
-            healed_project = _PARAMETER_CORRECTOR.correct_message_parameter(project)
-            if healed_project != project:
+        if normalized_project:
+            healed_project = _PARAMETER_CORRECTOR.correct_message_parameter(normalized_project)
+            if healed_project != normalized_project:
                 healed_params["project"] = healed_project
                 healing_applied = True
 
@@ -209,7 +213,7 @@ def _validate_search_parameters(
                 healing_applied = True
 
         # Update parameters with healed values
-        final_project = healed_params.get("project", project)
+        final_project = healed_params.get("project", normalized_project)
         final_start = healed_params.get("start", start)
         final_end = healed_params.get("end", end)
         final_message = healed_params.get("message", message)
@@ -682,14 +686,17 @@ async def _execute_search_with_fallbacks(
                             continue
 
                     # Apply status filter (mapped to emojis)
+                    # Entry must match AT LEAST ONE of the requested statuses
                     if search_params.get("status"):
                         entry_emoji = parsed.get("emoji", "")
+                        matches_any_status = False
                         for status_filter in search_params["status"]:
                             status_emojis = STATUS_EMOJI.get(status_filter.lower(), [])
-                            if entry_emoji not in status_emojis:
+                            if entry_emoji in status_emojis:
+                                matches_any_status = True
                                 break
-                        else:
-                            continue  # No break occurred, emoji matches all status filters
+                        if not matches_any_status:
+                            continue  # Entry doesn't match any requested status
 
                     # Apply agent filter
                     if search_params.get("agents"):
@@ -795,11 +802,11 @@ async def _execute_search_with_fallbacks(
 
                 paginated_entries = filtered_entries[start_idx:end_idx]
 
-                # Create pagination info
+                # Create pagination info (use total_count for formatter compatibility)
                 pagination_info = {
                     "page": page,
                     "page_size": page_size,
-                    "total_entries": total_entries,
+                    "total_count": total_entries,  # Key must be total_count for formatter
                     "has_next": end_idx < total_entries,
                     "has_prev": page > 1
                 }
@@ -822,7 +829,7 @@ async def _execute_search_with_fallbacks(
                     pagination_info = {
                         "page": healed_page,
                         "page_size": healed_page_size,
-                        "total_entries": len(filtered_entries),
+                        "total_count": len(filtered_entries),
                         "has_next": end_idx < len(filtered_entries),
                         "has_prev": healed_page > 1
                     }
@@ -833,7 +840,7 @@ async def _execute_search_with_fallbacks(
                     pagination_info = {
                         "page": 1,
                         "page_size": 50,
-                        "total_entries": len(filtered_entries),
+                        "total_count": len(filtered_entries),
                         "has_next": len(filtered_entries) > 50,
                         "has_prev": False
                     }
@@ -970,7 +977,7 @@ async def _execute_search_with_fallbacks(
                 "pagination": {
                     "page": 1,
                     "page_size": 1,
-                    "total_entries": 1,
+                    "total_count": 1,
                     "has_next": False,
                     "has_prev": False
                 },
@@ -1123,6 +1130,7 @@ async def query_entries(
                 tool_name="query_entries",
                 server_module=server_module,
                 agent_id=None,
+                explicit_project=final_config.project,
                 require_project=False,  # query_entries can work without active project
                 state_snapshot=state_snapshot,
             )
@@ -1205,6 +1213,8 @@ async def query_entries(
         if emoji:
             search_result["search_emoji"] = emoji
 
+        if context.reminders:
+            search_result["reminders"] = list(context.reminders)
         # Route through formatter for readable/structured/compact output
         return await default_formatter.finalize_tool_response(
             data=search_result,
@@ -1248,7 +1258,7 @@ async def query_entries(
                 "pagination": {
                     "page": 1,
                     "page_size": 1,
-                    "total_entries": 1,
+                    "total_count": 1,
                     "has_next": False,
                     "has_prev": False
                 },

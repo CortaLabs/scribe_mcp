@@ -1,0 +1,55 @@
+# Hello World Example Bridge Manifest
+#
+# This is a minimal example bridge demonstrating the Scribe bridge API.
+# To enable:
+#   1. Copy this file to hello_world.yaml (remove .example)
+#   2. Set enabled: true
+#   3. Restart the Scribe MCP server
+#
+# NOTE: This bridge is DISABLED by default for safety.
+
+bridge_id: hello_world
+name: Hello World Example Bridge
+version: 1.0.0
+description: Example bridge demonstrating the Scribe bridge API
+author: Scribe Team
+
+# DISABLED by default - rename to hello_world.yaml and set enabled: true to activate
+enabled: false
+
+# Bridge plugin module path (relative to bridges/ directory)
+plugin_module: examples.hello_world_plugin
+
+permissions:
+  - read:all_projects
+  - write:own_projects
+
+project_config:
+  can_create_projects: true
+  project_prefix: "hello_"
+  auto_tag:
+    - example
+    - hello-world
+  default_metadata:
+    source: hello_world_bridge
+
+hooks:
+  pre_append:
+    callback_type: sync
+    timeout_ms: 1000
+    critical: false
+  post_append:
+    callback_type: async
+    timeout_ms: 1000
+    critical: false
+
+log_config:
+  hello_events:
+    log_type: hello_events
+    path_template: "{docs_dir}/HELLO_LOG.md"
+    required_metadata: []
+
+health:
+  check_interval_seconds: 300
+  failure_threshold: 3
+  recovery_threshold: 2

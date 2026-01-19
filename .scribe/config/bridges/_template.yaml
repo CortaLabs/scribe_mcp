@@ -1,0 +1,57 @@
+# Bridge Manifest Template
+# Copy this file and rename to your_bridge.yaml
+
+bridge_id: your_bridge_id
+name: Your Bridge Name
+version: 1.0.0
+description: Description of what your bridge does
+author: Your Name
+
+# Custom log types (optional)
+# Define additional log types beyond the default 'progress' log
+log_config:
+  custom_audit:
+    log_type: custom_audit
+    path_template: "{docs_dir}/CUSTOM_AUDIT.md"
+    format: markdown  # markdown or jsonl
+    metadata_requirements:
+      - agent_id
+    description: Custom audit log for tracking specific events
+
+# Hooks to implement (optional)
+# Define which lifecycle hooks your bridge will use
+hooks:
+  pre_append:
+    callback_type: async  # sync, async, or webhook
+    timeout_ms: 5000
+    critical: false
+  post_append:
+    callback_type: async
+    timeout_ms: 5000
+    critical: false
+
+# Project management (optional)
+# Control how your bridge interacts with projects
+project_config:
+  can_create_projects: false
+  project_prefix: null
+  auto_tag: []
+  default_metadata: {}
+
+# Validation (optional)
+# Control validation strictness for data from your bridge
+validation:
+  mode: lenient  # strict, lenient, or custom
+  schema: null
+  custom_validator: null
+
+# Security
+# Use environment variables for sensitive data
+api_key: ${YOUR_BRIDGE_API_KEY}
+permissions:
+  - read:all_projects
+  - write:own_projects
+
+# Compatibility
+min_scribe_version: "2.1.0"
+max_scribe_version: null

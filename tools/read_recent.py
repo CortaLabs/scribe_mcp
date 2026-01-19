@@ -10,6 +10,7 @@ from scribe_mcp.server import app
 from scribe_mcp.tools.constants import STATUS_EMOJI
 from scribe_mcp.utils.files import read_tail
 from scribe_mcp.utils.response import create_pagination_info, ResponseFormatter
+from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.estimator import ParameterTypeEstimator
 from scribe_mcp.utils.config_manager import TokenBudgetManager
@@ -247,6 +248,9 @@ async def read_recent(
             }
         return base_response
 
+    # Normalize project parameter before context resolution
+    project = normalize_project_input(project)
+
     try:
         context = await _READ_RECENT_HELPER.prepare_context(
             tool_name="read_recent",
@@ -345,6 +349,8 @@ async def read_recent(
                         "messages": healing_messages,
                         "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
                     }
+                if context.reminders:
+                    response["reminders"] = list(context.reminders)
                 return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
                     response, format, "read_recent"
                 )
@@ -387,6 +393,8 @@ async def read_recent(
                     page_size=page_size
                 )
 
+            if context.reminders:
+                response["reminders"] = list(context.reminders)
             return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
                 response, format, "read_recent"
             )
@@ -443,6 +451,8 @@ async def read_recent(
                 "messages": healing_messages,
                 "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
             }
+        if context.reminders:
+            response["reminders"] = list(context.reminders)
         return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
             response, format, "read_recent"
         )
@@ -485,6 +495,8 @@ async def read_recent(
             page_size=page_size
         )
 
+    if context.reminders:
+        response["reminders"] = list(context.reminders)
     return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
         response, format, "read_recent"
     )

@@ -1,0 +1,613 @@
+# SPEC-FORMAT-001: Format Parameter Standardization
+
+metadata:
+  spec_id: SPEC-FORMAT-001
+  title: "Format Parameter Standardization Across All MCP Tools"
+  created: 2026-01-05
+  author: ResearchAgent-Phase5-FormatValidator
+  status: PROPOSED
+  priority: CRITICAL
+  estimated_effort: "8-12 hours"
+  dependencies:
+    - BUG-FORMAT-003  # Compact mode not implemented
+    - BUG-FORMAT-004  # rotate_log no readable mode
+  related_specs:
+    - SPEC-FORMAT-002  # Readable mode enhancement
+
+---
+
+# Problem Statement
+
+## Current State
+
+**Systemic Bug**: Compact mode returns **byte-for-byte identical JSON** to structured mode across 100% of tested tools (8/8 tools, projected 16/16).
+
+**Impact**:
+- Zero token savings from compact mode (expected 20-30% reduction)
+- Inconsistent format parameter support across tools
+- No standardized format dispatch logic
+- 2 tools intentionally lack format support (by design)
+- 1 tool missing readable mode entirely (rotate_log)
+
+## Evidence
+
+**Testing Coverage**: 11/16 tools tested (68.75%)
+
+**Compact Mode Failure Rate**: 100% (8/8 tested tools)
+
+**Tools Affected**:
+1. list_projects - C=S (666 chars identical)
+2. get_project - C=S (651 chars identical)
+3. read_recent - C=S (10,500 chars identical)
+4. query_entries - C=S (4,500 chars identical)
+5. rotate_log - C=S (429 chars identical) + NO readable mode
+6. set_project - C=S (1,100 chars identical)
+7. read_file - C=S (440 chars identical)
+8. append_entry - No JSON modes (may be intentional)
+
+**Success Cases**:
+- Readable mode: 52% avg token reduction (highly effective)
+- Structured mode: Baseline JSON output (works correctly)
+
+---
+
+# Goals
+
+## Primary Objectives
+
+1. **Implement compact mode for ALL tools** that support format parameter
+2. **Standardize format dispatch logic** across tool suite
+3. **Document format parameter behavior** for each tool
+4. **Add format parameter tests** to prevent regression
+5. **Fix rotate_log readable mode** (separate but related)
+
+## Success Criteria
+
+- ✅ Compact mode reduces tokens by 20-30% vs structured
+- ✅ All 16 tools have consistent format parameter behavior
+- ✅ Tests verify format parameter compliance
+- ✅ Documentation specifies which tools support which modes
+- ✅ Zero tools return identical output for different format values
+
+---
+
+# Technical Design
+
+## Architecture
+
+### Base Class Approach
+
+**Create `BaseFormattedTool` base class** with standard format dispatch:
+
+```python
+class BaseFormattedTool:
+    """Base class for tools with format parameter support."""
+
+    def format_response(
+        self,
+        data: Any,
+        format: str = "readable",
+        **kwargs
+    ) -> Union[str, Dict]:
+        """
+        Dispatch response formatting based on format parameter.
+
+        Args:
+            data: Raw response data
+            format: Output format (readable/structured/compact)
+            **kwargs: Additional formatting options
+
+        Returns:
+            Formatted response (str for readable, dict for JSON modes)
+        """
+        if format == "readable":
+            return self._format_readable(data, **kwargs)
+        elif format == "structured":
+            return self._format_structured(data, **kwargs)
+        elif format == "compact":
+            return self._format_compact(data, **kwargs)
+        else:
+            raise ValueError(f"Unknown format: {format}")
+
+    def _format_readable(self, data: Any, **kwargs) -> str:
+        """
+        Format as human-readable text with boxes/colors.
+
+        Subclasses SHOULD override this for custom readable output.
+        """
+        raise NotImplementedError("Tool must implement _format_readable()")
+
+    def _format_structured(self, data: Any, **kwargs) -> Dict:
+        """
+        Format as full JSON with all fields.
+
+        Default implementation returns data as-is.
+        Subclasses MAY override for custom structured output.
+        """
+        return data
+
+    def _format_compact(self, data: Any, **kwargs) -> Dict:
+        """
+        Format as compact JSON with short field names.
+
+        Default implementation uses ResponseFormatter.format_entry()
+        for compact field mapping.
+
+        Subclasses MAY override for custom compact logic.
+        """
+        from scribe_mcp.utils.response import ResponseFormatter
+        formatter = ResponseFormatter()
+
+        if isinstance(data, dict):
+            return formatter.format_entry(data, compact=True, **kwargs)
+        elif isinstance(data, list):
+            return {
+                "ok": True,
+                "d": [formatter.format_entry(item, compact=True, **kwargs)
+                      for item in data],
+                "c": len(data)
+            }
+        else:
+            return data
+```
+
+**Impact**: All tools inherit standardized format dispatch
+
+---
+
+### Compact Mode Field Mapping
+
+**Expand ResponseFormatter.COMPACT_FIELD_MAP**:
+
+```python
+COMPACT_FIELD_MAP = {
+    # Existing mappings
+    "id": "i",
+    "message": "m",
+    "timestamp": "t",
+    "ts": "t",
+    "emoji": "e",
+    "agent": "a",
+    "meta": "mt",
+    "status": "s",
+    "raw_line": "r",
+
+    # Extended mappings for project tools
+    "name": "n",
+    "slug": "sl",
+    "root": "rt",
+    "created_at": "c",
+    "last_entry_at": "le",
+    "last_access_at": "la",
+    "lifecycle_status": "ls",
+    "total_entries": "te",
+    "doc_status": "ds",
+    "activity_score": "as",
+
+    # Extended mappings for query tools
+    "entries": "e",
+    "count": "c",
+    "pagination": "p",
+    "page": "pg",
+    "page_size": "ps",
+    "total": "tot",
+    "has_more": "hm",
+
+    # Extended mappings for file tools
+    "path": "pt",
+    "size": "sz",
+    "encoding": "enc",
+    "sha256": "sha",
+    "chunks": "ch",
+    "lines": "ln",
+
+    # Common response fields
+    "ok": "ok",  # Keep as-is (already short)
+    "error": "err",
+    "warnings": "wrn",
+    "reminders": "rem",
+}
+```
+
+**Additional Compact Optimizations**:
+1. Truncate long strings (>100 chars → 97 + "...")
+2. Shorten timestamps (ISO 8601 → YYYY-MM-DD)
+3. Omit null/empty fields
+4. Compress nested structures
+
+---
+
+### Per-Tool Implementation
+
+**Pattern for Tool Migration**:
+
+```python
+# BEFORE (broken compact mode)
+async def list_projects(format: str = "structured", **kwargs):
+    projects = await storage.get_projects()
+
+    if format == "readable":
+        return _format_readable_projects(projects)
+    else:
+        # BUG: Returns same JSON for both structured and compact
+        return {"ok": True, "projects": projects}
+
+# AFTER (fixed compact mode)
+class ListProjectsTool(BaseFormattedTool):
+    async def execute(self, format: str = "readable", **kwargs):
+        projects = await storage.get_projects()
+        return self.format_response(projects, format, **kwargs)
+
+    def _format_readable(self, projects, **kwargs):
+        # Existing readable logic
+        return _format_readable_projects(projects)
+
+    def _format_structured(self, projects, **kwargs):
+        return {"ok": True, "projects": projects}
+
+    # Compact mode now works via base class default implementation
+```
+
+---
+
+## Tool-by-Tool Specifications
+
+### Category 1: Full Format Support (13 tools)
+
+**Tools**: append_entry, list_projects, get_project, read_recent, query_entries, set_project, read_file, manage_docs, generate_doc_templates, append_event, open_bug, open_security, link_fix
+
+**Format Modes**:
+- ✅ `readable` - Human-readable with boxes/colors
+- ✅ `structured` - Full JSON
+- ✅ `compact` - Abbreviated JSON (NEW - must implement)
+
+**Default Format**: `readable` (user-facing tools)
+
+---
+
+### Category 2: JSON-Only Tools (2 tools)
+
+**Tools**: scribe_doctor, delete_project
+
+**Format Modes**:
+- ❌ `readable` - NOT SUPPORTED (by design)
+- ✅ `structured` - Full JSON (only mode)
+- ❌ `compact` - NOT SUPPORTED (single mode tools)
+
+**Behavior**: Ignore format parameter, always return structured JSON
+
+**Rationale**: Operational/diagnostic tools where formatting adds no value
+
+**Implementation**:
+```python
+async def scribe_doctor(**kwargs):
+    # Ignore format parameter
+    diagnostics = _run_diagnostics()
+    return {"ok": True, "diagnostics": diagnostics}
+```
+
+---
+
+### Category 3: Special Case (rotate_log)
+
+**Current**: Returns JSON for ALL format modes (BUG-FORMAT-004)
+
+**Target**:
+- ✅ `readable` - NEW - Box-formatted summary
+- ✅ `structured` - Full JSON (existing)
+- ✅ `compact` - Abbreviated JSON (NEW)
+
+**Readable Mode Example**:
+```
+╔══════════════════════════════════════════════════════════╗
+║ LOG ROTATION COMPLETE                                    ║
+╟──────────────────────────────────────────────────────────╢
+║ Project: my_project                                      ║
+║ Original: PROGRESS_LOG.md (15,234 bytes)                 ║
+║ Archived: PROGRESS_LOG.md.20260105_120000.md             ║
+║ New log: PROGRESS_LOG.md (empty)                         ║
+║ Status: Success                                          ║
+╚══════════════════════════════════════════════════════════╝
+```
+
+**Estimated Reduction**: 40-50% vs structured mode
+
+---
+
+## Implementation Plan
+
+### Phase 1: Base Infrastructure (4 hours)
+
+**Tasks**:
+1. Create `BaseFormattedTool` base class
+2. Extend `ResponseFormatter.COMPACT_FIELD_MAP`
+3. Implement default `_format_compact()` logic
+4. Add format parameter tests
+
+**Files Modified**:
+- `utils/base_tool.py` (new file)
+- `utils/response.py` (extend compact mappings)
+- `tests/test_format_parameters.py` (new file)
+
+---
+
+### Phase 2: High-Frequency Tools (3 hours)
+
+**Priority Tools** (called frequently):
+1. list_projects
+2. get_project
+3. set_project
+4. read_recent
+
+**Tasks**:
+- Migrate to `BaseFormattedTool`
+- Verify compact mode works
+- Test token reduction (20-30% expected)
+
+**Files Modified**:
+- `tools/list_projects.py`
+- `tools/get_project.py`
+- `tools/set_project.py`
+- `tools/read_recent.py`
+
+---
+
+### Phase 3: Remaining Tools (4 hours)
+
+**Standard Tools**:
+- append_entry
+- query_entries
+- read_file
+- manage_docs
+- generate_doc_templates
+- append_event
+
+**Sentinel Tools** (test in Sentinel Mode):
+- open_bug
+- open_security
+- link_fix
+
+**Special Case**:
+- rotate_log (add readable mode)
+
+**Files Modified**:
+- 10 tool files
+- 1 special case (rotate_log)
+
+---
+
+### Phase 4: Testing & Documentation (1 hour)
+
+**Tasks**:
+1. Run format parameter compliance tests
+2. Measure actual token reductions with tiktoken
+3. Update tool documentation
+4. Update CLAUDE.md with format parameter guidance
+
+**Files Modified**:
+- `tests/test_format_parameters.py`
+- `docs/Scribe_Usage.md`
+- `CLAUDE.md`
+
+---
+
+## Testing Strategy
+
+### Test Coverage
+
+**Test Cases** (per tool):
+1. `format="readable"` → Returns string with boxes/colors
+2. `format="structured"` → Returns full JSON dict
+3. `format="compact"` → Returns abbreviated JSON dict
+4. Compact mode NOT identical to structured (byte-level comparison)
+5. Compact mode 20-30% smaller than structured
+6. Invalid format value → Raises ValueError
+
+**Test Implementation**:
+```python
+import pytest
+from scribe_mcp.tools.list_projects import list_projects
+
+async def test_list_projects_format_modes():
+    # Test readable mode
+    result = await list_projects(format="readable")
+    assert isinstance(result, str)
+    assert "╔" in result  # Box drawing present
+
+    # Test structured mode
+    result = await list_projects(format="structured")
+    assert isinstance(result, dict)
+    assert "projects" in result
+    structured_size = len(json.dumps(result))
+
+    # Test compact mode
+    result = await list_projects(format="compact")
+    assert isinstance(result, dict)
+    compact_size = len(json.dumps(result))
+
+    # Verify compact is NOT identical to structured
+    assert compact_size < structured_size
+
+    # Verify 20-30% reduction
+    reduction = (structured_size - compact_size) / structured_size
+    assert 0.20 <= reduction <= 0.35
+
+    # Test invalid format
+    with pytest.raises(ValueError):
+        await list_projects(format="invalid")
+```
+
+---
+
+### Acceptance Criteria
+
+**Must Pass**:
+- ✅ All 16 tools pass format parameter compliance tests
+- ✅ Compact mode achieves 20-30% token reduction vs structured
+- ✅ No tool returns identical output for different format modes
+- ✅ Readable mode maintains 50%+ reduction vs structured (existing)
+- ✅ Tests prevent regression (CI integration)
+
+**Quality Gates**:
+- Zero format-related bugs in test suite
+- 100% tool coverage for format parameter behavior
+- Documentation updated with format mode specifications
+
+---
+
+## Migration Risks
+
+### Risk 1: Breaking Changes
+
+**Concern**: Existing tool behavior changes
+
+**Mitigation**:
+- Maintain backward compatibility (default formats unchanged)
+- Add deprecation warnings if format behavior shifts
+- Version bump to indicate API change
+
+---
+
+### Risk 2: Performance Impact
+
+**Concern**: Format dispatch adds latency
+
+**Mitigation**:
+- Base class dispatch is minimal (simple if/elif)
+- Compact formatting is faster than readable (less string manipulation)
+- Test performance with high-frequency tools
+
+---
+
+### Risk 3: Tool-Specific Edge Cases
+
+**Concern**: Some tools have unique output structures
+
+**Mitigation**:
+- Allow tools to override `_format_compact()` for custom logic
+- Document edge cases in tool specifications
+- Test each tool individually
+
+---
+
+## Success Metrics
+
+### Token Reduction Targets
+
+| Format Mode | Target Reduction vs Structured | Current Actual |
+|-------------|-------------------------------|----------------|
+| Readable    | 40-60%                        | 52% (SUCCESS)  |
+| Compact     | 20-30%                        | 0% (BROKEN)    |
+
+**Goal**: Achieve 20-30% compact reduction across all tools
+
+---
+
+### Coverage Targets
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Tools with full format support | 13/13 (100%) | 7/13 (54%) |
+| Tools passing compliance tests | 16/16 (100%) | 0/16 (0%)  |
+| Compact mode token reduction   | 20-30%       | 0%         |
+
+---
+
+## Rollout Plan
+
+### Stage 1: Internal Testing (1 week)
+
+- Implement base infrastructure
+- Migrate 4 high-frequency tools
+- Test in development environment
+- Measure token reductions
+
+---
+
+### Stage 2: Beta Deployment (1 week)
+
+- Migrate remaining 9 standard tools
+- Test in staging environment
+- Collect user feedback
+- Fix edge cases
+
+---
+
+### Stage 3: Production Release (1 day)
+
+- Deploy to production
+- Monitor error rates
+- Update documentation
+- Announce format parameter availability
+
+---
+
+## Dependencies
+
+### Required Before Implementation
+
+1. **BUG-FORMAT-003** investigation complete (Team B)
+2. **BUG-FORMAT-004** investigation complete (Team B)
+3. Token metrics baseline established (Team C)
+4. Format parameter audit complete (Team B)
+
+### Blocks These Specs
+
+- SPEC-FORMAT-002: Readable mode enhancement (depends on base class)
+- SPEC-TOKEN-001: List projects optimization (depends on compact mode working)
+
+---
+
+## Future Enhancements
+
+### Not In Scope (v1)
+
+1. Per-tool format defaults configuration
+2. Custom compact field mappings per tool
+3. Format mode aliases (e.g., "brief" → "compact")
+4. Streaming/chunked format output
+
+### Potential v2 Features
+
+1. **Format Profiles**: Named presets (minimal/standard/full)
+2. **Format Negotiation**: Auto-select format based on token budget
+3. **Format Composition**: Combine modes (e.g., "readable+compact")
+4. **Dynamic Formatting**: Adjust verbosity based on data size
+
+---
+
+## Open Questions
+
+1. **Should append_entry support JSON modes?**
+   - Current: Readable only
+   - Option A: Add structured/compact for programmatic use
+   - Option B: Keep as-is (logging is human-first)
+
+2. **Default format for new tools?**
+   - Recommendation: Readable (human-friendly)
+   - Alternative: Let tools choose based on use case
+
+3. **Compact mode verbosity level?**
+   - Current spec: 20-30% reduction (moderate compression)
+   - Alternative: 40-50% reduction (aggressive, may lose data)
+
+---
+
+## References
+
+**Related Documents**:
+- Format Parameter Audit: `/wiki/analysis/format_parameter_audit.md`
+- Team A1 Final Report: `/wiki/analysis/TEAM_A1_FINAL_REPORT.md`
+- BUG-FORMAT-003: `/wiki/bugs/phase_5_bugs/BUG-FORMAT-003-compact-mode-not-implemented.md`
+- BUG-FORMAT-004: `/wiki/bugs/phase_5_bugs/BUG-FORMAT-004-rotate-log-no-readable-mode.md`
+
+**Source Files**:
+- `utils/response.py` - ResponseFormatter class
+- `tools/*.py` - All tool implementations
+
+---
+
+**Spec Status**: PROPOSED
+**Ready for Implementation**: YES (pending Team A/B/C completion)
+**Estimated Timeline**: 12 hours development + 1 week testing
+**Risk Level**: MEDIUM (well-understood problem, clear solution)

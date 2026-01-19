@@ -1,0 +1,345 @@
+---
+spec_id: SPEC-DEAD-001
+title: Dead Code Removal Plan
+version: 1.0
+date: 2026-01-05
+agent: ResearchAgent-Phase4-DeadCode
+phase: phase_4_dead_code
+status: verified
+
+# Executive Summary
+summary:
+  total_unused_imports: 238
+  total_dead_functions: 18
+  estimated_loc_reduction: 150-200
+  risk_level: low
+  implementation_effort: 2-3 hours
+
+# Prioritized Removal Strategy
+priorities:
+  critical:
+    description: "Immediate removals - zero risk, clear benefit"
+    items:
+      - category: unused_imports
+        count: 238
+        files: 76
+        automation: high
+        risk: none
+
+  high:
+    description: "Dead helper functions - confirmed unused with grep"
+    items:
+      - category: reminder_helpers
+        functions:
+          - _build_config
+          - _apply_tone
+          - _make_reminder
+          - reload_reminders
+        file: reminders.py
+        grep_verification: "≤1 match each (definition only)"
+        risk: none
+
+      - category: reindex_helpers
+        functions:
+          - _iter_doc_files
+        file: scripts/reindex_vector.py
+        grep_verification: "1 match (definition only)"
+        risk: none
+
+  medium:
+    description: "Infrastructure not integrated - requires decision"
+    items:
+      - category: plugin_hooks
+        functions:
+          - parse_entry
+          - execute_hook_pre_append
+          - execute_hook_post_append
+          - execute_hook_pre_rotate
+          - execute_hook_post_rotate
+        file: plugins/registry.py
+        grep_verification: "1 match each (never invoked)"
+        decision_required: "Remove if no plugin expansion planned"
+        risk: low
+        notes: "Future-proofing hooks that were never integrated"
+
+      - category: background_infrastructure
+        functions:
+          - _log_async_error
+          - _start_background_loop
+        file: plugins/vector_indexer.py
+        grep_verification: "≤2 matches (never called)"
+        decision_required: "Remove if async vector indexing not planned"
+        risk: low
+
+      - category: security_utilities
+        functions:
+          - get_safe_relative_path
+          - cleanup_repository
+        file: security/sandbox.py
+        grep_verification: "1 match each"
+        decision_required: "Remove if sandbox expansion not planned"
+        risk: low
+
+      - category: config_utilities
+        functions:
+          - reload_repo_config
+        file: config/repo_config.py
+        grep_verification: "2 matches (imported but unused)"
+        decision_required: "Remove if runtime config reload not needed"
+        risk: low
+
+      - category: monitoring_callbacks
+        functions:
+          - register_metric_callback
+        file: doc_management/performance_monitor.py
+        grep_verification: "1 match"
+        risk: low
+
+      - category: plugin_security
+        functions:
+          - get_plugin_security_info
+        file: plugins/registry.py
+        grep_verification: "2 matches (imported but unused)"
+        risk: low
+
+# Detailed Removal Specifications
+unused_imports:
+  automation: |
+    Can be removed with automated tools (autoflake, ruff --fix)
+
+  command: |
+    # Recommended: Use ruff to remove unused imports
+    ruff check --select F401 --fix .
+
+    # Alternative: Use autoflake
+    autoflake --remove-all-unused-imports --in-place --recursive .
+
+  files:
+    production:
+      - config/__init__.py: ["settings"]
+      - config/repo_config.py: ["os"]
+      - db/__init__.py: ["ops", "pool"]
+      - demo/demo_global_scribe.py: ["RepoConfig"]
+      - doc_management/__init__.py: ["apply_doc_change"]
+      - doc_management/diff_visualizer.py: ["ChangeRecord", "DiffResult"]
+      - doc_management/file_watcher.py: ["utcnow"]
+      - doc_management/integrity_verifier.py: ["json"]
+      - doc_management/manager.py: ["difflib", "ToolValidator"]
+      - doc_management/sync_manager.py: ["json"]
+      - plugins/registry.py: ["importlib.util", "Type", "settings"]
+      - plugins/vector_indexer.py: ["settings", "VectorIndexRecord", "concurrent.futures"]
+      - scripts/migrate_database.py: ["json"]
+      - scripts/scribe_cli.py: ["asyncio", "RepoConfig", "reload_repo_config", "get_plugin_security_info", "check_permission"]
+      - security/sandbox.py: ["os"]
+      - server.py: ["tools", "load_active_project"]
+      - shared/__init__.py: ["LoggingContext", "ProjectResolutionError", "clean_list", "compose_log_line", "default_status_emoji", "ensure_metadata_requirements", "normalize_metadata", "normalize_meta_filters", "resolve_log_definition", "resolve_logging_context", "LoggingToolMixin", "ProjectInfo", "ProjectRegistry"]
+      - state/__init__.py: ["StateManager"]
+      - state/agent_identity.py: ["hashlib", "json"]
+      - state/agent_manager.py: ["ConflictError"]
+      - storage/sqlite.py: ["MilestoneRecord", "ChecklistRecord", "DocumentSectionRecord", "CustomTemplateRecord", "DocumentChangeRecord", "SyncStatusRecord"]
+      - template_engine/__init__.py: ["Jinja2TemplateEngine", "TemplateEngineError", "TemplateNotFoundError", "TemplateValidationError", "TemplateRenderError", "DEFAULT_VARIABLES", "RESTRICTED_BUILTINS"]
+      - template_engine/engine.py: ["Template"]
+      - tools/__init__.py: ["append_entry", "delete_project", "generate_doc_templates", "get_project", "list_projects", "query_entries", "read_recent", "read_file", "sentinel_tools", "rotate_log", "set_project", "manage_docs", "vector_search", "manage_docs_validation", "doctor"]
+      - tools/append_entry.py: ["ensure_agent_session", "validate_agent_session", "ensure_metadata_requirements", "LogPriority", "LogCategory", "_manage_docs_validation"]
+      - tools/base/__init__.py: ["BaseTool", "ToolResult", "normalize_dict_param", "normalize_list_param", "ToolMetadata", "ToolParameter", "ToolExample", "get_tool_metadata", "list_tools_by_category", "list_deprecated_tools", "get_tool_examples", "validate_tool_parameters", "generate_tool_help", "TOOL_METADATA"]
+      - tools/base/base_tool.py: ["Awaitable", "Callable"]
+      - tools/config/append_entry_config.py: ["ConfigManager", "resolve_fallback_chain", "ErrorHandler"]
+      - tools/config/query_entries_config.py: ["re", "ErrorHandler", "HealingErrorHandler"]
+      - tools/config/rotate_log_config.py: ["json"]
+      - tools/delete_project.py: ["ensure_agent_session", "validate_agent_session", "slugify_project_name"]
+
+    tests:
+      note: "Test files have many unused imports - lower priority for cleanup"
+      count: 162
+      recommendation: "Clean up alongside production code but not blocking"
+
+dead_functions:
+  reminder_helpers:
+    file: reminders.py
+    functions:
+      - name: _build_config
+        line: ~292
+        reason: "Old helper from previous implementation"
+        verification: "1 grep match (definition only)"
+
+      - name: _apply_tone
+        line: ~350
+        reason: "Unused tone application logic"
+        verification: "1 grep match (definition only)"
+
+      - name: _make_reminder
+        line: ~356
+        reason: "Unused reminder constructor"
+        verification: "1 grep match (definition only)"
+
+      - name: reload_reminders
+        line: TBD
+        reason: "Runtime reload not implemented"
+        verification: "1 grep match"
+
+  plugin_hooks:
+    file: plugins/registry.py
+    functions:
+      - name: parse_entry
+        reason: "Entry parsing hook never invoked"
+        verification: "1 grep match"
+
+      - name: execute_hook_pre_append
+        reason: "Pre-append hook never invoked"
+        verification: "1 grep match"
+
+      - name: execute_hook_post_append
+        reason: "Post-append hook never invoked"
+        verification: "1 grep match"
+
+      - name: execute_hook_pre_rotate
+        reason: "Pre-rotate hook never invoked"
+        verification: "1 grep match"
+
+      - name: execute_hook_post_rotate
+        reason: "Post-rotate hook never invoked"
+        verification: "1 grep match"
+
+      - name: get_plugin_security_info
+        reason: "Security info function never called"
+        verification: "2 grep matches (imported but unused)"
+
+  vector_infrastructure:
+    file: plugins/vector_indexer.py
+    functions:
+      - name: _log_async_error
+        reason: "Async error handler never used"
+        verification: "1 grep match"
+
+      - name: _start_background_loop
+        reason: "Background task starter never called"
+        verification: "2 grep matches"
+
+  security_utilities:
+    file: security/sandbox.py
+    functions:
+      - name: get_safe_relative_path
+        reason: "Path sanitization not integrated"
+        verification: "1 grep match"
+
+      - name: cleanup_repository
+        reason: "Cleanup function not used"
+        verification: "1 grep match"
+
+  config_utilities:
+    file: config/repo_config.py
+    functions:
+      - name: reload_repo_config
+        reason: "Runtime reload not implemented"
+        verification: "2 grep matches (imported but unused)"
+
+  monitoring:
+    file: doc_management/performance_monitor.py
+    functions:
+      - name: register_metric_callback
+        reason: "Callback registration not used"
+        verification: "1 grep match"
+
+  scripts:
+    file: scripts/reindex_vector.py
+    functions:
+      - name: _iter_doc_files
+        reason: "Helper refactored away but not deleted"
+        verification: "1 grep match"
+
+# Implementation Plan
+implementation:
+  phase_1_immediate:
+    title: "Automated Unused Import Cleanup"
+    effort: "30 minutes"
+    steps:
+      - Run ruff or autoflake on production code
+      - Review changes with git diff
+      - Run pytest to ensure no breakage
+      - Commit with message: "chore: remove unused imports (SPEC-DEAD-001)"
+    risk: minimal
+
+  phase_2_dead_functions:
+    title: "Remove Verified Dead Functions"
+    effort: "1-2 hours"
+    steps:
+      - Remove helper functions (reminders.py: 4 functions)
+      - Remove script helper (reindex_vector.py: 1 function)
+      - Run pytest to verify no breakage
+      - Commit with message: "refactor: remove dead helper functions (SPEC-DEAD-001)"
+    risk: minimal
+
+  phase_3_infrastructure:
+    title: "Remove Unintegrated Infrastructure (Requires Decision)"
+    effort: "1 hour"
+    steps:
+      - Confirm with stakeholders: remove plugin hooks?
+      - Confirm with stakeholders: remove async vector infrastructure?
+      - Confirm with stakeholders: remove sandbox utilities?
+      - Remove approved items
+      - Update documentation if needed
+      - Run pytest
+      - Commit with descriptive message
+    risk: low_to_medium
+    decision_required: true
+
+# Validation Checklist
+validation:
+  before_removal:
+    - Verify grep match counts are still valid
+    - Check for new usage added since analysis
+    - Review git log for context on why code was added
+
+  during_removal:
+    - Remove one category at a time
+    - Run pytest after each category
+    - Git commit after each successful category
+
+  after_removal:
+    - Full pytest suite passes
+    - No new import errors
+    - Git grep confirms no lingering references
+    - Documentation updated (if needed)
+
+# Coordination with Other Teams
+team_coordination:
+  team_b_duplication:
+    note: "Check if any dead functions are also duplicates"
+    action: "Coordinate removal to avoid double-counting LOC reduction"
+
+  team_d_api_validator:
+    note: "Some unused imports may be in API documentation"
+    action: "Update API docs if documented functions are removed"
+
+# Expected Outcomes
+outcomes:
+  loc_reduction: 150-200
+  files_modified: ~80
+  cognitive_load_reduction: high
+  bundle_size_reduction: minimal
+  maintenance_burden_reduction: medium
+
+# Risks and Mitigation
+risks:
+  dynamic_imports:
+    risk: "Function called via __getattr__ or importlib"
+    mitigation: "Cross-checked with Phase 3 sys.path analysis - no dynamic patterns found"
+    likelihood: very_low
+
+  plugin_expansion:
+    risk: "Plugin hooks removed but needed for future plugins"
+    mitigation: "Document removal reason in git commit; easy to re-add from history"
+    likelihood: low
+
+  test_coverage:
+    risk: "Removed code was tested but not called in production"
+    mitigation: "Review test coverage before removal; keep tests if behavior is important"
+    likelihood: low
+
+# Success Metrics
+success_criteria:
+  - All pytest tests pass
+  - No import errors introduced
+  - Code review approval
+  - Documentation updated where needed
+  - Git history clean with descriptive commits

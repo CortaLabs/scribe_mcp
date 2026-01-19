@@ -16,11 +16,13 @@ from scribe_mcp.tools.project_utils import (
     list_project_configs,
     slugify_project_name,
 )
+from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.tools.base.parameter_normalizer import normalize_dict_param, normalize_list_param
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_utils import detect_project_state
 
 
 class _SetProjectHelper(LoggingToolMixin):
@@ -127,6 +129,63 @@ async def _gather_project_inventory(project: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+async def _check_slug_collision(
+    name: str,
+    backend: Any,
+) -> Optional[Dict[str, Any]]:
+    """Check if a new project name would collide with an existing project's canonical slug.
+
+    Args:
+        name: The new project name being created
+        backend: Storage backend to query existing projects
+
+    Returns:
+        None if no collision, or error dict with collision details if collision detected
+
+    Example:
+        If 'my_project' exists and user tries to create 'my-project':
+        Returns {"ok": False, "error": "Project 'my-project' would collide with existing project 'my_project'..."}
+    """
+    # Get canonical slug for the new project name
+    canonical_slug = normalize_project_input(name)
+    if not canonical_slug:
+        return None  # Invalid name, will be caught elsewhere
+
+    # Check if a project with this exact name already exists (update case, not a collision)
+    existing = await backend.fetch_project(name)
+    if existing:
+        return None  # Same name update is allowed, not a collision
+
+    # Query all projects to check for slug collisions
+    try:
+        all_projects = await backend.list_projects()
+    except Exception as exc:
+        # If we can't query projects, allow operation to proceed
+        # (backend errors should be caught at upsert time)
+        return None
+
+    # Check if any existing project has the same canonical slug but different raw name
+    for project in all_projects:
+        existing_slug = normalize_project_input(project.name)
+        if existing_slug == canonical_slug and project.name != name:
+            # Collision detected!
+            return {
+                "ok": False,
+                "error": (
+                    f"Project '{name}' would collide with existing project '{project.name}' "
+                    f"(both normalize to '{canonical_slug}'). "
+                    f"Please choose a different name or use the existing project."
+                ),
+                "collision": {
+                    "new_name": name,
+                    "existing_name": project.name,
+                    "canonical_slug": canonical_slug,
+                },
+            }
+
+    return None  # No collision detected
+
+
 @app.tool()
 async def set_project(
     name: str,
@@ -150,6 +209,9 @@ async def set_project(
     # Quick emoji/agent settings (for convenience)
     emoji: Optional[str] = None,  # Default emoji for the project
     project_agent: Optional[str] = None,  # Default agent for the project (alias for agent_id)
+    # Bridge management (Phase 3)
+    bridge_id: Optional[str] = None,  # ID of bridge that owns this project
+    bridge_managed: bool = False,  # Whether this project is bridge-managed
     # Output formatting
     format: str = "readable",  # Output format: readable, structured, compact
 ) -> Dict[str, Any]:
@@ -214,8 +276,9 @@ async def set_project(
             tags = [tags]  # Fallback: treat as single item
 
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
+    context_root = _get_context_repo_root()
     try:
-        resolved_root = _resolve_root(root)
+        resolved_root = _resolve_root(root, context_root, skip_validation)
     except ValueError as exc:
         return _SET_PROJECT_HELPER.apply_context_payload(
             _SET_PROJECT_HELPER.error_response(str(exc)),
@@ -254,6 +317,27 @@ async def set_project(
         "progress_log": str(resolved_log),
     }
 
+    # Compute baseline_hashes for newly generated docs (fixes EXISTING_LEGACY state detection)
+    # This allows get_project to distinguish NEW from EXISTING_LEGACY projects
+    # Store hashes in _hashes subkey to avoid polluting the docs list
+    docs_were_generated = len(doc_result.get("files", [])) > 0
+    if docs_were_generated:
+        from scribe_mcp.utils.integrity import compute_file_hash
+        baseline_hashes = {}
+        for doc_type in ["architecture", "phase_plan", "checklist"]:
+            doc_path = docs.get(doc_type)
+            if doc_path and Path(doc_path).exists():
+                try:
+                    file_hash, _ = compute_file_hash(doc_path)
+                    baseline_hashes[doc_type] = file_hash[:8]  # Short hash for readability
+                except Exception:
+                    pass  # Skip hash on error
+        if baseline_hashes:
+            docs["_hashes"] = {
+                "baseline_hashes": baseline_hashes,
+                "current_hashes": dict(baseline_hashes),  # Initially same as baseline
+            }
+
     project_data = {
         "name": name,
         "root": str(resolved_root),
@@ -286,11 +370,31 @@ async def set_project(
     backend = server_module.storage_backend
     project_record = None
     if backend:
+        # Check for slug collisions before creating new project
+        collision = await _check_slug_collision(name, backend)
+        if collision:
+            return _SET_PROJECT_HELPER.apply_context_payload(collision, base_context)
+
+        import json as _json
         project_record = await backend.upsert_project(
             name=name,
             repo_root=str(resolved_root),
             progress_log_path=str(resolved_log),
+            docs_json=_json.dumps(docs),  # Persist docs mapping to DB
+            bridge_id=bridge_id,
+            bridge_managed=bridge_managed,
         )
+
+        # Parse docs_json from project_record and populate project_data meta
+        if project_record and project_record.docs_json:
+            import json
+            try:
+                docs_metadata = json.loads(project_record.docs_json)
+                project_data.setdefault("meta", {})
+                project_data["meta"]["docs"] = docs_metadata
+            except (json.JSONDecodeError, TypeError):
+                # Invalid JSON - silently ignore and continue
+                pass
 
         # Best-effort Project Registry touch for this project (SQLite-first).
         try:
@@ -453,10 +557,26 @@ async def set_project(
     if format == "readable":
         from scribe_mcp.utils.response import default_formatter
 
-        # Detect new vs existing project
-        progress_log_path = Path(resolved_log)
-        entry_count = await _count_log_entries(progress_log_path)
-        is_new = not progress_log_path.exists() or entry_count == 0
+        # Detect project state using hash-based logic (fixes BUG-001)
+        # Use backend.count_entries for accurate count instead of file parsing
+        if backend and project_record:
+            entry_count = await backend.count_entries(project_record)
+        else:
+            # Fallback to file-based counting if backend unavailable
+            progress_log_path = Path(resolved_log)
+            entry_count = await _count_log_entries(progress_log_path)
+
+        # Use hash-based detection instead of entry_count for state determination
+        # Pass docs_were_generated flag to distinguish NEW vs EXISTING (SPEC-SET-001 fix)
+        # Note: generate_doc_templates returns "files" key, not "generated"
+        docs_were_generated = len(doc_result.get("files", [])) > 0
+        state, sitrep_message = detect_project_state(
+            project_data,
+            entry_count,
+            str(resolved_log),
+            docs_were_generated
+        )
+        is_new = (state == "NEW")
 
         if is_new:
             # NEW PROJECT SITREP
@@ -543,9 +663,28 @@ async def set_project(
     return _SET_PROJECT_HELPER.apply_context_payload(response, context_after)
 
 
-def _resolve_root(root: Optional[str]) -> Path:
+def _get_context_repo_root() -> Optional[Path]:
+    try:
+        context = server_module.get_execution_context()
+    except Exception:
+        context = None
+    if not context or not getattr(context, "repo_root", None):
+        return None
+    try:
+        return Path(str(context.repo_root)).expanduser().resolve()
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_root(root: Optional[str], context_root: Optional[Path], skip_validation: bool) -> Path:
     base = settings.project_root.resolve()
     if not root:
+        if context_root and context_root != base:
+            return context_root
+        if settings.require_explicit_root and not skip_validation:
+            raise ValueError(
+                "Explicit project root required. Pass root=... or provide context.repo_root."
+            )
         return base
 
     root_path = Path(root).expanduser()

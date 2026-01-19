@@ -540,3 +540,369 @@ Phase 0 (Foundation)
 - Recommendations for next phase?
 
 ---
+
+## Phase 6 — Session-Aware Reminder System (DB Integration)
+<!-- ID: phase_6_reminder_system -->
+
+**Objective:** Migrate reminder cooldown tracking from file-based to DB-backed with session isolation and failure-triggered priority.
+
+**Duration:** 3 weeks
+
+**Confidence:** 0.94 (High - infrastructure ready, clear migration path)
+
+### Overview
+
+This phase implements the session-aware reminder system architecture defined in Section 9 of ARCHITECTURE_GUIDE.md. The work proceeds through 7 sequential stages with feature flags for safe rollout and rollback capability.
+
+### Stage 1: Schema Migration (Non-Breaking)
+**Duration:** 2 days
+
+**Tasks:**
+1. Add `reminder_history` table to `storage/sqlite.py` schema (6 hours)
+   - Table definition with 10 columns (id, session_id, reminder_hash, project_root, agent_id, tool_name, reminder_key, shown_at, operation_status, context_metadata)
+   - Foreign key constraint: `session_id → scribe_sessions.session_id ON DELETE CASCADE`
+   - CHECK constraint: `operation_status IN ('success', 'failure', 'neutral')`
+
+2. Add indexes for query performance (2 hours)
+   - `idx_reminder_history_session_hash` (session_id, reminder_hash) - Primary cooldown lookup
+   - `idx_reminder_history_shown_at` (shown_at) - TTL cleanup queries
+   - `idx_reminder_history_session_tool` (session_id, tool_name) - Analytics queries
+
+3. Write schema migration test (4 hours)
+   - `tests/storage/test_sqlite.py::test_reminder_history_schema`
+   - Verify table creation, column types, constraints, indexes
+   - Verify FK cascade delete behavior
+
+4. Run full test suite (2 hours)
+   - Ensure no regressions from schema addition
+   - All 69 functional tests must pass
+
+**Deliverables:**
+- [ ] `storage/sqlite.py` updated with `reminder_history` table definition
+- [ ] 3 indexes created
+- [ ] Schema test passes
+- [ ] No test regressions
+
+**Acceptance Criteria:**
+- [ ] Table created successfully on fresh DB init
+- [ ] FK constraint prevents orphaned reminders when session deleted
+- [ ] Indexes exist and are used by query planner (verify with EXPLAIN)
+- [ ] No breaking changes to existing schema
+
+**Dependencies:** None (adds new table only)
+
+**Risks:**
+- **Low Risk:** Schema changes isolated to new table, no existing data affected
+
+---
+
+### Stage 2: Storage Methods Implementation
+**Duration:** 3 days
+
+**Tasks:**
+1. Implement `upsert_reminder_shown()` method (1 day)
+   - Accept 8 parameters (session_id, reminder_hash, project_root, agent_id, tool_name, reminder_key, operation_status, context_metadata)
+   - INSERT new row with current UTC timestamp
+   - Handle JSON serialization for `context_metadata`
+   - Use async/await pattern with connection pooling
+
+2. Implement `check_reminder_cooldown()` method (1 day)
+   - Query for COUNT(*) with session_id, reminder_hash, and cutoff timestamp
+   - Return True if reminder shown within cooldown window, False otherwise
+   - Optimize with index usage (verify with EXPLAIN QUERY PLAN)
+
+3. Implement `cleanup_reminder_history()` method (4 hours)
+   - DELETE entries older than cutoff_hours (default: 168 = 7 days)
+   - Return count of rows deleted
+   - Add to periodic cleanup tasks (future work)
+
+4. Write unit tests (1 day)
+   - `tests/storage/test_reminder_storage.py` (new file)
+   - Test `upsert_reminder_shown()` with various operation_status values
+   - Test `check_reminder_cooldown()` with expired/active cooldowns
+   - Test `cleanup_reminder_history()` with mixed old/new entries
+   - Test JSON metadata serialization/deserialization
+
+5. Add feature flag to config (2 hours)
+   - `config/reminder_config.json`: Add `"use_db_cooldown_tracking": false` (disabled by default)
+   - Document flag purpose and migration timeline
+
+**Deliverables:**
+- [ ] 3 new storage methods in `storage/sqlite.py`
+- [ ] `tests/storage/test_reminder_storage.py` created with 100% coverage
+- [ ] Feature flag added to config
+- [ ] All new tests passing
+
+**Acceptance Criteria:**
+- [ ] `upsert_reminder_shown()` inserts row successfully
+- [ ] `check_reminder_cooldown()` returns correct boolean based on timestamps
+- [ ] `cleanup_reminder_history()` deletes only old entries, returns accurate count
+- [ ] Feature flag defaults to False (file mode)
+- [ ] All unit tests pass
+
+**Dependencies:** Stage 1 (schema must exist)
+
+**Risks:**
+- **Low Risk:** New methods don't affect existing code until feature flag enabled
+
+---
+
+### Stage 3: Hash Refactoring (Backward Compatible)
+**Duration:** 3 days
+
+**Tasks:**
+1. Update `_get_reminder_hash()` signature (1 day)
+   - Add `session_id: Optional[str] = None` parameter
+   - Implement conditional logic: if `session_id` and `use_db_cooldown_tracking=True`, include session_id in hash
+   - Legacy mode: Return old format (project|agent|tool|reminder) when feature flag disabled
+   - DB mode: Return new format (session|project|agent|tool|reminder) when flag enabled
+
+2. Update hash generation call sites (1 day)
+   - `utils/reminder_engine.py::_should_show_reminder()` - Pass `session_id` parameter
+   - `utils/reminder_engine.py::generate_reminders()` - Accept and forward `session_id`
+   - Maintain backward compatibility: `session_id=None` falls back to file mode
+
+3. Write hash generation tests (1 day)
+   - `tests/test_reminder_engine.py::test_hash_generation_db_mode`
+   - `tests/test_reminder_engine.py::test_hash_generation_file_mode`
+   - `tests/test_reminder_engine.py::test_hash_generation_backward_compat`
+   - Verify format switching based on feature flag
+
+4. Run existing reminder tests (4 hours)
+   - All existing tests must pass with `use_db_cooldown_tracking=False` (file mode)
+   - No behavior changes in legacy mode
+
+**Deliverables:**
+- [ ] `_get_reminder_hash()` updated with conditional logic
+- [ ] Hash generation tests pass in both modes
+- [ ] No regressions in existing reminder tests
+
+**Acceptance Criteria:**
+- [ ] File mode hash format: `{project}|{agent}|{tool}|{reminder}` (4 parts)
+- [ ] DB mode hash format: `{session}|{project}|{agent}|{tool}|{reminder}` (5 parts)
+- [ ] Feature flag correctly controls hash format
+- [ ] All 69 functional tests pass with file mode
+
+**Dependencies:** Stage 2 (storage methods exist for testing)
+
+**Risks:**
+- **Medium Risk:** Hash format change could break cooldown logic if not properly gated by feature flag
+- **Mitigation:** Comprehensive tests in both modes, feature flag default=False
+
+---
+
+### Stage 4: Session Integration
+**Duration:** 4 days
+
+**Tasks:**
+1. Pass `session_id` from execution context to reminder engine (2 days)
+   - Update `reminders.py::get_reminders()` to extract `session_id` from state
+   - Update `reminder_engine.py::generate_reminders()` to accept `session_id` parameter
+   - Update all tool call sites (append_entry, read_file, etc.) to pass state with session_id
+
+2. Implement `should_reset_reminder_cooldowns()` function (1 day)
+   - 3 reset triggers: session ID change, 10-minute idle, 24-hour age
+   - Integrate with `get_session_metadata()` for idle/age calculation
+   - Clear in-memory `ReminderHistory` dict when reset triggered
+
+3. Add session metadata retrieval (1 day)
+   - Implement `get_session_metadata(session_id)` in execution context
+   - Query `scribe_sessions` table for `started_at` and `last_active_at`
+   - Calculate `session_age_minutes` and `idle_minutes`
+
+4. Write session isolation tests (1 day)
+   - `tests/test_reminder_session_isolation.py` (new file)
+   - Test same reminder appears in different sessions
+   - Test cooldown resets on 10-minute idle
+   - Test cooldown resets on session ID change
+   - Test 24-hour age cleanup trigger
+
+**Deliverables:**
+- [ ] Session ID propagated from execution context to reminder engine
+- [ ] `should_reset_reminder_cooldowns()` implemented
+- [ ] `get_session_metadata()` implemented
+- [ ] Session isolation tests passing
+
+**Acceptance Criteria:**
+- [ ] Reminder shown in session1 does NOT suppress in session2
+- [ ] Cooldown resets after 10-minute idle period
+- [ ] Cooldown resets when session_id changes
+- [ ] Long-running sessions (>24h) trigger cleanup
+
+**Dependencies:** Stage 3 (hash generation with session_id)
+
+**Risks:**
+- **High Risk:** Session ID might not be available in all code paths
+- **Mitigation:** Graceful fallback to file mode if session_id=None, extensive integration testing
+
+---
+
+### Stage 5: Failure Context Propagation
+**Duration:** 3 days
+
+**Tasks:**
+1. Add `operation_status` parameter to tool try/except blocks (2 days)
+   - `tools/append_entry.py` - Wrap main logic in try/except, set operation_status
+   - `tools/read_file.py` - Wrap main logic in try/except, set operation_status
+   - All 14 tools - Add finally block calling `get_reminders()` with operation_status
+
+2. Update `get_reminders()` signature (1 day)
+   - Add `operation_status: str = "neutral"` parameter
+   - Pass to `reminder_engine.generate_reminders()`
+   - Update docstring with behavior: failure=bypass cooldown, success=respect cooldown
+
+3. Implement failure-priority logic in ReminderEngine (1 day)
+   - Update `generate_reminders()` to accept `operation_status`
+   - Conditional cooldown check: if `operation_status == "failure"`, set `in_cooldown=False`
+   - Maintain max 3 reminders limit even for failures
+
+4. Write failure priority tests (1 day)
+   - `tests/test_reminder_failure_priority.py` (new file)
+   - Test failure-triggered reminders bypass cooldown
+   - Test success-triggered reminders respect cooldown
+   - Test neutral status maintains default behavior
+
+**Deliverables:**
+- [ ] All 14 tools updated with operation_status parameter
+- [ ] `get_reminders()` accepts operation_status
+- [ ] Failure-priority logic implemented
+- [ ] Failure priority tests passing
+
+**Acceptance Criteria:**
+- [ ] Reminder shown once, then suppressed on next success call
+- [ ] Same reminder shown again immediately on failure call
+- [ ] Max 3 reminders enforced even for failures
+- [ ] Neutral status (default) maintains backward compatibility
+
+**Dependencies:** Stage 4 (session integration complete)
+
+**Risks:**
+- **Medium Risk:** Failure reminders might cause spam if many consecutive failures
+- **Mitigation:** Max 3 reminders per call, cooldown still enforced within session
+
+---
+
+### Stage 6: DB Mode Activation (Production Rollout)
+**Duration:** 4 days + 48 hours monitoring
+
+**Tasks:**
+1. Set feature flag default to True (2 hours)
+   - `config/reminder_config.json`: Change `"use_db_cooldown_tracking": true`
+   - Commit with detailed changelog explaining migration
+
+2. Archive file-based cooldown cache (1 hour)
+   - Copy `data/reminder_cooldowns.json` to `data/reminder_cooldowns.json.archive`
+   - Add timestamp to archive filename
+   - Document archive purpose in commit message
+
+3. Run full test suite with DB mode (1 day)
+   - All 69 functional tests must pass
+   - All new reminder tests must pass
+   - Performance tests must validate <5ms query SLA
+
+4. Deploy to production (2 hours)
+   - Deploy to staging environment first
+   - Monitor for 4 hours in staging
+   - Deploy to production if staging clean
+
+5. Monitor production for 48 hours (passive)
+   - Watch error logs for reminder-related failures
+   - Monitor DB query performance (check <5ms SLA)
+   - Verify no regression in reminder delivery rate
+   - Be ready for immediate rollback if issues detected
+
+**Deliverables:**
+- [ ] Feature flag default changed to True
+- [ ] File-based cache archived
+- [ ] All tests passing in DB mode
+- [ ] Production deployment successful
+- [ ] 48-hour monitoring complete with no issues
+
+**Acceptance Criteria:**
+- [ ] All tests pass with `use_db_cooldown_tracking=True`
+- [ ] DB queries meet <5ms p95 SLA
+- [ ] No reminder delivery regressions
+- [ ] No increase in error rates
+- [ ] Session isolation working in production
+
+**Dependencies:** Stage 5 (all features implemented)
+
+**Risks:**
+- **High Risk:** Production issues require immediate rollback
+- **Mitigation:** Feature flag rollback available, archived file can be restored
+- **Rollback Plan:** Set `use_db_cooldown_tracking=false`, restore archived JSON file, redeploy
+
+---
+
+### Stage 7: Cleanup (Post-Validation)
+**Duration:** 2 days (after 2-week production validation)
+
+**Tasks:**
+1. Remove file-based cooldown code (1 day)
+   - Delete `_load_cooldown_cache()`, `_save_cooldown_cache()`, `_cleanup_cooldown_cache()` methods
+   - Remove `_cooldown_cache_path` attribute from ReminderEngine
+   - Remove legacy hash generation branch (keep only DB mode)
+   - Update class docstrings to reflect DB-only mode
+
+2. Remove feature flag (2 hours)
+   - Delete `"use_db_cooldown_tracking"` from `config/reminder_config.json`
+   - Remove conditional logic from `_get_reminder_hash()`
+   - Simplify to single hash format (session-aware only)
+
+3. Update documentation (4 hours)
+   - Update ARCHITECTURE_GUIDE.md to remove "migration" language
+   - Update tool documentation to reflect DB-backed reminder system
+   - Add session isolation behavior to README
+
+4. Final test suite run (2 hours)
+   - All tests pass with simplified code
+   - No feature flag references remain
+   - Code coverage maintained or improved
+
+**Deliverables:**
+- [ ] File-based code removed
+- [ ] Feature flag removed
+- [ ] Documentation updated
+- [ ] All tests passing
+
+**Acceptance Criteria:**
+- [ ] No file-based cooldown code remains
+- [ ] No feature flag references in codebase
+- [ ] Documentation reflects DB-only mode
+- [ ] All tests pass
+- [ ] Code is simpler and more maintainable
+
+**Dependencies:** Stage 6 + 2 weeks production validation
+
+**Risks:**
+- **Low Risk:** Code removal is straightforward after validation period
+- **Rollback Plan:** Git revert to pre-cleanup commit if issues discovered
+
+---
+
+### Phase 6 Summary
+
+**Total Duration:** 3 weeks implementation + 2 weeks validation = 5 weeks
+
+**Parallelization Opportunities:**
+- Stages 1-3 can have tests written in parallel with implementation
+- Stages 4-5 are sequential (session integration must precede failure context)
+
+**Success Metrics:**
+- [ ] All functional requirements met (session isolation, failure priority)
+- [ ] All performance requirements met (p95 <5ms)
+- [ ] All test requirements met (100% coverage of new code)
+- [ ] Zero production incidents during rollout
+- [ ] Clean migration with rollback plan validated
+
+**Critical Path:** Stage 1 → Stage 2 → Stage 3 → Stage 4 → Stage 5 → Stage 6 → (validation) → Stage 7
+
+**Confidence Level:** 0.94
+- Infrastructure ready (scribe_sessions table exists)
+- Clear migration strategy with feature flags
+- Comprehensive test coverage planned
+- Rollback plan defined for each stage
+
+---
+
+**End of Phase Plan**
