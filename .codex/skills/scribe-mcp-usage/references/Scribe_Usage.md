@@ -1,6 +1,6 @@
 <!--
 source: docs/Scribe_Usage.md
-source_sha256: 30c69a730d0e00f5d81f59d9bdcd54734a7e8bad0a69e972129e532c1f4d507a
+source_sha256: 85249c336b481ce9080379e23f9b7e0146be8cf81ee93dd59d13bfa8d98fa396
 note: This copy is patched for skill-local paths.
 -->
 
@@ -1055,6 +1055,8 @@ The following actions are **HIDDEN** - they still work but are not promoted in s
 - `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order. Nested batches are rejected for safety
 
 **Global Optional Parameters:**
+- `doc_name` (string): Document identifier (required for most actions except bug reports which auto-generate)
+- `project` (string): Explicit project override for cross-project doc management
 - `metadata` (dict): Additional metadata for the operation
 - `dry_run` (bool): Preview changes without applying
 - `target_dir` (string): Custom target directory for CREATE operations

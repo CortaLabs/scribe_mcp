@@ -150,6 +150,8 @@ The following actions are **HIDDEN** - they still work but are not promoted in s
 - `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order. Nested batches are rejected for safety
 
 **Global Optional Parameters:**
+- `doc_name` (string): Document identifier (required for most actions except bug reports which auto-generate)
+- `project` (string): Explicit project override for cross-project doc management
 - `metadata` (dict): Additional metadata for the operation
 - `dry_run` (bool): Preview changes without applying
 - `target_dir` (string): Custom target directory for CREATE operations
