@@ -55,7 +55,7 @@ Start here, then open only what you need:
 | `replace_section` | Replace content by section anchor | `doc_name`, `section`, `content` |
 | `apply_patch` | Apply unified diff patch | `doc_name`, `edit` or `patch` |
 | `replace_range` | Replace explicit line range | `doc_name`, `start_line`, `end_line`, `content` |
-| `replace_text` | Find/replace text pattern | `doc_name`, `content`, `metadata` |
+| `replace_text` | Find/replace text pattern | `doc_name`, `metadata.find`, `metadata.replace` |
 | `append` | Append content to doc/section | `doc_name`, `content` |
 | `status_update` | Update checklist item status | `doc_name`, `section`, `metadata` |
 
@@ -121,6 +121,13 @@ manage_docs(
     section="constraints",
     content="- New constraint added",
     metadata={"position": "inside"}
+)
+
+# Replace text (find/replace)
+manage_docs(
+    action="replace_text",
+    doc_name="architecture",
+    metadata={"find": "old_term", "replace": "new_term", "replace_all": True}
 )
 
 # Replace line range

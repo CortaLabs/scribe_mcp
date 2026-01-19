@@ -1,6 +1,6 @@
 <!--
 source: docs/Scribe_Usage.md
-source_sha256: 85249c336b481ce9080379e23f9b7e0146be8cf81ee93dd59d13bfa8d98fa396
+source_sha256: 0355111dd27decbc5d22e875b0fea6bae5eaaea07446cdc98d534b5cc189a93f
 note: This copy is patched for skill-local paths.
 -->
 
@@ -997,8 +997,22 @@ manage_docs(action="create", metadata={"doc_type": "bug", "category": "logic", "
 - `content` (string, required): Replacement content
 
 #### `replace_text`
-- `content` (string, required): Text pattern to replace
-- `metadata` (dict, optional): Replacement configuration
+- `metadata` (dict, required): Find/replace configuration with:
+  - `find` (string, required): Text pattern to find
+  - `replace` (string, optional): Replacement text (defaults to empty string)
+  - `match_mode` (string, optional): `literal` (default) or `regex`
+  - `replace_all` (bool, optional): Replace all occurrences (default: true)
+  - `scope` (string, optional): Limit to specific section ID
+  - `allow_no_match` (bool, optional): Don't error if no match (default: false)
+
+**Example:**
+```python
+manage_docs(
+    action="replace_text",
+    doc_name="architecture",
+    metadata={"find": "old_text", "replace": "new_text", "replace_all": True}
+)
+```
 
 ---
 

@@ -96,8 +96,22 @@ manage_docs(action="create", metadata={"doc_type": "bug", "category": "logic", "
 - `content` (string, required): Replacement content
 
 #### `replace_text`
-- `content` (string, required): Text pattern to replace
-- `metadata` (dict, optional): Replacement configuration
+- `metadata` (dict, required): Find/replace configuration with:
+  - `find` (string, required): Text pattern to find
+  - `replace` (string, optional): Replacement text (defaults to empty string)
+  - `match_mode` (string, optional): `literal` (default) or `regex`
+  - `replace_all` (bool, optional): Replace all occurrences (default: true)
+  - `scope` (string, optional): Limit to specific section ID
+  - `allow_no_match` (bool, optional): Don't error if no match (default: false)
+
+**Example:**
+```python
+manage_docs(
+    action="replace_text",
+    doc_name="architecture",
+    metadata={"find": "old_text", "replace": "new_text", "replace_all": True}
+)
+```
 
 ---
 

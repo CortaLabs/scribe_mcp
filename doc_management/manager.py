@@ -308,34 +308,62 @@ async def apply_doc_change(
                             before_hash = current_hash
                             file_size_before = doc_path.stat().st_size if doc_path.exists() else 0
 
-                        try:
-                            rebased_patch, rebase_info = _rebase_patch_to_current_context(
-                                original_body, patch_used
-                            )
-                            patch_used = rebased_patch
-                            updated_body, hunks_applied = _apply_unified_patch(
-                                original_body, patch_used
-                            )
-                            extra = {
-                                "hunks_applied": hunks_applied,
-                                "patch_source_hash": current_hash,
-                                "patch_source_hash_source": "auto",
-                                "rebase_attempted": True,
-                                "rebase_applied": True,
-                                "rebase_info": rebase_info,
-                            }
-                        except DocumentOperationError as rebase_error:
-                            diagnostics = _build_patch_failure_diagnostics(
-                                original_body, patch_text or "", str(rebase_error)
-                            )
-                            diagnostics.setdefault("rebase_attempted", True)
-                            if getattr(rebase_error, "extra", None):
-                                diagnostics.setdefault("rebase_details", rebase_error.extra)
-                            diagnostics.setdefault("rebase_failed_reason", str(rebase_error))
-                            raise DocumentOperationError(
-                                error_message,
-                                extra={"patch_diagnostics": diagnostics},
-                            )
+                        # Fallback 1: Try adjusting line numbers for frontmatter offset
+                        fallback_succeeded = False
+                        frontmatter_lines = 0
+                        if original_parsed.has_frontmatter and original_parsed.frontmatter_raw:
+                            # Count frontmatter lines (includes opening and closing --- delimiters)
+                            frontmatter_lines = len(original_parsed.frontmatter_raw.splitlines())
+
+                        if frontmatter_lines > 0:
+                            try:
+                                adjusted_patch = _adjust_patch_line_numbers(patch_used, frontmatter_lines)
+                                updated_body, hunks_applied = _apply_unified_patch(
+                                    original_body, adjusted_patch
+                                )
+                                patch_used = adjusted_patch
+                                extra = {
+                                    "hunks_applied": hunks_applied,
+                                    "patch_source_hash": current_hash,
+                                    "patch_source_hash_source": "auto",
+                                    "frontmatter_adjustment": True,
+                                    "frontmatter_lines_offset": frontmatter_lines,
+                                }
+                                fallback_succeeded = True
+                            except DocumentOperationError:
+                                # Fallback 1 failed, continue to fallback 2 (rebase)
+                                pass
+
+                        # Fallback 2: Try rebasing patch to current context
+                        if not fallback_succeeded:
+                            try:
+                                rebased_patch, rebase_info = _rebase_patch_to_current_context(
+                                    original_body, patch_used
+                                )
+                                patch_used = rebased_patch
+                                updated_body, hunks_applied = _apply_unified_patch(
+                                    original_body, patch_used
+                                )
+                                extra = {
+                                    "hunks_applied": hunks_applied,
+                                    "patch_source_hash": current_hash,
+                                    "patch_source_hash_source": "auto",
+                                    "rebase_attempted": True,
+                                    "rebase_applied": True,
+                                    "rebase_info": rebase_info,
+                                }
+                            except DocumentOperationError as rebase_error:
+                                diagnostics = _build_patch_failure_diagnostics(
+                                    original_body, patch_text or "", str(rebase_error)
+                                )
+                                diagnostics.setdefault("rebase_attempted", True)
+                                if getattr(rebase_error, "extra", None):
+                                    diagnostics.setdefault("rebase_details", rebase_error.extra)
+                                diagnostics.setdefault("rebase_failed_reason", str(rebase_error))
+                                raise DocumentOperationError(
+                                    error_message,
+                                    extra={"patch_diagnostics": diagnostics},
+                                )
                     else:
                         diagnostics = _build_patch_failure_diagnostics(
                             original_body, patch_used, error_message
@@ -1486,6 +1514,39 @@ def _build_bounded_previews(
             )
         )
     return previews
+
+
+def _adjust_patch_line_numbers(patch_text: str, offset: int) -> str:
+    """Adjust line numbers in a unified diff patch by subtracting an offset.
+
+    This handles the case where users create patches with line numbers relative
+    to the raw file (including frontmatter) but patches are applied to body only.
+
+    Args:
+        patch_text: The unified diff patch string
+        offset: Number of lines to subtract from line numbers (e.g., frontmatter line count)
+
+    Returns:
+        Adjusted patch with corrected line numbers
+    """
+    if offset <= 0:
+        return patch_text
+
+    lines = patch_text.splitlines(keepends=False)
+    adjusted_lines = []
+
+    for line in lines:
+        match = _HUNK_HEADER.match(line)
+        if match:
+            old_start = max(1, int(match.group(1)) - offset)
+            old_count = int(match.group(2)) if match.group(2) else 1
+            new_start = max(1, int(match.group(3)) - offset)
+            new_count = int(match.group(4)) if match.group(4) else 1
+            adjusted_lines.append(f"@@ -{old_start},{old_count} +{new_start},{new_count} @@")
+        else:
+            adjusted_lines.append(line)
+
+    return "\n".join(adjusted_lines)
 
 
 def _apply_unified_patch(original_text: str, patch_text: str) -> tuple[str, int]:
