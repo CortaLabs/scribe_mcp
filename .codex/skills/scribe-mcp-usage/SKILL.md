@@ -42,3 +42,101 @@ Start here, then open only what you need:
 - Log after meaningful actions with a reasoning block.
 - Use `read_file` for file contents; avoid shell reads.
 - Bridges must implement `on_activate()`, `on_deactivate()`, `health_check()`.
+
+---
+
+## manage_docs Quick Reference
+
+### 7 Primary Actions
+
+| Action | Purpose | Required Params |
+|--------|---------|-----------------|
+| `create` | Create new doc (research/bug/custom) | `doc_name`, `metadata.doc_type` |
+| `replace_section` | Replace content by section anchor | `doc_name`, `section`, `content` |
+| `apply_patch` | Apply unified diff patch | `doc_name`, `edit` or `patch` |
+| `replace_range` | Replace explicit line range | `doc_name`, `start_line`, `end_line`, `content` |
+| `replace_text` | Find/replace text pattern | `doc_name`, `content`, `metadata` |
+| `append` | Append content to doc/section | `doc_name`, `content` |
+| `status_update` | Update checklist item status | `doc_name`, `section`, `metadata` |
+
+### Global Optional Params
+- `project` — cross-project override
+- `dry_run` — preview without applying
+- `target_dir` — custom target for CREATE
+
+### doc_type Values (INSIDE metadata)
+`custom` (default), `research`, `bug`, `review`, `agent_card`
+
+### Create Examples
+```python
+# Research doc
+manage_docs(
+    action="create",
+    doc_name="RESEARCH_AUTH_20251119",
+    metadata={"doc_type": "research", "research_goal": "Analyze auth flow"}
+)
+
+# Bug report (doc_name auto-generated)
+manage_docs(
+    action="create",
+    metadata={
+        "doc_type": "bug",
+        "category": "logic",
+        "slug": "auth_leak",
+        "severity": "high",
+        "title": "Auth token not invalidated"
+    }
+)
+
+# Custom doc
+manage_docs(
+    action="create",
+    doc_name="COORDINATION_PROTOCOL",
+    metadata={"doc_type": "custom", "body": "# Protocol\n\nContent..."}
+)
+```
+
+### Edit Examples
+```python
+# Replace section
+manage_docs(
+    action="replace_section",
+    doc_name="architecture",
+    section="problem_statement",
+    content="## Problem Statement\nNew content here..."
+)
+
+# Update checklist
+manage_docs(
+    action="status_update",
+    doc_name="checklist",
+    section="phase_1_task_1",
+    metadata={"status": "done", "proof": "PR #123 merged"}
+)
+
+# Append to section
+manage_docs(
+    action="append",
+    doc_name="architecture",
+    section="constraints",
+    content="- New constraint added",
+    metadata={"position": "inside"}
+)
+
+# Replace line range
+manage_docs(
+    action="replace_range",
+    doc_name="phase_plan",
+    start_line=45,
+    end_line=50,
+    content="New content for these lines"
+)
+```
+
+### Deprecated Actions (still work, route to create)
+- `create_research_doc` → `create(metadata={"doc_type": "research"})`
+- `create_bug_report` → `create(metadata={"doc_type": "bug"})`
+- `create_doc` → `create(metadata={"doc_type": "custom"})`
+
+### Hidden Actions (advanced use)
+`list_sections`, `list_checklist_items`, `normalize_headers`, `generate_toc`, `validate_crosslinks`, `search`, `batch`
