@@ -31,8 +31,8 @@ Structured edits are now the default path: agents express intent, the server com
 - `apply_patch` auto-detects mode: unified when `patch` provided, structured when `edit` provided.
 - `patch_source_hash` enforces stale-source protection for patches.
 - Reminder system teaches **scaffold-only** `replace_section`, preferring structured/line edits.
-- New doc lifecycle actions: `normalize_headers`, `generate_toc`, `create_doc`, `validate_crosslinks`.
-- `create_doc` builds documents from content/body/snippets/sections; users do **not** supply Jinja. Multiline bodies are preserved. Use `metadata.register_doc=true` only when you want the new doc added to the project registry.
+- New doc lifecycle actions: `normalize_headers`, `generate_toc`, `create`, `validate_crosslinks`.
+- `create` is the unified document creation action. Use `metadata.doc_type` to specify type: `custom`, `research`, `bug`, `review`, or `agent_card`. Content goes in `metadata.body`. Use `metadata.register_doc=true` to add the doc to the project registry.
 - `validate_crosslinks` is read-only diagnostics (no write, no doc_updates log).
 - `normalize_headers` supports ATX headers with or without space and Setext (`====` / `----`), skipping fenced code blocks. Output is canonical ATX.
 - `generate_toc` uses GitHub-style anchors (NFKD normalization, ASCII folding, emoji removal, punctuation collapse, de-duped suffixes).
@@ -448,6 +448,81 @@ python -m scribe_mcp.scripts.scribe "Starting frontend work" \
 - 🔧 **Complete MCP Schema** - All `manage_docs` parameters properly exposed via JSON Schema
 - 🎯 **Type-Safe Operations** - Proper parameter typing for reliable tool discovery and validation
 - 📋 **Action-Driven Interface** - Atomic updates for architecture, phase plans, checklists, and research docs
+
+#### `manage_docs` Quick Reference
+
+**7 Primary Actions:**
+
+| Action | Purpose | Required Params |
+|--------|---------|-----------------|
+| `create` | Create new doc (research/bug/custom) | `doc_name`, `metadata.doc_type` |
+| `replace_section` | Replace content by section anchor | `doc_name`, `section`, `content` |
+| `apply_patch` | Apply unified diff patch | `doc_name`, `patch` |
+| `replace_range` | Replace explicit line range | `doc_name`, `start_line`, `end_line`, `content` |
+| `replace_text` | Find/replace text pattern | `doc_name`, `metadata.find`, `metadata.replace` |
+| `append` | Append content to doc/section | `doc_name`, `content` |
+| `status_update` | Update checklist item status | `doc_name`, `section`, `metadata` |
+
+**Global Optional Params:** `project`, `dry_run`, `target_dir`
+
+**doc_type Values** (INSIDE metadata): `custom` (default), `research`, `bug`, `review`, `agent_card`
+
+**Create Examples:**
+```python
+# Research doc
+manage_docs(
+    action="create",
+    doc_name="RESEARCH_AUTH_20260119",
+    metadata={"doc_type": "research", "research_goal": "Analyze auth flow"}
+)
+
+# Bug report (doc_name auto-generated)
+manage_docs(
+    action="create",
+    metadata={
+        "doc_type": "bug",
+        "category": "logic",
+        "slug": "auth_leak",
+        "severity": "high",
+        "title": "Auth token not invalidated"
+    }
+)
+
+# Custom doc
+manage_docs(
+    action="create",
+    doc_name="COORDINATION_PROTOCOL",
+    metadata={"doc_type": "custom", "body": "# Protocol\n\nContent..."}
+)
+```
+
+**Edit Examples:**
+```python
+# Replace section
+manage_docs(
+    action="replace_section",
+    doc_name="architecture",
+    section="problem_statement",
+    content="## Problem Statement\nNew content here..."
+)
+
+# Apply unified diff patch (context-aware matching)
+manage_docs(
+    action="apply_patch",
+    doc_name="architecture",
+    patch="--- a/file.md\n+++ b/file.md\n@@ -10,3 +10,3 @@\n-old line\n+new line\n context"
+)
+
+# Update checklist status
+manage_docs(
+    action="status_update",
+    doc_name="checklist",
+    section="phase_1_task_1",
+    metadata={"status": "done", "proof": "PR #123 merged"}
+)
+```
+
+For complete documentation, see `docs/Scribe_Usage.md` or the `/scribe-mcp-usage` skill.
 
 ### 💾 Bulletproof Storage
 - **🗄️ Multi-Backend Support** - SQLite (zero-config) + PostgreSQL (enterprise)
