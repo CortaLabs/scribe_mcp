@@ -1,6 +1,6 @@
 <!--
 source: docs/Scribe_Usage.md
-source_sha256: 618181e05a1838ebd42ca54327eb13df1c71c2222f641e75b208996e352d53ea
+source_sha256: 30c69a730d0e00f5d81f59d9bdcd54734a7e8bad0a69e972129e532c1f4d507a
 note: This copy is patched for skill-local paths.
 -->
 
@@ -945,12 +945,10 @@ await scribe_doctor()
 
 #### `create` (UNIFIED CREATION ACTION)
 - `doc_name` (string, required): Document identifier used for naming/registration
-- `doc_type` (string, optional): Document type for template routing
-  - Supported types: `custom`, `research`, `bug`, `review`, `agent_card`
-  - If omitted, defaults to `custom`
 - `content` (string, optional): Document content (alternative to `metadata.body`)
 - `template` (string, optional): Template name override
-- `metadata` (dict, optional): Document metadata with type-specific fields
+- `metadata` (dict, required for type routing): Document metadata with type-specific fields
+  - `doc_type` (string): Document type - `custom`, `research`, `bug`, `review`, `agent_card` (defaults to `custom`)
   - For `research`: `research_goal` (required), `confidence_areas` (optional)
   - For `bug`: `category`, `slug`, `severity`, `title` (all required), `component` (optional)
   - For `review`: Review report metadata

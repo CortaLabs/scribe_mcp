@@ -44,12 +44,10 @@
 
 #### `create` (UNIFIED CREATION ACTION)
 - `doc_name` (string, required): Document identifier used for naming/registration
-- `doc_type` (string, optional): Document type for template routing
-  - Supported types: `custom`, `research`, `bug`, `review`, `agent_card`
-  - If omitted, defaults to `custom`
 - `content` (string, optional): Document content (alternative to `metadata.body`)
 - `template` (string, optional): Template name override
-- `metadata` (dict, optional): Document metadata with type-specific fields
+- `metadata` (dict, required for type routing): Document metadata with type-specific fields
+  - `doc_type` (string): Document type - `custom`, `research`, `bug`, `review`, `agent_card` (defaults to `custom`)
   - For `research`: `research_goal` (required), `confidence_areas` (optional)
   - For `bug`: `category`, `slug`, `severity`, `title` (all required), `component` (optional)
   - For `review`: Review report metadata
