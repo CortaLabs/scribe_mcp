@@ -9,8 +9,8 @@ from typing import Any, Dict
 
 # Import with absolute paths from MCP_SPINE root
 from scribe_mcp.config.settings import settings
+from scribe_mcp.utils.slug import slugify_project_name
 from scribe_mcp.utils.time import format_utc
-import re
 
 
 TEMPLATE_FILENAMES = {
@@ -166,13 +166,6 @@ def create_rotation_context(
         "hash_chain_sequence": hash_chain_sequence,
         "hash_chain_root": hash_chain_root,
     }
-_SLUG_CLEANER = re.compile(r"[^0-9a-z_]+")
-
-
-def slugify_project_name(name: str) -> str:
-    """Return a filesystem-friendly slug without importing project_utils (avoids circular deps)."""
-    normalised = name.strip().lower().replace(" ", "_")
-    return _SLUG_CLEANER.sub("_", normalised).strip("_") or "project"
 
 
 def _load_project_variables() -> Dict[str, Any]:

@@ -155,24 +155,9 @@ async def resolve_logging_context(
                     f.write(f"session_key_fallback: {session_key_fallback}\n")
                     f.write(f"session_project from state: {session_project.get('name') if session_project else None}\n")
 
-            # REPO SCOPING: Verify session project belongs to current repo
-            if session_project and session_project.get("root"):
-                try:
-                    from scribe_mcp.config.repo_config import get_current_repo_config
-                    current_repo_root, _ = get_current_repo_config()
-                    project_root = Path(session_project["root"]).resolve()
-                    if project_root != current_repo_root:
-                        # Session project is from different repo - clear it
-                        debug_log = Path("/tmp/scribe_session_debug.log")
-                        with open(debug_log, "a") as f:
-                            f.write(f"\n=== SESSION PROJECT BLOCKED (cross-repo) ===\n")
-                            f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
-                            f.write(f"session_project: {session_project.get('name')}\n")
-                            f.write(f"project_root: {project_root}\n")
-                            f.write(f"current_repo: {current_repo_root}\n")
-                        session_project = None
-                except Exception:
-                    pass  # If repo detection fails, allow (backwards compat)
+            # NOTE: Session projects are explicitly set via set_project() - trust them.
+            # Cross-repo session projects are allowed since the user deliberately set them.
+            # Repo scoping only applies to auto-detected fallback projects (lines 284+).
 
             if session_project:
                 project = dict(session_project)

@@ -22,6 +22,7 @@ from scribe_mcp.tools.project_utils import (
 @app.tool()
 async def delete_project(
     name: str,
+    root: str,  # Required: repo root for safety (like set_project)
     mode: str = "archive",  # "archive" or "permanent"
     confirm: bool = False,  # Must explicitly confirm
     force: bool = False,    # Override safety checks
@@ -32,6 +33,7 @@ async def delete_project(
 
     Args:
         name: Project name to delete
+        root: Repository root path (required for safety, must match project's root)
         mode: "archive" (default) moves files to archive, "permanent" deletes everything
         confirm: Must be True to proceed with deletion
         force: Override safety checks (not recommended)
@@ -90,6 +92,17 @@ async def delete_project(
         project_record = await storage.fetch_project(name)
         if not project_record:
             response["warnings"].append(f"Project '{name}' not found in storage, checking state cache only.")
+
+        # Safety check: verify root matches project's repo_root
+        resolved_root = Path(root).resolve()
+        if project_record and project_record.repo_root:
+            project_root = Path(project_record.repo_root).resolve()
+            if resolved_root != project_root:
+                response["errors"].append(
+                    f"Root mismatch: provided '{resolved_root}' does not match project root '{project_root}'"
+                )
+                response["message"] = "Safety check failed: root parameter must match project's repository root"
+                return response
 
         # Try to get project configuration for file system operations
         # But don't require it - we can derive paths from the project record

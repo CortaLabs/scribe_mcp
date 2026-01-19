@@ -4,24 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from scribe_mcp.config.settings import settings
-
-_SLUG_CLEANER = re.compile(r"[^0-9a-z_]+")
-
-
-def _slugify_project_name(name: str) -> str:
-    """Return a filesystem-friendly slug for the provided project name.
-
-    Keep this local to avoid importing from scribe_mcp.tools.* (which registers MCP tools
-    at import time and can create circular imports).
-    """
-    normalised = name.strip().lower().replace(" ", "_").replace("-", "_")
-    return _SLUG_CLEANER.sub("_", normalised).strip("_") or "project"
+from scribe_mcp.utils.slug import slugify_project_name as _slugify_project_name
 
 # Setup structured logging for configuration operations
 config_logger = logging.getLogger(__name__)

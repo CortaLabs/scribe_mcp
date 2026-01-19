@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 # Import with absolute paths from scribe_mcp root
 from scribe_mcp.utils.files import async_atomic_write, ensure_parent, preflight_backup
+from scribe_mcp.utils.slug import slugify_filename
 from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.utils.frontmatter import (
     apply_frontmatter_updates,
@@ -790,7 +791,7 @@ def _resolve_create_doc_path(
     if not resolved_name:
         raise DocumentOperationError("CREATE_DOC_MISSING_NAME: doc_name or register_as is required")
 
-    safe_name = _slugify_filename(resolved_name)
+    safe_name = slugify_filename(resolved_name)
 
     docs_dir = project.get("docs_dir")
     if docs_dir:
@@ -2032,7 +2033,7 @@ def _default_frontmatter(
     body_text: str,
     date_str: str,
 ) -> Dict[str, Any]:
-    from scribe_mcp.tools.project_utils import slugify_project_name
+    from scribe_mcp.utils.slug import slugify_project_name
 
     project_slug = slugify_project_name(project_name or "project")
     doc_name_slug = doc_name.lower().replace("_", "-")
@@ -2157,14 +2158,6 @@ def _validate_comparison_symbols(value: Any) -> bool:
         return True  # Allow these, but be cautious
 
     return True
-
-
-def _slugify_filename(value: str) -> str:
-    import re
-
-    slug = re.sub(r"[^\w\-.]+", "_", value.strip())
-    slug = re.sub(r"_+", "_", slug).strip("_")
-    return slug or "document"
 
 
 def _build_create_doc_body(
@@ -2472,10 +2465,3 @@ class DefaultDict(dict):
 
     def __missing__(self, key: str) -> str:
         return ""
-_SLUG_CLEANER = re.compile(r"[^0-9a-z_]+")
-
-
-def slugify_project_name(name: str) -> str:
-    """Return a filesystem-friendly slug; duplicated here to avoid circular imports during tests."""
-    normalised = name.strip().lower().replace(" ", "_")
-    return _SLUG_CLEANER.sub("_", normalised).strip("_") or "project"

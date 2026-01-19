@@ -259,6 +259,27 @@ async def set_project(
         "progress_log": str(resolved_log),
     }
 
+    # Compute baseline_hashes for newly generated docs (fixes EXISTING_LEGACY state detection)
+    # This allows get_project to distinguish NEW from EXISTING_LEGACY projects
+    # Store hashes in _hashes subkey to avoid polluting the docs list
+    docs_were_generated = len(doc_result.get("files", [])) > 0
+    if docs_were_generated:
+        from scribe_mcp.utils.integrity import compute_file_hash
+        baseline_hashes = {}
+        for doc_type in ["architecture", "phase_plan", "checklist"]:
+            doc_path = docs.get(doc_type)
+            if doc_path and Path(doc_path).exists():
+                try:
+                    file_hash, _ = compute_file_hash(doc_path)
+                    baseline_hashes[doc_type] = file_hash[:8]  # Short hash for readability
+                except Exception:
+                    pass  # Skip hash on error
+        if baseline_hashes:
+            docs["_hashes"] = {
+                "baseline_hashes": baseline_hashes,
+                "current_hashes": dict(baseline_hashes),  # Initially same as baseline
+            }
+
     project_data = {
         "name": name,
         "root": str(resolved_root),

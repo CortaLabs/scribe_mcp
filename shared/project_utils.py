@@ -76,10 +76,15 @@ def detect_project_state(
         ("MODIFIED", "✏️ Modified: architecture (15 entries)")
     """
     # Extract hash metadata from project
+    # Check both project["meta"]["docs"] and project["docs"] for compatibility
+    # (logging_utils stores at project["docs"], set_project stores at meta["docs"])
     meta = project.get("meta", {})
-    docs = meta.get("docs", {})
-    baseline_hashes = docs.get("baseline_hashes", {})
-    current_hashes = docs.get("current_hashes", {})
+    docs = meta.get("docs", {}) or project.get("docs", {})
+
+    # Hashes can be at docs["_hashes"], docs directly, or legacy locations
+    hashes = docs.get("_hashes", {})
+    baseline_hashes = hashes.get("baseline_hashes", {}) or docs.get("baseline_hashes", {})
+    current_hashes = hashes.get("current_hashes", {}) or docs.get("current_hashes", {})
     flags = docs.get("flags", {})
 
     # Four-state detection logic
