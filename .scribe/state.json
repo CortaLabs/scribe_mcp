@@ -43,20 +43,46 @@
   "session_projects": {},
   "recent_tools": [
     {
+<<<<<<< Updated upstream
       "name": "list_projects",
       "ts": "2026-01-02 13:09:15 UTC"
     },
     {
       "name": "append_entry",
       "ts": "2026-01-02 11:49:22 UTC"
+=======
+      "name": "append_entry",
+      "ts": "2026-01-19 09:15:41 UTC"
+    },
+    {
+      "name": "list_projects",
+      "ts": "2026-01-19 09:15:11 UTC"
+    },
+    {
+      "name": "read_file",
+      "ts": "2026-01-19 09:15:02 UTC"
+    },
+    {
+      "name": "set_project",
+      "ts": "2026-01-19 09:12:42 UTC"
+    },
+    {
+      "name": "read_recent",
+      "ts": "2026-01-19 09:12:39 UTC"
+>>>>>>> Stashed changes
     },
     {
       "name": "manage_docs",
       "ts": "2026-01-02 11:49:15 UTC"
     },
     {
+<<<<<<< Updated upstream
       "name": "read_file",
       "ts": "2026-01-02 11:48:04 UTC"
+=======
+      "name": "query_entries",
+      "ts": "2026-01-19 09:01:09 UTC"
+>>>>>>> Stashed changes
     },
     {
       "name": "get_project",
@@ -71,9 +97,17 @@
       "ts": "2026-01-02 09:20:27 UTC"
     }
   ],
+<<<<<<< Updated upstream
   "last_activity_at": "2026-01-02 13:09:15 UTC",
   "session_started_at": "2026-01-02 13:08:37 UTC",
   "version": 37,
   "last_updated_by": null,
   "operation_timestamp": "2026-01-02 13:09:15 UTC"
+=======
+  "last_activity_at": "2026-01-19 09:15:41 UTC",
+  "session_started_at": "2026-01-18 22:18:28 UTC",
+  "version": 1122,
+  "last_updated_by": "Scribe",
+  "operation_timestamp": "2026-01-19 09:12:43 UTC"
+>>>>>>> Stashed changes
 }
