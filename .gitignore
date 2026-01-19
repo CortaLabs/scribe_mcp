@@ -35,3 +35,5 @@ docs/archived_global_logs/*
 docs/bugs/*
 *.preflight-*.bak
 TOOL_LOG.*.*.md
+data/scribe_projects.db-shm
+data/scribe_projects.db-wal

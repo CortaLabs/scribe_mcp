@@ -13,7 +13,7 @@
 
 **PRIMARY ACTIONS** (7 actions - main user-facing operations):
 - `create` - Unified creation with `doc_type` routing (replaces create_* actions)
-- `replace_section` - Replace content using section anchors
+- `replace_section` - Replace content using section anchors (scaffolder support)
 - `apply_patch` - Apply unified diff patches
 - `replace_range` - Replace explicit line ranges
 - `replace_text` - Find/replace text patterns
@@ -27,7 +27,7 @@
 - `create_review_report` → `create(doc_type="review")`
 - `create_agent_report_card` → `create(doc_type="agent_card")`
 
-**HIDDEN ACTIONS** (7 actions - supported but not promoted):
+**HIDDEN ACTIONS** (7 actions - supported but not promoted, for backwards compatibility):
 - `normalize_headers` - Normalize markdown headers to ATX format
 - `generate_toc` - Generate table of contents
 - `validate_crosslinks` - Validate cross-document references
@@ -52,12 +52,19 @@
   - For `agent_card`: Agent performance metadata
   - For `custom`: `body`/`snippet`/`sections` for content, `register_doc`/`register_as` for control
 
-**Migration from deprecated actions:**
+**Migration Examples:**
 ```python
 # OLD: create_research_doc
 manage_docs(action="create_research_doc", doc_name="RESEARCH_AUTH", metadata={"research_goal": "..."})
+
 # NEW: create with doc_type
 manage_docs(action="create", doc_name="RESEARCH_AUTH", doc_type="research", metadata={"research_goal": "..."})
+
+# OLD: create_bug_report
+manage_docs(action="create_bug_report", metadata={"category": "logic", "slug": "auth_bug", ...})
+
+# NEW: create with doc_type
+manage_docs(action="create", doc_type="bug", metadata={"category": "logic", "slug": "auth_bug", ...})
 ```
 
 #### `replace_section`
@@ -94,44 +101,55 @@ manage_docs(action="create", doc_name="RESEARCH_AUTH", doc_type="research", meta
 
 ### Deprecated Actions (Backwards Compatibility)
 
-The following actions are **DEPRECATED** but still work. They route to `create` with appropriate `doc_type`:
+The following actions are **DEPRECATED** but still work. They automatically route to the unified `create` action with appropriate `doc_type`:
 
-- `create_research_doc` → Use `create(doc_type="research")` instead
-- `create_bug_report` → Use `create(doc_type="bug")` instead
-- `create_review_report` → Use `create(doc_type="review")` instead
-- `create_agent_report_card` → Use `create(doc_type="agent_card")` instead
-- `create_doc` → Use `create(doc_type="custom")` instead
+#### `create_research_doc` → `create(doc_type="research")`
+**Migration:** Use `manage_docs(action="create", doc_type="research", ...)` instead.
 
-All deprecated actions accept the same parameters as before. See `create` action documentation above for details.
+#### `create_bug_report` → `create(doc_type="bug")`
+**Migration:** Use `manage_docs(action="create", doc_type="bug", ...)` instead.
+
+#### `create_review_report` → `create(doc_type="review")`
+**Migration:** Use `manage_docs(action="create", doc_type="review", ...)` instead.
+
+#### `create_agent_report_card` → `create(doc_type="agent_card")`
+**Migration:** Use `manage_docs(action="create", doc_type="agent_card", ...)` instead.
+
+#### `create_doc` → `create(doc_type="custom")`
+**Migration:** Use `manage_docs(action="create", doc_type="custom", ...)` instead.
+
+**Note:** All deprecated actions accept the same parameters as before, but internally route to the new `create` action. See the `create` action documentation above for detailed parameter specifications.
 
 ---
 
-### Hidden Actions (Advanced Use)
+### Hidden Actions (Advanced/Internal Use)
 
-The following actions are supported but not promoted in standard workflows:
+The following actions are **HIDDEN** - they still work but are not promoted in standard workflows. These are for backwards compatibility and advanced use cases:
 
-#### `list_sections` (HIDDEN)
-- Returns section anchors for the requested document with line numbers
-
-#### `list_checklist_items` (HIDDEN)
-- Returns all checklist items with their IDs and status
-
-#### `batch` (HIDDEN)
-- `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order
-
-#### `normalize_headers` (HIDDEN)
+#### `normalize_headers` (HIDDEN ACTION)
+- No additional parameters required
 - Normalizes all markdown headers to ATX format (# style)
 
-#### `generate_toc` (HIDDEN)
-- Generates table of contents
+#### `generate_toc` (HIDDEN ACTION)
+- `metadata` (dict, optional): TOC generation options
 
-#### `validate_crosslinks` (HIDDEN)
+#### `validate_crosslinks` (HIDDEN ACTION)
+- No additional parameters required
 - Validates all cross-document references
 
-#### `search` (HIDDEN)
-- Semantic search across documents
+#### `list_sections` (HIDDEN ACTION)
+- No additional parameters required
+- Returns the discovered section anchors for the requested document, including line numbers
 
----
+#### `list_checklist_items` (HIDDEN ACTION)
+- No additional parameters required
+- Returns all checklist items with their IDs and status
+
+#### `search` (HIDDEN ACTION)
+- Semantic search across documents (see dedicated search documentation)
+
+#### `batch` (HIDDEN ACTION)
+- `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order. Nested batches are rejected for safety
 
 **Global Optional Parameters:**
 - `metadata` (dict): Additional metadata for the operation
@@ -169,16 +187,18 @@ await manage_docs(
     metadata={"status": "done", "proof": "code_review_completed"}
 )
 
-# Create research document
+# Create research document (NEW SYNTAX)
 await manage_docs(
-    action="create_research_doc",
-    doc_name="RESEARCH_AUTH_SYSTEM_20251102",  # REQUIRED for custom docs
+    action="create",
+    doc_name="RESEARCH_AUTH_SYSTEM_20251102",
+    doc_type="research",
     metadata={"research_goal": "Analyze authentication flow", "confidence_areas": ["security"]}
 )
 
-# Create bug report
+# Create bug report (NEW SYNTAX)
 await manage_docs(
-    action="create_bug_report",
+    action="create",
+    doc_type="bug",
     metadata={
         "category": "database",
         "slug": "connection_leak",
@@ -186,6 +206,14 @@ await manage_docs(
         "title": "Database connection pool exhaustion",
         "component": "storage/sqlite.py"
     }
+)
+
+# Create custom document (NEW SYNTAX)
+await manage_docs(
+    action="create",
+    doc_name="COORDINATION_PROTOCOL",
+    doc_type="custom",
+    metadata={"body": "# Coordination Protocol\n\n..."}
 )
 
 # Apply unified patch (patch_mode defaults to "unified" when patch is provided)

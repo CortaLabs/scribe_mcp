@@ -1,6 +1,6 @@
 <!--
 source: docs/Scribe_Usage.md
-source_sha256: d1b88153a4b554406490742b2ecf89c044cfcfdad44d01eac1c3c323bb280f4a
+source_sha256: 51a356f44a5da0d18c3d81b24030ac6ab7c902533ab02fa0cf7fef6818947c26
 note: This copy is patched for skill-local paths.
 -->
 
@@ -536,7 +536,8 @@ await get_project()
 
 **Optional Parameters:**
 - `limit` (int, default: 5): Maximum number of projects to return
-- `filter` (string): Filter projects by name (case-insensitive)
+- `filter` (string): Filter projects by name (case-insensitive substring match)
+- `root` (string): Filter projects by repo root path (exact match, path-normalized). Useful for bridge integrations that need to resolve workspace → project mappings.
 - `compact` (bool): Use compact response format
 - `fields` (list): Specific fields to include in response
 - `include_test` (bool, default: false): Include test/temp projects
@@ -551,8 +552,11 @@ await list_projects()
 # With pagination
 await list_projects(limit=10, page=1)
 
-# Filtered search
+# Filtered by name
 await list_projects(filter="my-project", limit=3)
+
+# Filtered by repo root (for bridge workspace resolution)
+await list_projects(root="/home/austin/projects/MCP_SPINE/council_mcp")
 ```
 
 **Returns:**

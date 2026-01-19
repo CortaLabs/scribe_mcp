@@ -1,5 +1,5 @@
 {
-  "current_project": "mybb-forge-v2",
+  "current_project": "private-plugin-infra",
   "projects": {
     "scribe_mcp": {
       "name": "scribe_mcp",
@@ -1109,14 +1109,8 @@
         "agent": "Scribe"
       },
       "author": "Scribe",
-      "description": "AI-assisted MyBB development toolkit - MCP server, template/style sync, plugin scaffolding",
-      "tags": [
-        "mybb",
-        "mcp",
-        "php",
-        "python",
-        "forum"
-      ],
+      "description": "MyBB Playground main project coordination",
+      "tags": [],
       "meta": {
         "docs": {
           "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_playground/ARCHITECTURE_GUIDE.md",
@@ -1548,12 +1542,26 @@
       "name": "invite-system",
       "root": "/home/austin/projects/MyBB_Playground",
       "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system",
       "docs": {
         "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
         "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
         "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md",
-        "usercp_navigation_fix": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/usercp_navigation_fix.md"
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "MyBB-Coder"
+      },
+      "author": "MyBB-Coder",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/invite_system/PROGRESS_LOG.md"
+        }
       }
     },
     "manage-docs-ux-fix": {
@@ -1659,14 +1667,169 @@
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
         }
       }
+    },
+    "template-deployment-research": {
+      "name": "template-deployment-research",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "5c94ef66",
+            "phase_plan": "f1381b55",
+            "checklist": "4066c45c"
+          },
+          "current_hashes": {
+            "architecture": "5c94ef66",
+            "phase_plan": "f1381b55",
+            "checklist": "4066c45c"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "Investigate template deployment flow from plugin workspace to TestForum, including MCP disk-sync and plugin _install() coordination",
+      "tags": [
+        "mybb",
+        "plugin-manager",
+        "disk-sync",
+        "templates",
+        "research"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/template_deployment_research/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "5c94ef66",
+              "phase_plan": "f1381b55",
+              "checklist": "4066c45c"
+            },
+            "current_hashes": {
+              "architecture": "5c94ef66",
+              "phase_plan": "f1381b55",
+              "checklist": "4066c45c"
+            }
+          }
+        }
+      }
+    },
+    "plugin_manager_db_fix": {
+      "name": "plugin_manager_db_fix",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "0b3978cc",
+            "phase_plan": "ba78f988",
+            "checklist": "bfc32552"
+          },
+          "current_hashes": {
+            "architecture": "0b3978cc",
+            "phase_plan": "ba78f988",
+            "checklist": "bfc32552"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "Fix plugin manager database path inconsistency causing constraint failures",
+      "tags": [
+        "bug",
+        "plugin_manager",
+        "database",
+        "critical"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/plugin_manager_db_fix/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "0b3978cc",
+              "phase_plan": "ba78f988",
+              "checklist": "bfc32552"
+            },
+            "current_hashes": {
+              "architecture": "0b3978cc",
+              "phase_plan": "ba78f988",
+              "checklist": "bfc32552"
+            }
+          }
+        }
+      }
+    },
+    "mybb-dev-protocol": {
+      "name": "mybb-dev-protocol",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md",
+        "research_report_RESEARCH_test_20260119": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/research/RESEARCH_test_20260119.md",
+        "research_report_index": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/research/INDEX.md",
+        "bug_report_report": "/home/austin/projects/MyBB_Playground/docs/bugs/misc/2026-01-19_test_bug/report.md",
+        "bug_report_index": "/home/austin/projects/MyBB_Playground/docs/bugs/INDEX.md",
+        "review_report_REVIEW_REPORT_unknown_2026-01-19_1110": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/REVIEW_REPORT_unknown_2026-01-19_1110.md",
+        "review_report_index": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/REVIEW_INDEX.md",
+        "TEST_CUSTOM_DOC": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/custom.md"
+      }
+    },
+    "private-plugin-infra": {
+      "name": "private-plugin-infra",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "recent_projects": [
-    "mybb-forge-v2",
-    "agent_ux_overhaul",
-    "invite-system",
-    "scribe_mcp",
-    "slugify_standardization"
+    "private-plugin-infra",
+    "mybb-dev-protocol",
+    "plugin_manager_db_fix",
+    "mybb-playground",
+    "template-deployment-research"
   ],
   "session_projects": {
     "61c3e1d7-6d68-44f5-8354-e1483d8be1a6": {
@@ -1780,28 +1943,56 @@
       }
     },
     "0360c4a9-22e9-4da6-9a1a-fc6658db5d63": {
-      "name": "mybb-forge-v2",
+      "name": "mybb-dev-protocol",
       "root": "/home/austin/projects/MyBB_Playground",
-      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol",
       "docs": {
-        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "902e0e74",
+            "phase_plan": "e7eb50ff",
+            "checklist": "351b211d"
+          },
+          "current_hashes": {
+            "architecture": "902e0e74",
+            "phase_plan": "e7eb50ff",
+            "checklist": "351b211d"
+          }
+        }
       },
       "defaults": {
         "agent": "Scribe"
       },
       "author": "Scribe",
-      "description": null,
-      "tags": [],
+      "description": "Define the MyBB Forge development protocol and update agent files to enforce it",
+      "tags": [
+        "protocol",
+        "agents",
+        "documentation"
+      ],
       "meta": {
         "docs": {
-          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PHASE_PLAN.md",
-          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/CHECKLIST.md",
-          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_forge_v2/PROGRESS_LOG.md"
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "902e0e74",
+              "phase_plan": "e7eb50ff",
+              "checklist": "351b211d"
+            },
+            "current_hashes": {
+              "architecture": "902e0e74",
+              "phase_plan": "e7eb50ff",
+              "checklist": "351b211d"
+            }
+          }
         }
       }
     },
@@ -2042,6 +2233,84 @@
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/agent_ux_overhaul/PROGRESS_LOG.md"
         }
       }
+    },
+    "a3b209fd-3d0b-4cc4-bc25-f00055a586d9": {
+      "name": "mybb-dev-protocol",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/mybb_dev_protocol/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "f1b9b9b2-f385-4c09-bab8-bfff78e3eafb": {
+      "name": "private-plugin-infra",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "7043a6c6-1de1-496b-b1d1-732caf5af48c": {
+      "name": "private-plugin-infra",
+      "root": "/home/austin/projects/MyBB_Playground",
+      "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra",
+      "docs": {
+        "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MyBB_Playground/.scribe/docs/dev_plans/private_plugin_infra/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "session_modes": {
@@ -2057,53 +2326,56 @@
     "44bda144-e771-48d8-889f-9c028f208fa6": "project",
     "1c0fad10-13d9-48bd-a9e3-e178782633d2": "project",
     "f1909ced-a149-4a70-a648-a500c0f1911d": "project",
-    "d13441bf-fa72-4c4a-a481-3d289980e8c1": "project"
+    "d13441bf-fa72-4c4a-a481-3d289980e8c1": "project",
+    "a3b209fd-3d0b-4cc4-bc25-f00055a586d9": "project",
+    "f1b9b9b2-f385-4c09-bab8-bfff78e3eafb": "project",
+    "7043a6c6-1de1-496b-b1d1-732caf5af48c": "project"
   },
   "recent_tools": [
     {
-      "name": "read_file",
-      "ts": "2026-01-19 09:15:02 UTC"
-    },
-    {
       "name": "append_entry",
-      "ts": "2026-01-19 09:14:57 UTC"
-    },
-    {
-      "name": "set_project",
-      "ts": "2026-01-19 09:12:42 UTC"
+      "ts": "2026-01-19 12:12:57 UTC"
     },
     {
       "name": "read_recent",
-      "ts": "2026-01-19 09:12:39 UTC"
+      "ts": "2026-01-19 12:10:15 UTC"
     },
     {
-      "name": "manage_docs",
-      "ts": "2026-01-19 09:11:16 UTC"
+      "name": "set_project",
+      "ts": "2026-01-19 12:10:12 UTC"
     },
     {
       "name": "list_projects",
-      "ts": "2026-01-19 09:10:53 UTC"
+      "ts": "2026-01-19 12:08:38 UTC"
     },
     {
       "name": "query_entries",
-      "ts": "2026-01-19 09:01:09 UTC"
+      "ts": "2026-01-19 12:03:35 UTC"
+    },
+    {
+      "name": "manage_docs",
+      "ts": "2026-01-19 11:53:17 UTC"
+    },
+    {
+      "name": "read_file",
+      "ts": "2026-01-19 11:50:59 UTC"
+    },
+    {
+      "name": "generate_doc_templates",
+      "ts": "2026-01-19 11:39:04 UTC"
     },
     {
       "name": "get_project",
       "ts": "2026-01-19 08:53:24 UTC"
     },
     {
-      "name": "generate_doc_templates",
-      "ts": "2026-01-19 08:24:11 UTC"
-    },
-    {
       "name": "delete_project",
       "ts": "2026-01-19 00:57:10 UTC"
     }
   ],
-  "last_activity_at": "2026-01-19 09:15:02 UTC",
+  "last_activity_at": "2026-01-19 12:12:57 UTC",
   "session_started_at": "2026-01-18 22:18:28 UTC",
-  "version": 1122,
+  "version": 1147,
   "last_updated_by": "Scribe",
-  "operation_timestamp": "2026-01-19 09:12:43 UTC"
+  "operation_timestamp": "2026-01-19 12:10:12 UTC"
 }

@@ -957,13 +957,13 @@ await scribe_doctor()
 manage_docs(action="create_research_doc", doc_name="RESEARCH_AUTH", metadata={"research_goal": "..."})
 
 # NEW: create with doc_type
-manage_docs(action="create", doc_name="RESEARCH_AUTH", doc_type="research", metadata={"research_goal": "..."})
+manage_docs(action="create", doc_name="RESEARCH_AUTH", metadata={"doc_type": "research", "research_goal": "..."})
 
 # OLD: create_bug_report
 manage_docs(action="create_bug_report", metadata={"category": "logic", "slug": "auth_bug", ...})
 
 # NEW: create with doc_type
-manage_docs(action="create", doc_type="bug", metadata={"category": "logic", "slug": "auth_bug", ...})
+manage_docs(action="create", metadata={"doc_type": "bug", "category": "logic", "slug": "auth_bug", ...})
 ```
 
 #### `replace_section`

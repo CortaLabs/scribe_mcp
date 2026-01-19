@@ -4,49 +4,68 @@
 **Purpose**: Structured documentation system for projects.
 
 **Required Parameters:**
-- `action` (string): Action type (see all actions below)
+- `action` (string): Action type (see all 17 actions below)
 - `doc_name` (string): Document identifier/filename key (e.g., `architecture`, `phase_plan`, `checklist`, `implementation`)
 
-**Optional Parameters:**
-- `project` (string): Project name (automatically normalized - hyphens/underscores/spaces all work)
+**Important:** `doc_name` is the unique document identifier (and drives filename resolution). `doc_category` is a semantic label only and must not be used as a filename or registry key.
 
-**Important Notes:**
-- `doc_name` is the unique document identifier (and drives filename resolution). `doc_category` is a semantic label only and must not be used as a filename or registry key.
-- **Project name normalization**: Project names are automatically normalized. You can use `"My-Project"`, `"my_project"`, or `"MY PROJECT"` - all resolve to `"my_project"`.
+**All Available Actions (7 primary + 5 deprecated + 7 hidden = 19 total):**
 
-**All Available Actions (7 primary + deprecated aliases):**
-
-**EDIT Operations** (11 actions - auto-register documents by `doc_name` if needed):
-- `list_sections` - List all section anchors in a document
-- `list_checklist_items` - List all checklist items
-- `replace_section` - Replace content using section anchors
+**PRIMARY ACTIONS** (7 actions - main user-facing operations):
+- `create` - Unified creation with `doc_type` routing (replaces create_* actions)
+- `replace_section` - Replace content using section anchors (scaffolder support)
+- `apply_patch` - Apply unified diff patches
+- `replace_range` - Replace explicit line ranges
+- `replace_text` - Find/replace text patterns
 - `append` - Append content to document or section
 - `status_update` - Update checklist item status
-- `apply_patch` - Apply structured or unified diff patches
-- `replace_range` - Replace explicit line ranges
+
+**DEPRECATED ACTIONS** (5 actions - still work but route to `create` with `doc_type`):
+- `create_doc` → `create(doc_type="custom")`
+- `create_research_doc` → `create(doc_type="research")`
+- `create_bug_report` → `create(doc_type="bug")`
+- `create_review_report` → `create(doc_type="review")`
+- `create_agent_report_card` → `create(doc_type="agent_card")`
+
+**HIDDEN ACTIONS** (7 actions - supported but not promoted, for backwards compatibility):
 - `normalize_headers` - Normalize markdown headers to ATX format
 - `generate_toc` - Generate table of contents
-- `search` - Semantic search across documents
 - `validate_crosslinks` - Validate cross-document references
-- `replace_text` - Replace text patterns
-
-**CREATE Operations** (1 unified action):
-- `create` - Create documents (routes based on `doc_type` parameter):
-  - `doc_type="research"` - Create structured research documents
-  - `doc_type="bug"` - Create structured bug reports
-  - `doc_type="review"` - Create review reports
-  - `doc_type="agent_card"` - Create agent performance reports
-  - `doc_type="custom"` - Create custom documents
+- `list_sections` - List all section anchors in a document
+- `list_checklist_items` - List all checklist items
+- `search` - Semantic search across documents
 - `batch` - Execute multiple operations sequentially
 
-**Deprecated CREATE Actions (still work with warnings):**
-- `create_research_doc` → Use `create(doc_type="research")` instead
-- `create_bug_report` → Use `create(doc_type="bug")` instead
-- `create_review_report` → Use `create(doc_type="review")` instead
-- `create_agent_report_card` → Use `create(doc_type="agent_card")` instead
-- `create_doc` → Use `create(doc_type="custom")` instead
-
 **Action-Specific Parameters:**
+
+#### `create` (UNIFIED CREATION ACTION)
+- `doc_name` (string, required): Document identifier used for naming/registration
+- `doc_type` (string, optional): Document type for template routing
+  - Supported types: `custom`, `research`, `bug`, `review`, `agent_card`
+  - If omitted, defaults to `custom`
+- `content` (string, optional): Document content (alternative to `metadata.body`)
+- `template` (string, optional): Template name override
+- `metadata` (dict, optional): Document metadata with type-specific fields
+  - For `research`: `research_goal` (required), `confidence_areas` (optional)
+  - For `bug`: `category`, `slug`, `severity`, `title` (all required), `component` (optional)
+  - For `review`: Review report metadata
+  - For `agent_card`: Agent performance metadata
+  - For `custom`: `body`/`snippet`/`sections` for content, `register_doc`/`register_as` for control
+
+**Migration Examples:**
+```python
+# OLD: create_research_doc
+manage_docs(action="create_research_doc", doc_name="RESEARCH_AUTH", metadata={"research_goal": "..."})
+
+# NEW: create with doc_type
+manage_docs(action="create", doc_name="RESEARCH_AUTH", doc_type="research", metadata={"research_goal": "..."})
+
+# OLD: create_bug_report
+manage_docs(action="create_bug_report", metadata={"category": "logic", "slug": "auth_bug", ...})
+
+# NEW: create with doc_type
+manage_docs(action="create", doc_type="bug", metadata={"category": "logic", "slug": "auth_bug", ...})
+```
 
 #### `replace_section`
 - `section` (string, required): Section anchor ID (e.g., "problem_statement")
@@ -78,61 +97,59 @@
 - `content` (string, required): Text pattern to replace
 - `metadata` (dict, optional): Replacement configuration
 
-#### `list_sections`
-- No additional parameters required
-- Returns the discovered section anchors for the requested document, including line numbers.
+---
 
-#### `list_checklist_items`
-- No additional parameters required
-- Returns all checklist items with their IDs and status
+### Deprecated Actions (Backwards Compatibility)
 
-#### `batch`
-- `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order. Nested batches are rejected for safety.
+The following actions are **DEPRECATED** but still work. They automatically route to the unified `create` action with appropriate `doc_type`:
 
-#### `create` (Unified Document Creation)
-- `doc_type` (string, required): Document type - `research|bug|review|agent_card|custom`
-- `doc_name` (string, required for research/custom): Document name (e.g., "RESEARCH_AUTH_SYSTEM_20251102")
-- `metadata` (dict, required): Type-specific metadata:
-  - **For `doc_type="research"`**: Must include `research_goal` field
-    - Example: `{"research_goal": "Analyze authentication flow", "confidence_areas": ["security", "performance"]}`
-  - **For `doc_type="bug"`**: Must include:
-    - `category` (string): One of `infrastructure|logic|database|api|ui|misc`
-    - `slug` (string): Descriptive identifier
-    - `severity` (string): One of `low|medium|high|critical`
-    - `title` (string): Brief bug description
-    - `component` (string, optional): Affected component
-  - **For `doc_type="review"`**: Review report metadata
-  - **For `doc_type="agent_card"`**: Agent performance metadata
-  - **For `doc_type="custom"`**: Custom document metadata
-- `content` (string, optional): Document content (for custom docs)
-- `template` (string, optional): Template name (for custom docs)
+#### `create_research_doc` → `create(doc_type="research")`
+**Migration:** Use `manage_docs(action="create", doc_type="research", ...)` instead.
 
-#### `create_research_doc` (DEPRECATED)
-Use `create(doc_type="research")` instead. See `create` action above.
+#### `create_bug_report` → `create(doc_type="bug")`
+**Migration:** Use `manage_docs(action="create", doc_type="bug", ...)` instead.
 
-#### `create_bug_report` (DEPRECATED)
-Use `create(doc_type="bug")` instead. See `create` action above.
+#### `create_review_report` → `create(doc_type="review")`
+**Migration:** Use `manage_docs(action="create", doc_type="review", ...)` instead.
 
-#### `create_review_report` (DEPRECATED)
-Use `create(doc_type="review")` instead. See `create` action above.
+#### `create_agent_report_card` → `create(doc_type="agent_card")`
+**Migration:** Use `manage_docs(action="create", doc_type="agent_card", ...)` instead.
 
-#### `create_agent_report_card` (DEPRECATED)
-Use `create(doc_type="agent_card")` instead. See `create` action above.
+#### `create_doc` → `create(doc_type="custom")`
+**Migration:** Use `manage_docs(action="create", doc_type="custom", ...)` instead.
 
-#### `create_doc` (DEPRECATED)
-Use `create(doc_type="custom")` instead. See `create` action above.
-- `metadata` (dict, optional): Document metadata (supports `register_doc` and `register_as` overrides)
+**Note:** All deprecated actions accept the same parameters as before, but internally route to the new `create` action. See the `create` action documentation above for detailed parameter specifications.
 
-#### `normalize_headers`
+---
+
+### Hidden Actions (Advanced/Internal Use)
+
+The following actions are **HIDDEN** - they still work but are not promoted in standard workflows. These are for backwards compatibility and advanced use cases:
+
+#### `normalize_headers` (HIDDEN ACTION)
 - No additional parameters required
 - Normalizes all markdown headers to ATX format (# style)
 
-#### `generate_toc`
+#### `generate_toc` (HIDDEN ACTION)
 - `metadata` (dict, optional): TOC generation options
 
-#### `validate_crosslinks`
+#### `validate_crosslinks` (HIDDEN ACTION)
 - No additional parameters required
 - Validates all cross-document references
+
+#### `list_sections` (HIDDEN ACTION)
+- No additional parameters required
+- Returns the discovered section anchors for the requested document, including line numbers
+
+#### `list_checklist_items` (HIDDEN ACTION)
+- No additional parameters required
+- Returns all checklist items with their IDs and status
+
+#### `search` (HIDDEN ACTION)
+- Semantic search across documents (see dedicated search documentation)
+
+#### `batch` (HIDDEN ACTION)
+- `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order. Nested batches are rejected for safety
 
 **Global Optional Parameters:**
 - `metadata` (dict): Additional metadata for the operation
@@ -170,16 +187,18 @@ await manage_docs(
     metadata={"status": "done", "proof": "code_review_completed"}
 )
 
-# Create research document
+# Create research document (NEW SYNTAX)
 await manage_docs(
-    action="create_research_doc",
-    doc_name="RESEARCH_AUTH_SYSTEM_20251102",  # REQUIRED for custom docs
+    action="create",
+    doc_name="RESEARCH_AUTH_SYSTEM_20251102",
+    doc_type="research",
     metadata={"research_goal": "Analyze authentication flow", "confidence_areas": ["security"]}
 )
 
-# Create bug report
+# Create bug report (NEW SYNTAX)
 await manage_docs(
-    action="create_bug_report",
+    action="create",
+    doc_type="bug",
     metadata={
         "category": "database",
         "slug": "connection_leak",
@@ -187,6 +206,14 @@ await manage_docs(
         "title": "Database connection pool exhaustion",
         "component": "storage/sqlite.py"
     }
+)
+
+# Create custom document (NEW SYNTAX)
+await manage_docs(
+    action="create",
+    doc_name="COORDINATION_PROTOCOL",
+    doc_type="custom",
+    metadata={"body": "# Coordination Protocol\n\n..."}
 )
 
 # Apply unified patch (patch_mode defaults to "unified" when patch is provided)
