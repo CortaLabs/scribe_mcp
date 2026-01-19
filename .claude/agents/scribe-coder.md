@@ -348,8 +348,8 @@ When discovering bugs during implementation:
 # Create structured bug report
 manage_docs(
     action="create",
-    doc_type="bug",
     metadata={
+        "doc_type": "bug",
         "category": "<category>",
         "slug": "<descriptive_slug>",
         "severity": "<low|medium|high|critical>",
@@ -363,6 +363,44 @@ This automatically creates:
 - `docs/bugs/<category>/<YYYY-MM-DD>_<slug>/report.md`
 - Updates the main `docs/bugs/INDEX.md`
 - Provides structured bug report template
+
+## Implementation Report Creation
+
+**MANDATORY:** Create an implementation report at the end of every coding session:
+
+```python
+manage_docs(
+    action="create",
+    doc_name="IMPLEMENTATION_REPORT_20260119_1430",
+    metadata={
+        "doc_type": "custom",
+        "body": """# Implementation Report
+
+## Summary
+<What was implemented>
+
+## Files Changed
+| File | Changes |
+|------|---------|
+| `path/to/file.py` | Added X, modified Y |
+
+## Tests
+- [ ] Unit tests added/updated
+- [ ] Integration tests pass
+- [ ] Manual verification complete
+
+## Notes
+<Any important observations, gotchas, or follow-up items>
+"""
+    }
+)
+```
+
+**Key requirements:**
+- `doc_name` must include timestamp: `IMPLEMENTATION_REPORT_<YYYYMMDD>_<HHMM>`
+- `doc_type` goes INSIDE `metadata`, not as top-level param
+- Include: summary, files changed, test status, notes
+- Verify the report was created after the call
 
 ## Global Milestone Logging
 

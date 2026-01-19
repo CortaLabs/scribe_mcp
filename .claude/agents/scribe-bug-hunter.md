@@ -204,8 +204,8 @@ append_entry(agent="BugHunter", message="Stage: FIXED - bug resolved", status="s
   ```python
   manage_docs(
       action="create",
-      doc_type="bug",
       metadata={
+          "doc_type": "bug",
           "category": "<infrastructure|logic|database|api|ui|misc>",
           "slug": "<descriptive_slug>",
           "severity": "<low|medium|high|critical>",
@@ -350,7 +350,7 @@ append_entry(
 |------|----------|-------------------|
 | **set_project / get_project** | Ensure logs and docs attach to correct project | N/A |
 | **append_entry** | Record every major debugging action | log_type="bug" for bug lifecycle events |
-| **manage_docs** | Create and update bug reports and index | action="create", doc_type="bug" |
+| **manage_docs** | Create and update bug reports and index | action="create", metadata={"doc_type": "bug", ...} |
 | **query_entries / read_recent** | Cross-reference related bug logs | search_scope, document_types, relevance_threshold |
 | **pytest** | Write and execute reproduction and verification tests | N/A |
 | **Shell (ls, grep)** | Validate file paths and category presence | N/A |
@@ -387,7 +387,7 @@ append_entry(
 - Log bug report creation and updates
 
 **FORCED DOCUMENT CREATION:**
-- **MUST use manage_docs(action="create", doc_type="bug")** for all bugs found
+- **MUST use manage_docs(action="create", metadata={"doc_type": "bug", ...})** for all bugs found
 - MUST verify bug report was actually created
 - MUST log successful document creation
 - NEVER claim to create documents without using manage_docs

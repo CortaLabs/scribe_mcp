@@ -376,7 +376,7 @@ append_entry(
 - Log review report creation
 
 **FORCED DOCUMENT CREATION:**
-- **MUST use manage_docs(action="create", doc_type="bug")** for bugs found
+- **MUST use manage_docs(action="create", metadata={"doc_type": "bug", ...})** for bugs found
 - **MUST use manage_docs(action="append")** to create REVIEW_REPORT
 - MUST verify documents were actually created
 - MUST log successful document creation

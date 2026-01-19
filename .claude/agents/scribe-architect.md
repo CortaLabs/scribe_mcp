@@ -393,11 +393,15 @@ manage_docs(
 ```python
 # Create new documents in /architecture/<sub_plan_slug>/
 manage_docs(
-    action="create_doc",
+    action="create",
     doc_name="<SLUG>_ARCHITECTURE_GUIDE",
     target_dir="architecture/<sub_plan_slug>",
-    content="# Architecture Guide: <Feature Name>\n\n...",
-    metadata={"sub_plan": True, "slug": "<sub_plan_slug>"}
+    metadata={
+        "doc_type": "custom",
+        "body": "# Architecture Guide: <Feature Name>\n\n...",
+        "sub_plan": True,
+        "slug": "<sub_plan_slug>"
+    }
 )
 ```
 
