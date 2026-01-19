@@ -287,83 +287,55 @@ async def apply_doc_change(
                         extra={"precondition_failed": "SOURCE_HASH_MISMATCH"},
                     )
 
+                # Calculate frontmatter offset for smart matching
+                frontmatter_lines = 0
+                if original_parsed.has_frontmatter and original_parsed.frontmatter_raw:
+                    frontmatter_lines = len(original_parsed.frontmatter_raw.splitlines())
+
                 try:
-                    updated_body, hunks_applied = _apply_unified_patch(original_body, patch_used)
+                    # Use context-aware smart patch application
+                    updated_body, hunks_applied, smart_extra = _apply_unified_patch_smart(
+                        original_body, patch_used, frontmatter_lines
+                    )
                     extra = {
                         "hunks_applied": hunks_applied,
                         "patch_source_hash": current_hash,
                         "patch_source_hash_source": patch_hash_source,
+                        **smart_extra,
                     }
                 except DocumentOperationError as exc:
                     error_message = str(exc)
+                    # If smart matching failed, try rebase as last resort
                     if _is_patch_context_error(error_message) and not patch_source_hash:
-                        latest_text = original_text
-                        if doc_path.exists():
-                            latest_text = await asyncio.to_thread(doc_path.read_text, encoding="utf-8")
-                        latest_parsed = parse_frontmatter(latest_text)
-                        if latest_parsed.body != original_body:
-                            original_body = latest_parsed.body
-                            original_parsed = latest_parsed
-                            current_hash = _hash_text(original_body)
-                            before_hash = current_hash
-                            file_size_before = doc_path.stat().st_size if doc_path.exists() else 0
-
-                        # Fallback 1: Try adjusting line numbers for frontmatter offset
-                        fallback_succeeded = False
-                        frontmatter_lines = 0
-                        if original_parsed.has_frontmatter and original_parsed.frontmatter_raw:
-                            # Count frontmatter lines (includes opening and closing --- delimiters)
-                            frontmatter_lines = len(original_parsed.frontmatter_raw.splitlines())
-
-                        if frontmatter_lines > 0:
-                            try:
-                                adjusted_patch = _adjust_patch_line_numbers(patch_used, frontmatter_lines)
-                                updated_body, hunks_applied = _apply_unified_patch(
-                                    original_body, adjusted_patch
-                                )
-                                patch_used = adjusted_patch
-                                extra = {
-                                    "hunks_applied": hunks_applied,
-                                    "patch_source_hash": current_hash,
-                                    "patch_source_hash_source": "auto",
-                                    "frontmatter_adjustment": True,
-                                    "frontmatter_lines_offset": frontmatter_lines,
-                                }
-                                fallback_succeeded = True
-                            except DocumentOperationError:
-                                # Fallback 1 failed, continue to fallback 2 (rebase)
-                                pass
-
-                        # Fallback 2: Try rebasing patch to current context
-                        if not fallback_succeeded:
-                            try:
-                                rebased_patch, rebase_info = _rebase_patch_to_current_context(
-                                    original_body, patch_used
-                                )
-                                patch_used = rebased_patch
-                                updated_body, hunks_applied = _apply_unified_patch(
-                                    original_body, patch_used
-                                )
-                                extra = {
-                                    "hunks_applied": hunks_applied,
-                                    "patch_source_hash": current_hash,
-                                    "patch_source_hash_source": "auto",
-                                    "rebase_attempted": True,
-                                    "rebase_applied": True,
-                                    "rebase_info": rebase_info,
-                                }
-                            except DocumentOperationError as rebase_error:
-                                diagnostics = _build_patch_failure_diagnostics(
-                                    original_body, patch_text or "", str(rebase_error)
-                                )
-                                diagnostics.setdefault("rebase_attempted", True)
-                                if getattr(rebase_error, "extra", None):
-                                    diagnostics.setdefault("rebase_details", rebase_error.extra)
-                                diagnostics.setdefault("rebase_failed_reason", str(rebase_error))
-                                raise DocumentOperationError(
-                                    error_message,
-                                    extra={"patch_diagnostics": diagnostics},
-                                )
+                        try:
+                            rebased_patch, rebase_info = _rebase_patch_to_current_context(
+                                original_body, patch_used
+                            )
+                            patch_used = rebased_patch
+                            updated_body, hunks_applied = _apply_unified_patch(
+                                original_body, patch_used
+                            )
+                            extra = {
+                                "hunks_applied": hunks_applied,
+                                "patch_source_hash": current_hash,
+                                "patch_source_hash_source": "auto",
+                                "rebase_attempted": True,
+                                "rebase_applied": True,
+                                "rebase_info": rebase_info,
+                            }
+                        except DocumentOperationError as rebase_error:
+                            diagnostics = _build_patch_failure_diagnostics(
+                                original_body, patch_text or "", str(rebase_error)
+                            )
+                            diagnostics.setdefault("smart_matching_failed", error_message)
+                            diagnostics.setdefault("rebase_attempted", True)
+                            if getattr(rebase_error, "extra", None):
+                                diagnostics.setdefault("rebase_details", rebase_error.extra)
+                            diagnostics.setdefault("rebase_failed_reason", str(rebase_error))
+                            raise DocumentOperationError(
+                                error_message,
+                                extra={"patch_diagnostics": diagnostics},
+                            )
                     else:
                         diagnostics = _build_patch_failure_diagnostics(
                             original_body, patch_used, error_message
@@ -1547,6 +1519,219 @@ def _adjust_patch_line_numbers(patch_text: str, offset: int) -> str:
             adjusted_lines.append(line)
 
     return "\n".join(adjusted_lines)
+
+
+def _extract_hunk_context(hunk_lines: list[str]) -> list[str]:
+    """Extract the context/delete lines from a hunk (lines that must match in original).
+
+    Returns list of line contents (without prefix) that should exist in original.
+    """
+    context = []
+    for line in hunk_lines:
+        if not line:
+            continue
+        if line.startswith("\\"):  # "\ No newline at end of file"
+            continue
+        prefix = line[0] if line else ""
+        if prefix in (" ", "-"):
+            context.append(line[1:])  # Strip prefix
+    return context
+
+
+def _find_context_position(original_lines: list[str], context_lines: list[str], start_hint: int = 0) -> int | None:
+    """Find where context_lines match in original_lines.
+
+    Args:
+        original_lines: Lines of the original document (with newlines)
+        context_lines: Context lines to find (without newlines)
+        start_hint: Suggested starting position (from hunk header)
+
+    Returns:
+        0-based index where context starts, or None if not found
+    """
+    if not context_lines:
+        return start_hint  # No context to match, trust the hint
+
+    # Normalize original lines for comparison
+    orig_normalized = [line.rstrip("\n\r") for line in original_lines]
+
+    # First, check at the hinted position
+    if start_hint >= 0 and start_hint + len(context_lines) <= len(orig_normalized):
+        if all(
+            orig_normalized[start_hint + i] == context_lines[i]
+            for i in range(len(context_lines))
+        ):
+            return start_hint
+
+    # Search entire document for context match
+    for pos in range(len(orig_normalized) - len(context_lines) + 1):
+        if pos == start_hint:
+            continue  # Already checked
+        if all(
+            orig_normalized[pos + i] == context_lines[i]
+            for i in range(len(context_lines))
+        ):
+            return pos
+
+    return None
+
+
+def _apply_unified_patch_smart(
+    original_text: str,
+    patch_text: str,
+    frontmatter_lines: int = 0
+) -> tuple[str, int, dict]:
+    """Apply unified diff with context-aware matching.
+
+    Instead of blindly trusting line numbers, this function:
+    1. Extracts context lines from each hunk
+    2. Finds where context actually matches in the document
+    3. Applies patch at the matched location
+    4. Reports adjustments made
+
+    Args:
+        original_text: The document body to patch
+        patch_text: Unified diff patch
+        frontmatter_lines: Number of frontmatter lines (for smart adjustment hints)
+
+    Returns:
+        Tuple of (patched_text, hunks_applied, extra_info)
+    """
+    if not patch_text or not patch_text.strip():
+        raise DocumentOperationError("apply_patch requires non-empty patch text")
+
+    original_lines = original_text.splitlines(keepends=True)
+    patch_lines = patch_text.splitlines(keepends=False)
+
+    # Skip --- and +++ headers
+    i = 0
+    while i < len(patch_lines) and (patch_lines[i].startswith("--- ") or patch_lines[i].startswith("+++ ")):
+        i += 1
+
+    output: list[str] = []
+    original_index = 0
+    hunks_applied = 0
+    adjustments = []
+
+    while i < len(patch_lines):
+        header = patch_lines[i]
+        match = _HUNK_HEADER.match(header)
+        if not match:
+            if header.strip() == "":
+                i += 1
+                continue
+            raise DocumentOperationError(f"PATCH_INVALID_FORMAT: expected hunk header: {header!r}")
+
+        hunk_old_start = int(match.group(1))
+        hunk_old_count = int(match.group(2)) if match.group(2) else 1
+        i += 1
+
+        # Collect all lines in this hunk
+        hunk_lines = []
+        while i < len(patch_lines) and not patch_lines[i].startswith("@@ "):
+            hunk_lines.append(patch_lines[i])
+            i += 1
+
+        # Extract context lines for matching
+        context_lines = _extract_hunk_context(hunk_lines)
+
+        # Try to find where context actually matches
+        expected_pos = hunk_old_start - 1  # 0-based
+
+        # First try: exact position from hunk header
+        actual_pos = _find_context_position(original_lines, context_lines, expected_pos)
+
+        # Second try: if frontmatter offset might be the issue
+        if actual_pos is None and frontmatter_lines > 0:
+            adjusted_pos = expected_pos - frontmatter_lines
+            if adjusted_pos >= 0:
+                actual_pos = _find_context_position(original_lines, context_lines, adjusted_pos)
+                if actual_pos is not None:
+                    adjustments.append({
+                        "hunk": hunks_applied + 1,
+                        "expected_line": hunk_old_start,
+                        "actual_line": actual_pos + 1,
+                        "adjustment": "frontmatter_offset",
+                        "offset": frontmatter_lines,
+                    })
+
+        # Third try: search entire document
+        if actual_pos is None:
+            actual_pos = _find_context_position(original_lines, context_lines, -1)  # Search all
+            if actual_pos is not None and actual_pos != expected_pos:
+                adjustments.append({
+                    "hunk": hunks_applied + 1,
+                    "expected_line": hunk_old_start,
+                    "actual_line": actual_pos + 1,
+                    "adjustment": "context_search",
+                    "drift": actual_pos - expected_pos,
+                })
+
+        if actual_pos is None:
+            # Context not found anywhere
+            context_preview = context_lines[:3] if context_lines else ["<no context>"]
+            raise DocumentOperationError(
+                f"PATCH_CONTEXT_NOT_FOUND: hunk {hunks_applied + 1} context not found in document. "
+                f"Expected at line {hunk_old_start}, searched entire file. "
+                f"Context starts with: {context_preview}"
+            )
+
+        # Copy unchanged content up to the patch position
+        if actual_pos > original_index:
+            output.extend(original_lines[original_index:actual_pos])
+        original_index = actual_pos
+
+        # Apply the hunk
+        for hunk_line in hunk_lines:
+            if not hunk_line:
+                continue
+            if hunk_line.startswith("\\"):
+                continue
+
+            prefix = hunk_line[0]
+            text = hunk_line[1:]
+            patched_line = f"{text}\n"
+
+            if prefix == " ":
+                # Context line - verify and copy
+                if original_index >= len(original_lines):
+                    raise DocumentOperationError(
+                        f"PATCH_CONTEXT_MISMATCH: unexpected EOF at context line"
+                    )
+                if not _line_matches(patched_line, original_lines[original_index]):
+                    raise DocumentOperationError(
+                        f"PATCH_CONTEXT_MISMATCH: expected={patched_line!r} got={original_lines[original_index]!r}"
+                    )
+                output.append(original_lines[original_index])
+                original_index += 1
+            elif prefix == "-":
+                # Delete line - verify and skip
+                if original_index >= len(original_lines):
+                    raise DocumentOperationError(
+                        f"PATCH_DELETE_MISMATCH: unexpected EOF at delete line"
+                    )
+                if not _line_matches(patched_line, original_lines[original_index]):
+                    raise DocumentOperationError(
+                        f"PATCH_DELETE_MISMATCH: expected={patched_line!r} got={original_lines[original_index]!r}"
+                    )
+                original_index += 1  # Skip (delete) this line
+            elif prefix == "+":
+                # Add line
+                output.append(patched_line)
+            else:
+                raise DocumentOperationError(f"PATCH_INVALID_FORMAT: invalid line prefix {prefix!r}")
+
+        hunks_applied += 1
+
+    # Copy remaining content
+    output.extend(original_lines[original_index:])
+
+    extra_info = {}
+    if adjustments:
+        extra_info["context_adjustments"] = adjustments
+        extra_info["context_matching_used"] = True
+
+    return ("".join(output), hunks_applied, extra_info)
 
 
 def _apply_unified_patch(original_text: str, patch_text: str) -> tuple[str, int]:
