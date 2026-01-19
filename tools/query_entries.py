@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp.utils.time import format_utc, utcnow
+from scribe_mcp.utils.slug import normalize_project_input
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -95,6 +96,9 @@ def _validate_search_parameters(
     with bulletproof parameter validation and healing.
     """
     try:
+        # Normalize project name input to handle any format (hyphens, underscores, mixed case)
+        normalized_project = normalize_project_input(project) if project else project
+
         # Apply Phase 1 BulletproofParameterCorrector for initial parameter healing
         healed_params = {}
         healing_applied = False
@@ -178,9 +182,9 @@ def _validate_search_parameters(
             healing_applied = True
 
         # Heal string parameters
-        if project:
-            healed_project = _PARAMETER_CORRECTOR.correct_message_parameter(project)
-            if healed_project != project:
+        if normalized_project:
+            healed_project = _PARAMETER_CORRECTOR.correct_message_parameter(normalized_project)
+            if healed_project != normalized_project:
                 healed_params["project"] = healed_project
                 healing_applied = True
 
@@ -209,7 +213,7 @@ def _validate_search_parameters(
                 healing_applied = True
 
         # Update parameters with healed values
-        final_project = healed_params.get("project", project)
+        final_project = healed_params.get("project", normalized_project)
         final_start = healed_params.get("start", start)
         final_end = healed_params.get("end", end)
         final_message = healed_params.get("message", message)

@@ -6,6 +6,7 @@ tools/, config/, or other modules that may cause circular imports.
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 _SLUG_CLEANER = re.compile(r"[^0-9a-z_]+")
 _FILENAME_CLEANER = re.compile(r"[^\w\-.]+")
@@ -33,6 +34,38 @@ def slugify_project_name(name: str) -> str:
     """
     normalised = name.strip().lower().replace(" ", "_").replace("-", "_")
     return _SLUG_CLEANER.sub("_", normalised).strip("_") or "project"
+
+
+def normalize_project_input(name: Optional[str]) -> Optional[str]:
+    """Normalize project name input, accepting any reasonable format.
+
+    This is the canonical entry-point normalizer. Use at tool boundaries
+    to accept hyphens, underscores, spaces, or mixed case.
+
+    Args:
+        name: Project name in any format, or None
+
+    Returns:
+        Canonical slugified name, or None if input was None/empty
+
+    Examples:
+        >>> normalize_project_input("My-Project")
+        'my_project'
+        >>> normalize_project_input("my_project")
+        'my_project'
+        >>> normalize_project_input("MY PROJECT")
+        'my_project'
+        >>> normalize_project_input(None)
+        None
+        >>> normalize_project_input("")
+        None
+    """
+    if name is None:
+        return None
+    stripped = str(name).strip()
+    if not stripped:
+        return None
+    return slugify_project_name(stripped)
 
 
 def slugify_filename(value: str) -> str:

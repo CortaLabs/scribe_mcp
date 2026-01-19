@@ -23,7 +23,9 @@ from scribe_mcp.doc_management.manager import (
 )
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.utils.frontmatter import parse_frontmatter
+from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input
 from scribe_mcp.utils.time import format_utc
+from scribe_mcp.utils.estimator import PaginationCalculator
 from scribe_mcp.shared.logging_utils import (
     LoggingContext,
     ProjectResolutionError,
@@ -47,6 +49,42 @@ class _ManageDocsHelper(LoggingToolMixin):
 _MANAGE_DOCS_HELPER = _ManageDocsHelper()
 _PROJECT_REGISTRY = ProjectRegistry()
 _PROJECT_REGISTRY = ProjectRegistry()
+
+# === ACTION REGISTRY (Module Level) ===
+# Primary actions - the new consolidated API (7 actions)
+PRIMARY_ACTIONS = {
+    "create",           # Unified creation with doc_type routing
+    "replace_section",  # Section-based editing (scaffolder)
+    "apply_patch",      # Unified diff editing
+    "replace_range",    # Line-based editing
+    "replace_text",     # Find/replace
+    "append",           # Add content
+    "status_update",    # Checklist updates
+}
+
+# Deprecated aliases - old action names that route to new ones
+# Format: old_name -> (new_action, default_metadata)
+DEPRECATED_ALIASES = {
+    "create_doc": ("create", {"doc_type": "custom"}),
+    "create_research_doc": ("create", {"doc_type": "research"}),
+    "create_bug_report": ("create", {"doc_type": "bug"}),
+    "create_review_report": ("create", {"doc_type": "review"}),
+    "create_agent_report_card": ("create", {"doc_type": "agent_card"}),
+}
+
+# Hidden actions - still work but not promoted (for backwards compat)
+HIDDEN_ACTIONS = {
+    "normalize_headers",
+    "generate_toc",
+    "validate_crosslinks",
+    "list_sections",
+    "list_checklist_items",
+    "search",
+    "batch",
+}
+
+# Combined set for validation (all valid actions)
+VALID_ACTIONS = PRIMARY_ACTIONS | set(DEPRECATED_ALIASES.keys()) | HIDDEN_ACTIONS
 
 
 def _normalize_metadata_with_healing(metadata: Optional[Dict[str, Any] | str]) -> tuple[Dict[str, Any], bool, List[str]]:
@@ -98,39 +136,17 @@ def _heal_manage_docs_parameters(
     healing_applied = False
     invalid_action = False
 
-    # Define valid actions for enum correction (include batch and list_sections
-    # so they are preserved instead of being auto-corrected to another verb).
-    valid_actions = {
-        "replace_section",
-        "append",
-        "apply_patch",
-        "replace_range",
-        "replace_text",
-        "normalize_headers",
-        "generate_toc",
-        "status_update",
-        "batch",
-        "list_sections",
-        "list_checklist_items",
-        "create_doc",
-        "validate_crosslinks",
-        "search",
-        "create_research_doc",
-        "create_bug_report",
-        "create_review_report",
-        "create_agent_report_card",
-    }
-
+    # Use module-level ACTION REGISTRY constants
     healed_params = {}
 
     # Validate action parameter (no auto-correction to avoid accidental edits)
     original_action = action
     healed_action = str(original_action).strip() if original_action is not None else ""
-    if healed_action not in valid_actions:
+    if healed_action not in VALID_ACTIONS:
         invalid_action = True
         healing_applied = True
         healing_messages.append(
-            f"Invalid action '{original_action}'. Use one of: {', '.join(sorted(valid_actions))}."
+            f"Invalid action '{original_action}'. Use one of: {', '.join(sorted(VALID_ACTIONS))}."
         )
     healed_params["action"] = healed_action
     healed_params["invalid_action"] = invalid_action
@@ -1153,6 +1169,23 @@ async def manage_docs(
         )
         return error_payload
 
+    # Check for deprecated action names and emit warnings
+    deprecation_warning = None
+    if action in DEPRECATED_ALIASES:
+        new_action, default_params = DEPRECATED_ALIASES[action]
+        deprecation_warning = (
+            f"DEPRECATED: '{action}' is deprecated. "
+            f"Use create(doc_type='{default_params.get('doc_type', 'custom')}') instead."
+        )
+        # Apply default params to metadata if not already set
+        if metadata is None:
+            metadata = {}
+        for key, value in default_params.items():
+            if key not in metadata:
+                metadata[key] = value
+        # Keep using old action name for now (handlers still expect it)
+        # Task 2.2 already routes "create" correctly
+
     if healed_params.get("invalid_action"):
         error_payload = _MANAGE_DOCS_HELPER.error_response(
             f"Invalid manage_docs action '{action}'.",
@@ -1189,6 +1222,10 @@ async def manage_docs(
             scaffold_flag = raw_scaffold
         elif isinstance(raw_scaffold, str):
             scaffold_flag = raw_scaffold.strip().lower() in {"true", "1", "yes"}
+
+    # Normalize project parameter to handle hyphens, spaces, mixed case (Task Package 2.5)
+    if project is not None:
+        project = normalize_project_input(project)
 
     try:
         context = await _MANAGE_DOCS_HELPER.prepare_context(
@@ -1275,12 +1312,14 @@ async def manage_docs(
             # Continue to edit logic (skip auto-registration)
         else:
             # Custom doc not found - return helpful error
+            # Use slugified project name for accurate path hints
+            project_slug = slugify_project_name(project.get('name', '<project>'))
             error_payload = _MANAGE_DOCS_HELPER.error_response(
                 f"Custom document '{doc_name}' not found",
                 suggestion=(
                     f"Ensure document was created with create_{doc_category}_doc action. "
                     f"Check doc_name spelling and verify the document exists. "
-                    f"For research docs: check .scribe/docs/dev_plans/{project.get('slug', '<project>')}/research/ "
+                    f"For research docs: check .scribe/docs/dev_plans/{project_slug}/research/ "
                     f"For bug reports: check docs/bugs/<category>/<date>_{doc_name}/"
                 ),
                 extra={
@@ -1332,9 +1371,83 @@ async def manage_docs(
                 )
                 return _MANAGE_DOCS_HELPER.apply_context_payload(error_payload, context)
 
+    # Handle unified 'create' action with doc_type routing
+    if action == "create":
+        doc_type = metadata.get("doc_type", "custom") if isinstance(metadata, dict) else "custom"
+
+        if doc_type == "custom":
+            # Route to existing create_doc logic by changing action internally
+            action = "create_doc"
+            # Fall through to create_doc handler below (line 1611)
+        elif doc_type == "research":
+            # Route to existing create_research_doc logic
+            return await _handle_special_document_creation(
+                project,
+                action="create_research_doc",
+                doc_name=doc_name,
+                target_dir=target_dir,
+                content=content,
+                metadata=metadata,
+                dry_run=dry_run,
+                agent_id=agent_id,
+                storage_backend=backend,
+                helper=_MANAGE_DOCS_HELPER,
+                context=context,
+            )
+        elif doc_type == "bug":
+            # Route to existing create_bug_report logic
+            return await _handle_special_document_creation(
+                project,
+                action="create_bug_report",
+                doc_name=doc_name,
+                target_dir=target_dir,
+                content=content,
+                metadata=metadata,
+                dry_run=dry_run,
+                agent_id=agent_id,
+                storage_backend=backend,
+                helper=_MANAGE_DOCS_HELPER,
+                context=context,
+            )
+        elif doc_type == "review":
+            # Route to existing create_review_report logic
+            return await _handle_special_document_creation(
+                project,
+                action="create_review_report",
+                doc_name=doc_name,
+                target_dir=target_dir,
+                content=content,
+                metadata=metadata,
+                dry_run=dry_run,
+                agent_id=agent_id,
+                storage_backend=backend,
+                helper=_MANAGE_DOCS_HELPER,
+                context=context,
+            )
+        elif doc_type == "agent_card":
+            # Route to existing create_agent_report_card logic
+            return await _handle_special_document_creation(
+                project,
+                action="create_agent_report_card",
+                doc_name=doc_name,
+                target_dir=target_dir,
+                content=content,
+                metadata=metadata,
+                dry_run=dry_run,
+                agent_id=agent_id,
+                storage_backend=backend,
+                helper=_MANAGE_DOCS_HELPER,
+                context=context,
+            )
+        else:
+            return _MANAGE_DOCS_HELPER.error_response(
+                f"Unknown doc_type: {doc_type}",
+                suggestion="Valid doc_types: custom, research, bug, review, agent_card"
+            )
+
     # Handle research, bug, review, and agent report card creation
     if action in ["create_research_doc", "create_bug_report", "create_review_report", "create_agent_report_card"]:
-        return await _handle_special_document_creation(
+        response = await _handle_special_document_creation(
             project,
             action=action,
             doc_name=doc_name,
@@ -1347,6 +1460,10 @@ async def manage_docs(
             helper=_MANAGE_DOCS_HELPER,
             context=context,
         )
+        # Add deprecation warning to response if present
+        if deprecation_warning:
+            response["deprecated"] = deprecation_warning
+        return response
 
     if action == "list_sections":
         if not doc_name:
@@ -1359,6 +1476,7 @@ async def manage_docs(
         return await _handle_list_sections(
             project,
             doc_name=doc_name,
+            metadata=metadata,
             helper=_MANAGE_DOCS_HELPER,
             context=context,
         )
@@ -1863,6 +1981,10 @@ async def manage_docs(
                 pass
         response["preview"] = preview_content
 
+    # Add deprecation warning to response if present
+    if deprecation_warning:
+        response["deprecated"] = deprecation_warning
+
     return _MANAGE_DOCS_HELPER.apply_context_payload(response, context)
 
 
@@ -2075,6 +2197,7 @@ Examples:
 async def _handle_list_sections(
     project: Dict[str, Any],
     doc_name: str,
+    metadata: Optional[Dict[str, Any]],
     helper: LoggingToolMixin,
     context: LoggingContext,
 ) -> Dict[str, Any]:
@@ -2155,14 +2278,28 @@ async def _handle_list_sections(
         section_id: lines for section_id, lines in duplicates.items() if len(lines) > 1
     }
 
+    # Apply pagination if requested
+    page = metadata.get("page", 1) if metadata else 1
+    page_size = metadata.get("page_size", 50) if metadata else 50
+    total_count = len(sections)
+    start_idx, end_idx = PaginationCalculator.calculate_pagination_indices(page, page_size, total_count)
+    paginated_sections = sections[start_idx:end_idx]
+
     response = {
         "ok": True,
         "doc_name": doc_name,
         "path": str(path),
-        "sections": sections,
+        "sections": paginated_sections,
         "body_line_offset": body_line_offset,
         "frontmatter_line_count": body_line_offset,
         "hint": f"For full document structure, use: read_file(path='{path}', mode='scan_only')",
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_count": total_count,
+            "has_next": end_idx < total_count,
+            "has_prev": page > 1,
+        },
     }
     if duplicate_sections:
         response["duplicates"] = duplicate_sections
@@ -2254,15 +2391,37 @@ async def _handle_list_checklist_items(
             context,
         )
 
+    # Apply pagination if requested
+    page = metadata.get("page", 1) if metadata else 1
+    page_size = metadata.get("page_size", 20) if metadata else 20
+    total_items_count = len(items)
+    total_matches_count = len(matches)
+
+    # Paginate items
+    start_idx, end_idx = PaginationCalculator.calculate_pagination_indices(page, page_size, total_items_count)
+    paginated_items = items[start_idx:end_idx]
+
+    # Paginate matches separately if filtering
+    match_start, match_end = PaginationCalculator.calculate_pagination_indices(page, page_size, total_matches_count)
+    paginated_matches = matches[match_start:match_end]
+
     response = {
         "ok": True,
         "doc": doc_name,
         "path": str(path),
-        "total_items": len(items),
-        "items": items,
-        "matches": matches,
+        "total_items": total_items_count,
+        "items": paginated_items,
+        "matches": paginated_matches,
         "body_line_offset": body_line_offset,
         "frontmatter_line_count": body_line_offset,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_items": total_items_count,
+            "total_matches": total_matches_count,
+            "has_next": end_idx < total_items_count,
+            "has_prev": page > 1,
+        },
     }
     duplicate_sections = {
         section: lines for section, lines in duplicates.items() if len(lines) > 1
@@ -2352,7 +2511,9 @@ async def _handle_special_document_creation(
     docs_dir = Path(docs_dir_str) if docs_dir_str else Path("")
     # Fallback if docs_dir not in project (shouldn't happen in practice)
     if not docs_dir or str(docs_dir) == "" or str(docs_dir) == ".":
-        docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / project.get("name", "")
+        # Use slugified project name to match canonical folder structure (underscores, not hyphens)
+        project_slug = slugify_project_name(project.get("name", ""))
+        docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / project_slug
     now = datetime.now(timezone.utc)
     timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -2362,6 +2523,7 @@ async def _handle_special_document_creation(
     index_updater: Optional[Callable[[], Awaitable[None]]] = None
     index_path: Optional[Path] = None
     extra_metadata: Dict[str, Any] = {}
+    placement_warning: Optional[str] = None  # Set if research doc placement doesn't match PROGRESS_LOG
 
     if action == "create_research_doc":
         if not doc_name:
@@ -2383,7 +2545,39 @@ async def _handle_special_document_creation(
         if not safe_name:
             safe_name = f"research_{int(datetime.now().timestamp())}"
 
-        research_dir = docs_dir / "research"
+        # Support target_dir override for placing research docs outside default location
+        override_dir = target_dir or metadata.get("target_dir")
+
+        if override_dir:
+            # User explicitly specified a custom location - use it
+            research_dir = Path(override_dir)
+            if not research_dir.is_absolute():
+                research_dir = project_root / research_dir
+        else:
+            # Default: place in project's research folder
+            research_dir = docs_dir / "research"
+
+            # Verify placement aligns with PROGRESS_LOG location
+            progress_log_path = project.get("progress_log", "")
+            if progress_log_path:
+                progress_log_dir = Path(progress_log_path).parent
+                # Research should be sibling to PROGRESS_LOG (in same dev_plans/<project>/ folder)
+                expected_parent = progress_log_dir
+                actual_parent = docs_dir
+
+                # Normalize paths for comparison
+                try:
+                    expected_resolved = expected_parent.resolve()
+                    actual_resolved = actual_parent.resolve()
+                    if expected_resolved != actual_resolved:
+                        placement_warning = (
+                            f"Research doc will be created in '{actual_resolved}/research/' "
+                            f"but PROGRESS_LOG is in '{expected_resolved}'. "
+                            f"Use target_dir parameter or metadata.target_dir to override placement."
+                        )
+                except Exception:
+                    pass  # Path resolution failed, skip warning
+
         target_path = research_dir / f"{safe_name}.md"
         template_name = "RESEARCH_REPORT_TEMPLATE.md"
         doc_label = "research_report"
@@ -2651,6 +2845,8 @@ async def _handle_special_document_creation(
             success_payload["log_warning"] = log_warning
         if registration_warning:
             success_payload["registration_warning"] = registration_warning
+        if placement_warning:
+            success_payload["placement_warning"] = placement_warning
 
         return helper.apply_context_payload(success_payload, context)
 

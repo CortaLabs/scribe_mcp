@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from scribe_mcp.utils.integrity import count_file_lines
+from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.time import format_utc, utcnow
 
 from scribe_mcp import server as server_module
@@ -1432,12 +1433,16 @@ async def rotate_log(
             config=config
         )
 
+        # === NORMALIZE PROJECT INPUT ===
+        # Apply normalization to accept hyphenated, underscored, or mixed-case project names
+        normalized_project = normalize_project_input(project)
+
         # === CONTEXT RESOLUTION WITH ENHANCED ERROR HANDLING ===
         try:
             context = await _ROTATE_HELPER.prepare_context(
                 tool_name="rotate_log",
                 agent_id=None,
-                explicit_project=project,
+                explicit_project=normalized_project,
                 require_project=True,
                 state_snapshot=state_snapshot,
             )

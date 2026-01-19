@@ -1,5 +1,22 @@
 # Project Naming Guidelines
 
+## 🔄 Automatic Name Normalization
+
+Project names are **automatically normalized** at all tool boundaries. You can use any reasonable format:
+
+| Input Format | Normalized To |
+|--------------|---------------|
+| `my-project` | `my_project` |
+| `My Project` | `my_project` |
+| `MY-PROJECT` | `my_project` |
+| `My_Project Name` | `my_project_name` |
+
+**What this means:**
+- Hyphens, spaces, and mixed case are all accepted
+- Lookups work regardless of input format: `get_project(project="My-Project")` finds `my_project`
+- Storage uses canonical underscore_lowercase format
+- **Collision detection**: Creating `my-project` when `my_project` exists will warn you
+
 ## ⚠️ Reserved Project Names and Patterns
 
 The Scribe MCP system includes automatic temp project detection to prevent auto-switching to test projects during development.

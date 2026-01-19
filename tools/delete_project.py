@@ -17,6 +17,7 @@ from scribe_mcp.tools.project_utils import (
     list_project_configs,
     slugify_project_name,
 )
+from scribe_mcp.utils.slug import normalize_project_input
 
 
 @app.tool()
@@ -44,6 +45,19 @@ async def delete_project(
         Dict with deletion status, details, and any warnings
     """
     state_snapshot = await server_module.state_manager.record_tool("delete_project")
+
+    # Normalize project name to handle hyphens, underscores, mixed case
+    name = normalize_project_input(name)
+    if name is None:
+        return {
+            "success": False,
+            "project_name": None,
+            "mode": mode,
+            "message": "Invalid project name",
+            "details": {},
+            "warnings": [],
+            "errors": ["Project name cannot be empty or None"],
+        }
 
     # Auto-detect agent ID if not provided
     if agent_id is None:

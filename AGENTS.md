@@ -203,6 +203,8 @@ Scribe operates in **two mutually exclusive modes**:
 When spinning up a new project:
 
 1. Immediately call `set_project(<project_name>)`.
+   - **Project names are automatically normalized**: "My-Project", "my_project", and "MY PROJECT" all resolve to "my_project"
+   - Use descriptive names (hyphens/underscores/spaces all work)
 2. Use `manage_docs` to draft/populate, in **`.scribe/docs/`**:
 
    * `ARCHITECTURE_GUIDE.md`
@@ -215,6 +217,7 @@ When spinning up a new project:
 **Note:** `manage_docs` is for structured project documentation and artifacts.
 
 * **AGENTS.md is edited by hand** (do not generate/maintain it via `manage_docs`).
+* **New unified create syntax**: Use `manage_docs(action="create", doc_type="research|bug|review|agent_card|custom", ...)` instead of deprecated `create_research_doc`, `create_bug_report`, etc.
 
 ---
 

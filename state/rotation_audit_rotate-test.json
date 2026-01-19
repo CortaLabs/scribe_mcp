@@ -402,9 +402,23 @@
       "modified_timestamp": "2026-01-03T07:19:29.083614",
       "log_type": "progress",
       "stored_timestamp": "2026-01-03T12:19:29.150203 UTC"
+    },
+    {
+      "rotation_uuid": "3a548328-d73a-47d7-8466-19965b976fb1",
+      "rotation_timestamp_utc": "2026-01-18 23:08:21 UTC",
+      "sequence_number": 29,
+      "archived_file_path": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/216c80f9-e1a2-4a9c-8fcd-e11b95170c7b/.scribe/docs/dev_plans/rotate_test/PROGRESS_LOG.md.test.md",
+      "archived_file_name": "PROGRESS_LOG.md.test.md",
+      "entry_count": 33,
+      "file_hash": "decbd8cc86098b80a02d0b2e8f818f77a6ab0ef2db75cf51a816db03bfd44410",
+      "file_size": 1055,
+      "created_timestamp": "2026-01-18T18:08:21.361851",
+      "modified_timestamp": "2026-01-18T18:08:21.285851",
+      "log_type": "progress",
+      "stored_timestamp": "2026-01-18T23:08:21.369855 UTC"
     }
   ],
-  "total_rotations": 29,
-  "last_updated": "2026-01-03T12:19:29.150203 UTC",
+  "total_rotations": 30,
+  "last_updated": "2026-01-18T23:08:21.369855 UTC",
   "version": "1.0"
 }

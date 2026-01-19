@@ -539,26 +539,30 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
    # If you don't know IDs: manage_docs(action="list_checklist_items", doc="checklist")
    ```
 
-4. **Creating new managed docs**
+4. **Creating new managed docs** (NEW SYNTAX using unified `create` action)
    ```python
-   # Research docs
-   manage_docs(action="create_research_doc", doc_name="RESEARCH_<topic>_<YYYYMMDD>", metadata={...})
+   # Research docs (NEW)
+   manage_docs(action="create", doc_name="RESEARCH_<topic>_<YYYYMMDD>", doc_type="research", metadata={...})
 
-   # Bug reports
-   manage_docs(action="create_bug_report", metadata={"category": "...", "slug": "...", ...})
+   # Bug reports (NEW)
+   manage_docs(action="create", doc_type="bug", metadata={"category": "...", "slug": "...", ...})
 
-   # Custom docs (coordination protocols, briefs, etc.) - FULL FORMULA:
+   # Custom docs (coordination protocols, briefs, etc.) - FULL FORMULA (NEW):
    manage_docs(
-       action="create_doc",
+       action="create",
        doc_name="CUSTOM_DOC_NAME",              # REQUIRED - unique identifier
+       doc_type="custom",                       # NEW - replaces action="create_doc"
        metadata={
-           "doc_name": "CUSTOM_DOC_NAME",       # REQUIRED - must match top-level
-           "doc_type": "coordination",          # optional - category
            "body": "# Title\n\nContent...",     # REQUIRED - actual document body
            "target_dir": ".scribe/docs/dev_plans/<project>",  # optional
            "register_doc": True                 # optional - register in project state
        }
    )
+
+   # OLD SYNTAX STILL WORKS (deprecated but backwards compatible):
+   # manage_docs(action="create_research_doc", ...) → routes to create(doc_type="research")
+   # manage_docs(action="create_bug_report", ...) → routes to create(doc_type="bug")
+   # manage_docs(action="create_doc", ...) → routes to create(doc_type="custom")
    ```
 
 **For exact params/edge cases:** Search `docs/Scribe_Usage.md` with `scribe.read_file(mode="search", query="manage_docs <action>")`.
@@ -569,6 +573,7 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
 
 ### Project Management
 - `set_project(name)` - Initialize/select project (auto-bootstraps docs)
+  - **Project names auto-normalize:** `"my-project"` → `"my_project"` (hyphens, underscores, spaces all work)
 - `get_project()` - Get current context
 - `list_projects()` - Discover projects (lifecycle, activity, doc hygiene)
 

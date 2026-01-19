@@ -15,6 +15,7 @@ from scribe_mcp.shared.logging_utils import resolve_log_definition
 from scribe_mcp.shared.project_utils import detect_project_state
 from scribe_mcp.config import log_config as log_config_module
 from scribe_mcp.utils.logs import parse_log_line, read_all_lines
+from scribe_mcp.utils.slug import normalize_project_input
 from datetime import datetime, timezone
 
 
@@ -391,6 +392,10 @@ async def get_project(project: Optional[str] = None, format: str = "structured",
             exec_context = server_module.get_execution_context()
         except Exception:
             exec_context = None
+
+    # Normalize project input to handle hyphens, underscores, mixed case
+    if project:
+        project = normalize_project_input(project) or project
 
     if project:
         # Attempt to load explicit project request

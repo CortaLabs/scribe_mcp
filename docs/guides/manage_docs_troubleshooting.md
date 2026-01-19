@@ -94,8 +94,8 @@ await generate_doc_templates(project_name="<project>")
 
 # Solution 2: Use CREATE action for new documents
 await manage_docs(
-    action="create_research_doc",
-    doc="research",
+    action="create",
+    doc_type="research",
     doc_name="RESEARCH_TOPIC_20260106",
     metadata={...}
 )

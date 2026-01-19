@@ -20,6 +20,7 @@ from scribe_mcp.storage.models import (
 )
 from scribe_mcp.utils.time import format_utc, utcnow
 from scribe_mcp.utils.search import message_matches
+from scribe_mcp.utils.slug import normalize_project_input
 
 SQLITE_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MS = 5000
@@ -90,6 +91,7 @@ class SQLiteStorage(StorageBackend):
 
     async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
         await self._initialise()
+        # Try exact match first
         row = await self._fetchone(
             """
             SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
@@ -98,6 +100,20 @@ class SQLiteStorage(StorageBackend):
             """,
             (name,),
         )
+
+        # If not found, try canonical match (flexible lookup for existing projects)
+        if not row:
+            canonical = normalize_project_input(name)
+            if canonical and canonical != name:
+                row = await self._fetchone(
+                    """
+                    SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                    FROM scribe_projects
+                    WHERE name = ?;
+                    """,
+                    (canonical,),
+                )
+
         if not row:
             return None
         return ProjectRecord(
@@ -131,6 +147,7 @@ class SQLiteStorage(StorageBackend):
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
 
+            # Try exact match first
             cursor = conn.execute(
                 """
                 SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
@@ -140,6 +157,21 @@ class SQLiteStorage(StorageBackend):
                 (name,),
             )
             row = cursor.fetchone()
+
+            # If not found, try canonical match (flexible lookup for existing projects)
+            if not row:
+                canonical = normalize_project_input(name)
+                if canonical and canonical != name:
+                    cursor = conn.execute(
+                        """
+                        SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                        FROM scribe_projects
+                        WHERE name = ?;
+                        """,
+                        (canonical,),
+                    )
+                    row = cursor.fetchone()
+
             conn.close()
 
             if not row:

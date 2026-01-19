@@ -16,6 +16,7 @@ from scribe_mcp.tools.project_utils import (
     list_project_configs,
     slugify_project_name,
 )
+from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.tools.base.parameter_normalizer import normalize_dict_param, normalize_list_param
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
@@ -126,6 +127,63 @@ async def _gather_project_inventory(project: Dict[str, Any]) -> Dict[str, Any]:
     result["custom"] = default_formatter._detect_custom_content(dev_plan_dir)
 
     return result
+
+
+async def _check_slug_collision(
+    name: str,
+    backend: Any,
+) -> Optional[Dict[str, Any]]:
+    """Check if a new project name would collide with an existing project's canonical slug.
+
+    Args:
+        name: The new project name being created
+        backend: Storage backend to query existing projects
+
+    Returns:
+        None if no collision, or error dict with collision details if collision detected
+
+    Example:
+        If 'my_project' exists and user tries to create 'my-project':
+        Returns {"ok": False, "error": "Project 'my-project' would collide with existing project 'my_project'..."}
+    """
+    # Get canonical slug for the new project name
+    canonical_slug = normalize_project_input(name)
+    if not canonical_slug:
+        return None  # Invalid name, will be caught elsewhere
+
+    # Check if a project with this exact name already exists (update case, not a collision)
+    existing = await backend.fetch_project(name)
+    if existing:
+        return None  # Same name update is allowed, not a collision
+
+    # Query all projects to check for slug collisions
+    try:
+        all_projects = await backend.list_projects()
+    except Exception as exc:
+        # If we can't query projects, allow operation to proceed
+        # (backend errors should be caught at upsert time)
+        return None
+
+    # Check if any existing project has the same canonical slug but different raw name
+    for project in all_projects:
+        existing_slug = normalize_project_input(project.name)
+        if existing_slug == canonical_slug and project.name != name:
+            # Collision detected!
+            return {
+                "ok": False,
+                "error": (
+                    f"Project '{name}' would collide with existing project '{project.name}' "
+                    f"(both normalize to '{canonical_slug}'). "
+                    f"Please choose a different name or use the existing project."
+                ),
+                "collision": {
+                    "new_name": name,
+                    "existing_name": project.name,
+                    "canonical_slug": canonical_slug,
+                },
+            }
+
+    return None  # No collision detected
 
 
 @app.tool()
@@ -312,6 +370,11 @@ async def set_project(
     backend = server_module.storage_backend
     project_record = None
     if backend:
+        # Check for slug collisions before creating new project
+        collision = await _check_slug_collision(name, backend)
+        if collision:
+            return _SET_PROJECT_HELPER.apply_context_payload(collision, base_context)
+
         import json as _json
         project_record = await backend.upsert_project(
             name=name,

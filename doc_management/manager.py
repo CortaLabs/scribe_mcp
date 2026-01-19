@@ -469,6 +469,33 @@ async def apply_doc_change(
 
         date_str = utcnow().strftime("%Y-%m-%d")
         frontmatter_extra: Dict[str, Any] = {}
+
+        # === AUTO-TRANSFORM HOOK (opt-in via frontmatter) ===
+        # Check if document has opted into auto-transforms
+        frontmatter_data = original_parsed.frontmatter_data
+        auto_normalize = frontmatter_data.get("auto_normalize_headers", False)
+        auto_toc = frontmatter_data.get("auto_generate_toc", False)
+
+        transforms_applied = []
+
+        if auto_normalize and action not in ("normalize_headers", "generate_toc"):
+            # Apply header normalization to body
+            try:
+                updated_body = _normalize_headers_text(updated_body)
+                transforms_applied.append("normalize_headers")
+            except Exception as e:
+                # Non-fatal - log but continue
+                doc_logger.warning(f"Auto-normalize failed for {doc_name}: {e}")
+
+        if auto_toc and action not in ("normalize_headers", "generate_toc"):
+            # Apply TOC generation to body
+            try:
+                updated_body = _generate_toc_text(updated_body)
+                transforms_applied.append("generate_toc")
+            except Exception as e:
+                # Non-fatal - log but continue
+                doc_logger.warning(f"Auto-TOC failed for {doc_name}: {e}")
+
         try:
             updated_text, frontmatter_extra, frontmatter_line_count = _apply_frontmatter_pipeline(
                 original_parsed,
@@ -487,6 +514,9 @@ async def apply_doc_change(
                     "frontmatter_only": frontmatter_only,
                 }
             )
+            # Add auto-transforms metadata to frontmatter_extra (after pipeline returns its dict)
+            if transforms_applied:
+                frontmatter_extra["auto_transforms_applied"] = transforms_applied
             if frontmatter_only:
                 diff_preview = ""
             else:
@@ -754,9 +784,18 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
         "doc_log": "DOC_LOG.md",
         "security_log": "SECURITY_LOG.md",
         "bug_log": "BUG_LOG.md",
-    }.get(doc_name, f"{doc_name.upper()}.md")
+    }.get(doc_name, f"{doc_name}.md")  # Preserve case for custom doc names
 
     resolved_path = (docs_dir / filename).resolve()
+
+    # If file not found in main folder, check common subdirectories
+    if not resolved_path.exists():
+        subfolders_to_check = ["research", "architecture", "bugs"]
+        for subfolder in subfolders_to_check:
+            alt_path = (docs_dir / subfolder / filename).resolve()
+            if alt_path.exists():
+                resolved_path = alt_path
+                break
 
     # CRITICAL: Ensure fallback path is within project sandbox
     try:

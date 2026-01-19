@@ -23,6 +23,24 @@ The system will:
 3. Proceed with your edit operation
 4. Log the auto-registration event
 
+## Project Name Normalization (v2.2.0+)
+
+**Project names are automatically normalized** - you can use any format:
+
+```python
+# All of these work and refer to the same project:
+manage_docs(project="My-Project", ...)
+manage_docs(project="my_project", ...)
+manage_docs(project="MY PROJECT", ...)
+# All normalized to: "my_project"
+```
+
+**Key points:**
+- Hyphens, underscores, and spaces are all accepted
+- Case doesn't matter (automatically lowercased)
+- Normalization happens automatically before document lookup
+- You don't need to worry about exact formatting
+
 ## Action Categories
 
 ### EDIT Actions (Auto-Register)
@@ -49,11 +67,18 @@ These actions handle document creation and registration internally:
 
 | Action | Description | Use Case |
 |--------|-------------|----------|
-| `create_research_doc` | Create structured research documents | Document investigation findings |
-| `create_bug_report` | Create structured bug reports | Track bugs with automatic indexing |
-| `create_review_report` | Create review reports | Document code review outcomes |
-| `create_agent_report_card` | Create agent performance reports | Track agent quality scores |
-| `create_doc` | Create custom documents | Generate custom doc types |
+| `create(doc_type="research")` | Create structured research documents | Document investigation findings |
+| `create(doc_type="bug")` | Create structured bug reports | Track bugs with automatic indexing |
+| `create(doc_type="review")` | Create review reports | Document code review outcomes |
+| `create(doc_type="agent_card")` | Create agent performance reports | Track agent quality scores |
+| `create(doc_type="custom")` | Create custom documents | Generate custom doc types |
+
+**Deprecated Actions (Still Work with Warnings):**
+- `create_research_doc` → Use `create(doc_type="research")` instead
+- `create_bug_report` → Use `create(doc_type="bug")` instead
+- `create_review_report` → Use `create(doc_type="review")` instead
+- `create_agent_report_card` → Use `create(doc_type="agent_card")` instead
+- `create_doc` → Use `create(doc_type="custom")` instead
 
 ## Common Patterns
 
@@ -77,8 +102,8 @@ await manage_docs(
 
 ```python
 await manage_docs(
-    action="create_research_doc",
-    doc="research",  # REQUIRED - always use "research"
+    action="create",
+    doc_type="research",  # REQUIRED - specifies document type
     doc_name="RESEARCH_CONTEXT_HYDRATION_20260106",  # REQUIRED
     metadata={
         "research_goal": "Design context hydration for tools",
@@ -203,7 +228,7 @@ await generate_doc_templates(project_name="<project>")
 # Create file first using generate_doc_templates
 await generate_doc_templates(project_name="<project>")
 # OR use CREATE action for new custom docs
-await manage_docs(action="create_doc", ...)
+await manage_docs(action="create", doc_type="custom", ...)
 ```
 
 **Error: `STRUCTURED_EDIT_ANCHOR_NOT_FOUND`**
@@ -246,10 +271,10 @@ await manage_docs(
 ### For Research Agents
 
 ```python
-# Always use create_research_doc for new research
+# Always use create with doc_type="research" for new research
 await manage_docs(
-    action="create_research_doc",
-    doc="research",
+    action="create",
+    doc_type="research",
     doc_name="RESEARCH_<TOPIC>_<YYYYMMDD>",
     metadata={
         "research_goal": "...",
@@ -290,7 +315,8 @@ await manage_docs(
 
 # Create bug reports when issues found
 await manage_docs(
-    action="create_bug_report",
+    action="create",
+    doc_type="bug",
     metadata={
         "category": "logic",
         "slug": "off_by_one_error",
@@ -306,7 +332,8 @@ await manage_docs(
 ```python
 # Create review reports
 await manage_docs(
-    action="create_review_report",
+    action="create",
+    doc_type="review",
     metadata={
         "review_type": "pre_implementation",
         "overall_grade": 95,
@@ -334,10 +361,10 @@ manage_docs(action="replace_section", doc="architecture", section="<id>", conten
 manage_docs(action="status_update", doc="checklist", section="<id>", metadata={"status": "done", "proof": "..."})
 
 # Create research doc
-manage_docs(action="create_research_doc", doc="research", doc_name="RESEARCH_<TOPIC>_<DATE>", metadata={...})
+manage_docs(action="create", doc_type="research", doc_name="RESEARCH_<TOPIC>_<DATE>", metadata={...})
 
 # Create bug report
-manage_docs(action="create_bug_report", metadata={"category": "...", "slug": "...", "severity": "...", ...})
+manage_docs(action="create", doc_type="bug", metadata={"category": "...", "slug": "...", "severity": "...", ...})
 
 # Append to document
 manage_docs(action="append", doc="phase_plan", content="...")

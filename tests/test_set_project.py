@@ -148,6 +148,134 @@ class TestBug001EmptyLogDetection:
                 f"Progress log should exist after creation at {log_path}"
 
 
+class TestSlugCollisionDetection:
+    """Test suite for slug collision detection in set_project (Task Package 1.8)."""
+
+    @pytest.mark.asyncio
+    async def test_collision_different_names_same_slug(self):
+        """
+        Verify that creating 'my-project' after 'my_project' is rejected with clear error.
+
+        This tests the core collision detection: two different names that normalize to
+        the same canonical slug should not be allowed.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+
+            # Create first project: 'my_project'
+            result1 = await set_project(
+                name="my_project",
+                root=str(project_root),
+                format="structured"
+            )
+            result1 = extract_result(result1)
+            assert result1.get("ok", False), f"First project creation failed: {result1}"
+
+            # Try to create second project with different name but same slug: 'my-project'
+            result2 = await set_project(
+                name="my-project",
+                root=str(project_root),
+                format="structured"
+            )
+            result2 = extract_result(result2)
+
+            # Should fail with collision error
+            assert not result2.get("ok", False), \
+                "Second project with colliding slug should be rejected"
+            assert "error" in result2, "Collision response should include error message"
+            assert "my_project" in result2["error"], \
+                f"Error should mention existing project 'my_project'. Got: {result2['error']}"
+
+            # Error can come from either path validation OR slug collision check
+            # Both are valid ways to catch the same collision
+            error_msg = result2["error"]
+            is_path_collision = "already belongs to project" in error_msg
+            is_slug_collision = "collision" in result2
+
+            assert is_path_collision or is_slug_collision, \
+                f"Should detect collision via path or slug check. Got: {result2}"
+
+            # If it's a slug collision (reached our new check), verify details
+            if is_slug_collision:
+                collision = result2.get("collision", {})
+                assert collision.get("new_name") == "my-project", \
+                    "Collision should specify attempted new name"
+                assert collision.get("existing_name") == "my_project", \
+                    "Collision should specify existing project name"
+                assert collision.get("canonical_slug") == "my_project", \
+                    "Collision should show canonical slug both normalize to"
+
+    @pytest.mark.asyncio
+    async def test_no_collision_same_name_update(self):
+        """
+        Verify that updating a project with the same exact name is allowed (not a collision).
+
+        This is critical: calling set_project twice with the same name should work
+        (it's an update operation), even though the slugs are identical.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+
+            # Create project
+            result1 = await set_project(
+                name="test_project",
+                root=str(project_root),
+                format="structured"
+            )
+            result1 = extract_result(result1)
+            assert result1.get("ok", False), f"First project creation failed: {result1}"
+
+            # Update same project (same name) - should succeed
+            result2 = await set_project(
+                name="test_project",
+                root=str(project_root),
+                description="Updated description",
+                format="structured"
+            )
+            result2 = extract_result(result2)
+
+            # Should succeed
+            assert result2.get("ok", False), \
+                f"Updating project with same name should succeed. Got: {result2}"
+
+    @pytest.mark.asyncio
+    async def test_collision_multiple_variants(self):
+        """
+        Verify collision detection works with various slug variants.
+
+        Tests: 'my_project', 'my-project', 'My Project', 'MY-PROJECT' all normalize
+        to the same slug and should collide.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+
+            # Create base project
+            result1 = await set_project(
+                name="my_project",
+                root=str(project_root),
+                format="structured"
+            )
+            result1 = extract_result(result1)
+            assert result1.get("ok", False), f"Base project creation failed: {result1}"
+
+            # Try various colliding names
+            colliding_names = ["my-project", "My-Project", "MY_PROJECT", "my project"]
+
+            for variant in colliding_names:
+                result = await set_project(
+                    name=variant,
+                    root=str(project_root),
+                    format="structured"
+                )
+                result = extract_result(result)
+
+                # All should fail with collision
+                assert not result.get("ok", False), \
+                    f"Variant '{variant}' should collide with 'my_project'"
+                assert "collision" in result or "error" in result, \
+                    f"Variant '{variant}' should have collision/error in response"
+
+
 if __name__ == "__main__":
     # Run tests directly
     pytest.main([__file__, "-v"])

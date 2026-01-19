@@ -4,12 +4,17 @@
 **Purpose**: Structured documentation system for projects.
 
 **Required Parameters:**
-- `action` (string): Action type (see all 17 actions below)
+- `action` (string): Action type (see all actions below)
 - `doc_name` (string): Document identifier/filename key (e.g., `architecture`, `phase_plan`, `checklist`, `implementation`)
 
-**Important:** `doc_name` is the unique document identifier (and drives filename resolution). `doc_category` is a semantic label only and must not be used as a filename or registry key.
+**Optional Parameters:**
+- `project` (string): Project name (automatically normalized - hyphens/underscores/spaces all work)
 
-**All Available Actions (17 total):**
+**Important Notes:**
+- `doc_name` is the unique document identifier (and drives filename resolution). `doc_category` is a semantic label only and must not be used as a filename or registry key.
+- **Project name normalization**: Project names are automatically normalized. You can use `"My-Project"`, `"my_project"`, or `"MY PROJECT"` - all resolve to `"my_project"`.
+
+**All Available Actions (7 primary + deprecated aliases):**
 
 **EDIT Operations** (11 actions - auto-register documents by `doc_name` if needed):
 - `list_sections` - List all section anchors in a document
@@ -23,14 +28,23 @@
 - `generate_toc` - Generate table of contents
 - `search` - Semantic search across documents
 - `validate_crosslinks` - Validate cross-document references
+- `replace_text` - Replace text patterns
 
-**CREATE Operations** (6 actions - create the file and register it by default):
-- `create_research_doc` - Create structured research documents
-- `create_bug_report` - Create structured bug reports
-- `create_review_report` - Create review reports
-- `create_agent_report_card` - Create agent performance reports
-- `create_doc` - Create custom documents
+**CREATE Operations** (1 unified action):
+- `create` - Create documents (routes based on `doc_type` parameter):
+  - `doc_type="research"` - Create structured research documents
+  - `doc_type="bug"` - Create structured bug reports
+  - `doc_type="review"` - Create review reports
+  - `doc_type="agent_card"` - Create agent performance reports
+  - `doc_type="custom"` - Create custom documents
 - `batch` - Execute multiple operations sequentially
+
+**Deprecated CREATE Actions (still work with warnings):**
+- `create_research_doc` → Use `create(doc_type="research")` instead
+- `create_bug_report` → Use `create(doc_type="bug")` instead
+- `create_review_report` → Use `create(doc_type="review")` instead
+- `create_agent_report_card` → Use `create(doc_type="agent_card")` instead
+- `create_doc` → Use `create(doc_type="custom")` instead
 
 **Action-Specific Parameters:**
 
@@ -75,29 +89,38 @@
 #### `batch`
 - `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order. Nested batches are rejected for safety.
 
-#### `create_research_doc`
-- `doc_name` (string, required): Document name (e.g., "RESEARCH_AUTH_SYSTEM_20251102")
-- `metadata` (dict, required): Must include `research_goal` field
-  - Example: `{"research_goal": "Analyze authentication flow", "confidence_areas": ["security", "performance"]}`
+#### `create` (Unified Document Creation)
+- `doc_type` (string, required): Document type - `research|bug|review|agent_card|custom`
+- `doc_name` (string, required for research/custom): Document name (e.g., "RESEARCH_AUTH_SYSTEM_20251102")
+- `metadata` (dict, required): Type-specific metadata:
+  - **For `doc_type="research"`**: Must include `research_goal` field
+    - Example: `{"research_goal": "Analyze authentication flow", "confidence_areas": ["security", "performance"]}`
+  - **For `doc_type="bug"`**: Must include:
+    - `category` (string): One of `infrastructure|logic|database|api|ui|misc`
+    - `slug` (string): Descriptive identifier
+    - `severity` (string): One of `low|medium|high|critical`
+    - `title` (string): Brief bug description
+    - `component` (string, optional): Affected component
+  - **For `doc_type="review"`**: Review report metadata
+  - **For `doc_type="agent_card"`**: Agent performance metadata
+  - **For `doc_type="custom"`**: Custom document metadata
+- `content` (string, optional): Document content (for custom docs)
+- `template` (string, optional): Template name (for custom docs)
 
-#### `create_bug_report`
-- `metadata` (dict, required): Must include:
-  - `category` (string): One of `infrastructure|logic|database|api|ui|misc`
-  - `slug` (string): Descriptive identifier
-  - `severity` (string): One of `low|medium|high|critical`
-  - `title` (string): Brief bug description
-  - `component` (string, optional): Affected component
+#### `create_research_doc` (DEPRECATED)
+Use `create(doc_type="research")` instead. See `create` action above.
 
-#### `create_review_report`
-- `metadata` (dict, required): Review report metadata
+#### `create_bug_report` (DEPRECATED)
+Use `create(doc_type="bug")` instead. See `create` action above.
 
-#### `create_agent_report_card`
-- `metadata` (dict, required): Agent performance metadata
+#### `create_review_report` (DEPRECATED)
+Use `create(doc_type="review")` instead. See `create` action above.
 
-#### `create_doc`
-- `doc_name` (string, required): Document identifier used for naming/registration
-- `content` (string, required unless `metadata.body`/`metadata.snippet`/`metadata.sections` provided): Document content
-- `template` (string, optional): Template name
+#### `create_agent_report_card` (DEPRECATED)
+Use `create(doc_type="agent_card")` instead. See `create` action above.
+
+#### `create_doc` (DEPRECATED)
+Use `create(doc_type="custom")` instead. See `create` action above.
 - `metadata` (dict, optional): Document metadata (supports `register_doc` and `register_as` overrides)
 
 #### `normalize_headers`

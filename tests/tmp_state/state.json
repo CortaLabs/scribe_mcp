@@ -1,16 +1,16 @@
 {
-  "current_project": "test_compact",
+  "current_project": "default_project",
   "projects": {
     "enhanced-rotation-test": {
       "name": "enhanced-rotation-test",
-      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc",
-      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md"
       },
       "defaults": {
         "emoji": "\ud83e\uddea",
@@ -21,10 +21,10 @@
       "tags": [],
       "meta": {
         "docs": {
-          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PHASE_PLAN.md",
-          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/CHECKLIST.md",
-          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/b428111e-a796-4eb0-8535-7c1210468ffc/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md"
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/182352d4-3b27-4686-a5ee-8484622ad989/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md"
         }
       }
     },
@@ -1630,37 +1630,213 @@
           "progress_log": "/tmp/tmpvc0afbpx/.scribe/docs/dev_plans/test_bug_001_new_128696978176752/PROGRESS_LOG.md"
         }
       }
+    },
+    "my_project": {
+      "name": "my_project",
+      "root": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo",
+      "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project",
+      "docs": {
+        "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PHASE_PLAN.md",
+        "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/CHECKLIST.md",
+        "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "2f643830",
+            "phase_plan": "18558818",
+            "checklist": "34f53b80"
+          },
+          "current_hashes": {
+            "architecture": "2f643830",
+            "phase_plan": "18558818",
+            "checklist": "34f53b80"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PHASE_PLAN.md",
+          "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/CHECKLIST.md",
+          "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "2f643830",
+              "phase_plan": "18558818",
+              "checklist": "34f53b80"
+            },
+            "current_hashes": {
+              "architecture": "2f643830",
+              "phase_plan": "18558818",
+              "checklist": "34f53b80"
+            }
+          }
+        }
+      }
+    },
+    "test_project": {
+      "name": "test_project",
+      "root": "/tmp/tmpnrmx9kcp",
+      "progress_log": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project",
+      "docs": {
+        "architecture": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/CHECKLIST.md",
+        "progress_log": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": "Updated description",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PHASE_PLAN.md",
+          "checklist": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/CHECKLIST.md",
+          "progress_log": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "my_test_project": {
+      "name": "my_test_project",
+      "root": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo",
+      "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project",
+      "docs": {
+        "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/PHASE_PLAN.md",
+        "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/CHECKLIST.md",
+        "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "60abb922",
+            "phase_plan": "45461b22",
+            "checklist": "178be14c"
+          },
+          "current_hashes": {
+            "architecture": "60abb922",
+            "phase_plan": "45461b22",
+            "checklist": "178be14c"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/PHASE_PLAN.md",
+          "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/CHECKLIST.md",
+          "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_hy0/test_repo/.scribe/docs/dev_plans/my_test_project/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "60abb922",
+              "phase_plan": "45461b22",
+              "checklist": "178be14c"
+            },
+            "current_hashes": {
+              "architecture": "60abb922",
+              "phase_plan": "45461b22",
+              "checklist": "178be14c"
+            }
+          }
+        }
+      }
+    },
+    "default_project": {
+      "name": "default_project",
+      "root": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo",
+      "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project",
+      "docs": {
+        "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/PHASE_PLAN.md",
+        "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/CHECKLIST.md",
+        "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "d5dfe1e1",
+            "phase_plan": "ca441bcf",
+            "checklist": "42b3a9ac"
+          },
+          "current_hashes": {
+            "architecture": "d5dfe1e1",
+            "phase_plan": "ca441bcf",
+            "checklist": "42b3a9ac"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Scribe"
+      },
+      "author": "Scribe",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/PHASE_PLAN.md",
+          "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/CHECKLIST.md",
+          "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_handles_none_0/test_repo/.scribe/docs/dev_plans/default_project/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "d5dfe1e1",
+              "phase_plan": "ca441bcf",
+              "checklist": "42b3a9ac"
+            },
+            "current_hashes": {
+              "architecture": "d5dfe1e1",
+              "phase_plan": "ca441bcf",
+              "checklist": "42b3a9ac"
+            }
+          }
+        }
+      }
     }
   },
   "recent_projects": [
-    "test_compact",
-    "test_structured",
-    "test_with_entries",
-    "test_empty_log",
-    "test_custom_content"
+    "default_project",
+    "my_project",
+    "my_test_project",
+    "test_project",
+    "enhanced-rotation-test"
   ],
   "session_projects": {},
   "session_modes": {},
   "recent_tools": [
     {
+      "name": "list_projects",
+      "ts": "2026-01-19 08:49:49 UTC"
+    },
+    {
+      "name": "append_entry",
+      "ts": "2026-01-19 08:49:21 UTC"
+    },
+    {
       "name": "generate_doc_templates",
-      "ts": "2026-01-17 10:30:25 UTC"
+      "ts": "2026-01-19 08:21:15 UTC"
     },
     {
       "name": "set_project",
-      "ts": "2026-01-17 10:30:25 UTC"
+      "ts": "2026-01-19 08:21:15 UTC"
     },
     {
       "name": "rotate_log",
       "ts": "2026-01-17 10:30:19 UTC"
-    },
-    {
-      "name": "append_entry",
-      "ts": "2026-01-17 10:30:19 UTC"
-    },
-    {
-      "name": "list_projects",
-      "ts": "2026-01-12 22:38:49 UTC"
     },
     {
       "name": "vector_index_status",
@@ -1683,9 +1859,9 @@
       "ts": "2026-01-08 07:46:20 UTC"
     }
   ],
-  "last_activity_at": "2026-01-17 10:30:25 UTC",
-  "session_started_at": "2026-01-17 10:30:19 UTC",
-  "version": 478,
-  "last_updated_by": "TestAgent",
-  "operation_timestamp": "2026-01-17 10:30:25 UTC"
+  "last_activity_at": "2026-01-19 08:49:49 UTC",
+  "session_started_at": "2026-01-19 07:51:47 UTC",
+  "version": 490,
+  "last_updated_by": "Scribe",
+  "operation_timestamp": "2026-01-19 08:21:15 UTC"
 }
