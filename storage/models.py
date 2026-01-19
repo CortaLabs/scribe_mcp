@@ -11,8 +11,11 @@ class ProjectRecord:
     name: str
     repo_root: str
     progress_log_path: str
+    docs_json: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    bridge_id: Optional[str] = None
+    bridge_managed: bool = False
 
 
 @dataclass

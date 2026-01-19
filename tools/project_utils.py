@@ -4,24 +4,15 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.state import StateManager
+from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input  # Re-export for backwards compat
 
 PROJECTS_DIR = settings.project_root / "config" / "projects"
 _PROJECT_CACHE: Dict[Path, Tuple[float, Dict[str, Any]]] = {}
-
-
-_SLUG_CLEANER = re.compile(r"[^0-9a-z_]+")
-
-
-def slugify_project_name(name: str) -> str:
-    """Return a filesystem-friendly slug for the provided project name."""
-    normalised = name.strip().lower().replace(" ", "_").replace("-", "_")
-    return _SLUG_CLEANER.sub("_", normalised).strip("_") or "project"
 
 
 def list_project_configs() -> Dict[str, Dict[str, Any]]:
@@ -92,7 +83,7 @@ def _is_temp_project(project_path: Path) -> bool:
 
 def load_project_config(project_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     if project_name:
-        project = _load_project_file(PROJECTS_DIR / f"{project_name}.json")
+        project = _load_project_file(PROJECTS_DIR / f"{normalize_project_input(project_name) or project_name}.json")
         if project:
             return dict(project)
 

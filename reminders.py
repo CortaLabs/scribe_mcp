@@ -21,10 +21,19 @@ from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext as 
 _reminder_engine: Optional[ReminderEngine] = None
 
 def _get_engine() -> ReminderEngine:
-    """Get or create the reminder engine instance."""
+    """Get or create the reminder engine instance with DB storage backend."""
     global _reminder_engine
     if _reminder_engine is None:
+        from scribe_mcp.storage.sqlite import SQLiteStorage
+        from scribe_mcp.config.settings import settings
+
+        # Create storage backend for DB-based cooldown tracking
+        db_path = settings.project_root / ".scribe" / "data" / "scribe.db"
+        storage = SQLiteStorage(str(db_path))
+
+        # Create engine and inject storage
         _reminder_engine = validate_and_load_engine()
+        _reminder_engine.storage = storage
     return _reminder_engine
 
 
@@ -45,12 +54,17 @@ async def get_reminders(
     state: Optional[object] = None,
     agent_id: Optional[str] = None,
     variables: Optional[Dict[str, Any]] = None,
+    operation_status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Legacy compatibility wrapper for the original get_reminders function.
 
     This maintains the exact same interface as the original while using
     the new reminder engine under the hood.
+
+    Args:
+        operation_status: Status of the tool operation ("success", "failure", or None for neutral)
+                         Used to determine reminder priority (failures bypass cooldowns)
     """
     if not project:
         return []
@@ -62,6 +76,7 @@ async def get_reminders(
         state,
         agent_id=agent_id,
         variables=variables,
+        operation_status=operation_status,
     )
 
     # Use the new engine
@@ -83,8 +98,13 @@ async def _build_legacy_context(
     *,
     agent_id: Optional[str] = None,
     variables: Optional[Dict[str, Any]] = None,
+    operation_status: Optional[str] = None,
 ) -> NewReminderContext:
-    """Convert legacy project/state format to new ReminderContext."""
+    """Convert legacy project/state format to new ReminderContext.
+
+    Args:
+        operation_status: Status of the tool operation ("success", "failure", or None)
+    """
 
     # Extract project information
     project_name = project.get("name")
@@ -175,7 +195,7 @@ async def _build_legacy_context(
     except Exception:
         pass
 
-    # Get session information
+    # Get session age information
     session_age_minutes = None
     try:
         if state and hasattr(state, 'session_started_at') and state.session_started_at:
@@ -187,11 +207,20 @@ async def _build_legacy_context(
     except Exception:
         pass
 
+    # Extract session_id from state (separate try block for fault isolation)
+    session_id = None
+    try:
+        if state and hasattr(state, 'session_id'):
+            session_id = state.session_id
+    except Exception:
+        pass
+
     return NewReminderContext(
         tool_name=tool_name,
         project_name=project_name,
         project_root=str(project_root) if project_root else None,
         agent_id=agent_id,
+        session_id=session_id,
         total_entries=total_entries,
         minutes_since_log=minutes_since_log,
         last_log_time=last_log_time,
@@ -199,7 +228,8 @@ async def _build_legacy_context(
         docs_changed=docs_changed,
         current_phase=current_phase,
         session_age_minutes=session_age_minutes,
-        variables=variables or {}
+        variables=variables or {},
+        operation_status=operation_status,
     )
 
 

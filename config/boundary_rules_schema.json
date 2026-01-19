@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Boundary Rules Configuration Schema",
+  "description": "Schema for validating boundary rules configuration files",
+  "type": "object",
+  "required": ["version", "enabled", "rules"],
+  "properties": {
+    "version": {
+      "type": "number",
+      "description": "Configuration schema version",
+      "minimum": 1.0
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Master toggle for boundary checking"
+    },
+    "rules": {
+      "type": "array",
+      "description": "List of boundary enforcement rules",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "severity", "pattern"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique rule name",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable rule explanation",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["error", "warning", "info"],
+            "description": "Violation severity level"
+          },
+          "pattern": {
+            "type": "object",
+            "required": ["source", "forbidden_imports"],
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "Glob pattern for source files this rule applies to",
+                "minLength": 1
+              },
+              "forbidden_imports": {
+                "type": "array",
+                "description": "List of forbidden import patterns (glob)",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "allowed_exceptions": {
+                "type": "array",
+                "description": "Optional list of allowed exception patterns",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

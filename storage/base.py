@@ -30,8 +30,20 @@ class StorageBackend(ABC):
         name: str,
         repo_root: str,
         progress_log_path: str,
+        docs_json: Optional[str] = None,
+        bridge_id: Optional[str] = None,
+        bridge_managed: bool = False,
     ) -> ProjectRecord:
-        """Insert or update a project row and return the record."""
+        """Insert or update a project row and return the record.
+
+        Args:
+            name: Project name
+            repo_root: Repository root path
+            progress_log_path: Path to progress log file
+            docs_json: Optional JSON string of document metadata
+            bridge_id: Optional ID of bridge that owns this project
+            bridge_managed: Whether this project is managed by a bridge
+        """
 
     @abstractmethod
     async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
@@ -39,11 +51,26 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def list_projects(self) -> List[ProjectRecord]:
-        """Return all known projects."""
+        """Return all known projects (global - use list_projects_by_repo for scoped queries)."""
+
+    @abstractmethod
+    async def list_projects_by_repo(self, repo_root: str) -> List[ProjectRecord]:
+        """Return projects scoped to a specific repository root.
+
+        Args:
+            repo_root: Absolute path to repository root (will be normalized)
+
+        Returns:
+            List of projects whose repo_root matches the given path.
+        """
 
     @abstractmethod
     async def delete_project(self, name: str) -> bool:
         """Delete a project and all associated data. Returns True if project was deleted."""
+
+    @abstractmethod
+    async def update_project_docs(self, name: str, docs_json: str) -> bool:
+        """Update only the docs_json field for a project. Returns True if updated."""
 
     @abstractmethod
     async def insert_entry(
@@ -284,3 +311,40 @@ class StorageBackend(ABC):
     @abstractmethod
     async def set_agent_project(self, agent_id: str, project_name: Optional[str], expected_version: Optional[int], updated_by: str, session_id: str) -> Dict[str, Any]:
         """Set an agent's current project with optimistic concurrency control."""
+
+    # Bridge management methods
+    @abstractmethod
+    async def insert_bridge(
+        self,
+        bridge_id: str,
+        name: str,
+        version: str,
+        manifest_json: str,
+        state: str
+    ) -> None:
+        """Insert new bridge record."""
+
+    @abstractmethod
+    async def update_bridge_state(self, bridge_id: str, state: str) -> None:
+        """Update bridge state."""
+
+    @abstractmethod
+    async def update_bridge_health(
+        self,
+        bridge_id: str,
+        health_json: str,
+        error: Optional[str] = None
+    ) -> None:
+        """Update bridge health status."""
+
+    @abstractmethod
+    async def fetch_bridge(self, bridge_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch bridge by ID."""
+
+    @abstractmethod
+    async def list_bridges(self, state: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List bridges, optionally filtered by state."""
+
+    @abstractmethod
+    async def delete_bridge(self, bridge_id: str) -> None:
+        """Delete bridge record."""

@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Set, Union
 from jinja2 import (
     Environment,
     FileSystemLoader,
-    Template,
     TemplateNotFound,
     TemplateRuntimeError,
     TemplateSyntaxError,
@@ -27,20 +26,15 @@ except Exception:  # pragma: no cover - repo config optional during bootstrap
     RepoConfig = None  # type: ignore
     RepoDiscovery = None  # type: ignore
 
-# Standalone implementations to avoid circular import hell
+# Import canonical slugify from utils (designed for early import safety)
+from scribe_mcp.utils.slug import slugify_project_name
+
+# Standalone implementation to avoid circular import hell
 def get_template_root():
     """Get template root directory - standalone implementation."""
     # Use relative imports to avoid MCP_SPINE import issues
     current_dir = Path(__file__).parent.parent / "templates"
     return current_dir
-
-def slugify_project_name(name: str) -> str:
-    """Slugify project name - standalone implementation."""
-    import re
-    # Convert to lowercase and replace spaces/special chars with hyphens
-    slug = re.sub(r'[^a-zA-Z0-9\s-]', '', str(name)).strip().lower()
-    slug = re.sub(r'[-\s]+', '-', slug)
-    return slug.strip('-')
 
 # Setup logging for template engine
 template_logger = logging.getLogger(__name__)

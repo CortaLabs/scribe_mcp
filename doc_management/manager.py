@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import ast
-import difflib
 import hashlib
 import json
 import logging
@@ -15,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 # Import with absolute paths from scribe_mcp root
 from scribe_mcp.utils.files import async_atomic_write, ensure_parent, preflight_backup
+from scribe_mcp.utils.slug import slugify_filename
 from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.utils.frontmatter import (
     apply_frontmatter_updates,
@@ -25,7 +25,6 @@ from scribe_mcp.utils.diff_compiler import compile_unified_diff
 from scribe_mcp.utils.time import utcnow
 from scribe_mcp.templates import template_root
 from scribe_mcp.utils.parameter_validator import (
-    ToolValidator,
     BulletproofParameterCorrector,
 )
 import re
@@ -46,7 +45,7 @@ PATCH_MODE_ALLOWED = {PATCH_MODE_STRUCTURED, PATCH_MODE_UNIFIED}
 def _log_operation(
     level: str,
     operation: str,
-    doc: str,
+    doc_name: str,
     section: Optional[str],
     action: str,
     file_path: Path,
@@ -61,7 +60,7 @@ def _log_operation(
     log_data = {
         "timestamp": time.time(),
         "operation": operation,
-        "document": doc,
+        "doc_name": doc_name,
         "section": section,
         "action": action,
         "file_path": str(file_path),
@@ -78,18 +77,18 @@ def _log_operation(
     log_message = json.dumps(log_data, separators=(',', ':'))
 
     if level == "error":
-        doc_logger.error(f"Document operation failed: {operation} on {doc} - {error_message or 'Unknown error'}", extra={"structured_log": log_data})
+        doc_logger.error(f"Document operation failed: {operation} on {doc_name} - {error_message or 'Unknown error'}", extra={"structured_log": log_data})
     elif level == "warning":
-        doc_logger.warning(f"Document operation warning: {operation} on {doc} - {error_message}", extra={"structured_log": log_data})
+        doc_logger.warning(f"Document operation warning: {operation} on {doc_name} - {error_message}", extra={"structured_log": log_data})
     elif level == "info":
-        doc_logger.info(f"Document operation successful: {operation} on {doc}", extra={"structured_log": log_data})
+        doc_logger.info(f"Document operation successful: {operation} on {doc_name}", extra={"structured_log": log_data})
     else:
-        doc_logger.debug(f"Document operation: {operation} on {doc}", extra={"structured_log": log_data})
+        doc_logger.debug(f"Document operation: {operation} on {doc_name}", extra={"structured_log": log_data})
 
 
 @dataclass
 class DocChangeResult:
-    doc: str
+    doc_name: str
     section: Optional[str]
     action: str
     path: Path
@@ -125,7 +124,8 @@ class DocumentValidationError(Exception):
 async def apply_doc_change(
     project: Dict[str, Any],
     *,
-    doc: str,
+    doc_name: str,
+    doc_category: Optional[str] = None,
     action: str,
     section: Optional[str],
     content: Optional[str],
@@ -145,20 +145,20 @@ async def apply_doc_change(
 
     try:
         # Validate and correct inputs (bulletproof - never fails)
-        doc, action, section, content, template, metadata = _validate_and_correct_inputs(
-            doc, action, section, content, patch, patch_source_hash, edit,
+        doc_name, action, section, content, template, metadata = _validate_and_correct_inputs(
+            doc_name, action, section, content, patch, patch_source_hash, edit,
             start_line, end_line, template, metadata
         )
 
         # Resolve and validate document path
         if action != "create_doc":
             docs_mapping = project.get("docs") or {}
-            if doc not in docs_mapping:
-                raise DocumentOperationError(f"DOC_NOT_FOUND: doc '{doc}' is not registered")
+            if doc_name not in docs_mapping:
+                raise DocumentOperationError(f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered")
         if action == "create_doc":
-            doc_path = _resolve_create_doc_path(project, metadata, doc)
+            doc_path = _resolve_create_doc_path(project, metadata, doc_name)
         else:
-            doc_path = _resolve_doc_path(project, doc)
+            doc_path = _resolve_doc_path(project, doc_name)
         repo_root = Path(project["root"]).resolve()
         await ensure_parent(doc_path, repo_root=repo_root)
 
@@ -239,7 +239,13 @@ async def apply_doc_change(
 
                 effective_mode = _normalize_mode(patch_mode) or _normalize_mode(meta_mode)
                 if not effective_mode:
-                    effective_mode = PATCH_MODE_STRUCTURED
+                    # Smart default: unified if patch provided, structured if edit provided
+                    if patch_used:
+                        effective_mode = PATCH_MODE_UNIFIED
+                    elif edit:
+                        effective_mode = PATCH_MODE_STRUCTURED
+                    else:
+                        effective_mode = PATCH_MODE_UNIFIED  # Prefer unified as default
 
                 if patch_used and edit:
                     raise DocumentOperationError(
@@ -415,9 +421,11 @@ async def apply_doc_change(
                 if isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict):
                     metadata.setdefault("frontmatter", {})
                 if isinstance(metadata, dict):
-                    doc_type = metadata.get("doc_type") or doc
+                    # Ensure frontmatter dict exists for downstream processing
                     metadata.setdefault("frontmatter", {})
-                    metadata["frontmatter"].setdefault("doc_type", doc_type)
+                    # Pass doc_category through to frontmatter if not already set
+                    if doc_category and "category" not in metadata["frontmatter"]:
+                        metadata["frontmatter"]["category"] = doc_category
             elif action == "validate_crosslinks":
                 extra = {"crosslinks": _validate_crosslinks(original_text, project, metadata)}
                 updated_body = original_body
@@ -440,7 +448,7 @@ async def apply_doc_change(
         # Short-circuit for read-only actions
         if action == "validate_crosslinks":
             return DocChangeResult(
-                doc=doc,
+                doc_name=doc_name,
                 section=section,
                 action=action,
                 path=doc_path,
@@ -461,11 +469,39 @@ async def apply_doc_change(
 
         date_str = utcnow().strftime("%Y-%m-%d")
         frontmatter_extra: Dict[str, Any] = {}
+
+        # === AUTO-TRANSFORM HOOK (opt-in via frontmatter) ===
+        # Check if document has opted into auto-transforms
+        frontmatter_data = original_parsed.frontmatter_data
+        auto_normalize = frontmatter_data.get("auto_normalize_headers", False)
+        auto_toc = frontmatter_data.get("auto_generate_toc", False)
+
+        transforms_applied = []
+
+        if auto_normalize and action not in ("normalize_headers", "generate_toc"):
+            # Apply header normalization to body
+            try:
+                updated_body = _normalize_headers_text(updated_body)
+                transforms_applied.append("normalize_headers")
+            except Exception as e:
+                # Non-fatal - log but continue
+                doc_logger.warning(f"Auto-normalize failed for {doc_name}: {e}")
+
+        if auto_toc and action not in ("normalize_headers", "generate_toc"):
+            # Apply TOC generation to body
+            try:
+                updated_body = _generate_toc_text(updated_body)
+                transforms_applied.append("generate_toc")
+            except Exception as e:
+                # Non-fatal - log but continue
+                doc_logger.warning(f"Auto-TOC failed for {doc_name}: {e}")
+
         try:
             updated_text, frontmatter_extra, frontmatter_line_count = _apply_frontmatter_pipeline(
                 original_parsed,
                 updated_body,
-                doc=doc,
+                doc_name=doc_name,
+                doc_category=doc_category,
                 project=project,
                 metadata=metadata,
                 date_str=date_str,
@@ -478,6 +514,9 @@ async def apply_doc_change(
                     "frontmatter_only": frontmatter_only,
                 }
             )
+            # Add auto-transforms metadata to frontmatter_extra (after pipeline returns its dict)
+            if transforms_applied:
+                frontmatter_extra["auto_transforms_applied"] = transforms_applied
             if frontmatter_only:
                 diff_preview = ""
             else:
@@ -526,7 +565,7 @@ async def apply_doc_change(
                 _log_operation(
                     level="info",
                     operation="apply_doc_change",
-                    doc=doc,
+                    doc_name=doc_name,
                     section=section,
                     action=action,
                     file_path=doc_path,
@@ -550,7 +589,7 @@ async def apply_doc_change(
                         _log_operation(
                             level="warning",
                             operation="apply_doc_change",
-                            doc=doc,
+                            doc_name=doc_name,
                             section=section,
                             action=action,
                             file_path=doc_path,
@@ -566,7 +605,7 @@ async def apply_doc_change(
                     _log_operation(
                         level="error",
                         operation="apply_doc_change",
-                        doc=doc,
+                        doc_name=doc_name,
                         section=section,
                         action=action,
                         file_path=doc_path,
@@ -591,7 +630,7 @@ async def apply_doc_change(
             }
 
         return DocChangeResult(
-            doc=doc,
+            doc_name=doc_name,
             section=section,
             action=action,
             path=doc_path,
@@ -614,7 +653,7 @@ async def apply_doc_change(
         _log_operation(
             level="error",
             operation="apply_doc_change",
-            doc=doc,
+            doc_name=doc_name,
             section=section,
             action=action,
             file_path=Path(""),
@@ -633,7 +672,7 @@ async def apply_doc_change(
             extra.setdefault("precondition_failed", "SOURCE_HASH_MISMATCH")
 
         return DocChangeResult(
-            doc=doc,
+            doc_name=doc_name,
             section=section,
             action=action,
             path=Path(""),
@@ -654,7 +693,7 @@ async def apply_doc_change(
         _log_operation(
             level="error",
             operation="apply_doc_change",
-            doc=doc,
+            doc_name=doc_name,
             section=section,
             action=action,
             file_path=Path(""),
@@ -667,7 +706,7 @@ async def apply_doc_change(
         )
 
         return DocChangeResult(
-            doc=doc,
+            doc_name=doc_name,
             section=section,
             action=action,
             path=Path(""),
@@ -684,16 +723,20 @@ async def apply_doc_change(
         )
 
 
-def _resolve_doc_path(project: Dict[str, Any], doc_key: str) -> Path:
+def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
     """
     Resolve documentation path with safety assertions.
 
     Ensures all resolved paths remain within the repository sandbox
     and provides sensible fallbacks when explicit paths are not defined.
+
+    Args:
+        project: Project configuration dictionary
+        doc_name: Unique document identifier (e.g., "architecture", "phase_plan", "checklist")
     """
     # Validate inputs
-    if not doc_key:
-        raise ValueError("doc_key cannot be empty")
+    if not doc_name:
+        raise ValueError("doc_name cannot be empty")
 
     project_name = project.get("name")
     if not project_name:
@@ -705,8 +748,8 @@ def _resolve_doc_path(project: Dict[str, Any], doc_key: str) -> Path:
 
     # Try explicit paths first
     docs = project.get("docs") or {}
-    target = docs.get(doc_key)
-    if not target and doc_key == "progress_log":
+    target = docs.get(doc_name)
+    if not target and doc_name == "progress_log":
         target = project.get("progress_log")
 
     if target:
@@ -717,7 +760,7 @@ def _resolve_doc_path(project: Dict[str, Any], doc_key: str) -> Path:
         except ValueError as e:
             raise SecurityError(f"Document path {resolved_path} is outside project root {project_root}") from e
 
-        doc_logger.debug(f"Resolved doc path for {doc_key} using explicit target: {resolved_path}")
+        doc_logger.debug(f"Resolved doc path for {doc_name} using explicit target: {resolved_path}")
         return resolved_path
 
     # Fallback to conventional structure
@@ -725,8 +768,13 @@ def _resolve_doc_path(project: Dict[str, Any], doc_key: str) -> Path:
     if docs_dir:
         docs_dir = Path(docs_dir).parent
     else:
-        # Use conventional docs structure
-        docs_dir = project_root / "docs" / "dev_plans" / slugify_project_name(project_name)
+        # Try to use docs_dir from project configuration
+        docs_dir_str = project.get("docs_dir", "")
+        if docs_dir_str:
+            docs_dir = Path(docs_dir_str)
+        else:
+            # Final fallback to .scribe structure
+            docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / slugify_project_name(project_name)
 
     filename = {
         "architecture": "ARCHITECTURE_GUIDE.md",
@@ -736,9 +784,18 @@ def _resolve_doc_path(project: Dict[str, Any], doc_key: str) -> Path:
         "doc_log": "DOC_LOG.md",
         "security_log": "SECURITY_LOG.md",
         "bug_log": "BUG_LOG.md",
-    }.get(doc_key, f"{doc_key.upper()}.md")
+    }.get(doc_name, f"{doc_name}.md")  # Preserve case for custom doc names
 
     resolved_path = (docs_dir / filename).resolve()
+
+    # If file not found in main folder, check common subdirectories
+    if not resolved_path.exists():
+        subfolders_to_check = ["research", "architecture", "bugs"]
+        for subfolder in subfolders_to_check:
+            alt_path = (docs_dir / subfolder / filename).resolve()
+            if alt_path.exists():
+                resolved_path = alt_path
+                break
 
     # CRITICAL: Ensure fallback path is within project sandbox
     try:
@@ -746,26 +803,34 @@ def _resolve_doc_path(project: Dict[str, Any], doc_key: str) -> Path:
     except ValueError as e:
         raise SecurityError(f"Fallback document path {resolved_path} is outside project root {project_root}") from e
 
-    doc_logger.debug(f"Resolved doc path for {doc_key} using fallback: {resolved_path}")
+    doc_logger.debug(f"Resolved doc path for {doc_name} using fallback: {resolved_path}")
     return resolved_path
 
 
 def _resolve_create_doc_path(
     project: Dict[str, Any],
     metadata: Optional[Dict[str, Any]],
-    doc_key: str,
+    doc_name: str,
 ) -> Path:
+    """
+    Resolve path for creating a new document.
+
+    Args:
+        project: Project configuration dictionary
+        metadata: Optional metadata dict with doc_name, register_as, or target_dir overrides
+        doc_name: Unique document identifier (fallback if not in metadata)
+    """
     project_root = Path(project.get("root", ""))
     if not project_root.exists():
         raise ValueError(f"Project root does not exist: {project_root}")
 
     metadata = metadata or {}
-    doc_name = metadata.get("doc_name") or metadata.get("register_as") or metadata.get("doc_type") or doc_key
-    doc_name = str(doc_name or "").strip()
-    if not doc_name:
+    resolved_name = metadata.get("doc_name") or metadata.get("register_as") or metadata.get("doc_type") or doc_name
+    resolved_name = str(resolved_name or "").strip()
+    if not resolved_name:
         raise DocumentOperationError("CREATE_DOC_MISSING_NAME: doc_name or register_as is required")
 
-    safe_name = _slugify_filename(doc_name)
+    safe_name = slugify_filename(resolved_name)
 
     docs_dir = project.get("docs_dir")
     if docs_dir:
@@ -902,6 +967,22 @@ async def _load_fragment(name: str) -> str:
 
 def _replace_section(text: str, section: Optional[str], content: str, *, allow_append: bool = False) -> str:
     marker = SECTION_MARKER.format(section=section)
+
+    # Strip redundant header+marker from content if present at the start.
+    # This handles the common case where caller includes full section structure
+    # (header + marker + body) instead of just the body content.
+    content_stripped = content.lstrip()
+    marker_pos = content_stripped.find(marker)
+    # Only process if marker appears near the beginning (within ~200 chars for a header)
+    if 0 <= marker_pos <= 200:
+        prefix_before_marker = content_stripped[:marker_pos]
+        prefix_clean = prefix_before_marker.strip()
+        # Check if prefix is empty or looks like a markdown header
+        if not prefix_clean or re.match(r'^#+\s+[^\n]*$', prefix_clean):
+            # Strip everything up to and including the marker
+            after_marker = content_stripped[marker_pos + len(marker):]
+            content = after_marker.lstrip('\n\r')
+
     idx = text.find(marker)
     if idx == -1:
         if not allow_append:
@@ -1985,20 +2066,27 @@ def _extract_title(text: str, fallback: str) -> str:
 
 
 def _default_frontmatter(
-    doc: str,
+    doc_name: str,
+    doc_category: Optional[str],
     project_name: str,
     body_text: str,
     date_str: str,
 ) -> Dict[str, Any]:
-    from scribe_mcp.tools.project_utils import slugify_project_name
+    from scribe_mcp.utils.slug import slugify_project_name
 
     project_slug = slugify_project_name(project_name or "project")
-    title = _extract_title(body_text, doc.replace("_", " ").title())
+    doc_name_slug = doc_name.lower().replace("_", "-")
+    title = _extract_title(body_text, doc_name.replace("_", " ").title())
+    # Build category string - combine doc_category with engineering
+    category_parts = [doc_category] if doc_category else []
+    if "engineering" not in category_parts:
+        category_parts.append("engineering")
+    category_str = "|".join(category_parts)
     return {
-        "id": f"{project_slug}-{doc}",
+        "id": f"{project_slug}-{doc_name_slug}",
         "title": title,
-        "doc_type": doc,
-        "category": "engineering",
+        "doc_name": doc_name,
+        "category": category_str,
         "status": "draft",
         "version": "0.1",
         "last_updated": date_str,
@@ -2015,7 +2103,8 @@ def _apply_frontmatter_pipeline(
     parsed: "FrontmatterResult",
     updated_body: str,
     *,
-    doc: str,
+    doc_name: str,
+    doc_category: Optional[str],
     project: Dict[str, Any],
     metadata: Optional[Dict[str, Any]],
     date_str: str,
@@ -2070,7 +2159,7 @@ def _apply_frontmatter_pipeline(
                 {"frontmatter_updated": False, "frontmatter_created": False},
                 line_count,
             )
-        defaults = _default_frontmatter(doc, project.get("name", ""), updated_body, date_str)
+        defaults = _default_frontmatter(doc_name, doc_category, project.get("name", ""), updated_body, date_str)
         defaults.update(updates)
         frontmatter_block = build_frontmatter(defaults)
         line_count = len(frontmatter_block.splitlines())
@@ -2108,14 +2197,6 @@ def _validate_comparison_symbols(value: Any) -> bool:
         return True  # Allow these, but be cautious
 
     return True
-
-
-def _slugify_filename(value: str) -> str:
-    import re
-
-    slug = re.sub(r"[^\w\-.]+", "_", value.strip())
-    slug = re.sub(r"_+", "_", slug).strip("_")
-    return slug or "document"
 
 
 def _build_create_doc_body(
@@ -2225,7 +2306,7 @@ def _validate_crosslinks(
 
 
 def _validate_and_correct_inputs(
-    doc: str,
+    doc_name: str,
     action: str,
     section: Optional[str],
     content: Optional[str],
@@ -2240,11 +2321,11 @@ def _validate_and_correct_inputs(
     """
     Bulletproof parameter validation and correction that NEVER fails.
 
-    Returns corrected parameters tuple: (doc, action, section, content, template, metadata)
+    Returns corrected parameters tuple: (doc_name, action, section, content, template, metadata)
     """
     # Define validation schema
     validation_schema = {
-        "doc": {
+        "doc_name": {
             "type": str,
             "required": True,
             "default": ""
@@ -2281,7 +2362,7 @@ def _validate_and_correct_inputs(
 
     # Apply bulletproof parameter correction
     input_params = {
-        "doc": doc,
+        "doc_name": doc_name,
         "action": action,
         "section": section,
         "content": content,
@@ -2294,7 +2375,7 @@ def _validate_and_correct_inputs(
     corrected_params = BulletproofParameterCorrector.ensure_parameter_validity(input_params, validation_schema)
 
     # Apply business logic corrections
-    corrected_doc = corrected_params["doc"]
+    corrected_doc_name = corrected_params["doc_name"]
     corrected_action = corrected_params["action"]
     corrected_section = corrected_params["section"]
     corrected_content = corrected_params["content"]
@@ -2311,10 +2392,10 @@ def _validate_and_correct_inputs(
         "validate_crosslinks",
         "create_doc",
     }
-    if action in strict_doc_actions and doc is not None:
-        corrected_doc = str(doc).strip()
+    if action in strict_doc_actions and doc_name is not None:
+        corrected_doc_name = str(doc_name).strip()
     if corrected_action == "list_sections":
-        return corrected_doc, corrected_action, None, None, None, {}
+        return corrected_doc_name, corrected_action, None, None, None, {}
 
     if corrected_action == "batch":
         # Ensure metadata has operations list
@@ -2327,7 +2408,7 @@ def _validate_and_correct_inputs(
         if not isinstance(corrected_metadata["operations"], list):
             corrected_metadata["operations"] = [corrected_metadata["operations"]]
 
-        return corrected_doc, corrected_action, None, None, None, corrected_metadata
+        return corrected_doc_name, corrected_action, None, None, None, corrected_metadata
 
     # Section validation for actions that need it
     if corrected_action in {"replace_section", "status_update"}:
@@ -2380,7 +2461,7 @@ def _validate_and_correct_inputs(
         elif not corrected_content and not corrected_template:
             corrected_content = f"## {corrected_action.replace('_', ' ').title()}\n\nContent placeholder."
 
-    return corrected_doc, corrected_action, corrected_section, corrected_content, corrected_template, corrected_metadata
+    return corrected_doc_name, corrected_action, corrected_section, corrected_content, corrected_template, corrected_metadata
 
 
 async def _verify_file_write(file_path: Path, expected_content: str, expected_hash: str) -> bool:
@@ -2423,10 +2504,3 @@ class DefaultDict(dict):
 
     def __missing__(self, key: str) -> str:
         return ""
-_SLUG_CLEANER = re.compile(r"[^0-9a-z_]+")
-
-
-def slugify_project_name(name: str) -> str:
-    """Return a filesystem-friendly slug; duplicated here to avoid circular imports during tests."""
-    normalised = name.strip().lower().replace(" ", "_")
-    return _SLUG_CLEANER.sub("_", normalised).strip("_") or "project"

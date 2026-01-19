@@ -33,7 +33,7 @@ async def test_read_file_search_default_max_matches(tmp_path):
         target = tmp_path / "sample.txt"
         target.write_text("\n".join("needle" for _ in range(_DEFAULT_MAX_MATCHES + 25)), encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="search", search="needle")
+        result = await read_file(path=str(target), mode="search", search="needle", format="structured")
 
         assert result["ok"] is True
         assert len(result["matches"]) == _DEFAULT_MAX_MATCHES
@@ -51,7 +51,7 @@ async def test_read_file_invalid_regex_returns_error(tmp_path):
         target = tmp_path / "sample.txt"
         target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="search", search="(", search_mode="regex")
+        result = await read_file(path=str(target), mode="search", search="(", search_mode="regex", format="structured")
 
         assert result["ok"] is False
         assert result["error"] == "invalid regex"

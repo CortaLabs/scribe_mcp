@@ -1,0 +1,234 @@
+# Manage Docs
+
+### `manage_docs`
+**Purpose**: Structured documentation system for projects.
+
+**Required Parameters:**
+- `action` (string): Action type (see all 17 actions below)
+- `doc_name` (string): Document identifier/filename key (e.g., `architecture`, `phase_plan`, `checklist`, `implementation`)
+
+**Important:** `doc_name` is the unique document identifier (and drives filename resolution). `doc_category` is a semantic label only and must not be used as a filename or registry key.
+
+**All Available Actions (7 primary + 5 deprecated + 7 hidden = 19 total):**
+
+**PRIMARY ACTIONS** (7 actions - main user-facing operations):
+- `create` - Unified creation with `doc_type` routing (replaces create_* actions)
+- `replace_section` - Replace content using section anchors
+- `apply_patch` - Apply unified diff patches
+- `replace_range` - Replace explicit line ranges
+- `replace_text` - Find/replace text patterns
+- `append` - Append content to document or section
+- `status_update` - Update checklist item status
+
+**DEPRECATED ACTIONS** (5 actions - still work but route to `create` with `doc_type`):
+- `create_doc` → `create(doc_type="custom")`
+- `create_research_doc` → `create(doc_type="research")`
+- `create_bug_report` → `create(doc_type="bug")`
+- `create_review_report` → `create(doc_type="review")`
+- `create_agent_report_card` → `create(doc_type="agent_card")`
+
+**HIDDEN ACTIONS** (7 actions - supported but not promoted):
+- `normalize_headers` - Normalize markdown headers to ATX format
+- `generate_toc` - Generate table of contents
+- `validate_crosslinks` - Validate cross-document references
+- `list_sections` - List all section anchors in a document
+- `list_checklist_items` - List all checklist items
+- `search` - Semantic search across documents
+- `batch` - Execute multiple operations sequentially
+
+**Action-Specific Parameters:**
+
+#### `create` (UNIFIED CREATION ACTION)
+- `doc_name` (string, required): Document identifier used for naming/registration
+- `doc_type` (string, optional): Document type for template routing
+  - Supported types: `custom`, `research`, `bug`, `review`, `agent_card`
+  - If omitted, defaults to `custom`
+- `content` (string, optional): Document content (alternative to `metadata.body`)
+- `template` (string, optional): Template name override
+- `metadata` (dict, optional): Document metadata with type-specific fields
+  - For `research`: `research_goal` (required), `confidence_areas` (optional)
+  - For `bug`: `category`, `slug`, `severity`, `title` (all required), `component` (optional)
+  - For `review`: Review report metadata
+  - For `agent_card`: Agent performance metadata
+  - For `custom`: `body`/`snippet`/`sections` for content, `register_doc`/`register_as` for control
+
+**Migration from deprecated actions:**
+```python
+# OLD: create_research_doc
+manage_docs(action="create_research_doc", doc_name="RESEARCH_AUTH", metadata={"research_goal": "..."})
+# NEW: create with doc_type
+manage_docs(action="create", doc_name="RESEARCH_AUTH", doc_type="research", metadata={"research_goal": "..."})
+```
+
+#### `replace_section`
+- `section` (string, required): Section anchor ID (e.g., "problem_statement")
+- `content` (string, required): New section content
+
+#### `append`
+- `content` (string, required): Content to append
+- `section` (string, optional): Section anchor to append near. When omitted the content is appended to the end of the file.
+- `metadata.position` (string, optional): Insert placement relative to the section. Supported values: `before`, `inside` (immediately after the anchor), and `after` (default).
+
+#### `status_update`
+- `section` (string, required): Checklist item ID
+- `metadata` (dict, optional): Status info such as `{"status": "done", "proof": "evidence"}`. When omitted the existing status is preserved and proofs can still be updated.
+
+#### `apply_patch`
+- `edit` (dict, required): Patch specification with `type` field
+  - Format: `{"type": "structured"|"unified", ...}` for structured patches
+  - Or: Full patch dict for unified diffs
+- `patch` (string, optional): Unified diff patch string
+- `patch_source_hash` (string, optional): Source content hash for verification
+- `patch_mode` (string, optional): Patch application mode
+
+#### `replace_range`
+- `start_line` (int, required): Starting line number (1-indexed)
+- `end_line` (int, required): Ending line number (inclusive)
+- `content` (string, required): Replacement content
+
+#### `replace_text`
+- `content` (string, required): Text pattern to replace
+- `metadata` (dict, optional): Replacement configuration
+
+---
+
+### Deprecated Actions (Backwards Compatibility)
+
+The following actions are **DEPRECATED** but still work. They route to `create` with appropriate `doc_type`:
+
+- `create_research_doc` → Use `create(doc_type="research")` instead
+- `create_bug_report` → Use `create(doc_type="bug")` instead
+- `create_review_report` → Use `create(doc_type="review")` instead
+- `create_agent_report_card` → Use `create(doc_type="agent_card")` instead
+- `create_doc` → Use `create(doc_type="custom")` instead
+
+All deprecated actions accept the same parameters as before. See `create` action documentation above for details.
+
+---
+
+### Hidden Actions (Advanced Use)
+
+The following actions are supported but not promoted in standard workflows:
+
+#### `list_sections` (HIDDEN)
+- Returns section anchors for the requested document with line numbers
+
+#### `list_checklist_items` (HIDDEN)
+- Returns all checklist items with their IDs and status
+
+#### `batch` (HIDDEN)
+- `metadata.operations` (list, required): Sequence of manage_docs payloads executed in order
+
+#### `normalize_headers` (HIDDEN)
+- Normalizes all markdown headers to ATX format (# style)
+
+#### `generate_toc` (HIDDEN)
+- Generates table of contents
+
+#### `validate_crosslinks` (HIDDEN)
+- Validates all cross-document references
+
+#### `search` (HIDDEN)
+- Semantic search across documents
+
+---
+
+**Global Optional Parameters:**
+- `metadata` (dict): Additional metadata for the operation
+- `dry_run` (bool): Preview changes without applying
+- `target_dir` (string): Custom target directory for CREATE operations
+- Metadata payloads are auto-normalized; dicts, JSON strings, and legacy key/value sequences are all accepted.
+
+**MCP Schema Fix (v2.2.0+):**
+All parameters now properly exposed via MCP with correct JSON Schema types. Previously, parameters like `doc_name`, `edit`, `section`, and `metadata` appeared as empty schemas `{}` due to string annotations from `from __future__ import annotations`. Fixed by using `typing.get_type_hints()` to resolve annotations at runtime.
+
+**Example Usage:**
+```python
+# Replace architecture section
+await manage_docs(
+    action="replace_section",
+    doc_name="architecture",  # REQUIRED: unique doc identifier
+    section="problem_statement",
+    content="## Problem Statement\n**Context:** ..."
+)
+
+# Append within a section
+await manage_docs(
+    action="append",
+    doc_name="architecture",
+    section="problem_statement",
+    content="Updated scope paragraph",
+    metadata={"position": "inside"}
+)
+
+# Update checklist status
+await manage_docs(
+    action="status_update",
+    doc_name="checklist",
+    section="phase_1_task_1",
+    metadata={"status": "done", "proof": "code_review_completed"}
+)
+
+# Create research document
+await manage_docs(
+    action="create_research_doc",
+    doc_name="RESEARCH_AUTH_SYSTEM_20251102",  # REQUIRED for custom docs
+    metadata={"research_goal": "Analyze authentication flow", "confidence_areas": ["security"]}
+)
+
+# Create bug report
+await manage_docs(
+    action="create_bug_report",
+    metadata={
+        "category": "database",
+        "slug": "connection_leak",
+        "severity": "high",
+        "title": "Database connection pool exhaustion",
+        "component": "storage/sqlite.py"
+    }
+)
+
+# Apply unified patch (patch_mode defaults to "unified" when patch is provided)
+await manage_docs(
+    action="apply_patch",
+    doc_name="architecture",
+    patch="--- a/file.md\n+++ b/file.md\n@@ -10,3 +10,4 @@\n existing line\n+new line",
+    dry_run=True  # Always dry_run first!
+)
+
+# Batch multiple updates (executed sequentially)
+await manage_docs(
+    action="batch",
+    doc_name="architecture",
+    metadata={
+        "operations": [
+            {
+                "action": "append",
+                "doc_name": "architecture",
+                "section": "requirements_constraints",
+                "content": "Documented latency targets",
+                "metadata": {"position": "after"}
+            },
+            {
+                "action": "status_update",
+                "doc_name": "checklist",
+                "section": "documentation_hygiene",
+                "metadata": {"status": "done", "proof": "PROGRESS_LOG#2025-11-02"}
+            }
+        ]
+    }
+)
+```
+
+**Returns:**
+```json
+{
+  "ok": true,
+  "doc_name": "architecture",
+  "action": "replace_section",
+  "path": "/path/to/document.md",
+  "verification_passed": true,
+  "dry_run": false
+}
+```
+

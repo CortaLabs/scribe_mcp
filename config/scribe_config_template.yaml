@@ -55,7 +55,10 @@ hooks:
 mcp_server_name: "scribe.mcp"
 storage_backend: "sqlite"  # sqlite or postgres
 # db_path: .scribe/scribe.db  # Custom SQLite path (relative to repo root)
-doc_snapshots: true  # Enable preflight backups for doc edits
+doc_snapshots: false  # Enable preflight backups for doc edits
+
+# Output formatting (Phase 1.5 - Issue #9962 fix)
+use_ansi_colors: false  # Enable ANSI colors in tool output for Claude Code
 
 # For PostgreSQL backend
 # storage_backend: "postgres"

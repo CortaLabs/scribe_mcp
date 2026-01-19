@@ -7,8 +7,10 @@ import logging
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Tuple
+import hashlib
 
 from scribe_mcp import server as server_module
+from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.config.settings import settings
 from scribe_mcp.tools.project_utils import slugify_project_name
 from scribe_mcp.server import app
@@ -37,6 +39,7 @@ class _GenerateDocTemplatesHelper(LoggingToolMixin):
 
 
 _GENERATE_DOC_TEMPLATES_HELPER = _GenerateDocTemplatesHelper()
+_PROJECT_REGISTRY = ProjectRegistry()
 
 
 @app.tool()
@@ -220,6 +223,19 @@ async def generate_doc_templates(
         if force_overwrite or not path.exists():
             await asyncio.to_thread(_write_template, path, rendered, force_overwrite)
             written.append(str(path))
+
+            # Record baseline hash for doc lifecycle tracking
+            try:
+                content_hash = hashlib.sha256(rendered.encode('utf-8')).hexdigest()
+                _PROJECT_REGISTRY.record_doc_update(
+                    project_name,
+                    doc=key,
+                    action="template_created",
+                    before_hash=content_hash,  # Set baseline
+                    after_hash=content_hash,   # Same = pristine
+                )
+            except Exception:
+                pass  # Best-effort: Don't fail template generation
         else:
             skipped.append(str(path))
 

@@ -91,12 +91,16 @@ async def get_agent_project_data(agent_id: str) -> Tuple[Optional[Dict[str, Any]
         return project, list(recent)
 
 
-async def ensure_agent_session(agent_id: str) -> Optional[str]:
+async def ensure_agent_session(
+    agent_id: str,
+    stable_session_id: Optional[str] = None
+) -> Optional[str]:
     """
     Ensure agent has an active session, creating one if needed.
 
     Args:
         agent_id: Agent identifier
+        stable_session_id: Optional stable session ID from ExecutionContext
 
     Returns:
         Session ID if successful, None otherwise
@@ -108,8 +112,27 @@ async def ensure_agent_session(agent_id: str) -> Optional[str]:
         return None
 
     try:
-        # Try to resume existing session or create new one
-        session_id = await agent_identity.resume_agent_session(agent_id, agent_manager)
+        context = None
+        if hasattr(server_module, "get_execution_context"):
+            try:
+                context = server_module.get_execution_context()
+            except Exception:
+                context = None
+
+        session_metadata: Dict[str, Any] = {}
+        if context and getattr(context, "agent_identity", None):
+            agent_identity_payload = context.agent_identity
+            if agent_identity_payload.display_name:
+                session_metadata["agent_display_name"] = agent_identity_payload.display_name
+            session_metadata["agent_instance_id"] = agent_identity_payload.instance_id
+
+        # Try to resume existing session or create new one with stable session
+        session_id = await agent_identity.resume_agent_session(
+            agent_id,
+            agent_manager,
+            stable_session_id=stable_session_id,  # Pass through stable session
+            metadata=session_metadata or None,
+        )
         return session_id
     except Exception:
         return None
@@ -167,4 +190,3 @@ async def _recent_projects_snapshot(current_name: str) -> List[str]:
     except Exception:
         pass
     return snapshot
-

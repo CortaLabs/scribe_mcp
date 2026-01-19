@@ -5,7 +5,7 @@ doc_type: architecture
 category: engineering
 status: draft
 version: '0.1'
-last_updated: '2026-01-02'
+last_updated: '2026-01-03'
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -24,7 +24,6 @@ summary: ''
 
 ---
 ## 1. Problem Statement
-<!-- ID: problem_statement -->
 - **Context:** Implement repo-bound Sentinel Mode with concurrency-safe session isolation and audited reads in the Scribe MCP server.
 - **Goals:**
   - Enforce mode exclusivity (sentinel vs project) with hard-fail gating.
@@ -33,7 +32,7 @@ summary: ''
   - Prevent cross-project context leakage under concurrent sessions.
 - **Non-Goals:**
   - Sentinel writes into dev_plan project docs (tags only in Phase 1–2).
-  - Full write-audit or auto-commit workflows (deferred).
+  - Sentinel writes into dev_plan project docs (tags only in Phase 1–2).
 - **Success Metrics:**
   - Required tests pass (mode gating, path enforcement, session isolation, read logging, append safety).
   - Audit report cites current state with file/line evidence before implementation.
@@ -55,10 +54,11 @@ summary: ''
   - Backwards-compatible project-mode behavior.
 - **Assumptions:**
   - Repo root is set via `set_project` with absolute path.
-  - MCP runtime may provide a per-session identifier; if absent, router generates and persists per connection.
+  - MCP runtime must provide a per-session transport_session_id (or explicit session_id); router hard-fails if missing.
 - **Risks & Mitigations:**
-  - **Risk:** No session id → router generates/persists per connection; enforce validation. [Audit B]
+  - **Risk:** Missing session id → hard-fail at router; clients must supply transport_session_id or session_id. [Audit B]
   - **Risk:** Concurrent append corruption → append-only JSONL + file locks; bounded retry. [Audit C]
+  - **Risk:** Mode confusion → router tool gating with clear hard-fail errors. [Audit A,C]
   - **Risk:** Mode confusion → router tool gating with clear hard-fail errors. [Audit A,C]
 <!-- ID: architecture_overview -->
 - **Solution Summary:** Introduce ExecutionContext, session-scoped state, and sentinel logging to make multi-agent work safe and auditable.
@@ -70,9 +70,9 @@ summary: ''
   - **read_file Tool:** Reads repo files and logs provenance (sha256, agent identity).
   - **query_entries Extension:** Adds sentinel log search by time/filters.
 - **Data Flow:** MCP call → context validation → mode router → tool execution → log append.
-- **External Integrations:** Existing SQLite registry/state, filesystem logs.
-<!-- ID: detailed_design -->
-- **ExecutionContext Authority**
+  - MCP runtime must provide a per-session transport_session_id (or explicit session_id); router hard-fails if missing.
+- **Risks & Mitigations:**
+  - **Risk:** Missing session id → hard-fail at router; clients must supply transport_session_id or session_id. [Audit B]
   - Router validates required fields and injects derived fields before any tool logic. [Audit B]
   - Hard-fail if missing/invalid; no silent fallback. [Audit B]
 - **Session Identity Source (Final)**

@@ -1,4 +1,19 @@
-# Scribe MCP Whitepaper v2.1
+# Scribe MCP Whitepaper v2.1.1
+
+## What's New in v2.1.1
+
+### 🎨 Enhanced Readable Output (Phase 1.5/1.6)
+- **ANSI Color Support**: Tool output renders with semantic colors in Claude Code/Codex:
+  - Cyan boxes for headers/footers
+  - Green line numbers with dot separator (`    1. content`)
+  - Bold titles for sections (FILE CONTENT, METADATA, REMINDERS)
+  - Yellow metadata keys in footers
+- **CallToolResult Fix**: Workaround for Claude Code Issue #9962 - returns `TextContent`-only responses for proper newline rendering instead of escaped `\n`
+- **Config-Driven Colors**: Enable/disable via `use_ansi_colors: true` in `.scribe/config/scribe.yaml`
+- **5-Char Line Padding**: Consistent line number width matching Claude's native Read tool style
+- **Implementation**: `utils/response.py:40-83` and `config/repo_config.py:64-111`
+
+---
 
 ## What's New in v2.1
 

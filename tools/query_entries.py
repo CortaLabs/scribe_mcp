@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp.utils.time import format_utc, utcnow
+from scribe_mcp.utils.slug import normalize_project_input
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -18,7 +19,7 @@ from scribe_mcp.utils.config_manager import ConfigManager, validate_enum_value, 
 from scribe_mcp.utils.logs import parse_log_line, read_all_lines
 from scribe_mcp.utils.search import message_matches
 from scribe_mcp.utils.time import coerce_range_boundary
-from scribe_mcp.utils.response import create_pagination_info
+from scribe_mcp.utils.response import create_pagination_info, default_formatter
 from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.estimator import PaginationCalculator
 from scribe_mcp.utils.bulk_processor import BulkProcessor
@@ -82,7 +83,11 @@ def _validate_search_parameters(
     time_range: Optional[str],
     relevance_threshold: float,
     max_results: Optional[int],
-    config: Optional[QueryEntriesConfig]
+    config: Optional[QueryEntriesConfig],
+    priority: Optional[List[str]] = None,
+    category: Optional[List[str]] = None,
+    min_confidence: Optional[float] = None,
+    priority_sort: bool = False,
 ) -> Tuple[QueryEntriesConfig, Dict[str, Any]]:
     """
     Validate and prepare search parameters using enhanced Phase 3 utilities.
@@ -91,6 +96,9 @@ def _validate_search_parameters(
     with bulletproof parameter validation and healing.
     """
     try:
+        # Normalize project name input to handle any format (hyphens, underscores, mixed case)
+        normalized_project = normalize_project_input(project) if project else project
+
         # Apply Phase 1 BulletproofParameterCorrector for initial parameter healing
         healed_params = {}
         healing_applied = False
@@ -174,9 +182,9 @@ def _validate_search_parameters(
             healing_applied = True
 
         # Heal string parameters
-        if project:
-            healed_project = _PARAMETER_CORRECTOR.correct_message_parameter(project)
-            if healed_project != project:
+        if normalized_project:
+            healed_project = _PARAMETER_CORRECTOR.correct_message_parameter(normalized_project)
+            if healed_project != normalized_project:
                 healed_params["project"] = healed_project
                 healing_applied = True
 
@@ -205,7 +213,7 @@ def _validate_search_parameters(
                 healing_applied = True
 
         # Update parameters with healed values
-        final_project = healed_params.get("project", project)
+        final_project = healed_params.get("project", normalized_project)
         final_start = healed_params.get("start", start)
         final_end = healed_params.get("end", end)
         final_message = healed_params.get("message", message)
@@ -464,7 +472,11 @@ def _build_search_query(
             "verify_code_references": verify_code_references,
             "time_range": time_range,
             "relevance_threshold": relevance_threshold,
-            "max_results": max_results
+            "max_results": max_results,
+            "priority": final_config.priority if hasattr(final_config, 'priority') else None,
+            "category": final_config.category if hasattr(final_config, 'category') else None,
+            "min_confidence": final_config.min_confidence if hasattr(final_config, 'min_confidence') else None,
+            "priority_sort": final_config.priority_sort if hasattr(final_config, 'priority_sort') else False,
         }
 
         # Validate search parameters
@@ -674,14 +686,17 @@ async def _execute_search_with_fallbacks(
                             continue
 
                     # Apply status filter (mapped to emojis)
+                    # Entry must match AT LEAST ONE of the requested statuses
                     if search_params.get("status"):
                         entry_emoji = parsed.get("emoji", "")
+                        matches_any_status = False
                         for status_filter in search_params["status"]:
                             status_emojis = STATUS_EMOJI.get(status_filter.lower(), [])
-                            if entry_emoji not in status_emojis:
+                            if entry_emoji in status_emojis:
+                                matches_any_status = True
                                 break
-                        else:
-                            continue  # No break occurred, emoji matches all status filters
+                        if not matches_any_status:
+                            continue  # Entry doesn't match any requested status
 
                     # Apply agent filter
                     if search_params.get("agents"):
@@ -697,6 +712,24 @@ async def _execute_search_with_fallbacks(
                             validation_warnings.append(f"Ignoring meta_filters due to error: {meta_error}")
                             normalized_filters = {}
                         if normalized_filters and not _meta_matches(entry_meta, normalized_filters):
+                            continue
+
+                    # Apply priority filter
+                    if search_params.get("priority"):
+                        entry_priority = parsed.get("meta", {}).get("priority", "medium")
+                        if entry_priority not in search_params["priority"]:
+                            continue
+
+                    # Apply category filter
+                    if search_params.get("category"):
+                        entry_category = parsed.get("meta", {}).get("category")
+                        if entry_category not in search_params["category"]:
+                            continue
+
+                    # Apply confidence filter
+                    if search_params.get("min_confidence") is not None:
+                        entry_confidence = float(parsed.get("meta", {}).get("confidence", 1.0))
+                        if entry_confidence < search_params["min_confidence"]:
                             continue
 
                     # Apply time range filter
@@ -739,6 +772,17 @@ async def _execute_search_with_fallbacks(
                         # Skip problematic entry but continue processing
                         continue
 
+            # Apply priority sorting if requested
+            if search_params.get("priority_sort", False):
+                from scribe_mcp.shared.log_enums import get_priority_sort_key
+                filtered_entries.sort(
+                    key=lambda e: (
+                        get_priority_sort_key(e.get("meta", {}).get("priority", "medium")),
+                        e.get("ts_iso", "")
+                    ),
+                    reverse=False  # Lower priority numbers first (critical=0), timestamp DESC maintained
+                )
+
             # Apply pagination with error handling
             try:
                 page = search_params.get("page", 1)
@@ -758,11 +802,11 @@ async def _execute_search_with_fallbacks(
 
                 paginated_entries = filtered_entries[start_idx:end_idx]
 
-                # Create pagination info
+                # Create pagination info (use total_count for formatter compatibility)
                 pagination_info = {
                     "page": page,
                     "page_size": page_size,
-                    "total_entries": total_entries,
+                    "total_count": total_entries,  # Key must be total_count for formatter
                     "has_next": end_idx < total_entries,
                     "has_prev": page > 1
                 }
@@ -785,7 +829,7 @@ async def _execute_search_with_fallbacks(
                     pagination_info = {
                         "page": healed_page,
                         "page_size": healed_page_size,
-                        "total_entries": len(filtered_entries),
+                        "total_count": len(filtered_entries),
                         "has_next": end_idx < len(filtered_entries),
                         "has_prev": healed_page > 1
                     }
@@ -796,7 +840,7 @@ async def _execute_search_with_fallbacks(
                     pagination_info = {
                         "page": 1,
                         "page_size": 50,
-                        "total_entries": len(filtered_entries),
+                        "total_count": len(filtered_entries),
                         "has_next": len(filtered_entries) > 50,
                         "has_prev": False
                     }
@@ -933,7 +977,7 @@ async def _execute_search_with_fallbacks(
                 "pagination": {
                     "page": 1,
                     "page_size": 1,
-                    "total_entries": 1,
+                    "total_count": 1,
                     "has_next": False,
                     "has_prev": False
                 },
@@ -969,7 +1013,7 @@ async def query_entries(
     meta_filters: Optional[Dict[str, Any]] = None,
     limit: int = 50,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 10,
     compact: bool = False,
     fields: Optional[List[str]] = None,
     include_metadata: bool = True,
@@ -982,6 +1026,12 @@ async def query_entries(
     relevance_threshold: float = 0.0,  # 0.0-1.0 relevance scoring threshold
     max_results: Optional[int] = None,  # Override for limit (deprecated but kept for compatibility)
     config: Optional[QueryEntriesConfig] = None,  # Configuration object for dual parameter support
+    format: str = "readable",  # Output format: readable (default), structured, compact
+    # Phase 5 Priority/Category Filter Parameters
+    priority: Optional[List[str]] = None,  # Filter by priority levels (e.g., ["critical", "high"])
+    category: Optional[List[str]] = None,  # Filter by categories (e.g., ["bug", "security"])
+    min_confidence: Optional[float] = None,  # Minimum confidence threshold (0.0-1.0)
+    priority_sort: bool = False,  # If True, sort by priority (critical first) then by time
     **_kwargs: Any,  # tolerate unknown kwargs (contract: tools never TypeError)
 ) -> Dict[str, Any]:
     """Search the project log with flexible filters and pagination.
@@ -1013,6 +1063,12 @@ async def query_entries(
         max_results: Override maximum results (deprecated, use limit/page_size instead)
         config: Configuration object for dual parameter support. If provided, legacy parameters
                take precedence when both are specified.
+        format: Output format - "readable" (human-friendly, default), "structured" (full JSON), "compact" (minimal)
+        # Phase 5 Priority/Category Filter Parameters
+        priority: Filter by priority levels (e.g., ["critical", "high"])
+        category: Filter by categories (e.g., ["bug", "security"])
+        min_confidence: Minimum confidence threshold (0.0-1.0)
+        priority_sort: If True, sort by priority (critical first) then by time
 
     Returns:
         Paginated response with entries and metadata
@@ -1053,6 +1109,10 @@ async def query_entries(
             page_size=page_size,
             compact=compact,
             fields=fields,
+            priority=priority,
+            category=category,
+            min_confidence=min_confidence,
+            priority_sort=priority_sort,
             include_metadata=include_metadata,
             search_scope=search_scope,
             document_types=document_types,
@@ -1070,6 +1130,7 @@ async def query_entries(
                 tool_name="query_entries",
                 server_module=server_module,
                 agent_id=None,
+                explicit_project=final_config.project,
                 require_project=False,  # query_entries can work without active project
                 state_snapshot=state_snapshot,
             )
@@ -1142,7 +1203,24 @@ async def query_entries(
                 search_result["warnings"] = []
             search_result["warnings"].extend(search_result["validation_warnings"])
 
-        return search_result
+        # Add search parameters for readable formatter to show in header
+        if message:
+            search_result["search_message"] = message
+        if status:
+            search_result["search_status"] = status
+        if agents:
+            search_result["search_agents"] = agents
+        if emoji:
+            search_result["search_emoji"] = emoji
+
+        if context.reminders:
+            search_result["reminders"] = list(context.reminders)
+        # Route through formatter for readable/structured/compact output
+        return await default_formatter.finalize_tool_response(
+            data=search_result,
+            format=format,
+            tool_name="query_entries"
+        )
 
     except Exception as e:
         # === ULTIMATE EXCEPTION HANDLING AND FALLBACK ===
@@ -1180,7 +1258,7 @@ async def query_entries(
                 "pagination": {
                     "page": 1,
                     "page_size": 1,
-                    "total_entries": 1,
+                    "total_count": 1,
                     "has_next": False,
                     "has_prev": False
                 },

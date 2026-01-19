@@ -9,10 +9,12 @@ from scribe_mcp import server as server_module
 from scribe_mcp.server import app
 from scribe_mcp.tools.constants import STATUS_EMOJI
 from scribe_mcp.utils.files import read_tail
-from scribe_mcp.utils.response import create_pagination_info
+from scribe_mcp.utils.response import create_pagination_info, ResponseFormatter
+from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.estimator import ParameterTypeEstimator
 from scribe_mcp.utils.config_manager import TokenBudgetManager
+from scribe_mcp.utils.entry_limit import EntryLimitManager
 from scribe_mcp.utils.error_handler import HealingErrorHandler
 from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
@@ -27,6 +29,7 @@ class _ReadRecentHelper(LoggingToolMixin):
         self.token_budget_manager = TokenBudgetManager()
         self.parameter_estimator = ParameterTypeEstimator()
         self.error_handler = HealingErrorHandler()
+        self.formatter = ResponseFormatter()
 
     def heal_parameters_with_exception_handling(
         self,
@@ -156,10 +159,15 @@ async def read_recent(
     limit: Optional[Any] = None,
     filter: Optional[Dict[str, Any]] = None,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 10,
     compact: bool = False,
     fields: Optional[List[str]] = None,
     include_metadata: bool = True,
+    format: str = "readable",
+    priority: Optional[List[str]] = None,
+    category: Optional[List[str]] = None,
+    min_confidence: Optional[float] = None,
+    priority_sort: bool = False,
 ) -> Dict[str, Any]:
     """Return recent log entries with pagination and formatting options.
 
@@ -169,10 +177,15 @@ async def read_recent(
         limit: Alias for n (commonly used by agents)
         filter: Optional filters to apply (agent, status, emoji)
         page: Page number for pagination (1-based)
-        page_size: Number of entries per page
+        page_size: Number of entries per page (default: 10)
         compact: Use compact response format with short field names
         fields: Specific fields to include in response
         include_metadata: Include metadata field in entries
+        format: Output format - "readable" (default), "structured", or "compact"
+        priority: Filter by priority levels (e.g., ["critical", "high"])
+        category: Filter by categories (e.g., ["bug", "security"])
+        min_confidence: Minimum confidence threshold (0.0-1.0)
+        priority_sort: If True, sort by priority (critical first) then by time
 
     Returns:
         Paginated response with recent entries and metadata
@@ -204,6 +217,39 @@ async def read_recent(
         compact = False
         fields = None
         include_metadata = True
+
+    exec_context = None
+    if hasattr(server_module, "get_execution_context"):
+        try:
+            exec_context = server_module.get_execution_context()
+        except Exception:
+            exec_context = None
+
+    if exec_context and getattr(exec_context, "mode", None) == "sentinel":
+        context = await _READ_RECENT_HELPER.prepare_context(
+            tool_name="read_recent",
+            agent_id=None,
+            explicit_project=None,
+            require_project=False,
+            state_snapshot=state_snapshot,
+        )
+        base_response = _READ_RECENT_HELPER.error_response(
+            "Project resolution forbidden in sentinel mode.",
+            suggestion="Invoke set_project before reading logs",
+            context=context,
+            extra={"warning": "sentinel_mode_no_project"},
+        )
+        # Add healing information if parameters were healed
+        if healing_applied:
+            base_response["parameter_healing"] = {
+                "applied": True,
+                "messages": healing_messages,
+                "original_parameters": {"n": n, "page": page, "page_size": page_size},
+            }
+        return base_response
+
+    # Normalize project parameter before context resolution
+    project = normalize_project_input(project)
 
     try:
         context = await _READ_RECENT_HELPER.prepare_context(
@@ -240,6 +286,16 @@ async def read_recent(
         page_size = max(1, min(page_size, 200))
 
     filters = filter or {}
+
+    # Add new filters to the filters dict
+    if priority:
+        filters["priority"] = priority
+    if category:
+        filters["category"] = category
+    if min_confidence is not None:
+        filters["min_confidence"] = min_confidence
+    if priority_sort:
+        filters["priority_sort"] = priority_sort
 
     backend = server_module.storage_backend
     if backend:
@@ -280,78 +336,68 @@ async def read_recent(
                 extra_data={},
             )
 
-            # Apply Phase 1 token budget management
-            try:
-                truncated, token_count, items_truncated = _READ_RECENT_HELPER.token_budget_manager.truncate_response_to_budget(
-                    response,
-                    token_limit=None,  # Use default budget
-                    preserve_structure=True,
-                )
-                managed_response = truncated if isinstance(truncated, dict) else {"result": truncated}
-                managed_response["token_count"] = token_count
-                managed_response["items_truncated"] = items_truncated
-                managed_response["token_limit"] = _READ_RECENT_HELPER.token_budget_manager.default_token_limit
+            # Add project name for concurrent session clarity
+            if context and context.project:
+                response["project_name"] = context.project.get("name", "")
 
-                # Add healing information to response if parameters were healed
-                if healing_applied:
-                    managed_response["parameter_healing"] = {
-                        "applied": True,
-                        "messages": healing_messages,
-                        "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
-                    }
-
-                # Record token usage
-                if token_estimator:
-                    token_estimator.record_operation(
-                        operation="read_recent",
-                        input_data={
-                            "n": n,
-                            "filter": filters,
-                            "page": page,
-                            "page_size": page_size,
-                            "compact": compact,
-                            "fields": fields,
-                            "include_metadata": include_metadata,
-                            "backend": "database"
-                        },
-                        response=managed_response,
-                        compact_mode=compact,
-                        page_size=page_size
-                    )
-
-                return managed_response
-
-            except Exception as token_error:
-                # Fallback: return original response with healing info
+            # For readable format, skip token budget truncation (full content needed)
+            # Token budget only applies to structured/compact formats
+            if format == "readable":
                 if healing_applied:
                     response["parameter_healing"] = {
                         "applied": True,
                         "messages": healing_messages,
-                        "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]},
-                        "token_budget_error": str(token_error)
+                        "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
                     }
+                if context.reminders:
+                    response["reminders"] = list(context.reminders)
+                return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
+                    response, format, "read_recent"
+                )
 
-                # Record token usage with fallback
-                if token_estimator:
-                    token_estimator.record_operation(
-                        operation="read_recent",
-                        input_data={
-                            "n": n,
-                            "filter": filters,
-                            "page": page,
-                            "page_size": page_size,
-                            "compact": compact,
-                            "fields": fields,
-                            "include_metadata": include_metadata,
-                            "backend": "database",
-                            "token_budget_fallback": True
-                        },
-                        response=response,
-                        compact_mode=compact,
-                        page_size=page_size
-                    )
+            # Apply EntryLimitManager for structured/compact formats
+            # This preserves entry structure while limiting count intelligently
+            entry_limiter = EntryLimitManager()
+            limited_entries, limit_meta = entry_limiter.limit_entries(
+                entries=response.get("entries", []),
+                mode=format,
+                sort_by_priority=True,  # Enable priority sorting
+            )
+            response["entries"] = limited_entries
+            response["limit_metadata"] = limit_meta
 
-                return response
+            # Add healing information to response if parameters were healed
+            if healing_applied:
+                response["parameter_healing"] = {
+                    "applied": True,
+                    "messages": healing_messages,
+                    "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
+                }
+
+            # Record token usage
+            if token_estimator:
+                token_estimator.record_operation(
+                    operation="read_recent",
+                    input_data={
+                        "n": n,
+                        "filter": filters,
+                        "page": page,
+                        "page_size": page_size,
+                        "compact": compact,
+                        "fields": fields,
+                        "include_metadata": include_metadata,
+                        "backend": "database"
+                    },
+                    response=response,
+                    compact_mode=compact,
+                    page_size=page_size
+                )
+
+            if context.reminders:
+                response["reminders"] = list(context.reminders)
+            return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
+                response, format, "read_recent"
+            )
 
     # File-based fallback with pagination
     # Read more lines than needed to account for filtering
@@ -393,78 +439,67 @@ async def read_recent(
         extra_data={},
     )
 
-    # Apply Phase 1 token budget management for file-based fallback
-    try:
-        truncated, token_count, items_truncated = _READ_RECENT_HELPER.token_budget_manager.truncate_response_to_budget(
-            response,
-            token_limit=None,  # Use default budget
-            preserve_structure=True,
-        )
-        managed_response = truncated if isinstance(truncated, dict) else {"result": truncated}
-        managed_response["token_count"] = token_count
-        managed_response["items_truncated"] = items_truncated
-        managed_response["token_limit"] = _READ_RECENT_HELPER.token_budget_manager.default_token_limit
+    # Add project name for concurrent session clarity
+    if context and context.project:
+        response["project_name"] = context.project.get("name", "")
 
-        # Add healing information to response if parameters were healed
-        if healing_applied:
-            managed_response["parameter_healing"] = {
-                "applied": True,
-                "messages": healing_messages,
-                "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
-            }
-
-        # Record token usage
-        if token_estimator:
-            token_estimator.record_operation(
-                operation="read_recent",
-                input_data={
-                    "n": n,
-                    "filter": filters,
-                    "page": page,
-                    "page_size": page_size,
-                    "compact": compact,
-                    "fields": fields,
-                    "include_metadata": include_metadata,
-                    "backend": "file"
-                },
-                response=managed_response,
-                compact_mode=compact,
-                page_size=page_size
-            )
-
-        return managed_response
-
-    except Exception as token_error:
-        # Fallback: return original response with healing info
+    # For readable format, skip token budget truncation (full content needed)
+    if format == "readable":
         if healing_applied:
             response["parameter_healing"] = {
                 "applied": True,
                 "messages": healing_messages,
-                "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]},
-                "token_budget_error": str(token_error)
+                "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
             }
+        if context.reminders:
+            response["reminders"] = list(context.reminders)
+        return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
+            response, format, "read_recent"
+        )
 
-        # Record token usage with fallback
-        if token_estimator:
-            token_estimator.record_operation(
-                operation="read_recent",
-                input_data={
-                    "n": n,
-                    "filter": filters,
-                    "page": page,
-                    "page_size": page_size,
-                    "compact": compact,
-                    "fields": fields,
-                    "include_metadata": include_metadata,
-                    "backend": "file",
-                    "token_budget_fallback": True
-                },
-                response=response,
-                compact_mode=compact,
-                page_size=page_size
-            )
+    # Apply EntryLimitManager for file-based fallback (structured/compact formats)
+    # This preserves entry structure while limiting count intelligently
+    entry_limiter = EntryLimitManager()
+    limited_entries, limit_meta = entry_limiter.limit_entries(
+        entries=response.get("entries", []),
+        mode=format,
+        sort_by_priority=True,  # Enable priority sorting
+    )
+    response["entries"] = limited_entries
+    response["limit_metadata"] = limit_meta
 
-        return response
+    # Add healing information to response if parameters were healed
+    if healing_applied:
+        response["parameter_healing"] = {
+            "applied": True,
+            "messages": healing_messages,
+            "original_parameters": {"n": healed_params["n"], "page": healed_params["page"], "page_size": healed_params["page_size"]}
+        }
+
+    # Record token usage
+    if token_estimator:
+        token_estimator.record_operation(
+            operation="read_recent",
+            input_data={
+                "n": n,
+                "filter": filters,
+                "page": page,
+                "page_size": page_size,
+                "compact": compact,
+                "fields": fields,
+                "include_metadata": include_metadata,
+                "backend": "file"
+            },
+            response=response,
+            compact_mode=compact,
+            page_size=page_size
+        )
+
+    if context.reminders:
+        response["reminders"] = list(context.reminders)
+    return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
+        response, format, "read_recent"
+    )
 
 
 def _normalise_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -476,10 +511,21 @@ def _normalise_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
         normalised["emoji"] = STATUS_EMOJI.get(status, status)
     if "emoji" in filters and filters["emoji"]:
         normalised["emoji"] = str(filters["emoji"])
+    if "priority" in filters and filters["priority"]:
+        normalised["priority"] = filters["priority"]
+    if "category" in filters and filters["category"]:
+        normalised["category"] = filters["category"]
+    if "min_confidence" in filters and filters["min_confidence"] is not None:
+        normalised["min_confidence"] = filters["min_confidence"]
+    if "priority_sort" in filters:
+        normalised["priority_sort"] = filters["priority_sort"]
     return normalised
 
 
 def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:
+    from scribe_mcp.utils.logs import parse_log_line
+    from scribe_mcp.shared.log_enums import get_priority_sort_key
+
     agent = filters.get("agent")
     emoji = None
     if "emoji" in filters:
@@ -487,14 +533,57 @@ def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:
     elif "status" in filters:
         emoji = STATUS_EMOJI.get(filters["status"])
 
-    def matches(line: str) -> bool:
-        if agent and f"[Agent: {agent}]" not in line:
-            return False
-        if emoji and f"[{emoji}]" not in line:
-            return False
-        return True
+    priority_filter = filters.get("priority")
+    category_filter = filters.get("category")
+    min_confidence = filters.get("min_confidence")
+    priority_sort = filters.get("priority_sort", False)
 
-    return [line for line in lines if matches(line)]
+    # Parse lines and apply filters
+    parsed_entries = []
+    for line in lines:
+        # Basic text filters (fast path)
+        if agent and f"[Agent: {agent}]" not in line:
+            continue
+        if emoji and f"[{emoji}]" not in line:
+            continue
+
+        # Parse for advanced filters
+        parsed = parse_log_line(line)
+        if not parsed:
+            continue
+
+        # Filter by priority
+        if priority_filter:
+            entry_priority = parsed.get("meta", {}).get("priority", "medium")
+            if entry_priority not in priority_filter:
+                continue
+
+        # Filter by category
+        if category_filter:
+            entry_category = parsed.get("meta", {}).get("category")
+            if entry_category not in category_filter:
+                continue
+
+        # Filter by confidence
+        if min_confidence is not None:
+            entry_confidence = float(parsed.get("meta", {}).get("confidence", 1.0))
+            if entry_confidence < min_confidence:
+                continue
+
+        parsed_entries.append((line, parsed))
+
+    # Sort by priority if requested
+    if priority_sort:
+        # Sort by priority (critical=0 first) then by timestamp (DESC)
+        # Negate timestamp for DESC sort since we're doing ASC sort on tuple
+        parsed_entries.sort(
+            key=lambda item: (
+                get_priority_sort_key(item[1].get("meta", {}).get("priority", "medium")),
+                -(ord(item[1].get("ts_iso", "")[0]) if item[1].get("ts_iso") else 0)  # Simple DESC approx
+            )
+        )
+
+    return [line for line, _ in parsed_entries]
 
 
 def _progress_log_path(project: Dict[str, Any]) -> Path:

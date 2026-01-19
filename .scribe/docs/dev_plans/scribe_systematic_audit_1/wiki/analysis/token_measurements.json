@@ -1,0 +1,186 @@
+{
+  "append_entry": {
+    "modes": {
+      "readable": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/append_entry/readable.txt",
+        "chars": 456,
+        "tokens": 136,
+        "lines": 5,
+        "tokens_per_char": 0.298,
+        "chars_per_token": 3.35
+      }
+    },
+    "total_tokens": 136,
+    "file_count": 1
+  },
+  "append_event": {
+    "modes": {
+      "default": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/append_event/default.txt",
+        "chars": 359,
+        "tokens": 113,
+        "lines": 5,
+        "tokens_per_char": 0.315,
+        "chars_per_token": 3.18
+      }
+    },
+    "total_tokens": 113,
+    "file_count": 1
+  },
+  "delete_project": {
+    "modes": {
+      "notes": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/delete_project/notes.txt",
+        "chars": 417,
+        "tokens": 82,
+        "lines": 9,
+        "tokens_per_char": 0.197,
+        "chars_per_token": 5.09
+      },
+      "structured": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/delete_project/structured.txt",
+        "chars": 615,
+        "tokens": 136,
+        "lines": 2,
+        "tokens_per_char": 0.221,
+        "chars_per_token": 4.52
+      }
+    },
+    "total_tokens": 218,
+    "file_count": 2
+  },
+  "generate_doc_templates": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  },
+  "get_project": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  },
+  "link_fix": {
+    "modes": {
+      "error": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/link_fix/error.txt",
+        "chars": 166,
+        "tokens": 34,
+        "lines": 5,
+        "tokens_per_char": 0.205,
+        "chars_per_token": 4.88
+      }
+    },
+    "total_tokens": 34,
+    "file_count": 1
+  },
+  "list_projects": {
+    "modes": {
+      "compact": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/list_projects/compact.txt",
+        "chars": 1113,
+        "tokens": 285,
+        "lines": 2,
+        "tokens_per_char": 0.256,
+        "chars_per_token": 3.91
+      },
+      "readable": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/list_projects/readable.txt",
+        "chars": 656,
+        "tokens": 204,
+        "lines": 14,
+        "tokens_per_char": 0.311,
+        "chars_per_token": 3.22
+      },
+      "structured": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/list_projects/structured.txt",
+        "chars": 1113,
+        "tokens": 285,
+        "lines": 2,
+        "tokens_per_char": 0.256,
+        "chars_per_token": 3.91
+      }
+    },
+    "total_tokens": 774,
+    "file_count": 3
+  },
+  "manage_docs": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  },
+  "open_bug": {
+    "modes": {
+      "error": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/open_bug/error.txt",
+        "chars": 166,
+        "tokens": 34,
+        "lines": 5,
+        "tokens_per_char": 0.205,
+        "chars_per_token": 4.88
+      }
+    },
+    "total_tokens": 34,
+    "file_count": 1
+  },
+  "open_security": {
+    "modes": {
+      "error": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/open_security/error.txt",
+        "chars": 171,
+        "tokens": 34,
+        "lines": 5,
+        "tokens_per_char": 0.199,
+        "chars_per_token": 5.03
+      }
+    },
+    "total_tokens": 34,
+    "file_count": 1
+  },
+  "query_entries": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  },
+  "read_file": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  },
+  "read_recent": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  },
+  "rotate_log": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  },
+  "scribe_doctor": {
+    "modes": {
+      "notes": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/scribe_doctor/notes.txt",
+        "chars": 253,
+        "tokens": 52,
+        "lines": 6,
+        "tokens_per_char": 0.206,
+        "chars_per_token": 4.87
+      },
+      "structured": {
+        "file": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs/scribe_doctor/structured.txt",
+        "chars": 1139,
+        "tokens": 292,
+        "lines": 2,
+        "tokens_per_char": 0.256,
+        "chars_per_token": 3.9
+      }
+    },
+    "total_tokens": 344,
+    "file_count": 2
+  },
+  "set_project": {
+    "modes": {},
+    "total_tokens": 0,
+    "file_count": 0
+  }
+}

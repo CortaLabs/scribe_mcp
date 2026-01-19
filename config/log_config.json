@@ -20,6 +20,13 @@
       "metadata_requirements": ["project", "entry_type"],
       "description": "Repository-wide progress log for project lifecycle events and milestones",
       "auto_events": ["project_created", "project_phase_change", "project_completed", "research_completed", "architecture_approved", "implementation_completed"]
+    },
+    "tool_logs": {
+      "path": "{docs_dir}/TOOL_LOG.jsonl",
+      "format": "jsonl",
+      "metadata_requirements": ["tool", "format_requested"],
+      "rotation_threshold": 1000,
+      "description": "Structured JSON audit trail for all tool calls"
     }
   }
 }

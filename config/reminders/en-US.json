@@ -125,15 +125,15 @@
       "manage_docs_precision_preferred": {
         "level": "info",
         "emoji": "🧩",
-        "template": "For edits, prefer manage_docs apply_patch (structured mode) or replace_range. Do not hand-craft unified diffs; apply_patch unified mode is compiler output only. replace_section is best reserved for scaffolding templates.",
-        "short_template": "Prefer apply_patch/replace_range; use replace_section for scaffolding.",
-        "context": "apply_patch = structured by default, replace_range = explicit lines, unified diffs are compiler output only.",
+        "template": "For edits, prefer manage_docs apply_patch (unified diff format) or replace_range. replace_section is best reserved for scaffolding templates.",
+        "short_template": "Prefer apply_patch (unified diff) or replace_range; use replace_section only for scaffolding.",
+        "context": "apply_patch uses unified diff format by default, replace_range for explicit line edits.",
         "category": "teaching"
       },
       "manage_docs_scaffold_mode": {
         "level": "info",
         "emoji": "🧱",
-        "template": "Scaffolding detected: replace_section is OK for template setup. After scaffolding, switch to apply_patch (structured) or replace_range for precise edits.",
+        "template": "Scaffolding detected: replace_section is OK for template setup. After scaffolding, switch to apply_patch (unified diff) or replace_range for precise edits.",
         "short_template": "Scaffold: replace_section OK now; switch to apply_patch/replace_range after.",
         "context": "Use replace_section only for scaffolding; prefer apply_patch/replace_range for ongoing edits.",
         "category": "teaching"

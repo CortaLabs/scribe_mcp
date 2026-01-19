@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,11 +16,13 @@ from scribe_mcp.tools.project_utils import (
     list_project_configs,
     slugify_project_name,
 )
+from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.tools.base.parameter_normalizer import normalize_dict_param, normalize_list_param
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_utils import detect_project_state
 
 
 class _SetProjectHelper(LoggingToolMixin):
@@ -30,6 +33,157 @@ class _SetProjectHelper(LoggingToolMixin):
 _SET_PROJECT_HELPER = _SetProjectHelper()
 _PROJECT_REGISTRY = ProjectRegistry()
 _PROJECT_REGISTRY = ProjectRegistry()
+
+
+async def _count_log_entries(progress_log_path: Path) -> int:
+    """
+    Count entries in progress log file.
+
+    Counts only actual log entries with timestamps, not template headers.
+
+    Args:
+        progress_log_path: Path to PROGRESS_LOG.md
+
+    Returns:
+        Number of actual entries (lines matching [YYYY-MM-DD pattern)
+    """
+    if not progress_log_path.exists():
+        return 0
+
+    try:
+        with open(progress_log_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+            # Match only lines starting with timestamp pattern [YYYY-MM-DD
+            pattern = re.compile(r'^\[\d{4}-\d{2}-\d{2}')
+            return sum(1 for line in content.split('\n') if pattern.match(line.strip()))
+    except:
+        return 0
+
+
+async def _gather_project_inventory(project: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Gather full project inventory for existing project SITREP.
+
+    Returns:
+        {
+            "docs": {
+                "architecture": {"exists": True, "lines": 1274, "modified": False},
+                "phase_plan": {"exists": True, "lines": 542, "modified": False},
+                "checklist": {"exists": True, "lines": 356, "modified": False},
+                "progress": {"exists": True, "entries": 298}
+            },
+            "custom": {
+                "research_files": 3,
+                "bugs_present": False,
+                "jsonl_files": ["TOOL_LOG.jsonl"]
+            }
+        }
+    """
+    from scribe_mcp.utils.response import default_formatter
+
+    progress_log = project.get('progress_log', '')
+    if not progress_log or not Path(progress_log).exists():
+        return {"docs": {}, "custom": {}}
+
+    dev_plan_dir = Path(progress_log).parent
+
+    result = {"docs": {}, "custom": {}}
+
+    # Check standard documents
+    arch_file = dev_plan_dir / "ARCHITECTURE_GUIDE.md"
+    if arch_file.exists():
+        result["docs"]["architecture"] = {
+            "exists": True,
+            "lines": default_formatter._get_doc_line_count(arch_file),
+            "modified": False  # TODO: Check registry hashes if needed
+        }
+
+    phase_file = dev_plan_dir / "PHASE_PLAN.md"
+    if phase_file.exists():
+        result["docs"]["phase_plan"] = {
+            "exists": True,
+            "lines": default_formatter._get_doc_line_count(phase_file),
+            "modified": False
+        }
+
+    checklist_file = dev_plan_dir / "CHECKLIST.md"
+    if checklist_file.exists():
+        result["docs"]["checklist"] = {
+            "exists": True,
+            "lines": default_formatter._get_doc_line_count(checklist_file),
+            "modified": False
+        }
+
+    # Progress log
+    prog_file = Path(progress_log)
+    if prog_file.exists():
+        entry_count = await _count_log_entries(prog_file)
+        result["docs"]["progress"] = {
+            "exists": True,
+            "entries": entry_count
+        }
+
+    # Detect custom content
+    result["custom"] = default_formatter._detect_custom_content(dev_plan_dir)
+
+    return result
+
+
+async def _check_slug_collision(
+    name: str,
+    backend: Any,
+) -> Optional[Dict[str, Any]]:
+    """Check if a new project name would collide with an existing project's canonical slug.
+
+    Args:
+        name: The new project name being created
+        backend: Storage backend to query existing projects
+
+    Returns:
+        None if no collision, or error dict with collision details if collision detected
+
+    Example:
+        If 'my_project' exists and user tries to create 'my-project':
+        Returns {"ok": False, "error": "Project 'my-project' would collide with existing project 'my_project'..."}
+    """
+    # Get canonical slug for the new project name
+    canonical_slug = normalize_project_input(name)
+    if not canonical_slug:
+        return None  # Invalid name, will be caught elsewhere
+
+    # Check if a project with this exact name already exists (update case, not a collision)
+    existing = await backend.fetch_project(name)
+    if existing:
+        return None  # Same name update is allowed, not a collision
+
+    # Query all projects to check for slug collisions
+    try:
+        all_projects = await backend.list_projects()
+    except Exception as exc:
+        # If we can't query projects, allow operation to proceed
+        # (backend errors should be caught at upsert time)
+        return None
+
+    # Check if any existing project has the same canonical slug but different raw name
+    for project in all_projects:
+        existing_slug = normalize_project_input(project.name)
+        if existing_slug == canonical_slug and project.name != name:
+            # Collision detected!
+            return {
+                "ok": False,
+                "error": (
+                    f"Project '{name}' would collide with existing project '{project.name}' "
+                    f"(both normalize to '{canonical_slug}'). "
+                    f"Please choose a different name or use the existing project."
+                ),
+                "collision": {
+                    "new_name": name,
+                    "existing_name": project.name,
+                    "canonical_slug": canonical_slug,
+                },
+            }
+
+    return None  # No collision detected
 
 
 @app.tool()
@@ -55,6 +209,11 @@ async def set_project(
     # Quick emoji/agent settings (for convenience)
     emoji: Optional[str] = None,  # Default emoji for the project
     project_agent: Optional[str] = None,  # Default agent for the project (alias for agent_id)
+    # Bridge management (Phase 3)
+    bridge_id: Optional[str] = None,  # ID of bridge that owns this project
+    bridge_managed: bool = False,  # Whether this project is bridge-managed
+    # Output formatting
+    format: str = "readable",  # Output format: readable, structured, compact
 ) -> Dict[str, Any]:
     """Register the project (if needed) and mark it as the current context."""
     state_snapshot = await server_module.state_manager.record_tool("set_project")
@@ -117,8 +276,9 @@ async def set_project(
             tags = [tags]  # Fallback: treat as single item
 
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
+    context_root = _get_context_repo_root()
     try:
-        resolved_root = _resolve_root(root)
+        resolved_root = _resolve_root(root, context_root, skip_validation)
     except ValueError as exc:
         return _SET_PROJECT_HELPER.apply_context_payload(
             _SET_PROJECT_HELPER.error_response(str(exc)),
@@ -157,6 +317,27 @@ async def set_project(
         "progress_log": str(resolved_log),
     }
 
+    # Compute baseline_hashes for newly generated docs (fixes EXISTING_LEGACY state detection)
+    # This allows get_project to distinguish NEW from EXISTING_LEGACY projects
+    # Store hashes in _hashes subkey to avoid polluting the docs list
+    docs_were_generated = len(doc_result.get("files", [])) > 0
+    if docs_were_generated:
+        from scribe_mcp.utils.integrity import compute_file_hash
+        baseline_hashes = {}
+        for doc_type in ["architecture", "phase_plan", "checklist"]:
+            doc_path = docs.get(doc_type)
+            if doc_path and Path(doc_path).exists():
+                try:
+                    file_hash, _ = compute_file_hash(doc_path)
+                    baseline_hashes[doc_type] = file_hash[:8]  # Short hash for readability
+                except Exception:
+                    pass  # Skip hash on error
+        if baseline_hashes:
+            docs["_hashes"] = {
+                "baseline_hashes": baseline_hashes,
+                "current_hashes": dict(baseline_hashes),  # Initially same as baseline
+            }
+
     project_data = {
         "name": name,
         "root": str(resolved_root),
@@ -189,11 +370,31 @@ async def set_project(
     backend = server_module.storage_backend
     project_record = None
     if backend:
+        # Check for slug collisions before creating new project
+        collision = await _check_slug_collision(name, backend)
+        if collision:
+            return _SET_PROJECT_HELPER.apply_context_payload(collision, base_context)
+
+        import json as _json
         project_record = await backend.upsert_project(
             name=name,
             repo_root=str(resolved_root),
             progress_log_path=str(resolved_log),
+            docs_json=_json.dumps(docs),  # Persist docs mapping to DB
+            bridge_id=bridge_id,
+            bridge_managed=bridge_managed,
         )
+
+        # Parse docs_json from project_record and populate project_data meta
+        if project_record and project_record.docs_json:
+            import json
+            try:
+                docs_metadata = json.loads(project_record.docs_json)
+                project_data.setdefault("meta", {})
+                project_data["meta"]["docs"] = docs_metadata
+            except (json.JSONDecodeError, TypeError):
+                # Invalid JSON - silently ignore and continue
+                pass
 
         # Best-effort Project Registry touch for this project (SQLite-first).
         try:
@@ -250,15 +451,29 @@ async def set_project(
     # Use AgentContextManager for agent-scoped project context
     agent_manager = server_module.get_agent_context_manager()
     session_id: Optional[str] = None
+    mirror_global = True
+    context_session_id: Optional[str] = None
+    stable_session_id: Optional[str] = None
+    try:
+        context = server_module.get_execution_context()
+        if context:
+            context_session_id = context.session_id
+            # PHASE 1 INTEGRATION: Get stable session from ExecutionContext
+            stable_session_id = getattr(context, 'stable_session_id', None)
+    except Exception:
+        context_session_id = None
     if agent_manager:
         try:
-            # Ensure agent has an active session
-            session_id = await ensure_agent_session(agent_id)
+            # Ensure agent has an active session, passing stable session if available
+            session_id = await ensure_agent_session(agent_id, stable_session_id=stable_session_id)
             if not session_id:
-                # Fallback: create simple session
+                # Fallback: create simple session with stable session if available
                 import uuid
-                session_id = str(uuid.uuid4())
-                session_id = await agent_manager.start_session(agent_id, {"tool": "set_project"})
+                session_id = await agent_manager.start_session(
+                    agent_id,
+                    session_id=stable_session_id,  # Use stable session in fallback too
+                    metadata={"tool": "set_project"}
+                )
 
             # Set agent's current project with optimistic concurrency
             result = await agent_manager.set_current_project(
@@ -272,19 +487,59 @@ async def set_project(
             project_data["version"] = result.get("version", 1)
             project_data["updated_by"] = result.get("updated_by", agent_id)
             project_data["session_id"] = result.get("session_id", session_id)
+            mirror_global = False
 
         except Exception as e:
             # Fallback to legacy behavior if agent context fails
             print(f"⚠️  Agent context management failed: {e}")
             print("   💡 Falling back to legacy global state management")
-    # Always mirror active project to JSON state for persistence across restarts
+            mirror_global = True
+    # Mirror project data into JSON state; global current_project only updates for legacy fallback.
 
     state = await server_module.state_manager.set_current_project(
         name,
         project_data,
         agent_id=agent_id,
-        session_id=session_id,
+        session_id=context_session_id or session_id,
+        mirror_global=mirror_global,
     )
+    await server_module.state_manager.set_session_mode(
+        context_session_id or session_id,
+        "project",
+    )
+    backend = server_module.storage_backend
+    if backend:
+        # CRITICAL: Use stable_session_id (deterministic) instead of context_session_id (unstable UUID)
+        session_key = stable_session_id or context_session_id or session_id
+        if session_key:
+            if hasattr(backend, "set_session_project"):
+                # NO SILENT ERRORS - this is THE critical project binding!
+                await backend.set_session_project(session_key, name)
+                # Debug: Log the session binding
+                from datetime import datetime, timezone
+                debug_log = Path("/tmp/scribe_session_debug.log")
+                with open(debug_log, "a") as f:
+                    f.write(f"\n=== set_project session binding ===\n")
+                    f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
+                    f.write(f"session_key: {session_key}\n")
+                    f.write(f"project_name: {name}\n")
+                    f.write(f"stable_session_id: {stable_session_id}\n")
+                    f.write(f"context_session_id: {context_session_id}\n")
+            if hasattr(backend, "set_session_mode"):
+                # NO SILENT ERRORS - mode must be set correctly
+                await backend.set_session_mode(session_key, "project")
+            if hasattr(backend, "upsert_session"):
+                # NO SILENT ERRORS - session data must be persisted
+                await backend.upsert_session(
+                    session_id=session_key,
+                    transport_session_id=getattr(context, "transport_session_id", None),
+                    agent_id=agent_id,
+                    repo_root=str(resolved_root),
+                    mode="project",
+                )
+        if agent_id and hasattr(backend, "upsert_agent_recent_project"):
+            # NO SILENT ERRORS - agent tracking must work
+            await backend.upsert_agent_recent_project(agent_id, name)
     recent_projects = list(state.recent_projects)
 
     try:
@@ -298,6 +553,102 @@ async def set_project(
     except ProjectResolutionError:
         context_after = base_context
 
+    # Handle readable format with SITREP formatters
+    if format == "readable":
+        from scribe_mcp.utils.response import default_formatter
+
+        # Detect project state using hash-based logic (fixes BUG-001)
+        # Use backend.count_entries for accurate count instead of file parsing
+        if backend and project_record:
+            entry_count = await backend.count_entries(project_record)
+        else:
+            # Fallback to file-based counting if backend unavailable
+            progress_log_path = Path(resolved_log)
+            entry_count = await _count_log_entries(progress_log_path)
+
+        # Use hash-based detection instead of entry_count for state determination
+        # Pass docs_were_generated flag to distinguish NEW vs EXISTING (SPEC-SET-001 fix)
+        # Note: generate_doc_templates returns "files" key, not "generated"
+        docs_were_generated = len(doc_result.get("files", [])) > 0
+        state, sitrep_message = detect_project_state(
+            project_data,
+            entry_count,
+            str(resolved_log),
+            docs_were_generated
+        )
+        is_new = (state == "NEW")
+
+        if is_new:
+            # NEW PROJECT SITREP
+            docs_created = {
+                "architecture": str(docs_dir / "ARCHITECTURE_GUIDE.md"),
+                "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
+                "checklist": str(docs_dir / "CHECKLIST.md"),
+                "progress_log": str(resolved_log)
+            }
+
+            readable_content = default_formatter.format_project_sitrep_new(
+                project_data,
+                docs_created
+            )
+
+            response = {
+                "ok": True,
+                "project": project_data,
+                "is_new": True,
+                "docs_created": docs_created,
+                "readable_content": readable_content
+            }
+
+            return await default_formatter.finalize_tool_response(
+                response,
+                format="readable",
+                tool_name="set_project"
+            )
+
+        else:
+            # EXISTING PROJECT SITREP
+            # Gather inventory
+            inventory = await _gather_project_inventory(project_data)
+
+            # Get activity from registry (use module-level instance)
+            registry_info = _PROJECT_REGISTRY.get_project(name)
+
+            # Build activity summary
+            activity = {
+                "status": registry_info.status if registry_info else "unknown",
+                "total_entries": registry_info.total_entries if registry_info else 0,
+                "last_entry_at": registry_info.last_entry_at if registry_info else None
+            }
+
+            # Add per-log counts if available
+            if hasattr(registry_info, 'meta') and registry_info and registry_info.meta:
+                log_counts = registry_info.meta.get('log_entry_counts', {})
+                if log_counts:
+                    activity["per_log_counts"] = log_counts
+
+            readable_content = default_formatter.format_project_sitrep_existing(
+                project_data,
+                inventory,
+                activity
+            )
+
+            response = {
+                "ok": True,
+                "project": project_data,
+                "is_new": False,
+                "inventory": inventory,
+                "activity": activity,
+                "readable_content": readable_content
+            }
+
+            return await default_formatter.finalize_tool_response(
+                response,
+                format="readable",
+                tool_name="set_project"
+            )
+
+    # For structured/compact formats, use existing logic
     response: Dict[str, Any] = {
         "ok": True,
         "project": project_data,
@@ -312,9 +663,28 @@ async def set_project(
     return _SET_PROJECT_HELPER.apply_context_payload(response, context_after)
 
 
-def _resolve_root(root: Optional[str]) -> Path:
+def _get_context_repo_root() -> Optional[Path]:
+    try:
+        context = server_module.get_execution_context()
+    except Exception:
+        context = None
+    if not context or not getattr(context, "repo_root", None):
+        return None
+    try:
+        return Path(str(context.repo_root)).expanduser().resolve()
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_root(root: Optional[str], context_root: Optional[Path], skip_validation: bool) -> Path:
     base = settings.project_root.resolve()
     if not root:
+        if context_root and context_root != base:
+            return context_root
+        if settings.require_explicit_root and not skip_validation:
+            raise ValueError(
+                "Explicit project root required. Pass root=... or provide context.repo_root."
+            )
         return base
 
     root_path = Path(root).expanduser()

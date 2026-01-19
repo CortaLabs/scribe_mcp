@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 try:  # Prefer optional dotenv loading to keep env setup simple outside the repo
     from dotenv import load_dotenv  # type: ignore
@@ -69,6 +69,10 @@ class Settings:
     token_warning_threshold_percent: float
     default_field_selection: List[str]
     tokenizer_model: str
+    # Reminder system feature flags
+    use_db_cooldown_tracking: bool
+    use_session_aware_hashes: bool
+    require_explicit_root: bool
 
     @classmethod
     def load(cls) -> "Settings":
@@ -157,6 +161,17 @@ class Settings:
         # Tokenizer model
         tokenizer_model = os.environ.get("SCRIBE_TOKENIZER_MODEL", "gpt-4")
 
+        # Reminder system feature flags (default OFF for backward compatibility)
+        use_db_cooldown_tracking = os.environ.get("SCRIBE_REMINDER_USE_DB", "false").lower() in {
+            "1", "true", "yes"
+        }
+        use_session_aware_hashes = os.environ.get("SCRIBE_REMINDER_SESSION_HASH", "false").lower() in {
+            "1", "true", "yes"
+        }
+        require_explicit_root = os.environ.get("SCRIBE_REQUIRE_EXPLICIT_ROOT", "true").lower() in {
+            "1", "true", "yes"
+        }
+
         return cls(
             project_root=project_root,
             default_state_path=state_path,
@@ -191,6 +206,9 @@ class Settings:
             token_warning_threshold_percent=token_warning_threshold_percent,
             default_field_selection=default_field_selection,
             tokenizer_model=tokenizer_model,
+            use_db_cooldown_tracking=use_db_cooldown_tracking,
+            use_session_aware_hashes=use_session_aware_hashes,
+            require_explicit_root=require_explicit_root,
         )
 
 

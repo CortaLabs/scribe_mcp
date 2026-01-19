@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -132,13 +130,21 @@ class AgentIdentity:
             # Don't fail if we can't store the agent ID
             pass
 
-    async def resume_agent_session(self, agent_id: str, agent_context_manager) -> Optional[str]:
+    async def resume_agent_session(
+        self,
+        agent_id: str,
+        agent_context_manager,
+        stable_session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
         """
         Resume an agent's previous session and project context.
 
         Args:
             agent_id: Agent identifier
             agent_context_manager: AgentContextManager instance
+            stable_session_id: Optional stable session ID from ExecutionContext
+            metadata: Optional session metadata
 
         Returns:
             Session ID if resumption successful, None otherwise
@@ -147,14 +153,18 @@ class AgentIdentity:
             # Check if agent has an existing project
             agent_project = await agent_context_manager.get_current_project(agent_id)
             if agent_project and agent_project.get("project_name"):
-                # Create new session for the agent
+                # Create new session for the agent with stable session if provided
+                session_metadata = {
+                    "resumed": True,
+                    "resumed_at": utcnow().isoformat(),
+                    "previous_project": agent_project["project_name"],
+                }
+                if metadata:
+                    session_metadata.update(metadata)
                 session_id = await agent_context_manager.start_session(
                     agent_id,
-                    {
-                        "resumed": True,
-                        "resumed_at": utcnow().isoformat(),
-                        "previous_project": agent_project["project_name"]
-                    }
+                    session_id=stable_session_id,  # Pass through stable session
+                    metadata=session_metadata
                 )
 
                 print(f"🔄 Resumed agent '{agent_id}' session")
@@ -164,12 +174,16 @@ class AgentIdentity:
                 return session_id
             else:
                 # No previous project, create fresh session
+                session_metadata = {
+                    "fresh_session": True,
+                    "created_at": utcnow().isoformat(),
+                }
+                if metadata:
+                    session_metadata.update(metadata)
                 session_id = await agent_context_manager.start_session(
                     agent_id,
-                    {
-                        "fresh_session": True,
-                        "created_at": utcnow().isoformat()
-                    }
+                    session_id=stable_session_id,  # Pass through stable session
+                    metadata=session_metadata
                 )
 
                 print(f"🆕 Created fresh session for agent '{agent_id}'")

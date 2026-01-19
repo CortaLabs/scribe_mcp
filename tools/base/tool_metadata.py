@@ -130,7 +130,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
             ToolParameter(
                 name="root",
                 type="str",
-                description="Project root directory (auto-detected if not provided)"
+                description="Project root directory (required unless context repo_root is provided)"
             ),
             ToolParameter(
                 name="defaults",
@@ -149,13 +149,13 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
             ToolExample(
                 name="Basic project setup",
                 description="Create a new project with default settings",
-                code='await set_project(name="My Project")',
+                code='await set_project(name="My Project", root="/path/to/repo")',
                 result="Creates project with docs directory and 4 documentation files"
             ),
             ToolExample(
                 name="Custom defaults",
                 description="Create project with custom emoji and agent",
-                code='await set_project(name="My Project", defaults={"emoji": "🚀", "agent": "DevBot"})',
+                code='await set_project(name="My Project", root="/path/to/repo", defaults={"emoji": "🚀", "agent": "DevBot"})',
                 result="Project with custom rocket emoji and DevBot as default agent"
             ),
         ],

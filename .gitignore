@@ -34,3 +34,4 @@ docs/archived_projects/*
 docs/archived_global_logs/*
 docs/bugs/*
 *.preflight-*.bak
+TOOL_LOG.*.*.md

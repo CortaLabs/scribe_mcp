@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "created_timestamp": "2025-10-24 11:35:00 UTC",
-  "last_updated": "2026-01-02T03:18:27.611786 UTC",
+  "last_updated": "2026-01-18T23:08:21.370701 UTC",
   "projects": {
     "enhanced-rotation-test": {
       "created_timestamp": "2025-10-24T12:05:59.361388 UTC",
@@ -437,13 +437,13 @@
     },
     "rotate-test": {
       "created_timestamp": "2025-10-25T20:04:04.788854 UTC",
-      "current_sequence": 27,
-      "total_rotations": 27,
-      "last_rotation_timestamp": "2025-12-17 03:44:50 UTC",
+      "current_sequence": 29,
+      "total_rotations": 29,
+      "last_rotation_timestamp": "2026-01-18 23:08:21 UTC",
       "hash_chain": {
         "root_hash": "de31a3ef69355397d23ffd48010d4f59e7873fd6f4956f2f861209ec6875a3f6",
-        "current_sequence": 27,
-        "last_hash": "ac6832fa44b55dccbae31c59996c585e5b8c3166efa564e039b3d1598f4a9aa5"
+        "current_sequence": 29,
+        "last_hash": "decbd8cc86098b80a02d0b2e8f818f77a6ab0ef2db75cf51a816db03bfd44410"
       },
       "rotation_ids": [
         "4ce686f8-aa45-4348-9945-002554e1a1e4",
@@ -472,7 +472,9 @@
         "7f7ae8f7-bc34-4352-8158-d71f27b9a1c1",
         "47f1e49e-352e-4045-9667-b86d00996aae",
         "14990e8c-4dd7-4880-be6a-c61b5bb8a254",
-        "f492b1da-16f8-455b-856c-550dfe11eb0a"
+        "f492b1da-16f8-455b-856c-550dfe11eb0a",
+        "72524b97-4642-4b41-9143-1920f6dce461",
+        "3a548328-d73a-47d7-8466-19965b976fb1"
       ],
       "settings": {
         "auto_cleanup": true,
@@ -958,6 +960,82 @@
       },
       "rotation_ids": [
         "51f0ce66-fd5e-494b-ab15-e12517ff19d2"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "scribe_tool_output_refinement": {
+      "created_timestamp": "2026-01-04T06:02:59.112764 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-04 06:02:59 UTC",
+      "hash_chain": {
+        "root_hash": "dd07d391e753e254cc64421aeddaf080f73609c4fcc67a0e15272a9459c273b1",
+        "current_sequence": 1,
+        "last_hash": "dd07d391e753e254cc64421aeddaf080f73609c4fcc67a0e15272a9459c273b1"
+      },
+      "rotation_ids": [
+        "39decf1e-7bd8-40ba-a962-88f504957106"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "test_bug_001_rotation_136553505924608": {
+      "created_timestamp": "2026-01-08T01:20:53.644112 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-08 01:20:53 UTC",
+      "hash_chain": {
+        "root_hash": "6c34ebd762cd81cf5366c8e07220e0fef2af5195831192d4df2544a5dd0525cf",
+        "current_sequence": 1,
+        "last_hash": "6c34ebd762cd81cf5366c8e07220e0fef2af5195831192d4df2544a5dd0525cf"
+      },
+      "rotation_ids": [
+        "f18784f7-0c0f-4e0d-b472-61a16cf439f6"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "test_bug_001_rotation_132808858282112": {
+      "created_timestamp": "2026-01-08T01:22:19.035558 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-08 01:22:19 UTC",
+      "hash_chain": {
+        "root_hash": "91589f79164df7e3c2f1a5cf53eb6f49bb087bbb02fd2ce2ee053256d56103ba",
+        "current_sequence": 1,
+        "last_hash": "91589f79164df7e3c2f1a5cf53eb6f49bb087bbb02fd2ce2ee053256d56103ba"
+      },
+      "rotation_ids": [
+        "5318c96d-b937-4051-9e64-bf527de5c172"
+      ],
+      "log_stats": {},
+      "settings": {
+        "auto_cleanup": true,
+        "max_rotations": 100
+      }
+    },
+    "test_bug_001_rotation_128696997459360": {
+      "created_timestamp": "2026-01-17T10:30:19.429848 UTC",
+      "current_sequence": 1,
+      "total_rotations": 1,
+      "last_rotation_timestamp": "2026-01-17 10:30:19 UTC",
+      "hash_chain": {
+        "root_hash": "dd496da503cc93811f33f585002a363df2d25c5d0ce6daf3997487cfcec55c6d",
+        "current_sequence": 1,
+        "last_hash": "dd496da503cc93811f33f585002a363df2d25c5d0ce6daf3997487cfcec55c6d"
+      },
+      "rotation_ids": [
+        "dfaa40bb-01c3-4692-ae49-f1193239cd4a"
       ],
       "log_stats": {},
       "settings": {

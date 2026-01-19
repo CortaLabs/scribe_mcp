@@ -19,7 +19,6 @@ except ImportError:
     Observer = None
     FileSystemEventHandler = None
 
-from scribe_mcp.utils.time import utcnow
 
 
 @dataclass

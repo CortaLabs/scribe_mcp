@@ -96,3 +96,24 @@ async def test_state_manager_atomic_write_and_backup(tmp_path: Path):
 
     loaded = await manager.load()
     assert loaded.current_project == "proj2"
+
+
+@pytest.mark.asyncio
+async def test_state_manager_session_project_does_not_overwrite_global(tmp_path: Path):
+    state_file = tmp_path / "state.json"
+    manager = StateManager(path=state_file)
+
+    await manager.set_current_project(
+        "proj1",
+        {"name": "proj1", "root": ".", "progress_log": "./log"},
+    )
+
+    updated = await manager.set_current_project(
+        "proj2",
+        {"name": "proj2", "root": ".", "progress_log": "./log2"},
+        session_id="session-1",
+        mirror_global=False,
+    )
+
+    assert updated.current_project == "proj1"
+    assert updated.session_projects["session-1"]["name"] == "proj2"

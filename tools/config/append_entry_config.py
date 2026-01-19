@@ -61,6 +61,12 @@ class AppendEntryConfig:
     meta: Optional[Any] = field(default_factory=dict)
     timestamp_utc: Optional[str] = None
 
+    # NEW: Priority and categorization parameters
+    priority: Optional[str] = None  # critical|high|medium|low
+    category: Optional[str] = None  # decision|investigation|bug|implementation|test|milestone|config|security|performance|documentation
+    tags: Optional[List[str]] = None
+    confidence: Optional[float] = None  # 0.0-1.0
+
     # Bulk processing parameters
     items: Optional[str] = None  # JSON string array (legacy)
     items_list: Optional[List[Dict[str, Any]]] = None  # Direct list (new)
@@ -329,6 +335,10 @@ class AppendEntryConfig:
         stagger_seconds: int = 1,
         agent_id: Optional[str] = None,
         log_type: Optional[str] = "progress",
+        priority: Optional[str] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        confidence: Optional[float] = None,
         **kwargs: Any
     ) -> AppendEntryConfig:
         """
@@ -399,6 +409,10 @@ class AppendEntryConfig:
             stagger_seconds=stagger_seconds,
             agent_id=agent_id,
             log_type=log_type,
+            priority=priority,
+            category=category,
+            tags=tags,
+            confidence=confidence,
             **config_params
         )
 
@@ -419,6 +433,12 @@ class AppendEntryConfig:
             'agent': self.agent,
             'meta': self.meta,
             'timestamp_utc': self.timestamp_utc,
+
+            # Priority and categorization parameters
+            'priority': self.priority,
+            'category': self.category,
+            'tags': self.tags,
+            'confidence': self.confidence,
 
             # Bulk processing parameters
             'items': self.items,
@@ -471,6 +491,10 @@ class AppendEntryConfig:
             'stagger_seconds': self.stagger_seconds,
             'agent_id': self.agent_id,
             'log_type': self.log_type,
+            'priority': self.priority,
+            'category': self.category,
+            'tags': self.tags,
+            'confidence': self.confidence,
         }
 
     def merge_with_defaults(self, defaults: Dict[str, Any]) -> AppendEntryConfig:

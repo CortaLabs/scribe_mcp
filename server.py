@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Protocol, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Protocol, Union, cast, get_origin, get_args
 
 # Ensure the repository root (which contains the `scribe_mcp` package) is on sys.path.
 # This allows running `python server.py` or `python -m server` from within the package directory.
@@ -21,6 +24,13 @@ try:  # pragma: no cover - optional dependency
     _MCP_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency
     _MCP_AVAILABLE = False
+
+# Bridge tool extension support (optional)
+try:
+    from scribe_mcp.bridges.tools import get_tool_registry
+    BRIDGES_AVAILABLE = True
+except ImportError:
+    BRIDGES_AVAILABLE = False
 
     class _ServerStub:
         def __init__(self, name: str) -> None:
@@ -99,8 +109,34 @@ state_manager = StateManager()
 storage_backend = create_storage_backend()
 agent_context_manager = None  # Will be initialized in startup
 agent_identity = None  # Will be initialized in startup
-router_context_manager = RouterContextManager()
+router_context_manager = RouterContextManager(storage_backend=storage_backend)
 _startup_complete = False
+
+# Background task management (prevents garbage collection of fire-and-forget tasks)
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+background_tasks: set[asyncio.Task] = set()
+
+def schedule_background_task(coro):
+    """
+    Schedule a background task with automatic cleanup.
+
+    Prevents garbage collection of fire-and-forget tasks by maintaining
+    a strong reference in the background_tasks set. Tasks are automatically
+    removed when complete via add_done_callback.
+
+    Args:
+        coro: Coroutine to execute in background
+
+    Returns:
+        asyncio.Task: The created task (for testing/debugging)
+    """
+    import sys
+    print(f"[DEBUG] schedule_background_task called, creating task...", file=sys.stderr)
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    print(f"[DEBUG] Task created and added to background_tasks (total: {len(background_tasks)})", file=sys.stderr)
+    return task
 
 if _MCP_AVAILABLE:
     from mcp import types as mcp_types
@@ -109,6 +145,86 @@ if _MCP_AVAILABLE:
         if not hasattr(Server, "_scribe_tool_registry"):
             Server._scribe_tool_registry = {}
             Server._scribe_tool_defs = {}
+
+        def _build_schema_from_signature(func: Callable) -> Dict[str, Any]:
+            """Build JSON Schema from function signature with type hints."""
+            import typing
+            sig = inspect.signature(func)
+            properties = {}
+            required = []
+
+            # Use get_type_hints to resolve string annotations (from __future__ import annotations)
+            try:
+                type_hints = typing.get_type_hints(func)
+            except Exception:
+                type_hints = {}
+
+            for param_name, param in sig.parameters.items():
+                # Skip special parameters
+                if param_name in ("_kwargs", "kwargs") and param.kind == inspect.Parameter.VAR_KEYWORD:
+                    continue
+                if param_name in ("args",) and param.kind == inspect.Parameter.VAR_POSITIONAL:
+                    continue
+
+                # Determine if required (no default value)
+                has_default = param.default != inspect.Parameter.empty
+                if not has_default and param_name not in ("doc",):  # doc is technically required but batch doesn't use it
+                    required.append(param_name)
+
+                # Build property schema from type hint
+                param_schema = {"type": "string"}  # Default fallback
+
+                # Get resolved annotation from type_hints (handles string annotations)
+                annotation = type_hints.get(param_name, param.annotation)
+                if annotation != inspect.Parameter.empty and annotation is not None:
+                    # Handle Optional types (Union with None)
+                    origin = getattr(annotation, "__origin__", None)
+                    args = getattr(annotation, "__args__", ())
+
+                    if origin is Union:
+                        # Optional[X] is Union[X, None]
+                        non_none_types = [t for t in args if t is not type(None)]
+                        if non_none_types:
+                            annotation = non_none_types[0]
+                            # Re-compute origin for the inner type
+                            origin = getattr(annotation, "__origin__", None)
+
+                    # Map Python types to JSON Schema types
+                    if annotation is str or annotation == str:
+                        param_schema = {"type": "string"}
+                    elif annotation is int or annotation == int:
+                        param_schema = {"type": "integer"}
+                    elif annotation is float or annotation == float:
+                        param_schema = {"type": "number"}
+                    elif annotation is bool or annotation == bool:
+                        param_schema = {"type": "boolean"}
+                    elif origin is list or annotation is list:
+                        param_schema = {"type": "array"}
+                    elif origin is dict or annotation is dict:
+                        param_schema = {"type": "object"}
+                    elif hasattr(annotation, "__name__") and annotation.__name__ == "Dict":
+                        param_schema = {"type": "object"}
+                    elif hasattr(annotation, "__name__") and annotation.__name__ == "List":
+                        param_schema = {"type": "array"}
+                    else:
+                        # Unknown type, allow anything
+                        param_schema = {}
+
+                properties[param_name] = param_schema
+
+            # Special handling for manage_docs: make doc_category optional when action is batch
+            # This is a workaround since we can't make it conditionally required
+            if func.__name__ == "manage_docs" and "doc_category" in required:
+                required.remove("doc_category")
+
+            schema = {
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": True,
+            }
+            if required:
+                schema["required"] = required
+            return schema
 
         def _tool_decorator(
             func: Callable[..., Awaitable[Any]] | None = None,
@@ -120,11 +236,11 @@ if _MCP_AVAILABLE:
         ):
             def register(target: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
                 tool_name = name or target.__name__
-                schema = input_schema or {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": True,
-                }
+                # Build schema from function signature if not explicitly provided
+                if input_schema is None:
+                    schema = _build_schema_from_signature(target)
+                else:
+                    schema = input_schema
                 tool_description = description or (inspect.getdoc(target) or "")
                 Server._scribe_tool_registry[tool_name] = target
                 Server._scribe_tool_defs[tool_name] = mcp_types.Tool(
@@ -150,11 +266,131 @@ if _MCP_AVAILABLE:
         async def _call_tool(name: str, arguments: Dict[str, Any], **kwargs: Any) -> Any:
             registry = getattr(Server, "_scribe_tool_registry", {})
             func = registry.get(name)
+
+            # Check for bridge custom tools (format: bridge_id:tool_name)
+            if not func and ":" in name and BRIDGES_AVAILABLE:
+                try:
+                    tool_registry = get_tool_registry()
+                    parts = name.split(":", 1)
+                    if len(parts) == 2:
+                        bridge_id, tool_name = parts
+                        func = tool_registry.get_custom_tool(bridge_id, tool_name)
+                except Exception:
+                    pass  # Fall through to error handling
+
             if not func:
                 raise ValueError(f"Unknown tool '{name}'")
 
             sentinel_only = {"append_event", "open_bug", "open_security", "link_fix"}
-            sentinel_allowed = sentinel_only | {"read_file", "query_entries"}
+            sentinel_allowed = sentinel_only | {"read_file", "query_entries", "read_recent", "set_project", "append_entry", "list_projects", "get_project"}
+
+            def derive_session_identity(exec_context, arguments: dict) -> tuple[str, dict]:
+                """Derive stable session identity from execution context.
+
+                Returns (identity_hash, identity_parts dict)
+                """
+                # 1. Canonicalize repo_root
+                repo_root = os.path.realpath(exec_context.repo_root)
+
+                # 2. Get mode and scope_key
+                mode = exec_context.mode  # "project" or "sentinel"
+                if mode == "sentinel":
+                    scope_key = exec_context.sentinel_day  # e.g., "2026-01-03"
+                else:
+                    scope_key = exec_context.execution_id  # UUID
+
+                # 3. Get agent_key (prefer stable ID, fallback to display_name)
+                agent_key = None
+                if exec_context.agent_identity:
+                    agent_key = (
+                        getattr(exec_context.agent_identity, 'id', None) or
+                        getattr(exec_context.agent_identity, 'instance_id', None) or
+                        exec_context.agent_identity.display_name
+                    )
+                if not agent_key:
+                    agent_key = arguments.get("agent") or "default"
+
+                # 4. Construct identity string
+                identity = f"{repo_root}:{mode}:{scope_key}:{agent_key}"
+
+                # 5. Hash it (full SHA-256, no truncation)
+                identity_hash = hashlib.sha256(identity.encode()).hexdigest()
+
+                return identity_hash, {
+                    "repo_root": repo_root,
+                    "mode": mode,
+                    "scope_key": scope_key,
+                    "agent_key": agent_key,
+                }
+
+            def derive_session_identity_preview(context_payload: dict, arguments: dict) -> tuple[str, dict]:
+                """Preview stable session identity before ExecutionContext exists.
+
+                Uses context_payload instead of exec_context so we can derive identity
+                BEFORE building ExecutionContext.
+
+                Returns (identity_hash, identity_parts dict)
+                """
+                from datetime import datetime, timezone
+                import uuid
+
+                # 1. Canonicalize repo_root
+                repo_root = os.path.realpath(context_payload.get("repo_root", ""))
+
+                # 2. Get mode and scope_key
+                mode = context_payload.get("mode", "sentinel")
+                if mode == "sentinel":
+                    # For sentinel mode, derive scope_key from timestamp
+                    timestamp_utc = context_payload.get("timestamp_utc")
+                    if not timestamp_utc:
+                        timestamp_utc = datetime.now(timezone.utc).isoformat()
+                    scope_key = timestamp_utc.split("T")[0]  # e.g., "2026-01-03"
+                else:
+                    # For project mode, use transport_session_id (stable across tool calls)
+                    scope_key = context_payload.get("transport_session_id") or context_payload.get("session_id") or str(uuid.uuid4())
+
+                # 3. Get agent_key from arguments
+                agent_key = arguments.get("agent") or "default"
+
+                # 4. Construct identity string
+                identity = f"{repo_root}:{mode}:{scope_key}:{agent_key}"
+
+                # 5. Hash it (full SHA-256, no truncation)
+                identity_hash = hashlib.sha256(identity.encode()).hexdigest()
+
+                return identity_hash, {
+                    "repo_root": repo_root,
+                    "mode": mode,
+                    "scope_key": scope_key,
+                    "agent_key": agent_key,
+                }
+
+            def _derive_transport_session_id() -> str | None:
+                """Extract transport session ID from MCP request context.
+
+                This is a backwards-compatible fallback that checks headers/meta
+                for client-provided session identifiers. The stable session identity
+                is now derived separately using derive_session_identity().
+                """
+                try:
+                    request_context = app.request_context
+                except Exception:
+                    return None
+                if not request_context:
+                    return None
+                request = getattr(request_context, "request", None)
+                if request is not None:
+                    headers = getattr(request, "headers", None)
+                    if headers:
+                        header_val = headers.get("mcp-session-id")
+                        if header_val:
+                            return str(header_val)
+                meta = getattr(request_context, "meta", None)
+                client_id = getattr(meta, "client_id", None) if meta else None
+                if client_id:
+                    return str(client_id)
+                # No more id(session) fallback - stable identity derived elsewhere
+                return None
 
             context_payload = arguments.pop("context", None)
             if context_payload is None and "context" in kwargs:
@@ -162,19 +398,139 @@ if _MCP_AVAILABLE:
             if not isinstance(context_payload, dict):
                 context_payload = {}
 
-            if not context_payload.get("repo_root"):
-                repo_root = None
+            def _extract_request_repo_root() -> Optional[str]:
                 try:
-                    from scribe_mcp.tools.project_utils import load_active_project  # Lazy import.
-                    active_project, _, _ = await load_active_project(state_manager)
-                    if active_project:
-                        repo_root = active_project.get("root")
+                    request_context = app.request_context
                 except Exception:
-                    repo_root = None
-                context_payload["repo_root"] = repo_root or str(settings.project_root)
+                    return None
+                if not request_context:
+                    return None
+                meta = getattr(request_context, "meta", None)
+                if not meta:
+                    return None
+                if isinstance(meta, dict):
+                    for key in ("repo_root", "workspace_root", "cwd"):
+                        value = meta.get(key)
+                        if value:
+                            return str(value)
+                else:
+                    for key in ("repo_root", "workspace_root", "cwd"):
+                        value = getattr(meta, key, None)
+                        if value:
+                            return str(value)
+                return None
+
+            def _normalize_repo_root(value: Any) -> Optional[str]:
+                if not value:
+                    return None
+                try:
+                    root_path = Path(str(value)).expanduser()
+                except (TypeError, ValueError):
+                    return None
+                if not root_path.is_absolute():
+                    root_path = (settings.project_root / root_path).resolve()
+                else:
+                    root_path = root_path.resolve()
+                return str(root_path)
+
+            if not context_payload.get("repo_root"):
+                request_repo_root = _extract_request_repo_root()
+                if request_repo_root:
+                    try:
+                        request_path = Path(request_repo_root).expanduser()
+                        if request_path.is_absolute():
+                            from scribe_mcp.config.repo_config import RepoDiscovery
+                            candidate_root = RepoDiscovery.find_repo_root(request_path)
+                            if candidate_root and candidate_root.exists():
+                                context_payload["repo_root"] = str(candidate_root.resolve())
+                    except Exception:
+                        pass
+
+            repo_root_hint = _normalize_repo_root(context_payload.get("repo_root"))
+            if not repo_root_hint and isinstance(arguments, dict):
+                repo_root_hint = _normalize_repo_root(
+                    arguments.get("root") or arguments.get("repo_root")
+                )
+            if repo_root_hint:
+                context_payload["repo_root"] = repo_root_hint
+
+            if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
+                transport_fallback = (
+                    kwargs.get("session_id")
+                    or kwargs.get("client_id")
+                    or kwargs.get("connection_id")
+                )
+                if not transport_fallback:
+                    transport_fallback = _derive_transport_session_id()
+                if not transport_fallback:
+                    # No MCP session context - generate fallback based on process instance
+                    # This will be converted to stable session via derive_session_identity()
+                    transport_fallback = f"process:{router_context_manager._process_instance_id}"
+                if transport_fallback:
+                    context_payload["transport_session_id"] = str(transport_fallback)
+
+            if not context_payload.get("session_id") and context_payload.get("transport_session_id"):
+                backend = storage_backend
+                if backend and hasattr(backend, "get_session_by_transport"):
+                    # NO SILENT ERRORS - let it fail loudly
+                    existing = await backend.get_session_by_transport(
+                        str(context_payload["transport_session_id"])
+                    )
+                    if existing and existing.get("session_id"):
+                        context_payload["session_id"] = existing["session_id"]
+                    if existing and not context_payload.get("repo_root"):
+                        context_payload["repo_root"] = _normalize_repo_root(existing.get("repo_root"))
+                if not context_payload.get("session_id"):
+                    # NO SILENT ERRORS - let it fail loudly
+                    session_id = await router_context_manager.get_or_create_session_id(
+                        context_payload["transport_session_id"]
+                    )
+                    context_payload["session_id"] = session_id
+
+            if not context_payload.get("repo_root"):
+                backend = storage_backend
+                if backend and context_payload.get("session_id"):
+                    project_name = None
+                    if hasattr(backend, "get_session_project"):
+                        project_name = await backend.get_session_project(
+                            context_payload.get("session_id")
+                        )
+                    if not project_name and isinstance(arguments, dict):
+                        project_name = arguments.get("project") or arguments.get("name")
+                    if project_name and hasattr(backend, "fetch_project"):
+                        project_record = await backend.fetch_project(str(project_name))
+                        if project_record:
+                            context_payload["repo_root"] = _normalize_repo_root(
+                                project_record.repo_root
+                            )
+
+            if not context_payload.get("repo_root"):
+                context_payload["repo_root"] = str(settings.project_root.resolve())
 
             if context_payload.get("mode") not in {"sentinel", "project"}:
-                context_payload["mode"] = "sentinel" if name in sentinel_only else "project"
+                # Project-scoped tools that should always run in project mode
+                project_tools = {"set_project", "get_project", "append_entry", "read_recent", "query_entries", "rotate_log", "manage_docs", "generate_doc_templates"}
+
+                if name in project_tools:
+                    # Force project mode for project-scoped tools
+                    context_payload["mode"] = "project"
+                else:
+                    # For other tools, query existing session mode
+                    session_mode = None
+                    if context_payload.get("session_id"):
+                        backend = storage_backend
+                        if backend and hasattr(backend, "get_session_mode"):
+                            # NO SILENT ERRORS - let it fail loudly
+                            session_mode = await backend.get_session_mode(context_payload.get("session_id"))
+                        if session_mode is None:
+                            # NO SILENT ERRORS - let it fail loudly
+                            state = await state_manager.load()
+                            session_mode = state.get_session_mode(context_payload.get("session_id"))
+                    # Default to sentinel to avoid implicit project scope or audit pollution.
+                    context_payload["mode"] = session_mode or "sentinel"
+
+            if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
+                raise ValueError("ExecutionContext requires context.session_id or context.transport_session_id")
 
             if not context_payload.get("intent"):
                 context_payload["intent"] = f"tool:{name}"
@@ -188,6 +544,61 @@ if _MCP_AVAILABLE:
                     affected = [str(project_hint)]
             context_payload["affected_dev_projects"] = affected
 
+            backend = storage_backend
+            if backend and hasattr(backend, "upsert_session"):
+                try:
+                    await backend.upsert_session(
+                        session_id=context_payload.get("session_id"),
+                        transport_session_id=context_payload.get("transport_session_id"),
+                        repo_root=context_payload.get("repo_root"),
+                        mode=context_payload.get("mode"),
+                    )
+                except Exception:
+                    pass
+
+            # PHASE 1 INTEGRATION: Derive stable session BEFORE building ExecutionContext
+            import traceback
+            debug_log = Path("/tmp/scribe_session_debug.log")
+            with open(debug_log, "a") as f:
+                f.write(f"\n=== {datetime.now(timezone.utc).isoformat()} ===\n")
+                f.write(f"Tool: {name}\n")
+                f.write(f"context_payload: {context_payload}\n")
+
+            identity_hash, identity_parts = derive_session_identity_preview(context_payload, arguments)
+            with open(debug_log, "a") as f:
+                f.write(f"identity_hash: {identity_hash}\n")
+                f.write(f"identity_parts: {identity_parts}\n")
+
+            stable_session_id = None
+            with open(debug_log, "a") as f:
+                f.write(f"backend: {backend}\n")
+                f.write(f"has method: {hasattr(backend, 'get_or_create_agent_session') if backend else False}\n")
+
+            if backend and hasattr(backend, "get_or_create_agent_session"):
+                with open(debug_log, "a") as f:
+                    f.write(f"Calling get_or_create_agent_session...\n")
+                try:
+                    # NO SILENT ERRORS - let it fail loudly so we can debug
+                    stable_session_id = await backend.get_or_create_agent_session(
+                        identity_key=identity_hash,
+                        agent_name=identity_parts["agent_key"],  # For display
+                        agent_key=identity_parts["agent_key"],
+                        repo_root=identity_parts["repo_root"],
+                        mode=identity_parts["mode"],
+                        scope_key=identity_parts["scope_key"],
+                    )
+                    with open(debug_log, "a") as f:
+                        f.write(f"stable_session_id: {stable_session_id}\n")
+                except Exception as e:
+                    with open(debug_log, "a") as f:
+                        f.write(f"ERROR: {e}\n")
+                        f.write(f"Traceback:\n{traceback.format_exc()}\n")
+                    raise
+
+            # Add stable_session_id to context_payload BEFORE building ExecutionContext
+            if stable_session_id:
+                context_payload["stable_session_id"] = stable_session_id
+
             exec_context = await router_context_manager.build_execution_context(context_payload)
 
             if exec_context.mode == "sentinel" and name not in sentinel_allowed:
@@ -197,7 +608,7 @@ if _MCP_AVAILABLE:
                     tool_name=name,
                 )
                 raise ValueError(f"Tool '{name}' not allowed in sentinel mode")
-            if exec_context.mode == "project" and name in sentinel_only:
+            if exec_context.mode == "project" and name in sentinel_only and name != "append_event":
                 raise ValueError(f"Tool '{name}' not allowed in project mode")
 
             token = router_context_manager.set_current(exec_context)
@@ -249,6 +660,58 @@ async def _startup() -> None:
         print(f"⚠️  Plugin initialization failed: {e}")
         print("   💡 Continuing without plugins (vector search will not be available)")
 
+    # Initialize Bridge System (optional feature)
+    bridge_registry = None
+    if BRIDGES_AVAILABLE and storage_backend:
+        try:
+            from scribe_mcp.bridges.registry import BridgeRegistry
+            from scribe_mcp.bridges.health import BridgeHealthMonitor, set_health_monitor
+
+            # Task Package 1.1: Create BridgeRegistry
+            bridge_registry = BridgeRegistry(
+                storage_backend=storage_backend,
+                config_dir=Path(".scribe/config/bridges")
+            )
+            print("🌉 BridgeRegistry initialized")
+
+            # Task Package 1.2: Discover and register manifests
+            manifests = bridge_registry.discover_manifests()
+            bridges_activated = 0
+            bridges_total = len(manifests)
+
+            for manifest_path in manifests:
+                try:
+                    # Load, register, and activate each bridge
+                    manifest = bridge_registry.load_manifest(manifest_path)
+                    await bridge_registry.register_bridge(manifest)
+                    await bridge_registry.activate_bridge(manifest.bridge_id)
+                    print(f"   ✅ Registered & activated bridge: {manifest.bridge_id}")
+                    bridges_activated += 1
+                except Exception as bridge_error:
+                    print(f"   ⚠️  Failed to register bridge from {manifest_path}: {bridge_error}")
+                    # Continue with next manifest
+
+            # Print summary
+            if bridges_total > 0:
+                print(f"🌉 Bridge system initialized ({bridges_activated}/{bridges_total} bridges active)")
+            else:
+                print("🌉 Bridge system initialized (no manifests found)")
+
+            # Task Package 1.3: Start health monitor background task
+            if bridge_registry:
+                health_monitor = BridgeHealthMonitor(
+                    registry=bridge_registry,
+                    check_interval=60.0
+                )
+                set_health_monitor(health_monitor)
+                asyncio.create_task(health_monitor.start())
+                print("🏥 Bridge health monitor started (60s interval)")
+
+        except Exception as e:
+            print(f"⚠️  Bridge system initialization failed: {e}")
+            print("   💡 Continuing without bridge support")
+            bridge_registry = None
+
     # Initialize AgentContextManager for agent-scoped project context
     if storage_backend and state_manager:
         agent_context_manager = init_agent_context_manager(storage_backend, state_manager)
@@ -268,9 +731,30 @@ async def _startup() -> None:
         asyncio.create_task(_session_cleanup_task(agent_context_manager))
         print("🧹 Session cleanup task started")
 
+    # Register bridge custom tools with MCP server
+    if BRIDGES_AVAILABLE:
+        try:
+            tool_registry = get_tool_registry()
+            custom_tools = tool_registry.list_all_custom_tools()
+
+            for tool_info in custom_tools:
+                full_name = tool_info["full_name"]
+                bridge_id = tool_info["bridge_id"]
+                tool_name = tool_info["tool_name"]
+
+                # Get the actual implementation
+                impl = tool_registry.get_custom_tool(bridge_id, tool_name)
+                if impl:
+                    # Register with MCP server
+                    # The tool name will be prefixed: council_mcp:custom_audit
+                    Server._scribe_tool_registry[full_name] = impl
+                    print(f"🔧 Registered bridge tool: {full_name}")
+        except Exception as e:
+            print(f"⚠️  Bridge tool registration failed: {e}")
+            print("   💡 Continuing without bridge tools")
+
     # Replay any uncommitted journal entries for crash recovery (all projects)
     from scribe_mcp.utils.files import WriteAheadLog
-    from scribe_mcp.tools.project_utils import load_active_project
     from scribe_mcp.tools.list_projects import list_projects
 
     try:
@@ -280,7 +764,13 @@ async def _startup() -> None:
 
         # Method 1: Try to get list of all configured projects
         try:
-            projects_result = await list_projects()
+            # list_projects defaults to format="readable", which returns an MCP CallToolResult wrapper
+            # (Issue #9962 fix). For internal server startup we need a plain dict payload.
+            projects_result = await list_projects(
+                format="structured",
+                limit=1000,
+                include_test=True,
+            )
             available_projects = projects_result.get("projects", [])
             for project_info in available_projects:
                 project_name = project_info.get("name")
