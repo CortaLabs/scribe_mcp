@@ -161,11 +161,49 @@ For session concurrency and log clarity:
 
 - **Orchestrator (Claude Code)**: Must use `agent="Orchestrator"` with all Scribe tools
 - **Subagents**: Must use unique agent names per session:
-  - Examples: `Coder-9289`, `ResearchAgent-A`, `ReviewAgent-Phase3`
+  - Examples: `CoderAgent-AuthFix`, `ResearchAgent-DBMigration`, `ReviewAgent-Phase3`
   - Prevents log collision when multiple agents work in parallel
 - **Codex (OpenAI)**: Must use `agent="Codex"`
 
 The orchestrator MUST pass the current `project_name` to every subagent to prevent cross-project logging confusion.
+
+### ⚠️ Concurrent Agent Naming (CRITICAL)
+
+**MCP Transport Limitation:** Session identity is computed as `{repo_root}:{transport}:{agent_name}`. When multiple agents with the **same name** work on **different Scribe projects** within the **same repository** concurrently, their sessions collide and logs may route to the wrong project.
+
+**This collision ONLY occurs when ALL THREE match:**
+- Same repository root
+- Same MCP server process
+- Same agent name
+
+**Best Practice - Scoped Agent Names:**
+
+When dispatching multiple agents concurrently in the same repo, use task-scoped names:
+
+```python
+# ❌ WRONG - Same name causes collision
+Task(prompt="...use agent='CoderAgent'...")  # Working on feature_x
+Task(prompt="...use agent='CoderAgent'...")  # Working on bugfix_y - COLLISION!
+
+# ✅ CORRECT - Scoped names prevent collision
+Task(prompt="...use agent='CoderAgent-FeatureX'...")  # Working on feature_x
+Task(prompt="...use agent='CoderAgent-BugfixY'...")   # Working on bugfix_y - OK!
+```
+
+**Naming Convention:**
+- Format: `{BaseAgent}-{TaskScope}` (e.g., `CoderAgent-AuthRefactor`, `ResearchAgent-DBSchema`)
+- The scope should reflect the task or project slug
+- Keep it concise but unique within the concurrent batch
+
+**Review Agent Report Cards:**
+- Review Agent grades go to the **base agent name** (without scope suffix)
+- Example: `CoderAgent-AuthRefactor` gets graded → report card filed under `CoderAgent`
+- This maintains consistent agent performance tracking across tasks
+
+**When Scoped Names Are NOT Required:**
+- Sequential agent dispatches (one at a time) - no collision risk
+- Agents working in different repositories - different repo roots = different sessions
+- Single agent switching between projects - cache handles this correctly
 
 ---
 

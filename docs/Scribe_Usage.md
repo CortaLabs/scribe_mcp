@@ -121,6 +121,40 @@ If you skip step 1, most tools will error because no active project context exis
 
 ---
 
+## Concurrent Agent Naming (Session Isolation)
+
+**MCP Transport Limitation:** Session identity is `{repo_root}:{transport}:{agent_name}`. When multiple agents with the **same name** work on **different Scribe projects** within the **same repository** concurrently, sessions collide and logs may route incorrectly.
+
+**Collision occurs when ALL match:**
+- Same repository root
+- Same MCP server process
+- Same agent name
+
+### Best Practice: Scoped Agent Names
+
+For concurrent agents in the same repo, use task-scoped names:
+
+```python
+# ❌ COLLISION - same name, different projects
+Task(prompt="...agent='CoderAgent'...")  # project: feature_x
+Task(prompt="...agent='CoderAgent'...")  # project: bugfix_y → WRONG LOGS!
+
+# ✅ SAFE - scoped names
+Task(prompt="...agent='CoderAgent-FeatureX'...")  # project: feature_x
+Task(prompt="...agent='CoderAgent-BugfixY'...")   # project: bugfix_y → CORRECT!
+```
+
+**Naming Format:** `{BaseAgent}-{TaskScope}` (e.g., `CoderAgent-AuthRefactor`)
+
+**Review Agent:** Grades filed under base name (without scope) for consistent tracking.
+
+**When NOT required:**
+- Sequential dispatches (one agent at a time)
+- Different repositories (different repo roots)
+- Single agent switching projects (cache handles this)
+
+---
+
 ## Skill Pack (Generated References)
 
 This document is the **single source of truth** for the `scribe-mcp-usage` skill pack.

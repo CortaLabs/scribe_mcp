@@ -778,6 +778,29 @@ python -m scribe_mcp.scripts.scribe "Added new feature: description" --status su
 
 ---
 
+## ⚠️ Known Limitations
+
+### Concurrent Agent Session Collision
+
+**MCP Transport Limitation:** Session identity is `{repo_root}:{transport}:{agent_name}`. When multiple agents with the **same name** work on **different Scribe projects** within the **same repository** concurrently, their sessions collide.
+
+**Best Practice:** Use scoped agent names for concurrent work:
+```python
+# ❌ Same name = collision
+agent="CoderAgent"  # on project_x
+agent="CoderAgent"  # on project_y → logs may go to wrong project!
+
+# ✅ Scoped names = safe
+agent="CoderAgent-ProjectX"
+agent="CoderAgent-ProjectY"
+```
+
+**Not affected:** Sequential dispatches, different repositories, or single agent switching projects.
+
+See [Scribe_Usage.md](docs/Scribe_Usage.md#concurrent-agent-naming-session-isolation) for details.
+
+---
+
 ## 🙏 Acknowledgments
 
 Built with passion for better documentation and AI-human collaboration. Special thanks to:
