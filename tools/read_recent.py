@@ -154,6 +154,7 @@ _READ_RECENT_HELPER = _ReadRecentHelper()
 
 @app.tool()
 async def read_recent(
+    agent: str,
     project: Optional[str] = None,
     n: Optional[Any] = None,
     limit: Optional[Any] = None,

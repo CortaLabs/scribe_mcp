@@ -63,7 +63,7 @@ async def test_health_check():
 
         try:
             print("  ✓ Running health check...")
-            health_result = await scribe_mcp.tools.health_check.health_check()
+            health_result = await scribe_mcp.tools.health_check.health_check(agent="HealthAgent")
 
             print(f"  Overall status: {health_result['status']}")
             print(f"  Summary: {health_result['summary']}")

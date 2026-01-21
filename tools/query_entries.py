@@ -1000,6 +1000,7 @@ async def _execute_search_with_fallbacks(
 
 @app.tool()
 async def query_entries(
+    agent: str,
     project: Optional[str] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
@@ -1008,7 +1009,6 @@ async def query_entries(
     case_sensitive: bool = False,
     emoji: Optional[List[str]] = None,
     status: Optional[List[str]] = None,
-    agent: Optional[Any] = None,  # tolerate legacy single-agent param
     agents: Optional[List[str]] = None,
     meta_filters: Optional[Dict[str, Any]] = None,
     limit: int = 50,

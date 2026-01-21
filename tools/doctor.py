@@ -29,7 +29,7 @@ def _safe_bool(value: Any) -> bool:
 
 
 @app.tool()
-async def scribe_doctor() -> Dict[str, Any]:
+async def scribe_doctor(agent: str) -> Dict[str, Any]:
     """Return runtime diagnostics for the current MCP server instance."""
     repo_root = settings.project_root
     repo_root_str = str(repo_root) if repo_root else None

@@ -350,7 +350,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.tool()
-async def get_project(project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
+async def get_project(agent: str, project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
     """Return the active project selection, resolving defaults when necessary.
 
     Args:

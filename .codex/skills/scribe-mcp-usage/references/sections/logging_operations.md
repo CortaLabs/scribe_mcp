@@ -6,12 +6,12 @@
 #### Single Entry Mode
 
 **Required Parameters:**
+- `agent` (string): Agent identifier (e.g., "Orchestrator", "CoderAgent", "ResearchAgent-A")
 - `message` (string): Log message content
 
 **Optional Parameters:**
 - `status` (string): Status type - "info", "success", "warn", "error", "bug", "plan"
 - `emoji` (string): Custom emoji override
-- `agent` (string): Agent identifier
 - `meta` (dict): Metadata dictionary for context
 - `timestamp_utc` (string): Custom UTC timestamp
 - `log_type` (string): Target log identifier (defaults to "progress")
@@ -19,18 +19,19 @@
 **Example Usage:**
 ```python
 # Basic entry
-await append_entry(message="Fixed authentication bug")
+await append_entry(agent="CoderAgent", message="Fixed authentication bug")
 
 # With full context
 await append_entry(
+    agent="DebugBot",
     message="Fixed authentication bug",
     status="success",
-    agent="DebugBot",
     meta={"component": "auth", "tests_fixed": 5}
 )
 
 # Planning entry
 await append_entry(
+    agent="Orchestrator",
     message="Beginning database migration phase",
     status="plan",
     emoji="🗄️",
@@ -52,15 +53,15 @@ await append_entry(
 **Example Usage:**
 ```python
 # As JSON string
-await append_entry(items=json.dumps([
+await append_entry(agent="CoderAgent", items=json.dumps([
   {"message": "First task completed", "status": "success"},
-  {"message": "Bug found in auth module", "status": "bug", "agent": "DebugBot"},
+  {"message": "Bug found in auth module", "status": "bug"},
   {"message": "Database migration finished", "status": "info",
    "meta": {"component": "database", "phase": "deployment"}}
 ]))
 
 # As direct list
-await append_entry(items=[
+await append_entry(agent="ReviewAgent", items=[
   {"message": "Code review completed", "status": "success"},
   {"message": "Tests passing", "status": "success", "meta": {"tests_run": 25}}
 ])

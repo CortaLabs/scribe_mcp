@@ -4,6 +4,7 @@
 **Purpose**: Create/select a project and bootstrap documentation structure.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier (e.g., "Orchestrator", "CoderAgent", "ResearchAgent-A")
 - `name` (string): Project name (automatically normalized - hyphens, underscores, spaces all work)
 
 **Optional Parameters:**
@@ -22,12 +23,13 @@ This means all tools (`manage_docs`, `query_entries`, etc.) accept any format an
 **Example Usage:**
 ```python
 # Basic usage
-await set_project(name="my-project")
+await set_project(agent="Orchestrator", name="my-project")
 
 # With custom defaults
 await set_project(
+    agent="CoderAgent",
     name="my-project",
-    defaults={"emoji": "🧪", "agent": "MyAgent"}
+    defaults={"emoji": "🧪"}
 )
 ```
 
@@ -55,11 +57,12 @@ await set_project(
 ### `get_project`
 **Purpose**: Retrieve current active project context and configuration.
 
-**Parameters:** None
+**Required Parameters:**
+- `agent` (string): Agent identifier
 
 **Example Usage:**
 ```python
-await get_project()
+await get_project(agent="Orchestrator")
 ```
 
 **Returns:**
@@ -80,6 +83,9 @@ await get_project()
 ### `list_projects`
 **Purpose**: Discover available projects and their configurations.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier
+
 **Optional Parameters:**
 - `limit` (int, default: 5): Maximum number of projects to return
 - `filter` (string): Filter projects by name (case-insensitive substring match)
@@ -93,16 +99,16 @@ await get_project()
 **Example Usage:**
 ```python
 # Basic usage
-await list_projects()
+await list_projects(agent="Orchestrator")
 
 # With pagination
-await list_projects(limit=10, page=1)
+await list_projects(agent="CoderAgent", limit=10, page=1)
 
 # Filtered by name
-await list_projects(filter="my-project", limit=3)
+await list_projects(agent="ResearchAgent", filter="my-project", limit=3)
 
 # Filtered by repo root (for bridge workspace resolution)
-await list_projects(root="/home/austin/projects/MCP_SPINE/council_mcp")
+await list_projects(agent="Orchestrator", root="/home/austin/projects/MCP_SPINE/council_mcp")
 ```
 
 **Returns:**

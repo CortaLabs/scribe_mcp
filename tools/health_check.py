@@ -19,7 +19,7 @@ _HEALTH_CHECK_HELPER = _HealthCheckHelper()
 
 
 @app.tool()
-async def health_check() -> Dict[str, Any]:
+async def health_check(agent: str) -> Dict[str, Any]:
     """
     Perform comprehensive health check of the agent-scoped system.
 

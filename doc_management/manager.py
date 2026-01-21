@@ -825,7 +825,7 @@ def _resolve_create_doc_path(
         raise ValueError(f"Project root does not exist: {project_root}")
 
     metadata = metadata or {}
-    resolved_name = metadata.get("doc_name") or metadata.get("register_as") or metadata.get("doc_type") or doc_name
+    resolved_name = doc_name or metadata.get("doc_name") or metadata.get("register_as") or metadata.get("doc_type")
     resolved_name = str(resolved_name or "").strip()
     if not resolved_name:
         raise DocumentOperationError("CREATE_DOC_MISSING_NAME: doc_name or register_as is required")

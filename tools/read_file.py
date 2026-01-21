@@ -1692,6 +1692,7 @@ async def _log_project_read(context: ExecutionContext, message: str, meta: Dict[
 
 @app.tool()
 async def read_file(
+    agent: str,
     path: str,
     mode: str = "scan_only",
     chunk_index: Optional[List[int]] = None,

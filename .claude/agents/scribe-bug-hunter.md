@@ -203,6 +203,7 @@ append_entry(agent="BugHunter", message="Stage: FIXED - bug resolved", status="s
 - Create structured bug reports using the built-in workflow:
   ```python
   manage_docs(
+      agent="BugHunterAgent",
       action="create",
       metadata={
           "doc_type": "bug",
@@ -295,6 +296,7 @@ Search for similar bugs across all projects:
 ```python
 # Find related bug patterns
 query_entries(
+    agent="BugHunterAgent",
     search_scope="all_projects",
     document_types=["bugs"],
     message="<error_pattern_or_symptom>",
@@ -303,6 +305,7 @@ query_entries(
 
 # Search similar components for known issues
 query_entries(
+    agent="BugHunterAgent",
     search_scope="all_projects",
     document_types=["bugs", "progress"],
     message="<component_name>",
@@ -355,21 +358,36 @@ append_entry(
 | **pytest** | Write and execute reproduction and verification tests | N/A |
 | **Shell (ls, grep)** | Validate file paths and category presence | N/A |
 
+**⚠️ CRITICAL: Agent Parameter Required**
+
+ALL Scribe tool calls now require `agent` as the FIRST parameter:
+- Use `agent="BugHunterAgent"` for standard work
+- Use slugged names like `agent="BugHunterAgent-A"` or `agent="BugHunterAgent-9289"` when working in parallel sessions with other agents
+- This ensures proper session isolation and log attribution
+
+**Examples:**
+```python
+set_project(agent="BugHunterAgent", name="my_project")
+append_entry(agent="BugHunterAgent", message="...", status="info", log_type="bug")
+manage_docs(agent="BugHunterAgent", action="create", metadata={"doc_type": "bug", ...})
+query_entries(agent="BugHunterAgent", search_scope="all_projects", ...)
+```
+
 ---
 
 ## 🧩 Example Workflow
 
 ```text
-→ set_project("scribe_core_debug")
-→ append_entry(agent="BugHunter", message="Investigation started: connection refused", status="info")
-→ manage_docs("docs/bugs/infrastructure/2025-10-30_connection_refused/report.md", action="create", content="Bug report initialized")
+→ set_project(agent="BugHunterAgent", name="scribe_core_debug")
+→ append_entry(agent="BugHunterAgent", message="Investigation started: connection refused", status="info")
+→ manage_docs(agent="BugHunterAgent", action="create", metadata={"doc_type": "bug", ...})
 → Write reproduction test under tests/bugs/
-→ append_entry(agent="BugHunter", message="Reproduction test written", status="info", meta={"stage":"test_written"})
+→ append_entry(agent="BugHunterAgent", message="Reproduction test written", status="info", meta={"stage":"test_written"})
 → Diagnose and fix root cause
-→ append_entry(agent="BugHunter", message="Root cause fixed", status="success", meta={"stage":"fixed"})
-→ manage_docs("docs/bugs/infrastructure/2025-10-30_connection_refused/report.md", action="append_section", content="Fix summary and verification results")
+→ append_entry(agent="BugHunterAgent", message="Root cause fixed", status="success", meta={"stage":"fixed"})
+→ manage_docs(agent="BugHunterAgent", action="append", doc_name="report", content="Fix summary and verification results")
 → Update INDEX.md with new status
-→ append_entry(agent="BugHunter", message="Bug verification complete", status="success", meta={"stage":"verified"})
+→ append_entry(agent="BugHunterAgent", message="Bug verification complete", status="success", meta={"stage":"verified"})
 ````
 
 ---

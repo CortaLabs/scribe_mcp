@@ -384,13 +384,15 @@ def preflight_backup(
     context: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
-    Create a preflight backup of the file.
+    Create a preflight backup of the file in .scribe/backups/ directory.
 
     Args:
         file_path: File to backup
+        repo_root: Repository root (defaults to settings.project_root)
+        context: Optional context for security validation
 
     Returns:
-        Path to the backup file
+        Path to the backup file in .scribe/backups/
     """
     file_path = _ensure_safe_path(
         file_path,
@@ -402,8 +404,35 @@ def preflight_backup(
     if not file_path.exists():
         raise AtomicFileError(f"Cannot backup non-existent file: {file_path}")
 
+    # Determine effective repo root
+    root = (repo_root or settings.project_root).resolve()
+
+    # Create centralized backup directory
+    backup_dir = root / ".scribe" / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate path-preserving filename
+    # Convert file path relative to repo root to use double underscores for directory separators
+    try:
+        relative_path = file_path.relative_to(root)
+    except ValueError:
+        # File is outside repo root, use absolute path components
+        relative_path = Path(*file_path.parts[-3:])  # Use last 3 components
+
+    # Replace directory separators with __ to preserve path structure
+    path_parts = list(relative_path.parts)
+    if len(path_parts) > 1:
+        # Join directory parts with __, keep filename separate
+        dir_prefix = "__".join(path_parts[:-1])
+        filename = path_parts[-1]
+        backup_name = f"{dir_prefix}__{filename}"
+    else:
+        backup_name = relative_path.name
+
+    # Add timestamp and .bak extension
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    backup_path = file_path.with_suffix(f".preflight-{timestamp}.bak")
+    backup_filename = f"{backup_name}.preflight-{timestamp}.bak"
+    backup_path = backup_dir / backup_filename
 
     shutil.copy2(file_path, backup_path)
 

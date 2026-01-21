@@ -323,6 +323,7 @@ await manage_docs(
 **Purpose**: Create/update documentation templates for a project.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier
 - `project_name` (string): Name of the project
 
 **Optional Parameters:**
@@ -334,10 +335,11 @@ await manage_docs(
 **Example Usage:**
 ```python
 # Basic usage
-await generate_doc_templates(project_name="my-project")
+await generate_doc_templates(agent="Orchestrator", project_name="my-project")
 
 # With author and specific documents
 await generate_doc_templates(
+    agent="ArchitectAgent",
     project_name="my-project",
     author="MyAgent",
     documents=["architecture", "phase_plan"]
@@ -396,7 +398,7 @@ These actions handle document creation and registration internally, so auto-regi
 **Before v2.2.0 (manual registration required):**
 ```python
 # Step 1: Explicitly register documents first
-await generate_doc_templates(project_name="my_project")
+await generate_doc_templates(agent="Orchestrator", project_name="my_project")
 
 # Step 2: Then perform edits
 await manage_docs(
@@ -458,14 +460,14 @@ This error occurs when:
 1. Verify you're using an EDIT action (see list above)
 2. Check that the file exists: `ls .scribe/docs/dev_plans/<project>/<DOC_FILE>.md`
 3. Review progress log for auto-registration errors
-4. Try manual registration: `await generate_doc_templates(project_name="<project>")`
+4. Try manual registration: `await generate_doc_templates(agent="Orchestrator", project_name="<project>")`
 
 **Error: "Cannot auto-register: file does not exist at path X"**
 
 The document file doesn't exist at the expected location.
 
 *Solution:*
-1. Create the file first: `await generate_doc_templates(project_name="<project>")`
+1. Create the file first: `await generate_doc_templates(agent="Orchestrator", project_name="<project>")`
 2. Or use a CREATE action to generate a new document
 3. Verify the project name matches the directory structure
 

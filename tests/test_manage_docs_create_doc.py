@@ -159,3 +159,43 @@ async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path) -> None
     finally:
         server_module.state_manager = original_state_manager
         server_module.storage_backend = original_storage_backend
+
+
+@pytest.mark.asyncio
+async def test_create_custom_doc_respects_doc_name_parameter(tmp_path: Path) -> None:
+    """Test that doc_name parameter is respected over metadata.doc_type
+
+    Regression test for bug where doc_name parameter was ignored when
+    metadata contained doc_type, causing all custom docs to be named 'custom.md'.
+
+    See: RESEARCH_CUSTOM_DOC_NAMING_BUG_20260119.md
+    """
+    project = await _setup_project(tmp_path)
+
+    # Use apply_doc_change directly (simpler than manage_docs for tests)
+    change = await apply_doc_change(
+        project,
+        doc_name="COORDINATION_PROTOCOL",  # This parameter should take priority
+        action="create_doc",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        edit=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={"doc_type": "custom", "body": "# Protocol\n\nCoordination rules here."},
+        dry_run=False,
+    )
+
+    # Should create COORDINATION_PROTOCOL.md, NOT custom.md
+    assert change.success, f"Failed: {change.error_message}"
+    path = Path(change.path)
+    assert path.name == "COORDINATION_PROTOCOL.md", f"Expected COORDINATION_PROTOCOL.md but got {path.name}"
+    assert "custom.md" not in str(path), f"Should not create custom.md, got {path}"
+
+    # Verify content is correct
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert "# Protocol" in parsed.body
+    assert "Coordination rules here." in parsed.body

@@ -71,6 +71,7 @@ class TestBug001EmptyLogDetection:
 
             # Step 1: Create initial project (use readable format to get is_new flag)
             raw_result1 = await set_project(
+                agent="TestAgent",
                 name=project_name,
                 root=str(project_root),
                 format="readable"
@@ -97,6 +98,7 @@ class TestBug001EmptyLogDetection:
 
             # Step 4: Call set_project again after rotation
             raw_result2 = await set_project(
+                agent="TestAgent",
                 name=project_name,
                 root=str(project_root),
                 format="readable"
@@ -127,6 +129,7 @@ class TestBug001EmptyLogDetection:
 
             # Create a genuinely new project
             raw_result = await set_project(
+                agent="TestAgent",
                 name=project_name,
                 root=str(project_root),
                 format="readable"
@@ -164,6 +167,7 @@ class TestSlugCollisionDetection:
 
             # Create first project: 'my_project'
             result1 = await set_project(
+                agent="TestAgent",
                 name="my_project",
                 root=str(project_root),
                 format="structured"
@@ -173,6 +177,7 @@ class TestSlugCollisionDetection:
 
             # Try to create second project with different name but same slug: 'my-project'
             result2 = await set_project(
+                agent="TestAgent",
                 name="my-project",
                 root=str(project_root),
                 format="structured"
@@ -218,6 +223,7 @@ class TestSlugCollisionDetection:
 
             # Create project
             result1 = await set_project(
+                agent="TestAgent",
                 name="test_project",
                 root=str(project_root),
                 format="structured"
@@ -227,6 +233,7 @@ class TestSlugCollisionDetection:
 
             # Update same project (same name) - should succeed
             result2 = await set_project(
+                agent="TestAgent",
                 name="test_project",
                 root=str(project_root),
                 description="Updated description",
@@ -251,6 +258,7 @@ class TestSlugCollisionDetection:
 
             # Create base project
             result1 = await set_project(
+                agent="TestAgent",
                 name="my_project",
                 root=str(project_root),
                 format="structured"
@@ -263,6 +271,7 @@ class TestSlugCollisionDetection:
 
             for variant in colliding_names:
                 result = await set_project(
+                    agent="TestAgent",
                     name=variant,
                     root=str(project_root),
                     format="structured"

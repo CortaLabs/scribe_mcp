@@ -1115,6 +1115,7 @@ def _resolve_custom_doc_path(
 
 @app.tool()
 async def manage_docs(
+    agent: str,
     action: str,
     doc_category: str = "",  # Document category: architecture|phase_plan|checklist|research|bugs|wiki|custom
     section: Optional[str] = None,
@@ -1859,6 +1860,28 @@ async def manage_docs(
                 )
             except Exception as exc:
                 index_warning = str(exc)
+
+            # Update special doc indexes after successful edits (Phase 4: Index Update Event Coverage)
+            # This ensures INDEX.md files stay current when docs are edited, not just created
+            try:
+                project_root = project.get("root")
+                if isinstance(project_root, str):
+                    project_root = Path(project_root)
+                docs_dir_path = Path(project.get("docs_dir", ""))
+
+                index_updater = _get_index_updater_for_path(
+                    file_path=Path(change.path),
+                    project_root=project_root,
+                    docs_dir=docs_dir_path,
+                    agent_id=agent_id or "unknown"
+                )
+
+                if index_updater:
+                    await index_updater()
+            except Exception as exc:
+                # Don't fail the whole operation if index update fails
+                # The document was edited successfully, just the index may be stale
+                print(f"⚠️ Failed to update index after edit: {exc}")
 
     registry_warning = None
     response: Dict[str, Any] = {
@@ -2855,6 +2878,49 @@ async def _handle_special_document_creation(
             helper.error_response(f"Failed to create document: {exc}"),
             context,
         )
+
+
+def _get_index_updater_for_path(file_path: Path, project_root: Path, docs_dir: Path, agent_id: str) -> Optional[Callable[[], Awaitable[None]]]:
+    """
+    Detect special doc type from file path and return appropriate index updater.
+
+    Args:
+        file_path: Path to the document file
+        project_root: Project root directory
+        docs_dir: Project docs directory (.scribe/docs/dev_plans/<project>)
+        agent_id: Agent identifier for logging
+
+    Returns:
+        Index updater lambda or None if not a special doc type
+    """
+    try:
+        # Normalize paths for comparison
+        file_path = file_path.resolve()
+        project_root = project_root.resolve()
+        docs_dir = docs_dir.resolve()
+
+        # Research docs: in docs_dir/research/
+        research_dir = docs_dir / "research"
+        if research_dir.exists() and file_path.is_relative_to(research_dir):
+            return lambda: _update_research_index(research_dir, agent_id)
+
+        # Bug reports: in project_root/docs/bugs/
+        bugs_dir = project_root / "docs" / "bugs"
+        if bugs_dir.exists() and file_path.is_relative_to(bugs_dir):
+            return lambda: _update_bug_index(bugs_dir, agent_id)
+
+        # Review reports: REVIEW_REPORT_*.md in docs_dir
+        if file_path.parent == docs_dir and file_path.name.startswith("REVIEW_REPORT_"):
+            return lambda: _update_review_index(docs_dir, agent_id)
+
+        # Agent report cards: AGENT_REPORT_CARD_*.md in docs_dir
+        if file_path.parent == docs_dir and file_path.name.startswith("AGENT_REPORT_CARD_"):
+            return lambda: _update_agent_card_index(docs_dir, agent_id)
+
+        return None
+    except (ValueError, OSError):
+        # Path resolution or comparison failed
+        return None
 
 
 async def _update_research_index(research_dir: Path, agent_id: str) -> None:

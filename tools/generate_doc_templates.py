@@ -44,6 +44,7 @@ _PROJECT_REGISTRY = ProjectRegistry()
 
 @app.tool()
 async def generate_doc_templates(
+    agent: str,
     project_name: str,
     author: str | None = None,
     overwrite: bool = False,
@@ -305,8 +306,36 @@ def _render_template(template: str, context: Dict[str, str]) -> str:
 
 def _write_template(path: Path, content: str, overwrite: bool) -> None:
     if overwrite and path.exists():
-        backup_path = path.with_suffix(path.suffix + ".bak")
-        path.replace(backup_path)
+        # Create centralized backup directory
+        from datetime import datetime, timezone
+        backup_dir = settings.project_root / ".scribe" / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate path-preserving filename
+        try:
+            relative_path = path.relative_to(settings.project_root)
+        except ValueError:
+            # File is outside repo root, use last 3 components
+            relative_path = Path(*path.parts[-3:])
+
+        # Replace directory separators with __
+        path_parts = list(relative_path.parts)
+        if len(path_parts) > 1:
+            dir_prefix = "__".join(path_parts[:-1])
+            filename = path_parts[-1]
+            backup_name = f"{dir_prefix}__{filename}"
+        else:
+            backup_name = relative_path.name
+
+        # Add timestamp and .bak extension
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        backup_filename = f"{backup_name}.overwrite-{timestamp}.bak"
+        backup_path = backup_dir / backup_filename
+
+        # Copy to backup location instead of rename
+        import shutil
+        shutil.copy2(path, backup_path)
+
     with path.open("w", encoding="utf-8") as handle:
         handle.write(content)
 

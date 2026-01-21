@@ -181,6 +181,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.tool()
 async def list_projects(
+    agent: str,
     limit: Optional[int] = 5,  # Changed default to 5 for context safety
     filter: Optional[str] = None,
     root: Optional[str] = None,  # Filter by repo root path (for bridge resolution)

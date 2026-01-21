@@ -9,6 +9,9 @@
 ### `rotate_log`
 **Purpose**: Archive current progress log and start fresh file.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier
+
 **Optional Parameters:**
 - `confirm` (bool): When True, perform actual rotation
 - `dry_run` (bool, default: true): Preview rotation without changes
@@ -23,19 +26,21 @@
 **Example Usage:**
 ```python
 # Preview rotation
-await rotate_log(dry_run=True)
+await rotate_log(agent="Orchestrator", dry_run=True)
 
 # Actually rotate progress log
-await rotate_log(confirm=True)
+await rotate_log(agent="Orchestrator", confirm=True)
 
 # Rotate multiple log types
 await rotate_log(
+    agent="Orchestrator",
     confirm=True,
     log_types=["progress", "doc_updates"]
 )
 
 # Auto-threshold rotation
 await rotate_log(
+    agent="Orchestrator",
     confirm=True,
     auto_threshold=True,
     threshold_entries=1000
@@ -66,11 +71,13 @@ await rotate_log(
 **Purpose**: Verify the integrity of a specific rotation archive.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier
 - `archive_path` (string): Path to rotation archive to verify
 
 **Example Usage:**
 ```python
 await verify_rotation_integrity(
+    agent="Orchestrator",
     archive_path="/path/to/archive.md"
 )
 ```
@@ -78,11 +85,12 @@ await verify_rotation_integrity(
 ### `get_rotation_history`
 **Purpose**: Return recent rotation history entries for the active project.
 
-**Parameters:** None (requires active project)
+**Required Parameters:**
+- `agent` (string): Agent identifier
 
 **Example Usage:**
 ```python
-await get_rotation_history()
+await get_rotation_history(agent="Orchestrator")
 ```
 
 **Returns:**
@@ -109,9 +117,12 @@ await get_rotation_history()
 ### `scribe_doctor`
 **Purpose**: Diagnostics for repo root, config resolution, plugin status, and vector readiness.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier
+
 **Example Usage:**
 ```python
-await scribe_doctor()
+await scribe_doctor(agent="Orchestrator")
 ```
 
 **Returns:**

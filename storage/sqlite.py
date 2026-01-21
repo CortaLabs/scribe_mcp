@@ -348,6 +348,12 @@ class SQLiteStorage(StorageBackend):
             log_type = meta.get("log_type", "progress")
         elif log_type is None:
             log_type = "progress"
+
+        # CRITICAL: Never store tool_logs in DB - they go to JSONL only
+        # Tool logs can grow exponentially due to recursive response nesting
+        if log_type == "tool_logs":
+            return
+
         async with self._write_lock:
             await self._execute(
                 """

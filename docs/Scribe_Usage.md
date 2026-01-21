@@ -133,20 +133,20 @@ Use this as the minimal correct workflow for any session.
 
 1) Activate project:
 ```python
-set_project(name="<project_name>", root="<repo_root>")
+set_project(agent="<agent_name>", name="<project_name>", root="<repo_root>")
 ```
 
 2) Rehydrate context:
 ```python
-read_recent(n=5)
+read_recent(agent="<agent_name>", n=5)
 ```
 
 3) Log start (required):
 ```python
 append_entry(
+  agent="Codex",
   message="Starting <task>",
   status="info",
-  agent="Codex",
   meta={"task": "<task>", "reasoning": {"why": "...", "what": "...", "how": "..."}}
 )
 ```
@@ -159,9 +159,9 @@ append_entry(
 5) Log completion:
 ```python
 append_entry(
+  agent="Codex",
   message="Completed <task>: <summary>",
   status="success",
-  agent="Codex",
   meta={"deliverables": [...], "confidence": 0.9, "reasoning": {"why": "...", "what": "...", "how": "..."}}
 )
 ```
@@ -437,7 +437,7 @@ Validates `related_docs` without writing. Optional anchor checks are controlled 
 Most Scribe tools require an active project context. Before using any tool, you MUST set a project:
 
 ```python
-await set_project(name="your-project-name")
+await set_project(agent="<agent_name>", name="your-project-name", root="<repo_root>")
 ```
 
 **Failure to set a project first will result in errors like:**
@@ -452,10 +452,11 @@ await set_project(name="your-project-name")
 **Purpose**: Create/select a project and bootstrap documentation structure.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier for session tracking and logging
 - `name` (string): Project name (automatically normalized - hyphens, underscores, spaces all work)
+- `root` (string): Project root directory (must be provided)
 
 **Optional Parameters:**
-- `root` (string): Project root directory (defaults to current directory)
 - `progress_log` (string): Path to progress log file
 - `defaults` (dict): Default settings for the project
 
@@ -470,12 +471,14 @@ This means all tools (`manage_docs`, `query_entries`, etc.) accept any format an
 **Example Usage:**
 ```python
 # Basic usage
-await set_project(name="my-project")
+await set_project(agent="Codex", name="my-project", root="/path/to/repo")
 
 # With custom defaults
 await set_project(
+    agent="Codex",
     name="my-project",
-    defaults={"emoji": "🧪", "agent": "MyAgent"}
+    root="/path/to/repo",
+    defaults={"emoji": "🧪"}
 )
 ```
 
@@ -503,11 +506,17 @@ await set_project(
 ### `get_project`
 **Purpose**: Retrieve current active project context and configuration.
 
-**Parameters:** None
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
+**Optional Parameters:**
+- `project` (string): Optional project name override
+- `format` (string): Output format - "readable", "structured", or "compact"
+- `verbose` (bool): Include recent log entries if True
 
 **Example Usage:**
 ```python
-await get_project()
+await get_project(agent="Codex")
 ```
 
 **Returns:**
@@ -528,6 +537,9 @@ await get_project()
 ### `list_projects`
 **Purpose**: Discover available projects and their configurations.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
 **Optional Parameters:**
 - `limit` (int, default: 5): Maximum number of projects to return
 - `filter` (string): Filter projects by name (case-insensitive substring match)
@@ -541,16 +553,16 @@ await get_project()
 **Example Usage:**
 ```python
 # Basic usage
-await list_projects()
+await list_projects(agent="Codex")
 
 # With pagination
-await list_projects(limit=10, page=1)
+await list_projects(agent="Codex", limit=10, page=1)
 
 # Filtered by name
-await list_projects(filter="my-project", limit=3)
+await list_projects(agent="Codex", filter="my-project", limit=3)
 
 # Filtered by repo root (for bridge workspace resolution)
-await list_projects(root="/home/austin/projects/MCP_SPINE/council_mcp")
+await list_projects(agent="Codex", root="/home/austin/projects/MCP_SPINE/council_mcp")
 ```
 
 **Returns:**
@@ -585,12 +597,12 @@ await list_projects(root="/home/austin/projects/MCP_SPINE/council_mcp")
 #### Single Entry Mode
 
 **Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
 - `message` (string): Log message content
 
 **Optional Parameters:**
 - `status` (string): Status type - "info", "success", "warn", "error", "bug", "plan"
 - `emoji` (string): Custom emoji override
-- `agent` (string): Agent identifier
 - `meta` (dict): Metadata dictionary for context
 - `timestamp_utc` (string): Custom UTC timestamp
 - `log_type` (string): Target log identifier (defaults to "progress")
@@ -598,18 +610,19 @@ await list_projects(root="/home/austin/projects/MCP_SPINE/council_mcp")
 **Example Usage:**
 ```python
 # Basic entry
-await append_entry(message="Fixed authentication bug")
+await append_entry(agent="Codex", message="Fixed authentication bug")
 
 # With full context
 await append_entry(
+    agent="DebugBot",
     message="Fixed authentication bug",
     status="success",
-    agent="DebugBot",
     meta={"component": "auth", "tests_fixed": 5}
 )
 
 # Planning entry
 await append_entry(
+    agent="Codex",
     message="Beginning database migration phase",
     status="plan",
     emoji="🗄️",
@@ -620,26 +633,27 @@ await append_entry(
 #### Bulk Entry Mode
 
 **Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
 - `items` (string or list): JSON string array or direct list of entry dictionaries
 
 **Each Entry Requires:**
 - `message` (string): Log message content
 
 **Each Entry Optional:**
-- `status`, `emoji`, `agent`, `meta`, `timestamp_utc`, `log_type`
+- `status`, `emoji`, `meta`, `timestamp_utc`, `log_type`
 
 **Example Usage:**
 ```python
 # As JSON string
-await append_entry(items=json.dumps([
+await append_entry(agent="Codex", items=json.dumps([
   {"message": "First task completed", "status": "success"},
-  {"message": "Bug found in auth module", "status": "bug", "agent": "DebugBot"},
+  {"message": "Bug found in auth module", "status": "bug"},
   {"message": "Database migration finished", "status": "info",
    "meta": {"component": "database", "phase": "deployment"}}
 ]))
 
 # As direct list
-await append_entry(items=[
+await append_entry(agent="Codex", items=[
   {"message": "Code review completed", "status": "success"},
   {"message": "Tests passing", "status": "success", "meta": {"tests_run": 25}}
 ])
@@ -662,6 +676,9 @@ await append_entry(items=[
 ### `read_recent`
 **Purpose**: Retrieve recent log entries with pagination.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
 **Optional Parameters:**
 - `n` (int, default: 50): Number of recent entries to return
 - `filter` (dict): Optional filters for agent, status, emoji
@@ -674,13 +691,13 @@ await append_entry(items=[
 **Example Usage:**
 ```python
 # Basic usage
-await read_recent()
+await read_recent(agent="Codex")
 
 # Limited entries
-await read_recent(n=10)
+await read_recent(agent="Codex", n=10)
 
 # With filters
-await read_recent(n=5, filter={"agent": "DebugBot", "status": "success"})
+await read_recent(agent="Codex", n=5, filter={"agent": "DebugBot", "status": "success"})
 ```
 
 **Returns:**
@@ -712,6 +729,9 @@ await read_recent(n=5, filter={"agent": "DebugBot", "status": "success"})
 ### `query_entries`
 **Purpose**: Advanced log searching and filtering.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
 **Optional Parameters:**
 - `project` (string): Project name (uses active project if None)
 - `start` (string): Start timestamp filter
@@ -737,13 +757,14 @@ await read_recent(n=5, filter={"agent": "DebugBot", "status": "success"})
 **Example Usage:**
 ```python
 # Basic message search
-await query_entries(message="bug", message_mode="substring")
+await query_entries(agent="Codex", message="bug", message_mode="substring")
 
 # Date range search
-await query_entries(start="2025-10-23", end="2025-10-24")
+await query_entries(agent="Codex", start="2025-10-23", end="2025-10-24")
 
 # Enhanced cross-project search
 await query_entries(
+    agent="Codex",
     message="authentication",
     search_scope="all_projects",
     document_types=["progress", "bugs"],
@@ -752,6 +773,7 @@ await query_entries(
 
 # Metadata filtering
 await query_entries(
+    agent="Codex",
     meta_filters={"component": "auth", "severity": "high"}
 )
 ```
@@ -772,6 +794,7 @@ await query_entries(
 **Purpose**: Repo-scoped file access (by default) with deterministic scan/chunk/page/search modes, dependency analysis, and read provenance logging. Optional out-of-repo reads are allowed when explicitly enabled.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
 - `path` (string): File path (absolute or repo-relative)
 
 **Optional Parameters:**
@@ -837,22 +860,22 @@ Provides static analysis of Python imports with governance features:
 **Example Usage:**
 ```python
 # Basic scan (metadata + structure)
-await read_file(path="tools/read_file.py", mode="scan_only")
+await read_file(agent="Codex", path="tools/read_file.py", mode="scan_only")
 
 # Scan with dependency analysis
-await read_file(path="tools/read_file.py", mode="scan_only", include_dependencies=True)
+await read_file(agent="Codex", path="tools/read_file.py", mode="scan_only", include_dependencies=True)
 
 # Read specific chunk
-await read_file(path="docs/Scribe_Usage.md", mode="chunk", chunk_index=[0])
+await read_file(agent="Codex", path="docs/Scribe_Usage.md", mode="chunk", chunk_index=[0])
 
 # Regex search (default mode)
-await read_file(path="tools/read_file.py", mode="search", query=r"async\s+def\s+\w+")
+await read_file(agent="Codex", path="tools/read_file.py", mode="search", query=r"async\s+def\s+\w+")
 
 # Literal search (explicit)
-await read_file(path="docs/Scribe_Usage.md", mode="search", search="semantic", search_mode="literal")
+await read_file(agent="Codex", path="docs/Scribe_Usage.md", mode="search", search="semantic", search_mode="literal")
 
 # Search with context lines
-await read_file(path="server.py", mode="search", query="async def", context_lines=2)
+await read_file(agent="Codex", path="server.py", mode="search", query="async def", context_lines=2)
 ```
 
 **Configuration:**
@@ -885,9 +908,12 @@ rules:
 ### `scribe_doctor`
 **Purpose**: Diagnostics for repo root, config resolution, plugin status, and vector readiness.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
 **Example Usage:**
 ```python
-await scribe_doctor()
+await scribe_doctor(agent="Codex")
 ```
 
 **Returns:**
@@ -903,6 +929,7 @@ await scribe_doctor()
 **Purpose**: Structured documentation system for projects.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
 - `action` (string): Action type (see all 17 actions below)
 - `doc_name` (string): Document identifier/filename key (e.g., `architecture`, `phase_plan`, `checklist`, `implementation`)
 
@@ -1077,6 +1104,7 @@ All parameters now properly exposed via MCP with correct JSON Schema types. Prev
 ```python
 # Replace architecture section
 await manage_docs(
+    agent="Codex",
     action="replace_section",
     doc_name="architecture",  # REQUIRED: unique doc identifier
     section="problem_statement",
@@ -1085,6 +1113,7 @@ await manage_docs(
 
 # Append within a section
 await manage_docs(
+    agent="Codex",
     action="append",
     doc_name="architecture",
     section="problem_statement",
@@ -1094,6 +1123,7 @@ await manage_docs(
 
 # Update checklist status
 await manage_docs(
+    agent="Codex",
     action="status_update",
     doc_name="checklist",
     section="phase_1_task_1",
@@ -1102,6 +1132,7 @@ await manage_docs(
 
 # Create research document (NEW SYNTAX - doc_type goes IN metadata)
 await manage_docs(
+    agent="Codex",
     action="create",
     doc_name="RESEARCH_AUTH_SYSTEM_20251102",
     metadata={
@@ -1113,6 +1144,7 @@ await manage_docs(
 
 # Create bug report (NEW SYNTAX - doc_type goes IN metadata)
 await manage_docs(
+    agent="Codex",
     action="create",
     metadata={
         "doc_type": "bug",  # REQUIRED: specifies document type
@@ -1126,6 +1158,7 @@ await manage_docs(
 
 # Create custom document (NEW SYNTAX - doc_type goes IN metadata)
 await manage_docs(
+    agent="Codex",
     action="create",
     doc_name="COORDINATION_PROTOCOL",
     metadata={
@@ -1136,6 +1169,7 @@ await manage_docs(
 
 # Apply unified patch (patch_mode defaults to "unified" when patch is provided)
 await manage_docs(
+    agent="Codex",
     action="apply_patch",
     doc_name="architecture",
     patch="--- a/file.md\n+++ b/file.md\n@@ -10,3 +10,4 @@\n existing line\n+new line",
@@ -1144,6 +1178,7 @@ await manage_docs(
 
 # Batch multiple updates (executed sequentially)
 await manage_docs(
+    agent="Codex",
     action="batch",
     doc_name="architecture",
     metadata={
@@ -1199,6 +1234,7 @@ await manage_docs(
 ```python
 # Semantic search across docs + logs
 await manage_docs(
+    agent="Codex",
     action="search",
     doc_name="*",
     metadata={"query": "ExecutionContext", "search_mode": "semantic", "k": 8}
@@ -1206,6 +1242,7 @@ await manage_docs(
 
 # Doc-only semantic search scoped to a project
 await manage_docs(
+    agent="Codex",
     action="search",
     doc_name="*",
     metadata={
@@ -1222,6 +1259,7 @@ await manage_docs(
 **Purpose**: Create/update documentation templates for a project.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
 - `project_name` (string): Name of the project
 
 **Optional Parameters:**
@@ -1233,10 +1271,11 @@ await manage_docs(
 **Example Usage:**
 ```python
 # Basic usage
-await generate_doc_templates(project_name="my-project")
+await generate_doc_templates(agent="Codex", project_name="my-project")
 
 # With author and specific documents
 await generate_doc_templates(
+    agent="Codex",
     project_name="my-project",
     author="MyAgent",
     documents=["architecture", "phase_plan"]
@@ -1412,6 +1451,9 @@ Auto-registration requires database write access.
 ### `rotate_log`
 **Purpose**: Archive current progress log and start fresh file.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
 **Optional Parameters:**
 - `confirm` (bool): When True, perform actual rotation
 - `dry_run` (bool, default: true): Preview rotation without changes
@@ -1426,19 +1468,21 @@ Auto-registration requires database write access.
 **Example Usage:**
 ```python
 # Preview rotation
-await rotate_log(dry_run=True)
+await rotate_log(agent="Codex", dry_run=True)
 
 # Actually rotate progress log
-await rotate_log(confirm=True)
+await rotate_log(agent="Codex", confirm=True)
 
 # Rotate multiple log types
 await rotate_log(
+    agent="Codex",
     confirm=True,
     log_types=["progress", "doc_updates"]
 )
 
 # Auto-threshold rotation
 await rotate_log(
+    agent="Codex",
     confirm=True,
     auto_threshold=True,
     threshold_entries=1000
@@ -1513,6 +1557,7 @@ await get_rotation_history()
 **Purpose**: Delete or archive a project and all associated data.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
 - `name` (string): Project name to delete
 - `confirm` (bool): Must be True to proceed with deletion
 
@@ -1520,18 +1565,19 @@ await get_rotation_history()
 - `mode` (string, default: "archive"): "archive" or "permanent"
 - `force` (bool): Override safety checks (not recommended)
 - `archive_path` (string): Custom archive directory
-- `agent_id` (string): Agent identification
 
 **Example Usage:**
 ```python
 # Archive project (safe default)
 await delete_project(
+    agent="Codex",
     name="old-project",
     confirm=True
 )
 
 # Permanent deletion (dangerous)
 await delete_project(
+    agent="Codex",
     name="temp-project",
     confirm=True,
     mode="permanent"

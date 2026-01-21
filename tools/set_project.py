@@ -188,13 +188,13 @@ async def _check_slug_collision(
 
 @app.tool()
 async def set_project(
+    agent: str,  # REQUIRED: Agent name for session identity (e.g., "Coder-1", "ResearchAgent")
     name: str,
-    root: Optional[str] = None,
+    root: str,  # REQUIRED: Repository root path
     progress_log: Optional[str] = None,
     defaults: Optional[Dict[str, Any]] = None,
     author: Optional[str] = None,
     overwrite_docs: bool = False,
-    agent_id: Optional[str] = None,  # Agent identification (auto-detected if not provided)
     expected_version: Optional[int] = None,  # Optimistic concurrency control
     # Advanced parameters
     description: Optional[str] = None,  # Project description
@@ -208,23 +208,23 @@ async def set_project(
     reset_reminders: bool = False,
     # Quick emoji/agent settings (for convenience)
     emoji: Optional[str] = None,  # Default emoji for the project
-    project_agent: Optional[str] = None,  # Default agent for the project (alias for agent_id)
     # Bridge management (Phase 3)
     bridge_id: Optional[str] = None,  # ID of bridge that owns this project
     bridge_managed: bool = False,  # Whether this project is bridge-managed
     # Output formatting
     format: str = "readable",  # Output format: readable, structured, compact
 ) -> Dict[str, Any]:
-    """Register the project (if needed) and mark it as the current context."""
+    """Register the project (if needed) and mark it as the current context.
+
+    IMPORTANT:
+    - The `agent` parameter is REQUIRED and must match what you use in subsequent
+      tool calls (append_entry, etc.) for session isolation to work.
+    - The `root` parameter is REQUIRED and specifies the repository root path.
+    """
     state_snapshot = await server_module.state_manager.record_tool("set_project")
 
-    # Auto-detect agent ID if not provided
-    if agent_id is None:
-        agent_identity = server_module.get_agent_identity()
-        if agent_identity:
-            agent_id = await agent_identity.get_or_create_agent_id()
-        else:
-            agent_id = "Scribe"  # Fallback
+    # agent is now REQUIRED - use it as agent_id for internal tracking
+    agent_id = agent
 
     # Use BaseTool parameter normalization for consistent MCP framework handling
     if isinstance(defaults, str):
@@ -252,10 +252,6 @@ async def set_project(
         await agent_identity.update_agent_activity(
             agent_id, "set_project", {"project_name": name, "expected_version": expected_version}
         )
-
-    # Use project_agent if provided (takes precedence over agent_id for this project)
-    if project_agent:
-        agent_id = project_agent
 
     base_context: LoggingContext = await _SET_PROJECT_HELPER.prepare_context(
         tool_name="set_project",
@@ -306,7 +302,7 @@ async def set_project(
     resolved_root.mkdir(parents=True, exist_ok=True)
 
     # Bootstrap documentation scaffolds when missing
-    doc_result = await _ensure_documents(name, author, overwrite_docs, resolved_root, docs_dir)
+    doc_result = await _ensure_documents(name, author, overwrite_docs, resolved_root, docs_dir, agent_id)
     if not doc_result.get("ok", False):
         return _SET_PROJECT_HELPER.apply_context_payload(doc_result, base_context)
 
@@ -763,6 +759,7 @@ async def _ensure_documents(
     overwrite: bool,
     root_path: Path,
     docs_dir: Path,
+    agent_id: str,
 ) -> Dict[str, Any]:
     """
     Ensure project documentation exists with proper idempotency.
@@ -804,6 +801,7 @@ async def _ensure_documents(
     from scribe_mcp.tools import generate_doc_templates as doc_templates
 
     result = await doc_templates.generate_doc_templates(
+        agent=agent_id,
         project_name=name,
         author=author,
         overwrite=overwrite,

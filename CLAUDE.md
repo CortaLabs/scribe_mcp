@@ -79,7 +79,7 @@ Should I proceed?"
 
 **For NEW work:**
 ```
-"Create project with set_project(name='<descriptive_slug>'). Then <instructions>."
+"Create project with set_project(agent='AgentName', name='<descriptive_slug>', root='...'). Then <instructions>."
 ```
 - Use descriptive slugs: `auth_refactor`, `reminder_system`, `db_migration_fix`
 - NOT generic names: `test`, `fix`, `update`
@@ -88,8 +88,8 @@ Should I proceed?"
 ```
 "Use project_name='<existing_project>'. Then <instructions>."
 ```
-- Check current project with `get_project()` first
-- Use `list_projects()` if unsure what exists
+- Check current project with `get_project(agent='AgentName')` first
+- Use `list_projects(agent='AgentName')` if unsure what exists
 
 ### 📄 Document Chain - What Flows Between Agents
 
@@ -137,7 +137,7 @@ Claude Code MUST complete these steps before doing any work:
 
 2. **Read `AGENTS.md`** for cross-agent governance + repo-wide commandments
 
-3. **For parameter discovery:** Use `scribe.read_file(mode="search", query="<search_term>", path="docs/Scribe_Usage.md")` to find tool params/patterns
+3. **For parameter discovery:** Use `scribe.read_file(agent="AgentName", mode="search", query="<search_term>", path="docs/Scribe_Usage.md")` to find tool params/patterns
 
 4. **If files are missing:** STOP and report the failure. Do not guess tool parameters.
 
@@ -176,10 +176,10 @@ The orchestrator MUST pass the current `project_name` to every subagent to preve
 ### Step 1: Context Rehydration (COMMANDMENT #0)
 ```python
 # Check progress log - last 5-10 entries minimum
-read_recent(n=10, format="readable")
+read_recent(agent="AgentName", n=10, format="readable")
 
 # For targeted history or architectural decisions
-query_entries(message="<search_term>", format="readable")
+query_entries(agent="AgentName", message="<search_term>", format="readable")
 ```
 **Purpose:** Understand what's been done, what failed, current project state.
 **Violation:** Skipping this = working blind, repeating mistakes, breaking continuity.
@@ -187,20 +187,20 @@ query_entries(message="<search_term>", format="readable")
 ### Step 2: Project Confirmation (COMMANDMENT #0)
 ```python
 # Verify active project
-get_project(format="readable")
+get_project(agent="AgentName", format="readable")
 ```
 **If no active project or wrong project:**
-- Creating new feature/fix: Create dedicated project with `set_project(name="<descriptive_name>")`
-- Continuing work: Use `set_project(name="<existing_project>")` to activate
+- Creating new feature/fix: Create dedicated project with `set_project(agent="AgentName", name="<descriptive_name>", root="...")`
+- Continuing work: Use `set_project(agent="AgentName", name="<existing_project>", root="...")` to activate
 - Unsure: ASK USER which project to use
 
 ### Step 3: Intent Logging (COMMANDMENT #1)
 ```python
 # Log what you're about to do BEFORE doing it
 append_entry(
+    agent="Orchestrator",
     message="Starting <task_description>",
     status="info",
-    agent="Orchestrator",
     meta={"task": "<task>", "approach": "<approach>"}
 )
 ```
@@ -223,7 +223,7 @@ Task(
 ```python
 Task(
     subagent_type="<agent_type>",
-    prompt="Create new project first: set_project(name='<descriptive_name>'). Then <instructions>."
+    prompt="Create new project first: set_project(agent='AgentName', name='<descriptive_name>', root='...'). Then <instructions>."
 )
 ```
 
@@ -234,9 +234,9 @@ Task(
 **During work, log after every 2-3 significant actions:**
 ```python
 append_entry(
+    agent="Orchestrator",
     message="<what_was_done>",
     status="success|info|warn|error",
-    agent="Orchestrator",
     meta={"files_changed": [...], "tests": "<status>"}
 )
 ```
@@ -253,7 +253,7 @@ append_entry(
 **If you skip any step:**
 1. STOP immediately
 2. Complete the skipped step(s)
-3. Log the violation with `append_entry(status="warn")`
+3. Log the violation with `append_entry(agent="AgentName", status="warn")`
 4. Resume work
 
 **No freestyling. No shortcuts. Follow the checklist.**
@@ -266,12 +266,12 @@ append_entry(
 
 ### Orchestrator Workflow:
 
-1. **Check active project:** Call `get_project()`
-2. **If no project active:** Call `set_project(name=..., root=...)`
+1. **Check active project:** Call `get_project(agent="Orchestrator")`
+2. **If no project active:** Call `set_project(agent="Orchestrator", name=..., root=...)`
 3. **Pass resolved project name** to ALL subagents in their prompts
 4. **Rehydrate context when needed:**
-   - Project mode: `read_recent(limit=5)` or `query_entries()` (last 5-20 entries)
-   - Cross-project/global: `query_entries(search_scope="global")` or `"all_projects"`
+   - Project mode: `read_recent(agent="Orchestrator", limit=5)` or `query_entries(agent="Orchestrator")` (last 5-20 entries)
+   - Cross-project/global: `query_entries(agent="Orchestrator", search_scope="global")` or `"all_projects"`
    - Use when: fresh context window, unsure of next steps, need architectural decisions
 
 ---
@@ -345,12 +345,12 @@ The `StorageBackend` class (`storage/base.py`) is the **canonical entry point** 
 |--------|---------|
 | `upsert_project(name, repo_root, progress_log_path, docs_json)` | Create/update project |
 | `fetch_project(name)` | Get project by name |
-| `list_projects()` | List all projects |
+| `list_projects()` | List all projects (backend method, not MCP tool) |
 | `delete_project(name)` | Delete project |
 | `update_project_docs(name, docs_json)` | Partial update - docs_json only |
 | `insert_entry(...)` | Add log entry |
 | `fetch_recent_entries(...)` | Get recent log entries |
-| `query_entries(...)` | Search log entries |
+| `query_entries(...)` | Search log entries (backend method) |
 
 ### Why This Matters
 
@@ -383,7 +383,7 @@ await backend.update_project_docs(name, docs_json)
 
 **Workflow:** 1️⃣ Research → 2️⃣ Architect → 3️⃣ Review → 4️⃣ Code → 5️⃣ Review
 
-**Core Principle:** All work occurs within a dev plan project initialized via `set_project(name="<project_name>")`. The project name must be passed to every subagent.
+**Core Principle:** All work occurs within a dev plan project initialized via `set_project(agent="AgentName", name="<project_name>", root="...")`. The project name must be passed to every subagent.
 
 **Quality Gates:** ≥93% required to proceed between stages. Agents must FIX existing work, never replace files.
 
@@ -416,7 +416,7 @@ Claude Code (orchestrator) must:
 2. **Log phase transitions:** `append_entry(agent="Orchestrator", message="Starting Phase 2: Architecture", status="info")`
 3. **Enforce quality gates:** No progression without ≥93% review score
 4. **Re-dispatch failing agents:** Tell agents to FIX existing docs/code, never REPLACE
-5. **Rehydrate context first:** Use `read_recent()` or `query_entries()` before major decisions
+5. **Rehydrate context first:** Use `read_recent(agent="Orchestrator")` or `query_entries(agent="Orchestrator")` before major decisions
 6. **Pass project name:** Include `project_name="<current_project>"` in every subagent prompt
 
 ---
@@ -484,7 +484,7 @@ Existing architecture documents contain <previous_feature> work that must be pre
 ## 🚨 Commandments (Critical Failure Modes)
 
 ### Commandment #0: Progress Log First
-Before starting ANY work, rehydrate context with `read_recent()` or `query_entries()`. The progress log is the source of truth for project state.
+Before starting ANY work, rehydrate context with `read_recent(agent="AgentName")` or `query_entries(agent="AgentName")`. The progress log is the source of truth for project state.
 
 ### Commandment #0.5: Infrastructure Primacy
 NEVER create parallel or replacement files (e.g., enhanced_*, *_v2, *_new). You must modify/extend/refactor existing components directly. Replacing working modules = immediate failure.
@@ -519,36 +519,37 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
 
 1. **Update a known section** (recommended for most edits)
    ```python
-   manage_docs(action="replace_section", doc="architecture", section="<ID>", content="...")
-   # If you don't know section IDs: manage_docs(action="list_sections", doc="architecture")
+   manage_docs(agent="AgentName", action="replace_section", doc="architecture", section="<ID>", content="...")
+   # If you don't know section IDs: manage_docs(agent="AgentName", action="list_sections", doc="architecture")
    ```
 
 2. **Precision edits** (line-level)
    ```python
    # Preferred: structured patch
-   manage_docs(action="apply_patch", doc="architecture", edit={...})
+   manage_docs(agent="AgentName", action="apply_patch", doc="architecture", edit={...})
 
    # Or: explicit line range
-   manage_docs(action="replace_range", doc="architecture", start_line=12, end_line=15, content="...")
+   manage_docs(agent="AgentName", action="replace_range", doc="architecture", start_line=12, end_line=15, content="...")
    ```
 
 3. **Checklists**
    ```python
-   manage_docs(action="status_update", doc="checklist", section="<ID>",
+   manage_docs(agent="AgentName", action="status_update", doc="checklist", section="<ID>",
                metadata={"status": "done", "proof": "..."})
-   # If you don't know IDs: manage_docs(action="list_checklist_items", doc="checklist")
+   # If you don't know IDs: manage_docs(agent="AgentName", action="list_checklist_items", doc="checklist")
    ```
 
 4. **Creating new managed docs** (NEW SYNTAX - doc_type goes IN metadata)
    ```python
    # Research docs (doc_type inside metadata)
-   manage_docs(action="create", doc_name="RESEARCH_<topic>_<YYYYMMDD>", metadata={"doc_type": "research", ...})
+   manage_docs(agent="AgentName", action="create", doc_name="RESEARCH_<topic>_<YYYYMMDD>", metadata={"doc_type": "research", ...})
 
    # Bug reports (doc_type inside metadata)
-   manage_docs(action="create", metadata={"doc_type": "bug", "category": "...", "slug": "...", ...})
+   manage_docs(agent="AgentName", action="create", metadata={"doc_type": "bug", "category": "...", "slug": "...", ...})
 
    # Custom docs (coordination protocols, briefs, etc.) - FULL FORMULA:
    manage_docs(
+       agent="AgentName",
        action="create",
        doc_name="CUSTOM_DOC_NAME",              # REQUIRED - unique identifier
        metadata={
@@ -560,34 +561,34 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
    )
 
    # OLD SYNTAX STILL WORKS (deprecated but backwards compatible):
-   # manage_docs(action="create_research_doc", ...) → routes to create with doc_type="research" in metadata
-   # manage_docs(action="create_bug_report", ...) → routes to create with doc_type="bug" in metadata
-   # manage_docs(action="create_doc", ...) → routes to create with doc_type="custom" in metadata
+   # manage_docs(agent="AgentName", action="create_research_doc", ...) → routes to create with doc_type="research" in metadata
+   # manage_docs(agent="AgentName", action="create_bug_report", ...) → routes to create with doc_type="bug" in metadata
+   # manage_docs(agent="AgentName", action="create_doc", ...) → routes to create with doc_type="custom" in metadata
    ```
 
-**For exact params/edge cases:** Search `docs/Scribe_Usage.md` with `scribe.read_file(mode="search", query="manage_docs <action>")`.
+**For exact params/edge cases:** Search `docs/Scribe_Usage.md` with `scribe.read_file(agent="AgentName", mode="search", query="manage_docs <action>")`.
 
 ---
 
 ## 🔧 Essential Tools Quick Reference
 
 ### Project Management
-- `set_project(name)` - Initialize/select project (auto-bootstraps docs)
+- `set_project(agent, name, root)` - Initialize/select project (auto-bootstraps docs)
   - **Project names auto-normalize:** `"my-project"` → `"my_project"` (hyphens, underscores, spaces all work)
-- `get_project()` - Get current context
-- `list_projects()` - Discover projects (lifecycle, activity, doc hygiene)
+- `get_project(agent)` - Get current context
+- `list_projects(agent)` - Discover projects (lifecycle, activity, doc hygiene)
 
 ### Logging (PRIMARY TOOL)
-- `append_entry(message, status, meta)` - Single entry mode
-- `append_entry(items=[{...}, {...}])` - Bulk entry mode
+- `append_entry(agent, message, status, meta)` - Single entry mode
+- `append_entry(agent, items=[{...}, {...}])` - Bulk entry mode
 
 ### Documentation
-- `manage_docs(action, doc, ...)` - Atomic doc updates (see playbook above)
-- `generate_doc_templates(project_name)` - Template scaffolding
-- `rotate_log()` - Archive logs
+- `manage_docs(agent, action, doc, ...)` - Atomic doc updates (see playbook above)
+- `generate_doc_templates(agent, project_name)` - Template scaffolding
+- `rotate_log(agent)` - Archive logs
 
 ### v2.1.1 NEW Tools
-- `read_file(path, mode, include_dependencies, structure_filter, structure_page, structure_page_size)` - Repo-scoped file access with:
+- `read_file(agent, path, mode, include_dependencies, structure_filter, structure_page, structure_page_size)` - Repo-scoped file access with:
   - AST structure extraction (Python/Markdown/JS)
   - Full signatures with types, defaults, return types, line ranges
   - Method display under classes with async markers
@@ -597,8 +598,8 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
   - Boundary enforcement (forbidden import detection)
   - Regex search (default mode, changed from literal)
   - SKILL.md urgent detection
-- `scribe_doctor()` - Environment diagnostics
-- `manage_docs(action="search")` - Semantic search across docs
+- `scribe_doctor(agent)` - Environment diagnostics
+- `manage_docs(agent, action="search")` - Semantic search across docs
 
 ### Format Options
 All tools support `format` parameter:
@@ -665,7 +666,7 @@ from scribe_mcp.storage.sqlite import SQLiteStorage
 - **`docs/Scribe_Usage.md`** - Comprehensive tool reference (all params, examples, edge cases)
 - **`.codex/skills/scribe-mcp-usage/SKILL.md`** - Minimal enforceable contract
 
-**When in doubt:** Search `Scribe_Usage.md` using `scribe.read_file(mode="search")` for the answer.
+**When in doubt:** Search `Scribe_Usage.md` using `scribe.read_file(agent="AgentName", mode="search")` for the answer.
 
 ---
 

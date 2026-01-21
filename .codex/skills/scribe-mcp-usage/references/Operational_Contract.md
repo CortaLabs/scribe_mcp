@@ -9,15 +9,15 @@ description: Operate the local Scribe MCP for any repo; use when registering pro
 
 ## Step 1: Activate Project (MANDATORY)
 ```python
-set_project(name="<project_name_from_orchestrator>")
+set_project(agent="<YourAgentName>", name="<project_name_from_orchestrator>")
 ```
 
 ## Step 2: Log Your Start
 ```python
 append_entry(
+    agent="<YourAgentName>",
     message="Starting <your_task>",
     status="info",
-    agent="<YourAgentName>",
     meta={"task": "<task>", "reasoning": {"why": "...", "what": "...", "how": "..."}}
 )
 ```
@@ -62,9 +62,9 @@ append_entry(
 ## Step 4: Log Completion
 ```python
 append_entry(
+    agent="<YourAgentName>",
     message="Completed <your_task>: <summary>",
     status="success",
-    agent="<YourAgentName>",
     meta={"deliverables": [...], "confidence": 0.9}
 )
 ```
@@ -75,7 +75,7 @@ append_entry(
 
 - Codex: read and follow `AGENTS.md`.
 - Claude Code: read and follow `CLAUDE.md`.
-- For tool schemas and examples: `read_file(path="references/Scribe_Usage.md", mode="search", query="<tool_name>")`
+- For tool schemas and examples: `read_file(agent="<YourAgentName>", path="references/Scribe_Usage.md", mode="search", query="<tool_name>")`
 
 This skill is the minimal, enforceable tool-and-logging contract. Deeper rationale belongs in wiki or code.
 
@@ -143,10 +143,10 @@ All MCP tool calls and parameters must match these signatures.
 
 ```
 append_entry(
+  agent,              # REQUIRED
   message="",
   status=None,
   emoji=None,
-  agent=None,
   meta=None,
   timestamp_utc=None,
   items=None,
@@ -165,7 +165,8 @@ append_entry(
 )
 
 set_project(
-  name,
+  agent,              # REQUIRED
+  name,               # REQUIRED
   root=None,
   progress_log=None,
   defaults=None,
@@ -186,7 +187,11 @@ set_project(
   format="readable"
 )
 
-get_project(project=None, format="structured")
+get_project(
+  agent,              # REQUIRED
+  project=None,
+  format="structured"
+)
 
 manage_docs(
   action,
@@ -208,7 +213,8 @@ manage_docs(
 )
 
 generate_doc_templates(
-  project_name,
+  agent,              # REQUIRED
+  project_name,       # REQUIRED
   author=None,
   overwrite=False,
   force=False,
@@ -221,6 +227,7 @@ generate_doc_templates(
 )
 
 read_recent(
+  agent,              # REQUIRED
   project=None,
   n=None,
   limit=None,
@@ -238,6 +245,7 @@ read_recent(
 )
 
 query_entries(
+  agent,              # REQUIRED
   project=None,
   start=None,
   end=None,
@@ -271,7 +279,8 @@ query_entries(
 )
 
 read_file(
-  path,
+  agent,              # REQUIRED
+  path,               # REQUIRED
   mode="scan_only",
   chunk_index=None,
   start_chunk=None,
@@ -297,6 +306,7 @@ read_file(
 )
 
 list_projects(
+  agent,              # REQUIRED
   limit=5,
   filter=None,
   compact=False,
@@ -312,6 +322,7 @@ list_projects(
 )
 
 rotate_log(
+  agent,              # REQUIRED
   project=None,
   suffix=None,
   custom_metadata=None,
@@ -327,7 +338,8 @@ rotate_log(
 )
 
 delete_project(
-  name,
+  agent,              # REQUIRED
+  name,               # REQUIRED
   mode="archive",
   confirm=False,
   force=False,
@@ -335,7 +347,9 @@ delete_project(
   agent_id=None
 )
 
- scribe_doctor()
+scribe_doctor(
+  agent               # REQUIRED
+)
 ```
 
 ### Sentinel Tools (Sentinel Mode Only)

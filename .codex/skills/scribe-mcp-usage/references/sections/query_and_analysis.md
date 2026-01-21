@@ -3,6 +3,9 @@
 ### `read_recent`
 **Purpose**: Retrieve recent log entries with pagination.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier
+
 **Optional Parameters:**
 - `n` (int, default: 50): Number of recent entries to return
 - `filter` (dict): Optional filters for agent, status, emoji
@@ -15,13 +18,13 @@
 **Example Usage:**
 ```python
 # Basic usage
-await read_recent()
+await read_recent(agent="Orchestrator")
 
 # Limited entries
-await read_recent(n=10)
+await read_recent(agent="CoderAgent", n=10)
 
 # With filters
-await read_recent(n=5, filter={"agent": "DebugBot", "status": "success"})
+await read_recent(agent="ReviewAgent", n=5, filter={"agent": "DebugBot", "status": "success"})
 ```
 
 **Returns:**
@@ -53,6 +56,9 @@ await read_recent(n=5, filter={"agent": "DebugBot", "status": "success"})
 ### `query_entries`
 **Purpose**: Advanced log searching and filtering.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier
+
 **Optional Parameters:**
 - `project` (string): Project name (uses active project if None)
 - `start` (string): Start timestamp filter
@@ -78,13 +84,14 @@ await read_recent(n=5, filter={"agent": "DebugBot", "status": "success"})
 **Example Usage:**
 ```python
 # Basic message search
-await query_entries(message="bug", message_mode="substring")
+await query_entries(agent="CoderAgent", message="bug", message_mode="substring")
 
 # Date range search
-await query_entries(start="2025-10-23", end="2025-10-24")
+await query_entries(agent="ResearchAgent", start="2025-10-23", end="2025-10-24")
 
 # Enhanced cross-project search
 await query_entries(
+    agent="Orchestrator",
     message="authentication",
     search_scope="all_projects",
     document_types=["progress", "bugs"],
@@ -93,6 +100,7 @@ await query_entries(
 
 # Metadata filtering
 await query_entries(
+    agent="BugHunter",
     meta_filters={"component": "auth", "severity": "high"}
 )
 ```
@@ -113,6 +121,7 @@ await query_entries(
 **Purpose**: Repo-scoped file access (by default) with deterministic scan/chunk/page/search modes, dependency analysis, and read provenance logging. Optional out-of-repo reads are allowed when explicitly enabled.
 
 **Required Parameters:**
+- `agent` (string): Agent identifier
 - `path` (string): File path (absolute or repo-relative)
 
 **Optional Parameters:**
@@ -178,22 +187,22 @@ Provides static analysis of Python imports with governance features:
 **Example Usage:**
 ```python
 # Basic scan (metadata + structure)
-await read_file(path="tools/read_file.py", mode="scan_only")
+await read_file(agent="CoderAgent", path="tools/read_file.py", mode="scan_only")
 
 # Scan with dependency analysis
-await read_file(path="tools/read_file.py", mode="scan_only", include_dependencies=True)
+await read_file(agent="ArchitectAgent", path="tools/read_file.py", mode="scan_only", include_dependencies=True)
 
 # Read specific chunk
-await read_file(path="references/Scribe_Usage.md", mode="chunk", chunk_index=[0])
+await read_file(agent="ResearchAgent", path="references/Scribe_Usage.md", mode="chunk", chunk_index=[0])
 
 # Regex search (default mode)
-await read_file(path="tools/read_file.py", mode="search", query=r"async\s+def\s+\w+")
+await read_file(agent="CoderAgent", path="tools/read_file.py", mode="search", query=r"async\s+def\s+\w+")
 
 # Literal search (explicit)
-await read_file(path="references/Scribe_Usage.md", mode="search", search="semantic", search_mode="literal")
+await read_file(agent="CoderAgent", path="references/Scribe_Usage.md", mode="search", search="semantic", search_mode="literal")
 
 # Search with context lines
-await read_file(path="server.py", mode="search", query="async def", context_lines=2)
+await read_file(agent="BugHunter", path="server.py", mode="search", query="async def", context_lines=2)
 ```
 
 **Configuration:**
@@ -226,9 +235,12 @@ rules:
 ### `scribe_doctor`
 **Purpose**: Diagnostics for repo root, config resolution, plugin status, and vector readiness.
 
+**Required Parameters:**
+- `agent` (string): Agent identifier
+
 **Example Usage:**
 ```python
-await scribe_doctor()
+await scribe_doctor(agent="Orchestrator")
 ```
 
 **Returns:**

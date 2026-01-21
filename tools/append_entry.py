@@ -1239,10 +1239,10 @@ async def _process_large_bulk_chunked(
 
 @app.tool()
 async def append_entry(
+    agent: str,
     message: str = "",
     status: Optional[str] = None,
     emoji: Optional[str] = None,
-    agent: Optional[str] = None,
     meta: Optional[Any] = None,  # Changed to Any to handle MCP interface mangling
     timestamp_utc: Optional[str] = None,
     items: Optional[str] = None,

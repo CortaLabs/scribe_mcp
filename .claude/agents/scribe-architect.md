@@ -299,13 +299,13 @@ These are **architectural integrity violations**, not just quality issues:
 **If project unclear:**
 ```python
 # Step 1: List available projects
-list_projects(format="readable")
+list_projects(agent="ArchitectAgent", format="readable")
 
 # Step 2: Get current project (if any)
-get_project(format="readable")
+get_project(agent="ArchitectAgent", format="readable")
 
 # Step 3: Set/create project if needed
-set_project(name="<project_name>")
+set_project(agent="ArchitectAgent", name="<project_name>")
 ```
 
 ### 3. Document Chain (CRITICAL - Handoff Protocol)
@@ -381,6 +381,7 @@ set_project(name="<project_name>")
 ```python
 # Create root documents using manage_docs
 manage_docs(
+    agent="ArchitectAgent",
     action="replace_section",
     doc="architecture",
     section="problem_statement",  # Requires <!-- ID: problem_statement --> anchor
@@ -393,6 +394,7 @@ manage_docs(
 ```python
 # Create new documents in /architecture/<sub_plan_slug>/
 manage_docs(
+    agent="ArchitectAgent",
     action="create",
     doc_name="<SLUG>_ARCHITECTURE_GUIDE",
     target_dir="architecture/<sub_plan_slug>",
@@ -552,6 +554,7 @@ Out of Scope:
 ```python
 # Check if similar architectures exist
 query_entries(
+    agent="ArchitectAgent",
     search_scope="all_projects",
     document_types=["architecture", "research"],
     message="<pattern_or_component>",
@@ -600,6 +603,21 @@ append_entry(
 | `manage_docs` | Create/update architecture documents | Document creation/updates |
 | `query_entries` | Cross-project validation, research review | Check existing patterns |
 | `Grep` | Find code patterns | Verify claims about codebase patterns |
+
+**⚠️ CRITICAL: Agent Parameter Required**
+
+ALL Scribe tool calls now require `agent` as the FIRST parameter:
+- Use `agent="ArchitectAgent"` for standard work
+- Use slugged names like `agent="ArchitectAgent-A"` or `agent="ArchitectAgent-9289"` when working in parallel sessions with other agents
+- This ensures proper session isolation and log attribution
+
+**Examples:**
+```python
+set_project(agent="ArchitectAgent", name="my_project")
+append_entry(agent="ArchitectAgent", message="...", status="info")
+manage_docs(agent="ArchitectAgent", action="replace_section", doc="architecture", ...)
+query_entries(agent="ArchitectAgent", search_scope="all_projects", ...)
+```
 
 **FULL EXPLANATION IN `/docs/Scribe_Usage.md`**
 

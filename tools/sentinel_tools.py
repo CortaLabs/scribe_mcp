@@ -71,10 +71,10 @@ def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[st
 
 @app.tool()
 async def append_event(
+    agent: str,
     message: Optional[str] = None,
     status: Optional[str] = None,
     emoji: Optional[str] = None,
-    agent: Optional[str] = None,
     meta: Optional[Dict[str, Any]] = None,
     timestamp_utc: Optional[str] = None,
     items: Optional[Any] = None,
@@ -192,6 +192,7 @@ async def append_event(
 
 @app.tool()
 async def open_bug(
+    agent: str,
     title: str,
     symptoms: str,
     affected_paths: Optional[list[str]] = None,
@@ -215,6 +216,7 @@ async def open_bug(
 
 @app.tool()
 async def open_security(
+    agent: str,
     title: str,
     symptoms: str,
     affected_paths: Optional[list[str]] = None,
@@ -238,6 +240,7 @@ async def open_security(
 
 @app.tool()
 async def link_fix(
+    agent: str,
     case_id: str,
     execution_id: str,
     artifact_ref: str,

@@ -22,24 +22,24 @@ from scribe_mcp.utils.slug import normalize_project_input
 
 @app.tool()
 async def delete_project(
+    agent: str,  # Agent identification (required)
     name: str,
     root: str,  # Required: repo root for safety (like set_project)
     mode: str = "archive",  # "archive" or "permanent"
     confirm: bool = False,  # Must explicitly confirm
     force: bool = False,    # Override safety checks
     archive_path: Optional[str] = None,  # Custom archive location
-    agent_id: Optional[str] = None,  # Agent identification
 ) -> Dict[str, Any]:
     """Delete or archive a project and all associated data.
 
     Args:
+        agent: Agent identification (required)
         name: Project name to delete
         root: Repository root path (required for safety, must match project's root)
         mode: "archive" (default) moves files to archive, "permanent" deletes everything
         confirm: Must be True to proceed with deletion
         force: Override safety checks (not recommended)
         archive_path: Custom archive directory (default: docs/archived_projects/)
-        agent_id: Agent identification (auto-detected if not provided)
 
     Returns:
         Dict with deletion status, details, and any warnings
@@ -59,19 +59,11 @@ async def delete_project(
             "errors": ["Project name cannot be empty or None"],
         }
 
-    # Auto-detect agent ID if not provided
-    if agent_id is None:
-        agent_identity = server_module.get_agent_identity()
-        if agent_identity:
-            agent_id = await agent_identity.get_or_create_agent_id()
-        else:
-            agent_id = "Scribe"  # Fallback
-
     # Update agent activity tracking
     agent_identity = server_module.get_agent_identity()
     if agent_identity:
         await agent_identity.update_agent_activity(
-            agent_id, "delete_project", {"project_name": name, "mode": mode}
+            agent, "delete_project", {"project_name": name, "mode": mode}
         )
 
     # Initialize response

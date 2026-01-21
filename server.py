@@ -349,8 +349,10 @@ if _MCP_AVAILABLE:
                     # For project mode, use transport_session_id (stable across tool calls)
                     scope_key = context_payload.get("transport_session_id") or context_payload.get("session_id") or str(uuid.uuid4())
 
-                # 3. Get agent_key from arguments
-                agent_key = arguments.get("agent") or "default"
+                # 3. Get agent_key from arguments - REQUIRED, no fallback
+                agent_key = arguments.get("agent")
+                if not agent_key:
+                    raise ValueError("agent parameter is required for all tool calls")
 
                 # 4. Construct identity string
                 identity = f"{repo_root}:{mode}:{scope_key}:{agent_key}"
