@@ -614,6 +614,15 @@ if _MCP_AVAILABLE:
                 raise ValueError(f"Tool '{name}' not allowed in project mode")
 
             token = router_context_manager.set_current(exec_context)
+
+            # Auto-inject cached project if not explicitly provided
+            if "project" not in arguments and "project_name" not in arguments:
+                cached_project = await router_context_manager.get_cached_project(
+                    exec_context.stable_session_id
+                )
+                if cached_project:
+                    arguments["project"] = cached_project
+
             try:
                 result = func(**arguments)
             except TypeError:

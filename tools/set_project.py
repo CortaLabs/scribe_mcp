@@ -511,6 +511,11 @@ async def set_project(
             if hasattr(backend, "set_session_project"):
                 # NO SILENT ERRORS - this is THE critical project binding!
                 await backend.set_session_project(session_key, name)
+                # Update in-memory cache for auto-injection
+                await server_module.router_context_manager.cache_project_binding(
+                    stable_session_id or session_key,
+                    name
+                )
                 # Debug: Log the session binding
                 from datetime import datetime, timezone
                 debug_log = Path("/tmp/scribe_session_debug.log")
