@@ -1,5 +1,5 @@
 {
-  "current_project": "default_project",
+  "current_project": "my_project",
   "projects": {
     "enhanced-rotation-test": {
       "name": "enhanced-rotation-test",
@@ -1633,49 +1633,49 @@
     },
     "my_project": {
       "name": "my_project",
-      "root": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo",
-      "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project",
+      "root": "/tmp/tmpk2hvlnc0",
+      "progress_log": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project",
       "docs": {
-        "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PHASE_PLAN.md",
-        "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/CHECKLIST.md",
-        "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
+        "architecture": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/CHECKLIST.md",
+        "progress_log": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
         "_hashes": {
           "baseline_hashes": {
-            "architecture": "2f643830",
-            "phase_plan": "18558818",
-            "checklist": "34f53b80"
+            "architecture": "e2d20225",
+            "phase_plan": "e5cd22b2",
+            "checklist": "565e606b"
           },
           "current_hashes": {
-            "architecture": "2f643830",
-            "phase_plan": "18558818",
-            "checklist": "34f53b80"
+            "architecture": "e2d20225",
+            "phase_plan": "e5cd22b2",
+            "checklist": "565e606b"
           }
         }
       },
       "defaults": {
-        "agent": "Scribe"
+        "agent": "TestAgent"
       },
-      "author": "Scribe",
+      "author": "TestAgent",
       "description": null,
       "tags": [],
       "meta": {
         "docs": {
-          "architecture": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PHASE_PLAN.md",
-          "checklist": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/CHECKLIST.md",
-          "progress_log": "/tmp/pytest-of-austin/pytest-152/test_manage_docs_normalizes_mi0/test_repo/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
+          "architecture": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/PHASE_PLAN.md",
+          "checklist": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/CHECKLIST.md",
+          "progress_log": "/tmp/tmpk2hvlnc0/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md",
           "_hashes": {
             "baseline_hashes": {
-              "architecture": "2f643830",
-              "phase_plan": "18558818",
-              "checklist": "34f53b80"
+              "architecture": "e2d20225",
+              "phase_plan": "e5cd22b2",
+              "checklist": "565e606b"
             },
             "current_hashes": {
-              "architecture": "2f643830",
-              "phase_plan": "18558818",
-              "checklist": "34f53b80"
+              "architecture": "e2d20225",
+              "phase_plan": "e5cd22b2",
+              "checklist": "565e606b"
             }
           }
         }
@@ -1683,27 +1683,27 @@
     },
     "test_project": {
       "name": "test_project",
-      "root": "/tmp/tmpnrmx9kcp",
-      "progress_log": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md",
-      "docs_dir": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project",
+      "root": "/tmp/tmpvhvvth27",
+      "progress_log": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project",
       "docs": {
-        "architecture": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PHASE_PLAN.md",
-        "checklist": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/CHECKLIST.md",
-        "progress_log": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md"
+        "architecture": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/CHECKLIST.md",
+        "progress_log": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "Scribe"
+        "agent": "TestAgent"
       },
-      "author": "Scribe",
+      "author": "TestAgent",
       "description": "Updated description",
       "tags": [],
       "meta": {
         "docs": {
-          "architecture": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PHASE_PLAN.md",
-          "checklist": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/CHECKLIST.md",
-          "progress_log": "/tmp/tmpnrmx9kcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md"
+          "architecture": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/PHASE_PLAN.md",
+          "checklist": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/CHECKLIST.md",
+          "progress_log": "/tmp/tmpvhvvth27/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md"
         }
       }
     },
@@ -1806,18 +1806,126 @@
           }
         }
       }
+    },
+    "test_bug_001_rotation_137852006368720": {
+      "name": "test_bug_001_rotation_137852006368720",
+      "root": "/tmp/tmp228dw2op",
+      "progress_log": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720",
+      "docs": {
+        "architecture": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/PHASE_PLAN.md",
+        "checklist": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/CHECKLIST.md",
+        "progress_log": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "f5593db9",
+            "phase_plan": "e73fadf0",
+            "checklist": "19b04206"
+          },
+          "current_hashes": {
+            "architecture": "f5593db9",
+            "phase_plan": "e73fadf0",
+            "checklist": "19b04206"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "TestAgent"
+      },
+      "author": "TestAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/PHASE_PLAN.md",
+          "checklist": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/CHECKLIST.md",
+          "progress_log": "/tmp/tmp228dw2op/.scribe/docs/dev_plans/test_bug_001_rotation_137852006368720/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "f5593db9",
+              "phase_plan": "e73fadf0",
+              "checklist": "19b04206"
+            },
+            "current_hashes": {
+              "architecture": "f5593db9",
+              "phase_plan": "e73fadf0",
+              "checklist": "19b04206"
+            }
+          }
+        }
+      }
+    },
+    "test_bug_001_new_137852005143200": {
+      "name": "test_bug_001_new_137852005143200",
+      "root": "/tmp/tmpkbhb4tly",
+      "progress_log": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/PROGRESS_LOG.md",
+      "docs_dir": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200",
+      "docs": {
+        "architecture": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/PHASE_PLAN.md",
+        "checklist": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/CHECKLIST.md",
+        "progress_log": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "4e039f8a",
+            "phase_plan": "ee01f46f",
+            "checklist": "d47ed93e"
+          },
+          "current_hashes": {
+            "architecture": "4e039f8a",
+            "phase_plan": "ee01f46f",
+            "checklist": "d47ed93e"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "TestAgent"
+      },
+      "author": "TestAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/PHASE_PLAN.md",
+          "checklist": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/CHECKLIST.md",
+          "progress_log": "/tmp/tmpkbhb4tly/.scribe/docs/dev_plans/test_bug_001_new_137852005143200/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "4e039f8a",
+              "phase_plan": "ee01f46f",
+              "checklist": "d47ed93e"
+            },
+            "current_hashes": {
+              "architecture": "4e039f8a",
+              "phase_plan": "ee01f46f",
+              "checklist": "d47ed93e"
+            }
+          }
+        }
+      }
     }
   },
   "recent_projects": [
-    "default_project",
     "my_project",
-    "my_test_project",
     "test_project",
-    "enhanced-rotation-test"
+    "test_bug_001_new_137852005143200",
+    "test_bug_001_rotation_137852006368720",
+    "default_project"
   ],
   "session_projects": {},
   "session_modes": {},
   "recent_tools": [
+    {
+      "name": "set_project",
+      "ts": "2026-01-20 21:25:30 UTC"
+    },
+    {
+      "name": "generate_doc_templates",
+      "ts": "2026-01-20 21:25:30 UTC"
+    },
     {
       "name": "list_projects",
       "ts": "2026-01-19 08:49:49 UTC"
@@ -1825,14 +1933,6 @@
     {
       "name": "append_entry",
       "ts": "2026-01-19 08:49:21 UTC"
-    },
-    {
-      "name": "generate_doc_templates",
-      "ts": "2026-01-19 08:21:15 UTC"
-    },
-    {
-      "name": "set_project",
-      "ts": "2026-01-19 08:21:15 UTC"
     },
     {
       "name": "rotate_log",
@@ -1859,9 +1959,9 @@
       "ts": "2026-01-08 07:46:20 UTC"
     }
   ],
-  "last_activity_at": "2026-01-19 08:49:49 UTC",
-  "session_started_at": "2026-01-19 07:51:47 UTC",
-  "version": 490,
-  "last_updated_by": "Scribe",
-  "operation_timestamp": "2026-01-19 08:21:15 UTC"
+  "last_activity_at": "2026-01-20 21:25:30 UTC",
+  "session_started_at": "2026-01-20 21:24:40 UTC",
+  "version": 496,
+  "last_updated_by": "TestAgent",
+  "operation_timestamp": "2026-01-20 21:25:30 UTC"
 }

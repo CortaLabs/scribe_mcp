@@ -37,3 +37,4 @@ docs/bugs/*
 TOOL_LOG.*.*.md
 data/scribe_projects.db-shm
 data/scribe_projects.db-wal
+.scribe/state.json
