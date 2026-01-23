@@ -21,6 +21,7 @@ from scribe_mcp.storage.models import (
 from scribe_mcp.utils.time import format_utc, utcnow
 from scribe_mcp.utils.search import message_matches
 from scribe_mcp.utils.slug import normalize_project_input
+from scribe_mcp.storage.pool import SQLiteConnectionPool
 
 SQLITE_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MS = 5000
@@ -38,13 +39,18 @@ class SQLiteStorage(StorageBackend):
         self._init_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._initialised = False
+        self._pool: Optional[SQLiteConnectionPool] = None
 
     async def setup(self) -> None:
         await self._initialise()
+        # Initialize connection pool for reusable connections
+        self._pool = SQLiteConnectionPool(self._path, min_size=1, max_size=3)
 
-    async def close(self) -> None:  # pragma: no cover - nothing persistent to close
-        # Connections are short-lived; nothing to do.
-        return None
+    async def close(self) -> None:
+        """Close the connection pool and release all connections."""
+        if self._pool:
+            self._pool.close_all()
+            self._pool = None
 
     async def upsert_project(
         self,
@@ -1563,59 +1569,107 @@ class SQLiteStorage(StorageBackend):
         await asyncio.to_thread(self._ensure_index_sync, statement)
 
     def _ensure_index_sync(self, statement: str) -> None:
-        conn = self._connect()
-        try:
-            conn.execute(statement)
-            conn.commit()
-        finally:
-            conn.close()
+        # Use pool if available, otherwise fall back to direct connection
+        if self._pool:
+            conn = self._pool.acquire()
+            try:
+                conn.execute(statement)
+                conn.commit()
+            finally:
+                self._pool.release(conn)
+        else:
+            conn = self._connect()
+            try:
+                conn.execute(statement)
+                conn.commit()
+            finally:
+                conn.close()
 
     async def _execute(self, query: str, params: tuple[Any, ...]) -> None:
         await asyncio.to_thread(self._execute_sync, query, params)
 
     def _execute_sync(self, query: str, params: tuple[Any, ...]) -> None:
-        conn = self._connect()
-        try:
-            conn.execute(query, params)
-            conn.commit()
-        finally:
-            conn.close()
+        # Use pool if available, otherwise fall back to direct connection
+        if self._pool:
+            conn = self._pool.acquire()
+            try:
+                conn.execute(query, params)
+                conn.commit()
+            finally:
+                self._pool.release(conn)
+        else:
+            conn = self._connect()
+            try:
+                conn.execute(query, params)
+                conn.commit()
+            finally:
+                conn.close()
 
     async def _execute_many(self, statements: List[str]) -> None:
         await asyncio.to_thread(self._execute_many_sync, statements)
 
     def _execute_many_sync(self, statements: List[str]) -> None:
-        conn = self._connect()
-        try:
-            for statement in statements:
-                conn.execute(statement)
-            conn.commit()
-        finally:
-            conn.close()
+        # Use pool if available, otherwise fall back to direct connection
+        if self._pool:
+            conn = self._pool.acquire()
+            try:
+                for statement in statements:
+                    conn.execute(statement)
+                conn.commit()
+            finally:
+                self._pool.release(conn)
+        else:
+            conn = self._connect()
+            try:
+                for statement in statements:
+                    conn.execute(statement)
+                conn.commit()
+            finally:
+                conn.close()
 
     async def _fetchone(self, query: str, params: tuple[Any, ...]) -> Optional[sqlite3.Row]:
         return await asyncio.to_thread(self._fetchone_sync, query, params)
 
     def _fetchone_sync(self, query: str, params: tuple[Any, ...]) -> Optional[sqlite3.Row]:
-        conn = self._connect()
-        try:
-            cursor = conn.execute(query, params)
-            row = cursor.fetchone()
-            return row
-        finally:
-            conn.close()
+        # Use pool if available, otherwise fall back to direct connection
+        if self._pool:
+            conn = self._pool.acquire()
+            try:
+                cursor = conn.execute(query, params)
+                row = cursor.fetchone()
+                return row
+            finally:
+                self._pool.release(conn)
+        else:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(query, params)
+                row = cursor.fetchone()
+                return row
+            finally:
+                conn.close()
 
     async def _fetchall(self, query: str, params: tuple[Any, ...] | tuple = ()) -> List[sqlite3.Row]:
         return await asyncio.to_thread(self._fetchall_sync, query, params)
 
     def _fetchall_sync(self, query: str, params: tuple[Any, ...] | tuple = ()) -> List[sqlite3.Row]:
-        conn = self._connect()
-        try:
-            cursor = conn.execute(query, params)
-            rows = cursor.fetchall()
-            return rows
-        finally:
-            conn.close()
+        # Use pool if available, otherwise fall back to direct connection
+        if self._pool:
+            conn = self._pool.acquire()
+            try:
+                cursor = conn.execute(query, params)
+                rows = cursor.fetchall()
+                return rows
+            finally:
+                self._pool.release(conn)
+        else:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(query, params)
+                rows = cursor.fetchall()
+                return rows
+            finally:
+                conn.close()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
