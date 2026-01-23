@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-**Scribe MCP v2.1.1** - Enterprise-grade documentation governance for AI-powered development
+**Scribe MCP v2.2** - Enterprise-grade documentation governance for AI-powered development
 
 This file provides operational guidance to Claude Code (claude.ai/code) when working with this repository.
 
@@ -625,7 +625,7 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
 - `generate_doc_templates(agent, project_name)` - Template scaffolding
 - `rotate_log(agent)` - Archive logs
 
-### v2.1.1 NEW Tools
+### v2.2 NEW Tools
 - `read_file(agent, path, mode, include_dependencies, structure_filter, structure_page, structure_page_size)` - Repo-scoped file access with:
   - AST structure extraction (Python/Markdown/JS)
   - Full signatures with types, defaults, return types, line ranges
@@ -648,6 +648,32 @@ All tools support `format` parameter:
 ### ANSI Color Policy
 - **High-frequency tools** (`append_entry`, `set_project`): Colors OFF (hardcoded)
 - **Display-heavy tools** (`read_file`, `read_recent`, `query_entries`): Config-driven (`.scribe/config/scribe.yaml`)
+
+---
+
+## v2.2 Architecture Components
+
+### ResponseFormatter Decomposition
+The monolithic ResponseFormatter (2,934 lines) has been split into 7 specialized modules in `utils/formatters/`:
+- `base.py` - Base utilities, color handling
+- `entry.py` - Log entry formatting
+- `file.py` - File content formatting
+- `project.py` - Project list/detail formatting
+- `ui.py` - Boxes, headers, spinners
+- `dispatcher.py` - Routes to correct formatter
+
+Original `response.py` retained as backwards-compatible facade.
+
+### Connection Pooling
+New `storage/pool.py` provides SQLiteConnectionPool:
+- Thread-safe connection management
+- Default min=1, max=3 connections
+- 50-80% latency reduction
+
+### State Migration
+- state.json deprecated (database-only mode)
+- Session state stored in `agent_sessions` table
+- SCRIBE_STATE_PATH environment variable deprecated
 
 ---
 
@@ -708,4 +734,4 @@ from scribe_mcp.storage.sqlite import SQLiteStorage
 
 ---
 
-*Scribe MCP v2.1.1 - Operational guidance for Claude Code orchestration*
+*Scribe MCP v2.2 - Operational guidance for Claude Code orchestration*

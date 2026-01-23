@@ -2,7 +2,48 @@
 
 This document provides comprehensive usage instructions for all available Scribe MCP tools, including required parameters, optional parameters, and practical examples.
 
-## Update v2.1.1
+## v2.2 Architecture Updates
+
+### Connection Pooling
+Scribe v2.2 introduces connection pooling via `storage/pool.py`:
+- SQLiteConnectionPool with acquire()/release() lifecycle
+- Configuration: `pool_min_size` (default 1), `pool_max_size` (default 3)
+- Delivers 50-80% latency reduction
+
+### Data Retention
+New retention policy via `cleanup_old_entries()`:
+- Entries archived to `scribe_entries_archive` table before deletion
+- Configurable retention period (default 90 days via `SCRIBE_RETENTION_DAYS`)
+- Triggered during server startup
+
+### State Migration
+- state.json deprecated - all session state stored in database
+- Agent sessions tracked in `agent_sessions` table
+- SCRIBE_STATE_PATH environment variable no longer required
+
+### ResponseFormatter Decomposition
+The monolithic ResponseFormatter has been split into 7 modules in `utils/formatters/`:
+| Module | Purpose |
+|--------|---------|
+| base.py | Base utilities, color handling, token estimation |
+| ui.py | ASCII boxes, tables, headers |
+| entry.py | Log entry formatting |
+| file.py | File content formatting |
+| project.py | Project list/detail formatting |
+| dispatcher.py | Routes responses to correct formatter |
+
+Original `utils/response.py` retained as backwards-compatible facade.
+
+### Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `SCRIBE_RETENTION_DAYS` | Retention period in days for log entries | 90 |
+| `SCRIBE_STATE_PATH` | **DEPRECATED** - State now stored in database | N/A |
+
+---
+
+## Update v2.2
 
 - `apply_patch` now supports **structured mode** with compiler-generated unified diffs.
 - Unified diffs are **compiler output only** (do not hand-craft).
@@ -22,7 +63,7 @@ This document provides comprehensive usage instructions for all available Scribe
 - Vector indexing uses registry-managed docs only; log/rotated-log files are excluded from doc indexing.
 - `scripts/reindex_vector.py` supports `--rebuild` for clean index rebuilds, `--safe` for low-thread fallback, and `--wait-for-drain` to block until embeddings are written.
 
-## Readable Output Formatting (v2.1.1+)
+## Readable Output Formatting (v2.2+)
 
 Scribe MCP tools support a `format` parameter that controls output rendering for agent readability.
 

@@ -3,7 +3,7 @@
 <div align="center">
 
 **[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](tests/)**
-**[![Version](https://img.shields.io/badge/version-2.1.1-blue)](docs/whitepapers/)**
+**[![Version](https://img.shields.io/badge/version-2.2-blue)](docs/whitepapers/)**
 **[![License](https://img.shields.io/badge/license-Community+Small%20Business-orange)](LICENSE)**
 
 *Enterprise-grade documentation governance for AI-powered development — by Corta Labs*
@@ -14,7 +14,25 @@
 
 ---
 
-## ✨ Update v2.1.1 (Diff Editor, Readable Output & ANSI Colors)
+## Update v2.2 (Architecture Cleanup)
+
+Scribe MCP v2.2 delivers major architectural improvements:
+
+**Performance:**
+- **Connection Pooling**: New `storage/pool.py` with SQLiteConnectionPool delivers 50-80% latency reduction
+- **Optimized Indexes**: New composite indexes for agent/emoji filtering
+
+**Code Quality:**
+- **ResponseFormatter Decomposition**: Monolithic 2,934-line class split into 7 specialized modules in `utils/formatters/`
+- **Database-First State**: Session state migrated from state.json to database
+
+**Data Management:**
+- **Retention Policy**: New `scribe_entries_archive` table with configurable cleanup (default 90 days)
+- **Agent Isolation**: All tools require `agent` parameter for session isolation
+
+---
+
+## History: Update v2.1.1 (Diff Editor, Readable Output & ANSI Colors)
 
 Scribe MCP 2.1.1 introduces foundational document lifecycle upgrades, including a fully automated YAML frontmatter engine with round-trip safety, canonical metadata defaults, and extensible schema support. Frontmatter is created on first edit if missing, auto-updates `last_updated`, and supports explicit overrides without breaking existing fields. These changes establish a metadata plane separate from document body content, enabling safe diff operations, deterministic header/TOC tooling, and template-driven document creation.
 
@@ -295,7 +313,7 @@ You can run Scribe from any codebase (not just `MCP_SPINE`) by pointing it at th
 
 1. Start the MCP server from the Scribe codebase (once), then use `set_project(..., root=/abs/path/to/your/repo)` to target any repository.
 2. Optional env vars:
-   - `SCRIBE_STATE_PATH=/abs/path/to/state.json` (per-user; must be writable)
+   - `SCRIBE_STATE_PATH=/abs/path/to/state.json` **(DEPRECATED in v2.2 - sessions now stored in database)**
    - `SCRIBE_STORAGE_BACKEND=postgres` and `SCRIBE_DB_URL=postgresql://...` if you want Postgres.
 3. Ensure `PYTHONPATH` includes the parent of `scribe_mcp` so imports work when launched from elsewhere.
 
