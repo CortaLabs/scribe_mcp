@@ -378,3 +378,23 @@ class StorageBackend(ABC):
     @abstractmethod
     async def delete_bridge(self, bridge_id: str) -> None:
         """Delete bridge record."""
+
+    # Data retention policy methods (Phase 4)
+    @abstractmethod
+    async def cleanup_old_entries(
+        self,
+        project_id: Optional[int] = None,
+        retention_days: int = 90,
+        archive: bool = True,
+    ) -> int:
+        """Remove old entries, optionally archiving first.
+
+        Args:
+            project_id: Optional project ID to filter by (None = all projects)
+            retention_days: Delete entries older than this many days (default: 90)
+            archive: If True, copy entries to archive table before deletion (default: True)
+
+        Returns:
+            Number of entries deleted
+        """
+        ...

@@ -673,6 +673,14 @@ async def _startup() -> None:
     if storage_backend:
         await storage_backend.setup()
 
+        # Cleanup old entries (>retention_days) after database initialization
+        try:
+            deleted = await storage_backend.cleanup_old_entries(retention_days=settings.retention_days)
+            if deleted > 0:
+                print(f"🗑️  Cleaned up {deleted} old log entries (>{settings.retention_days} days)")
+        except Exception as e:
+            print(f"⚠️  Entry cleanup failed (non-fatal): {e}")
+
     # Initialize plugins for the current repository
     try:
         from scribe_mcp.config.repo_config import RepoConfig

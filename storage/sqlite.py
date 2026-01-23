@@ -1268,6 +1268,32 @@ class SQLiteStorage(StorageBackend):
                     """
                     CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at);
                     """,
+                    # Phase 4: Data Retention Policy - Archive table for audit trail
+                    """
+                    CREATE TABLE IF NOT EXISTS scribe_entries_archive (
+                        id TEXT PRIMARY KEY,
+                        project_id INTEGER,
+                        ts TEXT,
+                        ts_iso TEXT,
+                        emoji TEXT,
+                        agent TEXT,
+                        message TEXT,
+                        meta TEXT,
+                        raw_line TEXT,
+                        sha256 TEXT,
+                        log_type TEXT,
+                        priority TEXT,
+                        category TEXT,
+                        confidence REAL,
+                        archived_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_archive_project_ts ON scribe_entries_archive(project_id, ts_iso DESC);
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON scribe_entries_archive(archived_at DESC);
+                    """,
                 ]
             )
             # Ensure legacy databases have the newer scribe_projects columns
@@ -2787,3 +2813,73 @@ class SQLiteStorage(StorageBackend):
             """,
             (bridge_id,)
         )
+
+    # Data retention policy methods (Phase 4)
+    async def cleanup_old_entries(
+        self,
+        project_id: Optional[int] = None,
+        retention_days: int = 90,
+        archive: bool = True,
+    ) -> int:
+        """Remove old entries, optionally archiving first.
+
+        Implements archive-then-delete pattern for data retention policy.
+        Entries older than retention_days are optionally copied to
+        scribe_entries_archive before being deleted from scribe_entries.
+
+        Args:
+            project_id: Optional project ID to filter by (None = all projects)
+            retention_days: Delete entries older than this many days (default: 90)
+            archive: If True, copy entries to archive table before deletion (default: True)
+
+        Returns:
+            Number of entries deleted
+        """
+        await self._initialise()
+
+        # Calculate cutoff date
+        from datetime import datetime, timedelta
+        cutoff_date = (datetime.utcnow() - timedelta(days=retention_days)).isoformat()
+
+        # Build WHERE clause based on project_id filter
+        if project_id is not None:
+            where_clause = "WHERE ts_iso < ? AND project_id = ?"
+            params: tuple = (cutoff_date, project_id)
+        else:
+            where_clause = "WHERE ts_iso < ?"
+            params = (cutoff_date,)
+
+        async with self._write_lock:
+            if archive:
+                # Archive entries before deletion
+                await self._execute(
+                    f"""
+                    INSERT OR IGNORE INTO scribe_entries_archive
+                        (id, project_id, ts, ts_iso, emoji, agent, message, meta,
+                         raw_line, sha256, log_type, priority, category, confidence)
+                    SELECT
+                        id, project_id, ts, ts_iso, emoji, agent, message, meta,
+                        raw_line, sha256, log_type, priority, category, confidence
+                    FROM scribe_entries
+                    {where_clause}
+                    """,
+                    params,
+                )
+
+            # Delete old entries and get count
+            row = await self._fetchone(
+                f"""
+                SELECT COUNT(*) as count FROM scribe_entries {where_clause}
+                """,
+                params,
+            )
+            count = row["count"] if row else 0
+
+            await self._execute(
+                f"""
+                DELETE FROM scribe_entries {where_clause}
+                """,
+                params,
+            )
+
+        return count

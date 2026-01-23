@@ -47,6 +47,7 @@ class Settings:
     log_rate_limit_window: int
     log_max_bytes: int
     storage_timeout_seconds: float
+    retention_days: int
     reminder_defaults: Dict[str, Any]
     reminder_idle_minutes: int
     reminder_warmup_minutes: int
@@ -115,6 +116,7 @@ class Settings:
         log_rate_limit_window = max(0, _int_env("SCRIBE_LOG_RATE_LIMIT_WINDOW", 60))
         log_max_bytes = max(0, _int_env("SCRIBE_LOG_MAX_BYTES", 512 * 1024))
         storage_timeout_seconds = max(0.1, float(os.environ.get("SCRIBE_STORAGE_TIMEOUT_SECONDS", "5")))
+        retention_days = max(1, _int_env("SCRIBE_RETENTION_DAYS", 90))
         reminder_defaults = _load_env_json("SCRIBE_REMINDER_DEFAULTS")
         reminder_idle_minutes = max(1, _int_env("SCRIBE_REMINDER_IDLE_MINUTES", 45))
         reminder_warmup_minutes = max(0, _int_env("SCRIBE_REMINDER_WARMUP_MINUTES", 5))
@@ -186,6 +188,7 @@ class Settings:
             log_rate_limit_window=log_rate_limit_window,
             log_max_bytes=log_max_bytes,
             storage_timeout_seconds=storage_timeout_seconds,
+            retention_days=retention_days,
             reminder_defaults=reminder_defaults,
             reminder_idle_minutes=reminder_idle_minutes,
             reminder_warmup_minutes=reminder_warmup_minutes,
