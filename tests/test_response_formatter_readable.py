@@ -469,11 +469,22 @@ class TestFormatRouter:
     async def test_router_readable_format(self):
         """Test router returns string for readable format."""
         formatter = ResponseFormatter()
+        # Data format matches what read_file tool actually produces
         data = {
-            'content': 'Test content',
-            'path': '/test.txt',
-            'mode': 'chunk',
-            'start_line': 1
+            'ok': True,
+            'mode': 'line_range',
+            'scan': {
+                'repo_relative_path': 'test.txt',
+                'absolute_path': '/test.txt',
+                'line_count': 10,
+                'size_bytes': 100,
+                'encoding': 'utf-8',
+            },
+            'chunk': {
+                'content': 'Test content',
+                'line_start': 1,
+                'line_end': 1,
+            },
         }
 
         # Mock append_entry to avoid actual logging during test
@@ -489,7 +500,8 @@ class TestFormatRouter:
         assert isinstance(result, CallToolResult)
         assert len(result.content) == 1
         assert isinstance(result.content[0], TextContent)
-        assert "FILE CONTENT" in result.content[0].text
+        # Uses "READ FILE" header format
+        assert "READ FILE" in result.content[0].text or "test.txt" in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_router_structured_format(self):
@@ -526,11 +538,22 @@ class TestFormatRouter:
     async def test_router_default_format(self):
         """Test router defaults to readable format."""
         formatter = ResponseFormatter()
+        # Data format matches what read_file tool actually produces
         data = {
-            'content': 'Test',
-            'path': '/test.txt',
-            'mode': 'chunk',
-            'start_line': 1
+            'ok': True,
+            'mode': 'line_range',
+            'scan': {
+                'repo_relative_path': 'test.txt',
+                'absolute_path': '/test.txt',
+                'line_count': 10,
+                'size_bytes': 100,
+                'encoding': 'utf-8',
+            },
+            'chunk': {
+                'content': 'Test',
+                'line_start': 1,
+                'line_end': 1,
+            },
         }
 
         # No format parameter should default to readable

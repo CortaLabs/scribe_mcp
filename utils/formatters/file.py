@@ -1,314 +1,37 @@
-#!/usr/bin/env python3
-"""
-Response optimization utilities for token reduction.
+"""File content formatting for read_file tool responses.
 
-Provides compact/full response formatting, field selection,
-and token estimation capabilities.
+Phase 5 Task 5.3: Extracted from ResponseFormatter.format_readable_file_content.
+Handles formatting of file content, structure analysis, dependencies, and metadata.
 """
 
-from typing import Dict, List, Any, Optional, Union
-from dataclasses import dataclass
-import json
-from datetime import datetime
-from pathlib import Path
 import os
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
-# Import token estimator for accurate token counting
-try:
-    from .tokens import token_estimator
-except ImportError:
-    # Fallback if tokens module not available
-    token_estimator = None
-
-# Import estimation utilities
-from .estimator import PaginationInfo, PaginationCalculator, TokenEstimator
-
-# Import formatters (Phase 5 modularization)
-# Task 5.1: UI formatter
-from .formatters.ui import UIFormatter, format_header, add_tip
-# Task 5.2: Base formatter utilities
-from .formatters.base import (
-    BaseFormatter,
-    get_use_ansi_colors,
-    create_pagination_info as _create_pagination_info_base,
-    format_compact_json as _format_compact_json_base,
-)
-# Task 5.3: File formatter
-from .formatters.file import FileFormatter
-# Task 5.4: Entry formatter
-from .formatters.entry import EntryFormatter
-# Task 5.5: Project formatter
-from .formatters.project import ProjectFormatter
-# Task 5.6: Dispatcher (central router for finalize_tool_response)
-from .formatters.dispatcher import FormatterDispatcher
-
-# PaginationInfo is now imported from estimator utilities
-
-# MCP types for CallToolResult (Issue #9962 fix)
-# When we return CallToolResult with TextContent only (no structuredContent),
-# Claude Code displays text cleanly with actual newlines instead of escaped \n
-try:
-    from mcp.types import CallToolResult, TextContent
-    MCP_TYPES_AVAILABLE = True
-except ImportError:
-    # Fallback for environments without MCP SDK
-    CallToolResult = None
-    TextContent = None
-    MCP_TYPES_AVAILABLE = False
+from .base import BaseFormatter
+from .ui import UIFormatter
 
 
-# _get_use_ansi_colors now delegates to base module (Phase 5 Task 5.2)
-def _get_use_ansi_colors() -> bool:
+class FileFormatter(BaseFormatter):
+    """Formats file content, structure, and search results.
+
+    Extracted from ResponseFormatter.format_readable_file_content.
+    Handles multiple modes: scan_only, chunk, page, line_range, search.
     """
-    Get ANSI color setting from repo config.
-
-    Delegates to formatters.base.get_use_ansi_colors().
-    Phase 1.5/1.6: Load use_ansi_colors from .scribe/config/scribe.yaml
-    Falls back to True (colors enabled by default) if config unavailable.
-    """
-    return get_use_ansi_colors()
-
-
-class ResponseFormatter:
-    """Handles response formatting with compact/full modes and field selection."""
-
-    # Format constants (Phase 0)
-    FORMAT_READABLE = "readable"
-    FORMAT_STRUCTURED = "structured"
-    FORMAT_COMPACT = "compact"
-    FORMAT_BOTH = "both"  # TextContent + structuredContent (for when Issue #9962 is fixed)
-
-    # ANSI color codes for enhanced readability in Claude Code
-    ANSI_CYAN = "\033[36m"
-    ANSI_GREEN = "\033[32m"
-    ANSI_YELLOW = "\033[33m"
-    ANSI_BLUE = "\033[34m"
-    ANSI_MAGENTA = "\033[35m"
-    ANSI_BOLD = "\033[1m"
-    ANSI_DIM = "\033[2m"
-    ANSI_RESET = "\033[0m"
-
-    @property
-    def USE_COLORS(self) -> bool:
-        """
-        Check if ANSI colors are enabled via repo config.
-
-        Phase 1.5/1.6: Colors loaded from .scribe/config/scribe.yaml
-        (use_ansi_colors setting). Enabled by default.
-        """
-        return _get_use_ansi_colors()
-
-    # Compact field mappings (short aliases for common fields)
-    COMPACT_FIELD_MAP = {
-        "id": "i",
-        "message": "m",
-        "timestamp": "t",
-        "ts": "t",
-        "emoji": "e",
-        "agent": "a",
-        "meta": "mt",
-        "status": "s",
-        "raw_line": "r"
-    }
-
-    # Default fields for compact mode
-    COMPACT_DEFAULT_FIELDS = ["id", "message", "timestamp", "emoji", "agent"]
 
     def __init__(self, token_warning_threshold: int = 4000):
-        self.token_warning_threshold = token_warning_threshold
-        self._token_estimator = TokenEstimator()
-        # UIFormatter instance for delegating UI methods (Phase 5 Task 5.1)
-        self._ui = UIFormatter(use_colors=self.USE_COLORS)
-        # BaseFormatter instance for delegating base methods (Phase 5 Task 5.2)
-        self._base = BaseFormatter(token_warning_threshold)
-        # FileFormatter instance for delegating file content methods (Phase 5 Task 5.3)
-        self._file = FileFormatter(token_warning_threshold)
-        # EntryFormatter instance for delegating entry methods (Phase 5 Task 5.4)
-        self._entry = EntryFormatter(token_warning_threshold)
-        # ProjectFormatter instance for delegating project methods (Phase 5 Task 5.5)
-        self._project = ProjectFormatter(token_warning_threshold)
-        # FormatterDispatcher instance for delegating finalize_tool_response (Phase 5 Task 5.6)
-        # Pass existing formatters to dispatcher for consistent behavior
-        self._dispatcher = FormatterDispatcher(
-            token_warning_threshold=token_warning_threshold,
-            base_formatter=self._base,
-            ui_formatter=self._ui,
-            file_formatter=self._file,
-            entry_formatter=self._entry,
-            project_formatter=self._project,
-        )
-
-    def estimate_tokens(self, data: Union[Dict, List, str]) -> int:
-        """
-        Estimate token count for response data using TokenEstimator.
-        """
-        return self._token_estimator.estimate_tokens(data)
-
-    def format_entry(self, entry: Dict[str, Any], compact: bool = False,
-                    fields: Optional[List[str]] = None,
-                    include_metadata: bool = True) -> Dict[str, Any]:
-        """
-        Format a single log entry based on requested format.
-
-        Delegates to EntryFormatter.format_entry() (Phase 5 Task 5.4).
+        """Initialize FileFormatter.
 
         Args:
-            entry: Raw entry data from storage
-            compact: Use compact format with short field names
-            fields: Specific fields to include (None = all fields)
-            include_metadata: Whether to include metadata field
+            token_warning_threshold: Token count that triggers warnings
         """
-        return self._entry.format_entry(entry, compact, fields, include_metadata)
-
-    def _format_full_entry(self, entry: Dict[str, Any], fields: Optional[List[str]],
-                          include_metadata: bool) -> Dict[str, Any]:
-        """
-        Format entry in full format with optional field selection.
-
-        Delegates to EntryFormatter._format_full_entry() (Phase 5 Task 5.4).
-        """
-        return self._entry._format_full_entry(entry, fields, include_metadata)
-
-    def _format_compact_entry(self, entry: Dict[str, Any], fields: Optional[List[str]],
-                            include_metadata: bool) -> Dict[str, Any]:
-        """
-        Format entry in compact format with short field names.
-
-        Delegates to EntryFormatter._format_compact_entry() (Phase 5 Task 5.4).
-        """
-        return self._entry._format_compact_entry(entry, fields, include_metadata)
-
-    def format_response(self, entries: List[Dict[str, Any]],
-                       compact: bool = False,
-                       fields: Optional[List[str]] = None,
-                       include_metadata: bool = True,
-                       pagination: Optional[PaginationInfo] = None,
-                       extra_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Format a complete response with entries and metadata.
-
-        Delegates to EntryFormatter.format_response() (Phase 5 Task 5.4).
-
-        Args:
-            entries: List of log entries
-            compact: Use compact format
-            fields: Field selection
-            include_metadata: Include metadata in entries
-            pagination: Pagination information
-            extra_data: Additional response data (reminders, etc.)
-        """
-        return self._entry.format_response(entries, compact, fields, include_metadata, pagination, extra_data)
-
-    # ==================== Phase 0: Readable Format Helper Methods ====================
-
-    def _add_line_numbers(self, content: str, start: int = 1) -> str:
-        """
-        Add line numbers to content with optional green coloring.
-
-        Format: "     1. Line content" (with green line numbers if colors enabled)
-
-        Args:
-            content: Text content to number
-            start: Starting line number (default: 1)
-
-        Returns:
-            Line-numbered string with consistent padding
-
-        Note:
-            Delegates to UIFormatter.add_line_numbers (Phase 5 Task 5.1)
-        """
-        # Ensure UIFormatter has current color setting
-        self._ui.use_colors = self.USE_COLORS
-        return self._ui.add_line_numbers(content, start)
-
-    def _create_header_box(self, title: str, metadata: Dict[str, Any]) -> str:
-        """
-        Create ASCII box header with title and metadata.
-
-        Format:
-        ╔══════════════════════════════════════════════════════════╗
-        ║ TITLE                                                    ║
-        ╟──────────────────────────────────────────────────────────╢
-        ║ key1: value1                                             ║
-        ║ key2: value2                                             ║
-        ╚══════════════════════════════════════════════════════════╝
-
-        Args:
-            title: Header title text
-            metadata: Dictionary of metadata key-value pairs
-
-        Returns:
-            Formatted ASCII box as string
-
-        Note:
-            Delegates to UIFormatter.create_header_box (Phase 5 Task 5.1)
-        """
-        # Ensure UIFormatter has current color setting
-        self._ui.use_colors = self.USE_COLORS
-        return self._ui.create_header_box(title, metadata)
-
-    def _create_footer_box(self, audit_data: Dict[str, Any],
-                           reminders: Optional[List[Dict]] = None) -> str:
-        """
-        Create ASCII box footer with audit data and optional reminders.
-
-        Format:
-        ╔══════════════════════════════════════════════════════════╗
-        ║ METADATA                                                 ║
-        ╟──────────────────────────────────────────────────────────╢
-        ║ audit_key1: value1                                       ║
-        ║ audit_key2: value2                                       ║
-        ╟──────────────────────────────────────────────────────────╢
-        ║ REMINDERS                                                ║
-        ║ • Reminder 1                                             ║
-        ║ • Reminder 2                                             ║
-        ╚══════════════════════════════════════════════════════════╝
-
-        Args:
-            audit_data: Dictionary of audit/metadata
-            reminders: Optional list of reminder dictionaries
-
-        Returns:
-            Formatted ASCII box as string
-
-        Note:
-            Delegates to UIFormatter.create_footer_box (Phase 5 Task 5.1)
-        """
-        # Ensure UIFormatter has current color setting
-        self._ui.use_colors = self.USE_COLORS
-        return self._ui.create_footer_box(audit_data, reminders)
-
-    def _format_table(self, headers: List[str], rows: List[List[str]]) -> str:
-        """
-        Create aligned ASCII table.
-
-        Format:
-        ┌──────────┬──────────┬──────────┐
-        │ Header1  │ Header2  │ Header3  │
-        ├──────────┼──────────┼──────────┤
-        │ value1   │ value2   │ value3   │
-        │ value4   │ value5   │ value6   │
-        └──────────┴──────────┴──────────┘
-
-        Args:
-            headers: List of column headers
-            rows: List of row data (each row is list of strings)
-
-        Returns:
-            Formatted ASCII table as string
-
-        Note:
-            Delegates to UIFormatter.format_table (Phase 5 Task 5.1)
-        """
-        return self._ui.format_table(headers, rows)
-
-    # ==================== Phase 0: Core Formatting Methods ====================
+        super().__init__(token_warning_threshold)
+        self._ui = UIFormatter(token_warning_threshold=token_warning_threshold)
 
     def format_readable_file_content(self, data: Dict[str, Any]) -> str:
         """
         Format read_file output in readable format with simple header, content first, metadata at bottom.
-
-        Delegates to FileFormatter (Phase 5 Task 5.3).
 
         Args:
             data: read_file response with 'scan', 'chunks', 'chunk', etc.
@@ -316,20 +39,12 @@ class ResponseFormatter:
         Returns:
             Formatted string with one-line header, line-numbered content, metadata footer
         """
-        return self._file.format_readable_file_content(data)
-
-    def _format_readable_file_content_DEPRECATED(self, data: Dict[str, Any]) -> str:
-        """
-        DEPRECATED: Original implementation kept for reference during Phase 5 migration.
-        Use format_readable_file_content() which delegates to FileFormatter.
-        """
         # Extract scan metadata
         scan = data.get('scan', {})
         path = scan.get('repo_relative_path') or scan.get('absolute_path', 'unknown')
         mode = data.get('mode', 'unknown')
 
         # Get filename from path
-        import os
         filename = os.path.basename(path)
 
         # Extract content based on mode and determine line range
@@ -385,7 +100,7 @@ class ResponseFormatter:
 
         # CONTENT FIRST (with line numbers)
         if mode != 'scan_only' and content != '[no matches found]':
-            parts.append(self._add_line_numbers(content, start_line))
+            parts.append(self._ui.add_line_numbers(content, start_line))
         else:
             parts.append(content)
 
@@ -477,10 +192,10 @@ class ResponseFormatter:
 
                     for cls in paginated_classes:
                         # Format class header with line range
-                        start_line = cls['line']
-                        end_line = cls.get('end_line', start_line)
-                        line_count = end_line - start_line + 1
-                        line_info = f"lines {start_line}-{end_line} ({line_count} lines)" if end_line > start_line else f"line {start_line}"
+                        cls_start_line = cls['line']
+                        cls_end_line = cls.get('end_line', cls_start_line)
+                        line_count = cls_end_line - cls_start_line + 1
+                        line_info = f"lines {cls_start_line}-{cls_end_line} ({line_count} lines)" if cls_end_line > cls_start_line else f"line {cls_start_line}"
                         parts.append(f"    • class {cls['name']} at {line_info}")
 
                         # Show methods if available (with pagination)
@@ -644,7 +359,6 @@ class ResponseFormatter:
 
                 if has_resolution:
                     # Group imports by type
-                    from collections import defaultdict
                     grouped = defaultdict(list)
                     for imp in imports:
                         import_type = imp.get('import_type', 'unresolved')
@@ -919,146 +633,11 @@ class ResponseFormatter:
 
         return '\n'.join(parts)
 
-    def format_readable_log_entries(self, entries: List[Dict], pagination: Dict, search_context: Optional[Dict] = None, project_name: Optional[str] = None) -> str:
-        """
-        Format log entries in readable format with reasoning blocks.
-
-        Delegates to EntryFormatter.format_readable_log_entries() (Phase 5 Task 5.4).
-
-        Phase 3a enhancements:
-        - Parse and display meta.reasoning blocks as tree structure
-        - Smarter message truncation with word boundaries
-        - Compact timestamp format (HH:MM)
-        - Better pagination display (Page X of Y)
-        - ANSI colors enabled (config-driven, display-heavy tool)
-
-        Phase 3b enhancements:
-        - Optional search_context for query_entries (shows filters in header)
-        - Different header for search results vs recent entries
-
-        Args:
-            entries: List of log entry dicts
-            pagination: Pagination metadata
-            search_context: Optional search filter context (for query_entries)
-
-        Returns:
-            Formatted string with header box, entries with reasoning, footer
-        """
-        return self._entry.format_readable_log_entries(entries, pagination, search_context, project_name)
-
-    def _truncate_message_smart(self, message: str, max_length: int = 100) -> str:
-        """
-        Truncate message at word boundary for better readability.
-
-        Delegates to EntryFormatter._truncate_message_smart() (Phase 5 Task 5.4).
-
-        Args:
-            message: Message to truncate
-            max_length: Maximum length before truncation
-
-        Returns:
-            Truncated message with ellipsis or original if short enough
-        """
-        return self._entry._truncate_message_smart(message, max_length)
-
-    def format_readable_projects(self, projects: List[Dict], active: Optional[str] = None) -> str:
-        """
-        Format list_projects output in readable format.
-
-        Delegates to ProjectFormatter.format_readable_projects() (Phase 5 Task 5.5).
-
-        Args:
-            projects: List of project dicts
-            active: Name of active project (if any)
-
-        Returns:
-            Formatted string with header box, project table, footer
-        """
-        return self._project.format_readable_projects(projects, active)
-
-    def format_readable_confirmation(self, operation: str, data: Dict[str, Any]) -> str:
-        """
-        Format operation confirmations (append_entry, etc) in readable format.
-
-        Delegates to ProjectFormatter.format_readable_confirmation() (Phase 5 Task 5.5).
-
-        Args:
-            operation: Operation name (e.g., "append_entry")
-            data: Operation result data
-
-        Returns:
-            Formatted confirmation string
-        """
-        return self._project.format_readable_confirmation(operation, data)
-
-    def format_readable_error(self, error: str, context: Dict[str, Any]) -> str:
-        """
-        Format error messages in readable format.
-
-        Args:
-            error: Error message
-            context: Error context data
-
-        Returns:
-            Formatted error string
-        """
-        # Build header
-        header_meta = {
-            'status': 'ERROR',
-            'type': context.get('error_type', 'unknown')
-        }
-
-        parts = []
-        parts.append(self._create_header_box("ERROR", header_meta))
-        parts.append("")
-        parts.append(f"❌ {error}")
-        parts.append("")
-
-        # Add context if available
-        if context:
-            footer_meta = {k: v for k, v in context.items() if k != 'error_type'}
-            parts.append(self._create_footer_box(footer_meta))
-
-        return '\n'.join(parts)
-
-    def _parse_reasoning_block(self, meta: Dict[str, Any]) -> Optional[Dict[str, str]]:
-        """
-        Parse reasoning block from meta.reasoning field.
-
-        Delegates to EntryFormatter._parse_reasoning_block() (Phase 5 Task 5.4).
-
-        Args:
-            meta: Metadata dictionary that may contain reasoning field
-
-        Returns:
-            Dictionary with why/what/how keys or None if not parseable
-        """
-        return self._entry._parse_reasoning_block(meta)
-
-    def _format_relative_time(self, timestamp: str) -> str:
-        """
-        Convert timestamp to relative time string.
-
-        Delegates to BaseFormatter.format_relative_time() (Phase 5 Task 5.2).
-
-        Examples:
-            "2026-01-03T08:15:30Z" -> "2 hours ago" (if now is 10:15)
-            "2026-01-02T10:00:00Z" -> "1 day ago"
-            "2025-12-20T14:30:00Z" -> "2 weeks ago"
-
-        Args:
-            timestamp: ISO 8601 timestamp string (UTC)
-
-        Returns:
-            Relative time string or original timestamp if parsing fails
-        """
-        return self._base.format_relative_time(timestamp)
-
     def _get_doc_line_count(self, file_path: Union[str, Path]) -> int:
         """
         Get line count for a file using efficient method.
 
-        Delegates to FileFormatter (Phase 5 Task 5.3).
+        Uses stat-based approach when possible, falls back to line counting.
 
         Args:
             file_path: Absolute or relative path to file
@@ -1066,300 +645,70 @@ class ResponseFormatter:
         Returns:
             Number of lines in file, or 0 if file doesn't exist
         """
-        return self._file._get_doc_line_count(file_path)
+        try:
+            # Convert to Path object
+            path = Path(file_path)
+
+            # Check if file exists
+            if not path.exists() or not path.is_file():
+                return 0
+
+            # Efficient line counting
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                return sum(1 for _ in f)
+        except (OSError, PermissionError):
+            # Return 0 on any file access errors
+            return 0
 
     def _detect_custom_content(self, docs_dir: Union[str, Path]) -> Dict[str, Any]:
         """
         Detect custom documents in project dev plan directory.
 
-        Delegates to FileFormatter (Phase 5 Task 5.3).
+        Scans for:
+        - research/ directory and file count
+        - bugs/ directory (if present in dev plan)
+        - .jsonl files (TOOL_LOG.jsonl, etc.)
 
         Args:
             docs_dir: Path to project dev plan directory
                       (e.g., .scribe/docs/dev_plans/project_name/)
 
         Returns:
-            Dictionary with custom content info
+            Dictionary with custom content info:
+            {
+                "research_files": 3,
+                "bugs_present": False,
+                "jsonl_files": ["TOOL_LOG.jsonl"]
+            }
         """
-        return self._file._detect_custom_content(docs_dir)
-
-    def format_projects_table(
-        self,
-        projects: List[Dict[str, Any]],
-        active_name: Optional[str],
-        pagination: Dict[str, Any],
-        filters: Dict[str, Any]
-    ) -> str:
-        """
-        Format multiple projects as minimal table with pagination.
-
-        Delegates to ProjectFormatter.format_projects_table() (Phase 5 Task 5.5).
-
-        Used when filter results in 2+ projects.
-
-        Args:
-            projects: List of project dicts (from list_projects query)
-            active_name: Name of currently active project (for star marker)
-            pagination: Dict with page, page_size, total_count, total_pages
-            filters: Dict with name, status, tags, order_by, direction
-
-        Returns:
-            Formatted table string (~200 tokens)
-        """
-        return self._project.format_projects_table(projects, active_name, pagination, filters)
-
-    def format_project_detail(
-        self,
-        project: Dict[str, Any],
-        registry_info: Optional[Any],
-        docs_info: Dict[str, Any]
-    ) -> str:
-        """
-        Format single project with full details (deep dive).
-
-        Delegates to ProjectFormatter.format_project_detail() (Phase 5 Task 5.5).
-
-        Used when filter results in exactly 1 project.
-
-        Args:
-            project: Project dict from list_projects
-            registry_info: ProjectRecord from registry (or None)
-            docs_info: Dict with document information
-
-        Returns:
-            Formatted detail view string (~400 tokens)
-        """
-        return self._project.format_project_detail(project, registry_info, docs_info)
-
-    def format_no_projects_found(self, filters: Dict[str, Any]) -> str:
-        """
-        Format helpful empty state when no projects match filters.
-
-        Delegates to ProjectFormatter.format_no_projects_found() (Phase 5 Task 5.5).
-
-        Args:
-            filters: Dict with name, status, tags filter values
-
-        Returns:
-            Formatted empty state string (~100 tokens)
-        """
-        return self._project.format_no_projects_found(filters)
-
-    def format_project_context(
-        self,
-        project: Dict[str, Any],
-        recent_entries: List[Dict[str, Any]],
-        docs_info: Dict[str, Any],
-        activity: Dict[str, Any]
-    ) -> str:
-        """
-        Format current project context with recent activity.
-
-        Delegates to ProjectFormatter.format_project_context() (Phase 5 Task 5.5).
-
-        Shows "Where am I?" information: location, documents, recent work.
-
-        Args:
-            project: Project dict with name, root, progress_log
-            recent_entries: Last 1-5 progress log entries (COMPLETE, no truncation!)
-            docs_info: Dict with document information
-            activity: Dict with activity summary
-
-        Returns:
-            Formatted context string (~300 tokens with 1-5 recent entries)
-        """
-        return self._project.format_project_context(project, recent_entries, docs_info, activity)
-
-    def format_project_sitrep_new(
-        self,
-        project: Dict[str, Any],
-        docs_created: Dict[str, str]
-    ) -> str:
-        """
-        Format SITREP for newly created project.
-
-        Delegates to ProjectFormatter.format_project_sitrep_new() (Phase 5 Task 5.5).
-
-        Shows: location, created documents with template info, next steps.
-
-        Args:
-            project: Project dict with name, root, progress_log
-            docs_created: Dict mapping doc type to path
-
-        Returns:
-            Formatted SITREP string (~150 tokens)
-        """
-        return self._project.format_project_sitrep_new(project, docs_created)
-
-    def format_project_sitrep_existing(
-        self,
-        project: Dict[str, Any],
-        inventory: Dict[str, Any],
-        activity: Dict[str, Any]
-    ) -> str:
-        """
-        Format SITREP for existing project activation.
-
-        Delegates to ProjectFormatter.format_project_sitrep_existing() (Phase 5 Task 5.5).
-
-        Shows: location, inventory (docs + custom content), activity, warnings.
-
-        Args:
-            project: Project dict with name, root, progress_log
-            inventory: Dict with project inventory
-            activity: Dict with activity summary
-
-        Returns:
-            Formatted SITREP string (~250 tokens)
-        """
-        return self._project.format_project_sitrep_existing(project, inventory, activity)
-
-    def format_readable_append_entry(self, data: Dict[str, Any]) -> str:
-        """
-        Format append_entry output in concise readable format.
-
-        Delegates to EntryFormatter.format_readable_append_entry() (Phase 5 Task 5.4).
-
-        Design decisions (Phase 2 user-approved):
-        - NO ANSI COLORS for this tool (USE_COLORS hardcoded to False)
-        - Parse and display meta.reasoning block nicely
-        - Show reminders only if present (conditional)
-        - Single entry: Concise 4-5 line format
-        - Bulk entry: Summary format with samples
-
-        Args:
-            data: append_entry response data
-
-        Returns:
-            Formatted string with concise or summary format
-        """
-        return self._entry.format_readable_append_entry(data)
-
-    def _format_single_append_entry(self, data: Dict[str, Any], USE_COLORS: bool) -> str:
-        """
-        Format single append_entry in optimized readable format.
-
-        Delegates to EntryFormatter._format_single_append_entry() (Phase 5 Task 5.4).
-        """
-        return self._entry._format_single_append_entry(data, USE_COLORS)
-
-    def _format_bulk_append_entry(self, data: Dict[str, Any], USE_COLORS: bool) -> str:
-        """
-        Format bulk append_entry in summary format.
-
-        Delegates to EntryFormatter._format_bulk_append_entry() (Phase 5 Task 5.4).
-        """
-        return self._entry._format_bulk_append_entry(data, USE_COLORS)
-
-    def _extract_compact_log_line(self, full_line: str) -> str:
-        """
-        Extract compact version of log line for bulk display.
-
-        Delegates to EntryFormatter._extract_compact_log_line() (Phase 5 Task 5.4).
-
-        Args:
-            full_line: Full log line with all metadata
-
-        Returns:
-            Compact version with emoji + message + key metadata
-        """
-        return self._entry._extract_compact_log_line(full_line)
-
-    async def finalize_tool_response(
-        self,
-        data: Dict[str, Any],
-        format: str = "readable",  # NOTE: readable is DEFAULT
-        tool_name: str = ""
-    ) -> Union[Dict[str, Any], "CallToolResult"]:
-        """
-        CRITICAL ROUTER: Logs tool call to JSONL and SQL, then formats response.
-
-        Delegates to FormatterDispatcher.finalize_tool_response() (Phase 5 Task 5.6).
-
-        This method ensures complete audit trail by logging structured data to:
-        1. JSONL: .scribe/logs/TOOL_LOG.jsonl (via tool_logger.py - synchronous)
-        2. SQL: tool_calls table (via storage.record_tool_call() - async fire-and-forget)
-
-        Uses direct logging to prevent recursion (no append_entry calls).
-
-        ISSUE #9962 FIX: When format="readable", we return CallToolResult with
-        TextContent ONLY (no structuredContent). This forces Claude Code to
-        display the text cleanly with actual newlines instead of escaped \\n.
-
-        Args:
-            data: Tool response data (always a dict)
-            format: Output format - "readable", "structured", "compact", or "both"
-            tool_name: Name of the tool being called
-
-        Returns:
-            - format="readable": CallToolResult with TextContent only (clean display)
-            - format="both": CallToolResult with TextContent + structuredContent
-            - format="structured"/"compact": Original data dict
-            - Fallback to dict if MCP types unavailable
-        """
-        return await self._dispatcher.finalize_tool_response(data, format, tool_name)
-
-    def format_projects_response(self, projects: List[Dict[str, Any]],
-                               compact: bool = False,
-                               fields: Optional[List[str]] = None,
-                               extra_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Format response for list_projects tool.
-
-        Delegates to ProjectFormatter.format_projects_response() (Phase 5 Task 5.5).
-        """
-        return self._project.format_projects_response(projects, compact, fields, extra_data)
-
-
-# Global pagination calculator instance
-_PAGINATION_CALCULATOR = PaginationCalculator()
-
-def create_pagination_info(page: int, page_size: int, total_count: int) -> PaginationInfo:
-    """Create pagination metadata using PaginationCalculator.
-
-    Delegates to formatters.base.create_pagination_info() (Phase 5 Task 5.2).
-    Kept here for backward compatibility.
-    """
-    return _create_pagination_info_base(page, page_size, total_count)
-
-
-# Default formatter instance
-default_formatter = ResponseFormatter()
-
-
-# ============================================================================
-# SPEC-TOKEN-003: Global Optimization Utilities
-# ============================================================================
-
-
-def format_compact_json(
-    data: dict,
-    abbreviations: Optional[dict] = None
-) -> str:
-    """
-    Format JSON with abbreviated keys for compact mode.
-
-    Delegates to formatters.base.format_compact_json() (Phase 5 Task 5.2).
-    Kept here for backward compatibility.
-
-    This function implements Pattern 2 from SPEC-TOKEN-003: Verbose JSON Keys.
-    Reduces JSON output size by 20-40% through key abbreviation.
-
-    Args:
-        data: Data dictionary to format
-        abbreviations: Custom abbreviation mappings (optional, uses global defaults)
-
-    Returns:
-        Compact JSON string with abbreviated keys
-
-    Examples:
-        >>> data = {"projects": [{"name": "test", "status": "planning"}], "total_count": 1}
-        >>> format_compact_json(data)
-        '{"p":[{"n":"test","s":"planning"}],"tot":1}'
-    """
-    return _format_compact_json_base(data, abbreviations)
-
-
-# Note: format_header and add_tip are now imported from utils.formatters.ui
-# at the top of this file (Phase 5 Task 5.1 modularization).
-# They remain available from this module for backward compatibility.
-# See: from .formatters.ui import UIFormatter, format_header, add_tip
+        # Initialize result
+        result = {
+            "research_files": 0,
+            "bugs_present": False,
+            "jsonl_files": []
+        }
+
+        try:
+            # Convert to Path object
+            path = Path(docs_dir)
+
+            # Check if directory exists
+            if not path.exists() or not path.is_dir():
+                return result
+
+            # Scan for research directory
+            research_dir = path / "research"
+            if research_dir.exists() and research_dir.is_dir():
+                result["research_files"] = len(list(research_dir.glob("*.md")))
+
+            # Check for bugs directory (note: bugs are usually at .scribe/docs/bugs/, not in dev plan)
+            bugs_dir = path / "bugs"
+            result["bugs_present"] = bugs_dir.exists() and bugs_dir.is_dir()
+
+            # Find .jsonl files in dev plan root
+            result["jsonl_files"] = [f.name for f in path.glob("*.jsonl")]
+
+            return result
+        except (OSError, PermissionError):
+            # Return empty result on directory access errors
+            return result
