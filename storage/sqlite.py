@@ -823,6 +823,16 @@ class SQLiteStorage(StorageBackend):
             if self._initialised:
                 return
             await asyncio.to_thread(self._path.parent.mkdir, parents=True, exist_ok=True)
+
+            # Migration tracking table - MUST be created first, before any tracked migrations
+            # This table records which migrations have been completed to skip them on future startups
+            await self._execute("""
+                CREATE TABLE IF NOT EXISTS scribe_migrations (
+                    name TEXT PRIMARY KEY,
+                    completed_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """, ())
+
             # Migration: Drop old agent_sessions table if it has legacy schema
             # (old schema had 'id' column, new schema has 'session_id')
             await self._migrate_agent_sessions_schema()
@@ -1296,74 +1306,148 @@ class SQLiteStorage(StorageBackend):
                     """,
                 ]
             )
-            # Ensure legacy databases have the newer scribe_projects columns
-            await self._ensure_column("scribe_projects", "repo_root", "TEXT")
-            await self._ensure_column("scribe_projects", "progress_log_path", "TEXT")
-            await self._ensure_column("scribe_projects", "status", "TEXT")
-            await self._ensure_column("scribe_projects", "phase", "TEXT")
-            await self._ensure_column("scribe_projects", "confidence", "REAL DEFAULT 0.0")
-            await self._ensure_column("scribe_projects", "completed_at", "TIMESTAMP")
-            await self._ensure_column("scribe_projects", "last_activity", "TIMESTAMP")
-            await self._ensure_column("scribe_projects", "description", "TEXT")
-            await self._ensure_column("scribe_projects", "last_entry_at", "TEXT")
-            await self._ensure_column("scribe_projects", "last_access_at", "TEXT")
-            await self._ensure_column("scribe_projects", "last_status_change", "TEXT")
-            await self._ensure_column("scribe_projects", "tags", "TEXT")
-            await self._ensure_column("scribe_projects", "meta", "TEXT")
-            # Bridge ownership columns for Phase 3
-            await self._ensure_column("scribe_projects", "bridge_id", "TEXT")
-            await self._ensure_column("scribe_projects", "bridge_managed", "INTEGER DEFAULT 0")
-            await self._execute("CREATE INDEX IF NOT EXISTS idx_projects_bridge ON scribe_projects(bridge_id)", ())
-            # Ensure scribe_entries has metadata columns for categorization and prioritization
-            await self._ensure_column("scribe_entries", "priority", "TEXT")
-            await self._ensure_column("scribe_entries", "category", "TEXT")
-            await self._ensure_column("scribe_entries", "tags", "TEXT")
-            await self._ensure_column("scribe_entries", "confidence", "REAL DEFAULT 1.0")
-            await self._ensure_column("scribe_entries", "log_type", "TEXT DEFAULT 'progress'")
-            # Note: Run scripts/backfill_log_type.py manually to populate log_type from meta
-            await self._migrate_document_sections()
-            await self._ensure_column("document_changes", "project_root", "TEXT")
-            await self._ensure_column("document_changes", "file_path", "TEXT")
-            await self._ensure_column("sync_status", "project_root", "TEXT")
-            await self._ensure_column("sync_status", "relative_path", "TEXT")
-            await self._ensure_column("document_sections", "project_root", "TEXT")
-            await self._ensure_column("document_sections", "file_path", "TEXT")
-            await self._ensure_column("document_sections", "relative_path", "TEXT")
-            await self._ensure_index("CREATE UNIQUE INDEX IF NOT EXISTS idx_document_sections_file_path ON document_sections(project_root, file_path);")
-            await self._ensure_index("CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_status_file_path ON sync_status(project_root, file_path);")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_agent_report_cards_project_agent ON agent_report_cards(project_id, agent_name);")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_agent_report_cards_stage ON agent_report_cards(stage);")
-            # Performance indexes for scribe_entries metadata columns
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_priority_ts ON scribe_entries(priority, ts_iso DESC);")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_category_ts ON scribe_entries(category, ts_iso DESC);")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_log_type ON scribe_entries(project_id, log_type, ts_iso DESC);")
 
-            # Phase 1 optimization indexes - eliminate full table scans on high-frequency queries
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_agent_ts ON scribe_entries(agent, ts_iso DESC);")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_emoji_ts ON scribe_entries(emoji, ts_iso DESC);")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_logtype_ts ON scribe_entries(log_type, ts_iso DESC);")
+            # =========================================================================
+            # TRACKED MIGRATIONS - Skip if already completed
+            # These migrations use _run_migration() to check scribe_migrations table
+            # and skip if already run. Keeps IF NOT EXISTS as safety backup.
+            # =========================================================================
 
-            # Migration: Add repo_root column to tool_calls for per-project/repo tool logging
-            await self._ensure_column("tool_calls", "repo_root", "TEXT")
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);")
+            # Migration: scribe_projects extended columns (legacy schema support)
+            if not await self._migration_completed("projects_extended_columns_v1"):
+                logger.debug("Running migration: projects_extended_columns_v1")
+                await self._ensure_column("scribe_projects", "repo_root", "TEXT")
+                await self._ensure_column("scribe_projects", "progress_log_path", "TEXT")
+                await self._ensure_column("scribe_projects", "status", "TEXT")
+                await self._ensure_column("scribe_projects", "phase", "TEXT")
+                await self._ensure_column("scribe_projects", "confidence", "REAL DEFAULT 0.0")
+                await self._ensure_column("scribe_projects", "completed_at", "TIMESTAMP")
+                await self._ensure_column("scribe_projects", "last_activity", "TIMESTAMP")
+                await self._ensure_column("scribe_projects", "description", "TEXT")
+                await self._ensure_column("scribe_projects", "last_entry_at", "TEXT")
+                await self._ensure_column("scribe_projects", "last_access_at", "TEXT")
+                await self._ensure_column("scribe_projects", "last_status_change", "TEXT")
+                await self._ensure_column("scribe_projects", "tags", "TEXT")
+                await self._ensure_column("scribe_projects", "meta", "TEXT")
+                await self._mark_migration_complete("projects_extended_columns_v1")
+            else:
+                logger.debug("Skipping migration: projects_extended_columns_v1 (already completed)")
 
-            # Phase 1 optimization - repo_root lookups on scribe_projects
-            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_projects_repo ON scribe_projects(repo_root);")
+            # Migration: Bridge ownership columns for Phase 3
+            if not await self._migration_completed("projects_bridge_columns_v1"):
+                logger.debug("Running migration: projects_bridge_columns_v1")
+                await self._ensure_column("scribe_projects", "bridge_id", "TEXT")
+                await self._ensure_column("scribe_projects", "bridge_managed", "INTEGER DEFAULT 0")
+                await self._execute("CREATE INDEX IF NOT EXISTS idx_projects_bridge ON scribe_projects(bridge_id)", ())
+                await self._mark_migration_complete("projects_bridge_columns_v1")
+            else:
+                logger.debug("Skipping migration: projects_bridge_columns_v1 (already completed)")
 
-            # Phase 3: state.json elimination - session activity tracking columns
-            await self._ensure_column("agent_sessions", "recent_tools", "TEXT")  # JSON array of recent tool names
-            await self._ensure_column("agent_sessions", "session_started_at", "TEXT")  # ISO timestamp
-            await self._ensure_column("agent_sessions", "last_activity_at", "TEXT")  # ISO timestamp
+            # Migration: scribe_entries metadata columns for categorization
+            if not await self._migration_completed("entries_metadata_columns_v1"):
+                logger.debug("Running migration: entries_metadata_columns_v1")
+                await self._ensure_column("scribe_entries", "priority", "TEXT")
+                await self._ensure_column("scribe_entries", "category", "TEXT")
+                await self._ensure_column("scribe_entries", "tags", "TEXT")
+                await self._ensure_column("scribe_entries", "confidence", "REAL DEFAULT 1.0")
+                await self._ensure_column("scribe_entries", "log_type", "TEXT DEFAULT 'progress'")
+                # Note: Run scripts/backfill_log_type.py manually to populate log_type from meta
+                await self._mark_migration_complete("entries_metadata_columns_v1")
+            else:
+                logger.debug("Skipping migration: entries_metadata_columns_v1 (already completed)")
+
+            # Migration: Document sections schema rebuild (complex migration)
+            if not await self._migration_completed("document_sections_schema_v1"):
+                logger.debug("Running migration: document_sections_schema_v1")
+                await self._migrate_document_sections()
+                await self._ensure_column("document_changes", "project_root", "TEXT")
+                await self._ensure_column("document_changes", "file_path", "TEXT")
+                await self._ensure_column("sync_status", "project_root", "TEXT")
+                await self._ensure_column("sync_status", "relative_path", "TEXT")
+                await self._ensure_column("document_sections", "project_root", "TEXT")
+                await self._ensure_column("document_sections", "file_path", "TEXT")
+                await self._ensure_column("document_sections", "relative_path", "TEXT")
+                await self._ensure_index("CREATE UNIQUE INDEX IF NOT EXISTS idx_document_sections_file_path ON document_sections(project_root, file_path);")
+                await self._ensure_index("CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_status_file_path ON sync_status(project_root, file_path);")
+                await self._mark_migration_complete("document_sections_schema_v1")
+            else:
+                logger.debug("Skipping migration: document_sections_schema_v1 (already completed)")
+
+            # Migration: Agent report cards indexes
+            if not await self._migration_completed("agent_report_cards_indexes_v1"):
+                logger.debug("Running migration: agent_report_cards_indexes_v1")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_agent_report_cards_project_agent ON agent_report_cards(project_id, agent_name);")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_agent_report_cards_stage ON agent_report_cards(stage);")
+                await self._mark_migration_complete("agent_report_cards_indexes_v1")
+            else:
+                logger.debug("Skipping migration: agent_report_cards_indexes_v1 (already completed)")
+
+            # Migration: Performance indexes for scribe_entries metadata columns
+            if not await self._migration_completed("entries_metadata_indexes_v1"):
+                logger.debug("Running migration: entries_metadata_indexes_v1")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_priority_ts ON scribe_entries(priority, ts_iso DESC);")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_category_ts ON scribe_entries(category, ts_iso DESC);")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_log_type ON scribe_entries(project_id, log_type, ts_iso DESC);")
+                await self._mark_migration_complete("entries_metadata_indexes_v1")
+            else:
+                logger.debug("Skipping migration: entries_metadata_indexes_v1 (already completed)")
+
+            # Migration: Phase 1 optimization indexes - eliminate full table scans
+            if not await self._migration_completed("phase1_optimization_indexes_v1"):
+                logger.debug("Running migration: phase1_optimization_indexes_v1")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_agent_ts ON scribe_entries(agent, ts_iso DESC);")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_emoji_ts ON scribe_entries(emoji, ts_iso DESC);")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_logtype_ts ON scribe_entries(log_type, ts_iso DESC);")
+                await self._mark_migration_complete("phase1_optimization_indexes_v1")
+            else:
+                logger.debug("Skipping migration: phase1_optimization_indexes_v1 (already completed)")
+
+            # Migration: tool_calls repo_root column for per-project/repo tool logging
+            if not await self._migration_completed("tool_calls_repo_root_v1"):
+                logger.debug("Running migration: tool_calls_repo_root_v1")
+                await self._ensure_column("tool_calls", "repo_root", "TEXT")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);")
+                await self._mark_migration_complete("tool_calls_repo_root_v1")
+            else:
+                logger.debug("Skipping migration: tool_calls_repo_root_v1 (already completed)")
+
+            # Migration: Phase 1 optimization - repo_root lookups on scribe_projects
+            if not await self._migration_completed("projects_repo_index_v1"):
+                logger.debug("Running migration: projects_repo_index_v1")
+                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_projects_repo ON scribe_projects(repo_root);")
+                await self._mark_migration_complete("projects_repo_index_v1")
+            else:
+                logger.debug("Skipping migration: projects_repo_index_v1 (already completed)")
+
+            # Migration: Phase 3 state.json elimination - session activity tracking columns
+            if not await self._migration_completed("agent_sessions_activity_v1"):
+                logger.debug("Running migration: agent_sessions_activity_v1")
+                await self._ensure_column("agent_sessions", "recent_tools", "TEXT")  # JSON array of recent tool names
+                await self._ensure_column("agent_sessions", "session_started_at", "TEXT")  # ISO timestamp
+                await self._ensure_column("agent_sessions", "last_activity_at", "TEXT")  # ISO timestamp
+                await self._mark_migration_complete("agent_sessions_activity_v1")
+            else:
+                logger.debug("Skipping migration: agent_sessions_activity_v1 (already completed)")
 
             # Migration: Add docs_json column for manage_docs functionality (BUG-MANAGE-DOCS-001)
-            await self.migrate_add_docs_json_column()
+            if not await self._migration_completed("docs_json_column_v1"):
+                logger.debug("Running migration: docs_json_column_v1")
+                await self.migrate_add_docs_json_column()
+                await self._mark_migration_complete("docs_json_column_v1")
+            else:
+                logger.debug("Skipping migration: docs_json_column_v1 (already completed)")
 
-            # Backfill docs_json from state.json for existing projects
+            # Migration: Backfill docs_json from state.json for existing projects
+            # This is a one-time migration, skip if state.json doesn't exist or already done
             from pathlib import Path
             state_path = Path(self._path).parent / "state.json"
-            if state_path.exists():
+            if state_path.exists() and not await self._migration_completed("backfill_docs_json_v1"):
+                logger.debug("Running migration: backfill_docs_json_v1")
                 await self.backfill_docs_json_from_state(state_path)
+                await self._mark_migration_complete("backfill_docs_json_v1")
+            elif await self._migration_completed("backfill_docs_json_v1"):
+                logger.debug("Skipping migration: backfill_docs_json_v1 (already completed)")
 
             self._initialised = True
 
@@ -1615,6 +1699,59 @@ class SQLiteStorage(StorageBackend):
                 conn.commit()
             finally:
                 conn.close()
+
+    # -------------------------------------------------------------------------
+    # Migration Tracking Helpers (Phase 6 Task 6.2)
+    # -------------------------------------------------------------------------
+    async def _migration_completed(self, name: str) -> bool:
+        """Check if a migration has already been completed.
+
+        Args:
+            name: Unique migration identifier (e.g., 'v2_1_0_project_columns')
+
+        Returns:
+            True if migration was previously completed and recorded
+        """
+        try:
+            row = await self._fetchone(
+                "SELECT 1 FROM scribe_migrations WHERE name = ?",
+                (name,)
+            )
+            return row is not None
+        except Exception:
+            # Table might not exist yet on first run
+            return False
+
+    async def _mark_migration_complete(self, name: str) -> None:
+        """Mark a migration as completed.
+
+        Args:
+            name: Unique migration identifier to record as completed
+        """
+        await self._execute(
+            "INSERT OR IGNORE INTO scribe_migrations (name) VALUES (?)",
+            (name,)
+        )
+        logger.debug(f"Migration '{name}' marked as complete")
+
+    async def _run_migration(self, name: str, coro) -> bool:
+        """Run a migration if not already completed, with tracking.
+
+        Args:
+            name: Unique migration identifier
+            coro: Coroutine to execute for the migration
+
+        Returns:
+            True if migration was run, False if skipped
+        """
+        if await self._migration_completed(name):
+            logger.debug(f"Skipping migration '{name}' (already completed)")
+            return False
+
+        await coro
+        await self._mark_migration_complete(name)
+        logger.debug(f"Completed migration '{name}'")
+        return True
 
     async def _execute(self, query: str, params: tuple[Any, ...]) -> None:
         await asyncio.to_thread(self._execute_sync, query, params)

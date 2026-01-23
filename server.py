@@ -111,6 +111,7 @@ agent_context_manager = None  # Will be initialized in startup
 agent_identity = None  # Will be initialized in startup
 router_context_manager = RouterContextManager(storage_backend=storage_backend)
 _startup_complete = False
+_journal_replay_complete = False  # Tracks background journal replay status
 
 # Background task management (prevents garbage collection of fire-and-forget tasks)
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
@@ -663,6 +664,93 @@ from scribe_mcp import tools  # noqa: E402  # isort:skip
 _HAS_LIFECYCLE_HOOKS = hasattr(app, "on_startup") and hasattr(app, "on_shutdown")
 
 
+async def _replay_journals_background() -> None:
+    """Replay uncommitted journal entries in background (non-blocking startup).
+
+    This function runs as a background task to avoid blocking server startup.
+    The server can respond to tool calls immediately while journals are replayed.
+    """
+    global _journal_replay_complete
+
+    print("🔄 Starting background journal replay...")
+
+    from scribe_mcp.utils.files import WriteAheadLog
+    from scribe_mcp.tools.list_projects import list_projects
+    import glob
+
+    try:
+        # Enhanced recovery: Scan all projects for orphaned journals
+        total_replayed = 0
+        recovered_projects = []
+
+        # Method 1: Try to get list of all configured projects
+        try:
+            # list_projects defaults to format="readable", which returns an MCP CallToolResult wrapper
+            # (Issue #9962 fix). For internal server startup we need a plain dict payload.
+            # Use internal system agent for startup operations
+            projects_result = await list_projects(
+                agent="__scribe_internal__",
+                format="structured",
+                limit=1000,
+                include_test=True,
+            )
+            available_projects = projects_result.get("projects", [])
+            for project_info in available_projects:
+                project_name = project_info.get("name")
+                if project_name and project_info.get("progress_log"):
+                    progress_log_path = Path(project_info["progress_log"])
+                    if progress_log_path.exists():
+                        wal = WriteAheadLog(progress_log_path)
+                        replayed = wal.replay_uncommitted()
+                        if replayed > 0:
+                            total_replayed += replayed
+                            recovered_projects.append(project_name)
+        except Exception as list_error:
+            print(f"⚠️  Project listing failed during recovery: {list_error}")
+
+        # Method 2: Fallback - scan for orphaned journal files in project directories
+        try:
+            # Look for .journal files in typical project locations
+            journal_patterns = [
+                str(settings.project_root / "config" / "projects" / "*" / "*.journal"),
+                str(settings.project_root / ".scribe" / "docs" / "dev_plans" / "*" / "*.journal"),
+                "**/PROGRESS_LOG.md.journal"  # Common pattern
+            ]
+
+            for pattern in journal_patterns:
+                for journal_file in glob.glob(pattern, recursive=True):
+                    journal_path = Path(journal_file)
+                    if journal_path.exists():
+                        # Find corresponding log file
+                        log_path = journal_path.with_suffix('')
+                        if log_path.exists():
+                            wal = WriteAheadLog(log_path)
+                            replayed = wal.replay_uncommitted()
+                            if replayed > 0:
+                                total_replayed += replayed
+                                project_name = log_path.parent.name
+                                if project_name not in recovered_projects:
+                                    recovered_projects.append(project_name)
+        except Exception as scan_error:
+            print(f"⚠️  Journal scan failed during recovery: {scan_error}")
+
+        # Report recovery results
+        if total_replayed > 0:
+            print(f"🛡️  CRASH RECOVERY: Replayed {total_replayed} uncommitted entries across {len(recovered_projects)} projects")
+            for project_name in recovered_projects:
+                print(f"   📋 Recovered entries for project: {project_name}")
+            print("   ✅ Audit trail integrity maintained despite crash")
+        else:
+            print("✅ Background journal replay completed (no uncommitted entries)")
+
+    except Exception as e:
+        # Journal recovery should not prevent server operation
+        print(f"⚠️  Journal recovery warning: {e}")
+        print("   💡 Server will continue but some audit entries may be missing")
+    finally:
+        _journal_replay_complete = True
+
+
 async def _startup() -> None:
     """Initialise shared resources before handling requests."""
     global agent_context_manager, agent_identity, _startup_complete
@@ -789,77 +877,10 @@ async def _startup() -> None:
             print(f"⚠️  Bridge tool registration failed: {e}")
             print("   💡 Continuing without bridge tools")
 
-    # Replay any uncommitted journal entries for crash recovery (all projects)
-    from scribe_mcp.utils.files import WriteAheadLog
-    from scribe_mcp.tools.list_projects import list_projects
-
-    try:
-        # Enhanced recovery: Scan all projects for orphaned journals
-        total_replayed = 0
-        recovered_projects = []
-
-        # Method 1: Try to get list of all configured projects
-        try:
-            # list_projects defaults to format="readable", which returns an MCP CallToolResult wrapper
-            # (Issue #9962 fix). For internal server startup we need a plain dict payload.
-            projects_result = await list_projects(
-                format="structured",
-                limit=1000,
-                include_test=True,
-            )
-            available_projects = projects_result.get("projects", [])
-            for project_info in available_projects:
-                project_name = project_info.get("name")
-                if project_name and project_info.get("progress_log"):
-                    progress_log_path = Path(project_info["progress_log"])
-                    if progress_log_path.exists():
-                        wal = WriteAheadLog(progress_log_path)
-                        replayed = wal.replay_uncommitted()
-                        if replayed > 0:
-                            total_replayed += replayed
-                            recovered_projects.append(project_name)
-        except Exception as list_error:
-            print(f"⚠️  Project listing failed during recovery: {list_error}")
-
-        # Method 2: Fallback - scan for orphaned journal files in project directories
-        try:
-            import glob
-
-            # Look for .journal files in typical project locations
-            journal_patterns = [
-                str(settings.project_root / "config" / "projects" / "*" / "*.journal"),
-                str(settings.project_root / ".scribe" / "docs" / "dev_plans" / "*" / "*.journal"),
-                "**/PROGRESS_LOG.md.journal"  # Common pattern
-            ]
-
-            for pattern in journal_patterns:
-                for journal_file in glob.glob(pattern, recursive=True):
-                    journal_path = Path(journal_file)
-                    if journal_path.exists():
-                        # Find corresponding log file
-                        log_path = journal_path.with_suffix('')
-                        if log_path.exists():
-                            wal = WriteAheadLog(log_path)
-                            replayed = wal.replay_uncommitted()
-                            if replayed > 0:
-                                total_replayed += replayed
-                                project_name = log_path.parent.name
-                                if project_name not in recovered_projects:
-                                    recovered_projects.append(project_name)
-        except Exception as scan_error:
-            print(f"⚠️  Journal scan failed during recovery: {scan_error}")
-
-        # Report recovery results
-        if total_replayed > 0:
-            print(f"🛡️  CRASH RECOVERY: Replayed {total_replayed} uncommitted entries across {len(recovered_projects)} projects")
-            for project_name in recovered_projects:
-                print(f"   📋 Recovered entries for project: {project_name}")
-            print("   ✅ Audit trail integrity maintained despite crash")
-
-    except Exception as e:
-        # Journal recovery should not prevent server startup
-        print(f"⚠️  Journal recovery warning: {e}")
-        print("   💡 Server will continue but some audit entries may be missing")
+    # Start background journal replay (non-blocking)
+    # Journal recovery happens in background so server can respond to tool calls immediately
+    schedule_background_task(_replay_journals_background())
+    print("✅ Server ready (journal replay continuing in background)")
 
 
 async def _shutdown() -> None:
