@@ -285,6 +285,7 @@ class TestReadFileIntegration:
         try:
             # Test with tools/append_entry.py (known to have imports)
             result = await read_file(
+                agent="test_agent",
                 path="tools/append_entry.py",
                 mode="scan_only",
                 include_dependencies=True,
@@ -346,6 +347,7 @@ class TestReadFileIntegration:
         try:
             # Test with tools/read_file.py itself (meta!)
             result = await read_file(
+                agent="test_agent",
                 path="tools/read_file.py",
                 mode="scan_only",
                 include_dependencies=True,
@@ -402,6 +404,7 @@ class TestReadFileIntegration:
         try:
             # Test with include_dependencies=False (default)
             result = await read_file(
+                agent="test_agent",
                 path="tools/append_entry.py",
                 mode="scan_only",
                 include_dependencies=False,
@@ -449,6 +452,7 @@ class TestReadFileIntegration:
             # Baseline: without dependencies
             start_baseline = time.time()
             result_baseline = await read_file(
+                agent="test_agent",
                 path=test_path,
                 mode="scan_only",
                 include_dependencies=False,
@@ -459,6 +463,7 @@ class TestReadFileIntegration:
             # With dependencies
             start_deps = time.time()
             result_deps = await read_file(
+                agent="test_agent",
                 path=test_path,
                 mode="scan_only",
                 include_dependencies=True,
@@ -859,6 +864,7 @@ from typing import Dict, List, Optional
                 # Measure resolution performance
                 start = time.time()
                 await read_file(
+                    agent="test_agent",
                     path=str(test_file),
                     mode="scan_only",
                     include_dependencies=True,
@@ -874,6 +880,7 @@ from typing import Dict, List, Optional
 
             # Verify dependencies were extracted with resolution (using real file)
             result = await read_file(
+                agent="test_agent",
                 path="tools/read_file.py",
                 mode="scan_only",
                 include_dependencies=True,
@@ -1147,6 +1154,7 @@ class TestImpactIntegration:
         try:
             # Test on a file that's likely to have importers (storage/sqlite.py)
             result = await read_file_module.read_file(
+                agent="test_agent",
                 path="storage/sqlite.py",
                 mode="scan_only",
                 include_dependencies=True,
@@ -1206,6 +1214,7 @@ class TestImpactIntegration:
         try:
             # Should fail with include_impact=True but include_dependencies=False
             result = await read_file_module.read_file(
+                agent="test_agent",
                 path="storage/sqlite.py",
                 mode="scan_only",
                 include_dependencies=False,
@@ -1648,6 +1657,7 @@ rules:
 
         try:
             result = await read_file(
+                agent="test_agent",
                 path=str(test_file),
                 format="structured",
                 include_dependencies=True
@@ -1718,6 +1728,7 @@ rules:
 
         try:
             result = await read_file(
+                agent="test_agent",
                 path=str(test_file),
                 format="structured",
                 include_dependencies=True

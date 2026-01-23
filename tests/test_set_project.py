@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 import sys
 import shutil
+import uuid
 
 # Add MCP_SPINE to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,12 +67,14 @@ class TestBug001EmptyLogDetection:
         5. Verify it shows EXISTING, not NEW
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            project_name = f"test_bug_001_rotation_{id(tmpdir)}"
+            unique_id = str(uuid.uuid4())[:8]
+            project_name = f"test_bug_001_rotation_{unique_id}"
+            agent_name = f"TestAgent-Bug001-{unique_id}"
             project_root = Path(tmpdir)
 
             # Step 1: Create initial project (use readable format to get is_new flag)
             raw_result1 = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name=project_name,
                 root=str(project_root),
                 format="readable"
@@ -88,17 +91,17 @@ class TestBug001EmptyLogDetection:
             await append_entry(
                 message="Test entry before rotation",
                 status="info",
-                agent="TestAgent"
+                agent=agent_name
             )
 
             # Step 3: Rotate the log (creates empty file)
-            raw_rotate = await rotate_log(confirm=True)
+            raw_rotate = await rotate_log(agent=agent_name, confirm=True)
             rotate_result = extract_result(raw_rotate)
             assert rotate_result["ok"], "Log rotation failed"
 
             # Step 4: Call set_project again after rotation
             raw_result2 = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name=project_name,
                 root=str(project_root),
                 format="readable"
@@ -124,12 +127,14 @@ class TestBug001EmptyLogDetection:
         is genuinely new (log file doesn't exist at all).
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            project_name = f"test_bug_001_new_{id(tmpdir)}"
+            unique_id = str(uuid.uuid4())[:8]
+            project_name = f"test_bug_001_new_{unique_id}"
+            agent_name = f"TestAgent-Bug001New-{unique_id}"
             project_root = Path(tmpdir)
 
             # Create a genuinely new project
             raw_result = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name=project_name,
                 root=str(project_root),
                 format="readable"
@@ -163,11 +168,13 @@ class TestSlugCollisionDetection:
         the same canonical slug should not be allowed.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            unique_id = str(uuid.uuid4())[:8]
+            agent_name = f"TestAgent-Collision-{unique_id}"
             project_root = Path(tmpdir)
 
             # Create first project: 'my_project'
             result1 = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name="my_project",
                 root=str(project_root),
                 format="structured"
@@ -177,7 +184,7 @@ class TestSlugCollisionDetection:
 
             # Try to create second project with different name but same slug: 'my-project'
             result2 = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name="my-project",
                 root=str(project_root),
                 format="structured"
@@ -219,11 +226,13 @@ class TestSlugCollisionDetection:
         (it's an update operation), even though the slugs are identical.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            unique_id = str(uuid.uuid4())[:8]
+            agent_name = f"TestAgent-NoCollision-{unique_id}"
             project_root = Path(tmpdir)
 
             # Create project
             result1 = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name="test_project",
                 root=str(project_root),
                 format="structured"
@@ -233,7 +242,7 @@ class TestSlugCollisionDetection:
 
             # Update same project (same name) - should succeed
             result2 = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name="test_project",
                 root=str(project_root),
                 description="Updated description",
@@ -254,11 +263,13 @@ class TestSlugCollisionDetection:
         to the same slug and should collide.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
+            unique_id = str(uuid.uuid4())[:8]
+            agent_name = f"TestAgent-MultiVariant-{unique_id}"
             project_root = Path(tmpdir)
 
             # Create base project
             result1 = await set_project(
-                agent="TestAgent",
+                agent=agent_name,
                 name="my_project",
                 root=str(project_root),
                 format="structured"
@@ -271,7 +282,7 @@ class TestSlugCollisionDetection:
 
             for variant in colliding_names:
                 result = await set_project(
-                    agent="TestAgent",
+                    agent=agent_name,
                     name=variant,
                     root=str(project_root),
                     format="structured"

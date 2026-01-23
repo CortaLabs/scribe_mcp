@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import pytest
+import uuid
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -181,14 +182,14 @@ class TestNewProjectSITREP:
     @pytest.mark.asyncio
     async def test_new_project_sitrep_format(self, temp_project_dir):
         """Test that new project returns correct SITREP format."""
-        project_name = "test_new_project"
+        project_name = f"test_new_project_{str(uuid.uuid4())[:8]}"
 
         # Call set_project with readable format
         result = await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Extract readable content from CallToolResult
@@ -211,13 +212,13 @@ class TestNewProjectSITREP:
     @pytest.mark.asyncio
     async def test_new_project_shows_template_info(self, temp_project_dir):
         """Test that new project SITREP shows template line counts."""
-        project_name = "test_template_info"
+        project_name = f"test_template_info_{str(uuid.uuid4())[:8]}"
 
         result = await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         data = extract_result(result)
@@ -231,13 +232,13 @@ class TestNewProjectSITREP:
     @pytest.mark.asyncio
     async def test_new_project_shows_next_steps(self, temp_project_dir):
         """Test that new project SITREP includes next steps tip."""
-        project_name = "test_next_steps"
+        project_name = f"test_next_steps_{str(uuid.uuid4())[:8]}"
 
         result = await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         data = extract_result(result)
@@ -255,14 +256,14 @@ class TestExistingProjectSITREP:
     @pytest.mark.asyncio
     async def test_existing_project_sitrep_format(self, temp_project_dir):
         """Test that existing project returns correct SITREP format."""
-        project_name = "test_existing_project"
+        project_name = f"test_existing_project_{str(uuid.uuid4())[:8]}"
 
         # First create the project
         await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="structured",  # Use structured to skip SITREP on first call
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Add some entries to progress log to make it "existing"
@@ -284,7 +285,7 @@ class TestExistingProjectSITREP:
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Extract and verify readable content
@@ -298,14 +299,14 @@ class TestExistingProjectSITREP:
     @pytest.mark.asyncio
     async def test_existing_project_shows_activity(self, temp_project_dir):
         """Test that existing project SITREP shows activity summary."""
-        project_name = "test_activity"
+        project_name = f"test_activity_{str(uuid.uuid4())[:8]}"
 
         # Create and populate project
         await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="structured",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Add entries
@@ -325,7 +326,7 @@ class TestExistingProjectSITREP:
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         data = extract_result(result)
@@ -338,14 +339,14 @@ class TestExistingProjectSITREP:
     @pytest.mark.asyncio
     async def test_existing_project_shows_custom_content(self, temp_project_dir):
         """Test that existing project SITREP shows custom content if present."""
-        project_name = "test_custom_content"
+        project_name = f"test_custom_content_{str(uuid.uuid4())[:8]}"
 
         # Create project
         await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="structured",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Find dev plan dir
@@ -368,7 +369,7 @@ class TestExistingProjectSITREP:
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         data = extract_result(result)
@@ -385,13 +386,13 @@ class TestNewVsExistingDetection:
     @pytest.mark.asyncio
     async def test_empty_progress_log_is_new(self, temp_project_dir):
         """Test that empty progress log triggers new project SITREP."""
-        project_name = "test_empty_log"
+        project_name = f"test_empty_log_{str(uuid.uuid4())[:8]}"
 
         result = await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         data = extract_result(result)
@@ -401,14 +402,14 @@ class TestNewVsExistingDetection:
     @pytest.mark.asyncio
     async def test_progress_log_with_entries_is_existing(self, temp_project_dir):
         """Test that progress log with entries triggers existing project SITREP."""
-        project_name = "test_with_entries"
+        project_name = f"test_with_entries_{str(uuid.uuid4())[:8]}"
 
         # Create project
         await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="structured",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Add entries
@@ -425,7 +426,7 @@ class TestNewVsExistingDetection:
             name=project_name,
             root=str(temp_project_dir),
             format="readable",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         data = extract_result(result)
@@ -439,13 +440,13 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_structured_format_unchanged(self, temp_project_dir):
         """Test that structured format returns traditional response."""
-        project_name = "test_structured"
+        project_name = f"test_structured_{str(uuid.uuid4())[:8]}"
 
         result = await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="structured",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Should have traditional response structure
@@ -462,13 +463,13 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_compact_format_unchanged(self, temp_project_dir):
         """Test that compact format returns traditional response."""
-        project_name = "test_compact"
+        project_name = f"test_compact_{str(uuid.uuid4())[:8]}"
 
         result = await set_project(
             name=project_name,
             root=str(temp_project_dir),
             format="compact",
-            agent_id="TestAgent"
+            agent="TestAgent"
         )
 
         # Should have traditional response structure

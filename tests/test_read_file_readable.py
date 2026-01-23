@@ -56,7 +56,7 @@ async def test_scan_only_readable(tmp_path):
         target = tmp_path / "test.py"
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="scan_only", format="readable")
+        result = await read_file(agent="test_agent", path=str(target), mode="scan_only", format="readable")
 
         # Should return CallToolResult with TextContent (Issue #9962 fix)
         assert isinstance(result, CallToolResult)
@@ -83,7 +83,7 @@ async def test_chunk_readable(tmp_path):
         target = tmp_path / "test.py"
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="chunk", chunk_index=[0], format="readable")
+        result = await read_file(agent="test_agent", path=str(target), mode="chunk", chunk_index=[0], format="readable")
 
         # Should return CallToolResult (Issue #9962 fix)
         assert isinstance(result, CallToolResult)
@@ -112,6 +112,7 @@ async def test_line_range_readable(tmp_path):
         target.write_text("line 1\nline 2\nline 3\nline 4\nline 5\n", encoding="utf-8")
 
         result = await read_file(
+            agent="test_agent",
             path=str(target),
             mode="line_range",
             start_line=2,
@@ -145,6 +146,7 @@ async def test_page_readable(tmp_path):
         target.write_text("\n".join(lines), encoding="utf-8")
 
         result = await read_file(
+            agent="test_agent",
             path=str(target),
             mode="page",
             page_number=1,
@@ -175,6 +177,7 @@ async def test_full_stream_readable(tmp_path):
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
         result = await read_file(
+            agent="test_agent",
             path=str(target),
             mode="full_stream",
             start_chunk=0,
@@ -205,6 +208,7 @@ async def test_search_readable(tmp_path):
         target.write_text("alpha\nbeta\ngamma\ndelta\nbeta\n", encoding="utf-8")
 
         result = await read_file(
+            agent="test_agent",
             path=str(target),
             mode="search",
             search="beta",
@@ -236,7 +240,7 @@ async def test_chunk_structured(tmp_path):
         target = tmp_path / "test.py"
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="chunk", chunk_index=[0], format="structured")
+        result = await read_file(agent="test_agent", path=str(target), mode="chunk", chunk_index=[0], format="structured")
 
         # Should return dict (not string)
         assert isinstance(result, dict)
@@ -260,6 +264,7 @@ async def test_line_range_structured(tmp_path):
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
         result = await read_file(
+            agent="test_agent",
             path=str(target),
             mode="line_range",
             start_line=1,
@@ -289,7 +294,7 @@ async def test_default_format_is_readable(tmp_path):
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
         # Call without explicit format parameter
-        result = await read_file(path=str(target), mode="chunk", chunk_index=[0])
+        result = await read_file(agent="test_agent", path=str(target), mode="chunk", chunk_index=[0])
 
         # Should return CallToolResult (readable format is default, Issue #9962 fix)
         assert isinstance(result, CallToolResult)
@@ -314,7 +319,7 @@ async def test_line_numbers_visible(tmp_path):
         lines = [f"line {i}" for i in range(1, 11)]
         target.write_text("\n".join(lines), encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="chunk", chunk_index=[0], format="readable")
+        result = await read_file(agent="test_agent", path=str(target), mode="chunk", chunk_index=[0], format="readable")
 
         # Should return CallToolResult (Issue #9962 fix)
         assert isinstance(result, CallToolResult)
@@ -337,7 +342,7 @@ async def test_actual_line_breaks(tmp_path):
         target = tmp_path / "test.py"
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="chunk", chunk_index=[0], format="readable")
+        result = await read_file(agent="test_agent", path=str(target), mode="chunk", chunk_index=[0], format="readable")
 
         # Should return CallToolResult (Issue #9962 fix)
         assert isinstance(result, CallToolResult)
@@ -365,7 +370,7 @@ async def test_metadata_in_boxes(tmp_path):
         target = tmp_path / "test.py"
         target.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
-        result = await read_file(path=str(target), mode="chunk", chunk_index=[0], format="readable")
+        result = await read_file(agent="test_agent", path=str(target), mode="chunk", chunk_index=[0], format="readable")
 
         # Should return CallToolResult (Issue #9962 fix)
         assert isinstance(result, CallToolResult)
@@ -401,7 +406,7 @@ async def test_error_readable(tmp_path):
     token = _install_execution_context(tmp_path)
     try:
         # Try to read non-existent file
-        result = await read_file(path=str(tmp_path / "nonexistent.txt"), format="readable")
+        result = await read_file(agent="test_agent", path=str(tmp_path / "nonexistent.txt"), format="readable")
 
         # Even errors should return CallToolResult (Issue #9962 fix)
         assert isinstance(result, CallToolResult)

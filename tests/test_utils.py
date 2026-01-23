@@ -50,6 +50,7 @@ async def test_set_project_rejects_log_outside_root(tmp_path: Path):
     safe_root = tmp_path / "safe_root"
     outside_log = tmp_path / "elsewhere" / "PROGRESS_LOG.md"
     result = await set_project.set_project(
+        agent="test_agent",
         name="malicious",
         root=str(safe_root),
         progress_log=str(outside_log),
@@ -62,8 +63,10 @@ async def test_set_project_rejects_log_outside_root(tmp_path: Path):
 async def test_set_project_allows_external_root(tmp_path: Path):
     external_root = tmp_path / "external_repo"
     result = await set_project.set_project(
+        agent="test_agent",
         name="external_project",
         root=str(external_root),
+        format="structured",
     )
 
     try:

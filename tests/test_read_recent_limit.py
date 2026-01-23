@@ -15,7 +15,7 @@ from tools.read_recent import read_recent
 async def test_readable_format_no_truncation():
     """Verify readable format returns full entries without truncation."""
     # This test requires a project with entries
-    result = await read_recent(n=10, format="readable")
+    result = await read_recent(agent="test_agent", n=10, format="readable")
 
     # Should have entries or be a formatted string
     assert result is not None
@@ -38,7 +38,7 @@ async def test_readable_format_no_truncation():
 @pytest.mark.asyncio
 async def test_structured_format_uses_limit_manager():
     """Verify structured format uses EntryLimitManager."""
-    result = await read_recent(n=100, format="structured")
+    result = await read_recent(agent="test_agent", n=100, format="structured")
 
     # Should have proper response structure
     if isinstance(result, dict):
@@ -60,7 +60,7 @@ async def test_structured_format_uses_limit_manager():
 @pytest.mark.asyncio
 async def test_compact_format_uses_limit_manager():
     """Verify compact format uses EntryLimitManager."""
-    result = await read_recent(n=50, format="compact")
+    result = await read_recent(agent="test_agent", n=50, format="compact")
 
     if isinstance(result, dict):
         # Should not fail
@@ -80,7 +80,7 @@ async def test_compact_format_uses_limit_manager():
 @pytest.mark.asyncio
 async def test_entry_limit_metadata():
     """Verify limit metadata is included for non-readable formats."""
-    result = await read_recent(n=50, format="compact")
+    result = await read_recent(agent="test_agent", n=50, format="compact")
 
     if isinstance(result, dict) and "entries" in result and result["entries"]:
         # Should have limit metadata
@@ -101,8 +101,8 @@ async def test_entry_limit_metadata():
 async def test_readable_vs_structured_entry_preservation():
     """Verify readable format preserves more content than structured."""
     # Get same entries in both formats
-    readable_result = await read_recent(n=5, format="readable")
-    structured_result = await read_recent(n=5, format="structured")
+    readable_result = await read_recent(agent="test_agent", n=5, format="readable")
+    structured_result = await read_recent(agent="test_agent", n=5, format="structured")
 
     # Both should succeed
     assert readable_result is not None
@@ -121,7 +121,7 @@ async def test_readable_vs_structured_entry_preservation():
 @pytest.mark.asyncio
 async def test_priority_sorting_enabled():
     """Verify EntryLimitManager uses priority sorting."""
-    result = await read_recent(n=20, format="structured")
+    result = await read_recent(agent="test_agent", n=20, format="structured")
 
     if isinstance(result, dict) and "entries" in result and len(result["entries"]) > 1:
         # Should have limit_metadata confirming sort was applied

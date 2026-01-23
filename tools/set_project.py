@@ -569,8 +569,8 @@ async def set_project(
 
         # Use hash-based detection instead of entry_count for state determination
         # Pass docs_were_generated flag to distinguish NEW vs EXISTING (SPEC-SET-001 fix)
-        # Note: generate_doc_templates returns "files" key, not "generated"
-        docs_were_generated = len(doc_result.get("files", [])) > 0
+        # Note: _ensure_documents returns "generated" key (list of generated doc types)
+        docs_were_generated = len(doc_result.get("generated", [])) > 0
         state, sitrep_message = detect_project_state(
             project_data,
             entry_count,

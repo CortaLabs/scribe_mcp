@@ -485,6 +485,7 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
 
         # Dry-run research doc to confirm templated content
         research_result = await manage_docs(
+            agent="test_agent",
             action="create_research_doc",
             doc="architecture",
             doc_name="architecture_findings",
@@ -497,6 +498,7 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
 
         # Dry-run bug report to confirm templated content
         bug_result = await manage_docs(
+            agent="test_agent",
             action="create_bug_report",
             doc="architecture",
             metadata={"category": "backend", "severity": "high"},
@@ -508,6 +510,7 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
 
         # Metadata JSON arrays should normalize without failing
         array_meta_result = await manage_docs(
+            agent="test_agent",
             action="append",
             doc="phase_plan",
             content="Iteration planning update",
@@ -517,6 +520,7 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         assert array_meta_result["ok"]
 
         append_inside_result = await manage_docs(
+            agent="test_agent",
             action="append",
             doc="architecture",
             section="problem_statement",
@@ -531,6 +535,7 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         assert "Inserted via inside append" in architecture_text
 
         batch_result = await manage_docs(
+            agent="test_agent",
             action="batch",
             doc="architecture",
             metadata={
@@ -561,6 +566,7 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         assert "Batch item two" in architecture_text
 
         sections_result = await manage_docs(
+            agent="test_agent",
             action="list_sections",
             doc="architecture",
         )
@@ -575,6 +581,7 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
             "performance_level": "EXCELLENT",
         }
         agent_result = await manage_docs(
+            agent="test_agent",
             action="create_agent_report_card",
             doc="architecture",
             metadata=agent_metadata,
