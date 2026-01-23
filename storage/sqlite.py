@@ -1307,9 +1307,17 @@ class SQLiteStorage(StorageBackend):
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_log_type ON scribe_entries(project_id, log_type, ts_iso DESC);")
 
+            # Phase 1 optimization indexes - eliminate full table scans on high-frequency queries
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_agent_ts ON scribe_entries(agent, ts_iso DESC);")
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_emoji_ts ON scribe_entries(emoji, ts_iso DESC);")
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_logtype_ts ON scribe_entries(log_type, ts_iso DESC);")
+
             # Migration: Add repo_root column to tool_calls for per-project/repo tool logging
             await self._ensure_column("tool_calls", "repo_root", "TEXT")
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);")
+
+            # Phase 1 optimization - repo_root lookups on scribe_projects
+            await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_projects_repo ON scribe_projects(repo_root);")
 
             # Migration: Add docs_json column for manage_docs functionality (BUG-MANAGE-DOCS-001)
             await self.migrate_add_docs_json_column()
