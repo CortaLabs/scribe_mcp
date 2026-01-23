@@ -312,6 +312,36 @@ class StorageBackend(ABC):
     async def set_agent_project(self, agent_id: str, project_name: Optional[str], expected_version: Optional[int], updated_by: str, session_id: str) -> Dict[str, Any]:
         """Set an agent's current project with optimistic concurrency control."""
 
+    # Session activity tracking (Phase 3: state.json elimination)
+    @abstractmethod
+    async def update_session_activity(
+        self,
+        session_id: str,
+        tool_name: str,
+        timestamp: str,
+    ) -> None:
+        """Update session activity tracking (replaces state.json writes).
+
+        Args:
+            session_id: The session identifier
+            tool_name: Name of tool that was called
+            timestamp: ISO format timestamp of the activity
+        """
+        ...
+
+    @abstractmethod
+    async def get_session_activity(
+        self,
+        session_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get session activity data.
+
+        Returns:
+            Dict with recent_tools, session_started_at, last_activity_at
+            or None if session not found
+        """
+        ...
+
     # Bridge management methods
     @abstractmethod
     async def insert_bridge(

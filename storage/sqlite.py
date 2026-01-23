@@ -1325,6 +1325,11 @@ class SQLiteStorage(StorageBackend):
             # Phase 1 optimization - repo_root lookups on scribe_projects
             await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_projects_repo ON scribe_projects(repo_root);")
 
+            # Phase 3: state.json elimination - session activity tracking columns
+            await self._ensure_column("agent_sessions", "recent_tools", "TEXT")  # JSON array of recent tool names
+            await self._ensure_column("agent_sessions", "session_started_at", "TEXT")  # ISO timestamp
+            await self._ensure_column("agent_sessions", "last_activity_at", "TEXT")  # ISO timestamp
+
             # Migration: Add docs_json column for manage_docs functionality (BUG-MANAGE-DOCS-001)
             await self.migrate_add_docs_json_column()
 
@@ -2161,6 +2166,62 @@ class SQLiteStorage(StorageBackend):
                 result = await self.get_agent_project(agent_id)
 
             return result or await self.get_agent_project(agent_id)
+
+    # Phase 3: state.json elimination - session activity tracking
+    async def update_session_activity(
+        self,
+        session_id: str,
+        tool_name: str,
+        timestamp: str,
+    ) -> None:
+        """Update session activity tracking (replaces state.json writes)."""
+        await self._initialise()
+
+        # Get current recent_tools
+        row = await self._fetchone(
+            "SELECT recent_tools, session_started_at FROM agent_sessions WHERE session_id = ?",
+            (session_id,)
+        )
+
+        if row:
+            # Update existing session
+            import json
+            recent_tools = json.loads(row["recent_tools"]) if row["recent_tools"] else []
+            recent_tools.insert(0, tool_name)
+            recent_tools = recent_tools[:10]  # Keep last 10
+
+            session_started = row["session_started_at"] or timestamp
+
+            async with self._write_lock:
+                await self._execute(
+                    """UPDATE agent_sessions
+                       SET recent_tools = ?, last_activity_at = ?, session_started_at = ?
+                       WHERE session_id = ?""",
+                    (json.dumps(recent_tools), timestamp, session_started, session_id)
+                )
+        # If session doesn't exist, it will be created by upsert_session
+
+    async def get_session_activity(
+        self,
+        session_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get session activity data."""
+        await self._initialise()
+
+        row = await self._fetchone(
+            "SELECT recent_tools, session_started_at, last_activity_at FROM agent_sessions WHERE session_id = ?",
+            (session_id,)
+        )
+
+        if not row:
+            return None
+
+        import json
+        return {
+            "recent_tools": json.loads(row["recent_tools"]) if row["recent_tools"] else [],
+            "session_started_at": row["session_started_at"],
+            "last_activity_at": row["last_activity_at"],
+        }
 
     async def get_or_create_agent_session(
         self,

@@ -113,47 +113,110 @@ class StateManager:
         await self._write_state(state)
 
     async def record_tool(self, tool_name: str) -> State:
-        """Track the most recent tool invocations."""
+        """Track the most recent tool invocations.
+
+        DATABASE-ONLY MODE (v2.2.0+):
+        - Writes to database only (agent_sessions table)
+        - state.json writes REMOVED (migration complete)
+        - Falls back to state.json for read-only access to old data
+        """
         async with self._lock:
+            # Load state.json for non-activity fields (current_project, etc.)
             data = await asyncio.to_thread(self._read_json)
-            now = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            now_utc = utcnow()
+            now = now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+            timestamp_iso = now_utc.isoformat()
 
-            recent_tools = _normalise_tool_history(data.get("recent_tools", []))
-            filtered = [item for item in recent_tools if item.get("name") != tool_name]
-            filtered.insert(0, {"name": tool_name, "ts": now})
-            limited = filtered[: TOOL_HISTORY_LIMIT]
+            # Write to database (primary storage for session activity)
+            session_id = None
+            try:
+                from scribe_mcp import server as server_module
+                backend = getattr(server_module, 'storage_backend', None)
+                router_ctx = getattr(server_module, 'router_context_manager', None)
 
-            last_activity = data.get("last_activity_at")
-            session_started = data.get("session_started_at")
-            reset_threshold = settings.reminder_idle_minutes
-            warm_start = session_started
+                if backend and router_ctx and hasattr(backend, 'update_session_activity'):
+                    exec_context = router_ctx.get_current()
+                    if exec_context:
+                        # Prefer stable_session_id for agent_sessions table, fallback to session_id
+                        session_id = exec_context.stable_session_id or exec_context.session_id
 
-            if last_activity:
-                try:
-                    last_dt = parse_utc(last_activity)
-                    if last_dt:
-                        idle_minutes = (utcnow() - last_dt).total_seconds() / 60
-                        if idle_minutes >= reset_threshold:
-                            warm_start = now
-                except Exception:
-                    warm_start = now
-            else:
-                warm_start = now
+                        await backend.update_session_activity(
+                            session_id=session_id,
+                            tool_name=tool_name,
+                            timestamp=timestamp_iso
+                        )
+            except Exception as e:
+                # Log but don't fail - fall back to state.json read for this call
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to write session activity to database: {e}")
 
-            data["recent_tools"] = limited
-            data["last_activity_at"] = now
-            data["session_started_at"] = warm_start
-            await asyncio.to_thread(self._write_json, data)
+            # Get session activity (database-first, with state.json fallback)
+            activity = await self._get_session_activity_with_fallback(session_id, data)
+
+            # NO LONGER WRITING TO STATE.JSON - database is source of truth
+            # state.json is now read-only for migration period
+
             return State(
                 current_project=data.get("current_project"),
                 projects=data.get("projects", {}),
                 recent_projects=data.get("recent_projects", []),
                 session_projects=data.get("session_projects", {}),
                 session_modes=data.get("session_modes", {}),
-                recent_tools=limited,
-                last_activity_at=now,
-                session_started_at=warm_start,
+                recent_tools=activity.get("recent_tools", []),
+                last_activity_at=activity.get("last_activity_at", now),
+                session_started_at=activity.get("session_started_at", now),
             )
+
+    async def _get_session_activity_with_fallback(
+        self,
+        session_id: Optional[str],
+        state_json_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Get session activity from database with state.json fallback.
+
+        Migration helper that tries database first, falls back to state.json
+        for old sessions that haven't been migrated yet.
+
+        Args:
+            session_id: Session ID to look up (may be None if context unavailable)
+            state_json_data: Loaded state.json data for fallback
+
+        Returns:
+            Dict with keys: recent_tools (list), last_activity_at (str), session_started_at (str)
+        """
+        # Try database first (primary source)
+        if session_id:
+            try:
+                from scribe_mcp import server as server_module
+                backend = getattr(server_module, 'storage_backend', None)
+
+                if backend and hasattr(backend, 'get_session_activity'):
+                    activity = await backend.get_session_activity(session_id)
+                    if activity:
+                        # Convert tool names to the format State expects
+                        # Database stores simple tool names, State uses [{name, ts}] format
+                        tool_names = activity.get("recent_tools", [])
+                        recent_tools = [{"name": name, "ts": "migration"} for name in tool_names]
+
+                        return {
+                            "recent_tools": recent_tools,
+                            "last_activity_at": activity.get("last_activity_at"),
+                            "session_started_at": activity.get("session_started_at"),
+                        }
+            except Exception as e:
+                # Log and fall through to state.json fallback
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Database session activity lookup failed, using state.json fallback: {e}")
+
+        # Fallback to state.json (read-only) for old sessions
+        recent_tools = _normalise_tool_history(state_json_data.get("recent_tools", []))
+        return {
+            "recent_tools": recent_tools,
+            "last_activity_at": state_json_data.get("last_activity_at"),
+            "session_started_at": state_json_data.get("session_started_at"),
+        }
 
     async def set_current_project(
         self,
