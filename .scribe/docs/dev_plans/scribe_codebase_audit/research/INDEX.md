@@ -1,14 +1,15 @@
 # Research Documents Index
 
-*Last Updated: 2026-01-23 00:40:23 UTC*
+*Last Updated: 2026-01-23 01:58:04 UTC*
 
 This directory contains research documents generated during the development process.
 
 ## Available Research Documents
 
+- **[RESEARCH_FORMATTER_DECOMPOSITION_DETAILED](RESEARCH_FORMATTER_DECOMPOSITION_DETAILED.md)** - 2026-01-23 01:58 (2047 bytes)
+- **[RESEARCH_REMINDER_SYSTEM](RESEARCH_REMINDER_SYSTEM.md)** - 2026-01-23 00:41 (25216 bytes)
+- **[RESEARCH_DATABASE_OPTIMIZATION](RESEARCH_DATABASE_OPTIMIZATION.md)** - 2026-01-23 00:41 (25578 bytes)
 - **[RESEARCH_FORMATTER_DECOMPOSITION](RESEARCH_FORMATTER_DECOMPOSITION.md)** - 2026-01-23 00:40 (2038 bytes)
-- **[RESEARCH_DATABASE_OPTIMIZATION](RESEARCH_DATABASE_OPTIMIZATION.md)** - 2026-01-23 00:40 (16791 bytes)
-- **[RESEARCH_REMINDER_SYSTEM](RESEARCH_REMINDER_SYSTEM.md)** - 2026-01-23 00:36 (2030 bytes)
 - **[RESEARCH_STATE_JSON_AUDIT](RESEARCH_STATE_JSON_AUDIT.md)** - 2026-01-23 00:30 (2031 bytes)
 - **[RESEARCH_TOOL_DUPLICATION](RESEARCH_TOOL_DUPLICATION.md)** - 2026-01-23 00:30 (2031 bytes)
 - **[RESEARCH_IMPORT_STARTUP_ANALYSIS](RESEARCH_IMPORT_STARTUP_ANALYSIS.md)** - 2026-01-23 00:29 (2038 bytes)
@@ -20,7 +21,7 @@ This directory contains research documents generated during the development proc
 
 ## Index Information
 
-- **Total Documents:** 10
+- **Total Documents:** 11
 - **Index Location:** `scribe_codebase_audit/research/INDEX.md`
 
 ---
