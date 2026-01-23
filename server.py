@@ -489,22 +489,39 @@ if _MCP_AVAILABLE:
                     )
                     context_payload["session_id"] = session_id
 
+            # FIX: Prioritize explicit project argument for repo_root derivation.
+            # This ensures the session identity matches what set_project used, since
+            # the unstable session_id might not match the stable_session_id used for binding.
             if not context_payload.get("repo_root"):
                 backend = storage_backend
-                if backend and context_payload.get("session_id"):
-                    project_name = None
-                    if hasattr(backend, "get_session_project"):
-                        project_name = await backend.get_session_project(
-                            context_payload.get("session_id")
-                        )
-                    if not project_name and isinstance(arguments, dict):
-                        project_name = arguments.get("project") or arguments.get("name")
-                    if project_name and hasattr(backend, "fetch_project"):
-                        project_record = await backend.fetch_project(str(project_name))
+                if backend and hasattr(backend, "fetch_project"):
+                    # PRIORITY 1: Use explicit project argument if provided
+                    # This is critical because set_project binds to stable_session_id,
+                    # but we only have the unstable session_id at this point.
+                    explicit_project = None
+                    if isinstance(arguments, dict):
+                        explicit_project = arguments.get("project") or arguments.get("name")
+
+                    if explicit_project:
+                        project_record = await backend.fetch_project(str(explicit_project))
                         if project_record:
                             context_payload["repo_root"] = _normalize_repo_root(
                                 project_record.repo_root
                             )
+
+                    # PRIORITY 2: Fall back to session-based lookup only if no explicit project
+                    if not context_payload.get("repo_root") and context_payload.get("session_id"):
+                        project_name = None
+                        if hasattr(backend, "get_session_project"):
+                            project_name = await backend.get_session_project(
+                                context_payload.get("session_id")
+                            )
+                        if project_name:
+                            project_record = await backend.fetch_project(str(project_name))
+                            if project_record:
+                                context_payload["repo_root"] = _normalize_repo_root(
+                                    project_record.repo_root
+                                )
 
             if not context_payload.get("repo_root"):
                 context_payload["repo_root"] = str(settings.project_root.resolve())
