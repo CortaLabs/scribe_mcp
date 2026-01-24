@@ -361,9 +361,37 @@
       "modified_timestamp": "2025-12-16T22:44:54.084759",
       "log_type": "progress",
       "stored_timestamp": "2025-12-17T03:44:54.150421 UTC"
+    },
+    {
+      "rotation_uuid": "63505208-e225-48a8-afa2-c16489be9dee",
+      "rotation_timestamp_utc": "2026-01-23 09:23:58 UTC",
+      "sequence_number": 40,
+      "archived_file_path": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/2b3d9061-fb66-4696-b068-54f051a9440d/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md.test-enhanced.md",
+      "archived_file_name": "PROGRESS_LOG.md.test-enhanced.md",
+      "entry_count": 34,
+      "file_hash": "ac2377170d4c924bdf17a093eba5fc3d1745ba697c29966b5584ce3fcfc76b79",
+      "file_size": 1312,
+      "created_timestamp": "2026-01-23T04:23:58.548676",
+      "modified_timestamp": "2026-01-23T04:23:58.476677",
+      "log_type": "progress",
+      "stored_timestamp": "2026-01-23T09:23:58.563539 UTC"
+    },
+    {
+      "rotation_uuid": "31664c40-ff00-4d26-9c2c-3a369d23d4d4",
+      "rotation_timestamp_utc": "2026-01-23 09:25:28 UTC",
+      "sequence_number": 41,
+      "archived_file_path": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/e432d23c-73fc-4975-9ce2-56127b61a5b1/.scribe/docs/dev_plans/enhanced_rotation_test/PROGRESS_LOG.md.test-enhanced.md",
+      "archived_file_name": "PROGRESS_LOG.md.test-enhanced.md",
+      "entry_count": 34,
+      "file_hash": "24e60b4b02a455e22713447eb569990cb71059cf6b58220051ef90f5543fdc17",
+      "file_size": 1312,
+      "created_timestamp": "2026-01-23T04:25:28.120160",
+      "modified_timestamp": "2026-01-23T04:25:28.032160",
+      "log_type": "progress",
+      "stored_timestamp": "2026-01-23T09:25:28.128190 UTC"
     }
   ],
-  "total_rotations": 26,
-  "last_updated": "2025-12-17T03:44:54.150421 UTC",
+  "total_rotations": 28,
+  "last_updated": "2026-01-23T09:25:28.128190 UTC",
   "version": "1.0"
 }
