@@ -1007,7 +1007,8 @@ async def _auto_register_document(
                 "doc_name": doc_name,
                 "path": str(doc_path),
                 "hash": doc_hash[:8],
-            }
+            },
+            format="structured"  # Returns plain dict for internal processing
         )
     except Exception as e:
         # Non-fatal - log warning but don't fail registration
@@ -1844,6 +1845,7 @@ async def manage_docs(
                 meta=log_meta,
                 agent=agent_id,
                 log_type="doc_updates",
+                format="structured"  # Returns plain dict for internal processing
             )
         except Exception as exc:
             log_error = str(exc)
@@ -2787,6 +2789,7 @@ async def _handle_special_document_creation(
                 meta=log_meta,
                 agent=agent_id,
                 log_type="doc_updates",
+                format="structured"  # Returns plain dict for internal processing
             )
         except Exception as exc:
             log_warning = str(exc)

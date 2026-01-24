@@ -44,7 +44,7 @@ from scribe_mcp.shared.log_enums import (
     infer_priority_from_status,
 )
 from scribe_mcp.utils.parameter_validator import ToolValidator, BulletproofParameterCorrector
-from scribe_mcp.utils.config_manager import ConfigManager, resolve_fallback_chain, BulletproofFallbackManager
+from scribe_mcp.utils.config_manager import ConfigManager, resolve_fallback_chain
 from scribe_mcp.utils.error_handler import ErrorHandler, ExceptionHealer
 from scribe_mcp.security.sandbox import PermissionError as SandboxPermissionError
 from scribe_mcp.utils.response import default_formatter
@@ -78,7 +78,6 @@ _PARALLEL_PROCESSOR = ParallelBulkProcessor()
 # Phase 3 Enhanced utilities integration
 _PARAMETER_CORRECTOR = BulletproofParameterCorrector()
 _EXCEPTION_HEALER = ExceptionHealer()
-_FALLBACK_MANAGER = BulletproofFallbackManager()
 _PROJECT_REGISTRY = ProjectRegistry()
 
 
@@ -357,70 +356,8 @@ def _validate_and_prepare_parameters(
         return final_config, {"healing_applied": healing_applied, "healed_params": healed_params}
 
     except Exception as e:
-        # Apply Phase 2 ExceptionHealer for parameter validation errors
-        healed_exception = _EXCEPTION_HEALER.heal_parameter_validation_error(
-            e, {"message": message, "status": status, "agent": agent, "log_type": log_type}
-        )
-
-        if healed_exception.get("success"):
-            # Use healed values from exception recovery
-            fallback_params = _FALLBACK_MANAGER.apply_emergency_fallback(
-                "append_entry", healed_exception.get("healed_values", {}) or {}
-            )
-
-            # Create safe fallback configuration
-            safe_config = AppendEntryConfig.from_legacy_params(
-                message=fallback_params.get("message", message or "Entry processing completed"),
-                status=fallback_params.get("status", status or "info"),
-                emoji=fallback_params.get("emoji", emoji or "ℹ️"),
-                agent=fallback_params.get("agent", agent or "Scribe"),
-                meta=fallback_params.get("meta", meta or {}),
-                timestamp_utc=fallback_params.get("timestamp_utc", timestamp_utc),
-                items=items,
-                items_list=items_list,
-                auto_split=auto_split,
-                split_delimiter=split_delimiter,
-                stagger_seconds=stagger_seconds,
-                agent_id=agent_id,
-                log_type=fallback_params.get("log_type", log_type or "progress")
-            )
-
-            return safe_config, {
-                "healing_applied": True,
-                "exception_healing": True,
-                "healed_params": healed_exception.get("healed_values", {}),
-                "fallback_used": True
-            }
-        else:
-            # Ultimate fallback - use BulletproofFallbackManager
-            fallback_params = _FALLBACK_MANAGER.apply_emergency_fallback("append_entry", {
-                "message": message or "Entry processing completed",
-                "status": status,
-                "agent": agent,
-                "log_type": log_type
-            })
-
-            emergency_config = AppendEntryConfig.from_legacy_params(
-                message=fallback_params.get("message", "Emergency entry created"),
-                status=fallback_params.get("status", "info"),
-                emoji=fallback_params.get("emoji", "🚨"),
-                agent=fallback_params.get("agent", "Scribe"),
-                meta=fallback_params.get("meta", {"emergency_fallback": True}),
-                timestamp_utc=fallback_params.get("timestamp_utc", timestamp_utc),
-                items=items,
-                items_list=items_list,
-                auto_split=auto_split,
-                split_delimiter=split_delimiter,
-                stagger_seconds=stagger_seconds,
-                agent_id=agent_id,
-                log_type=fallback_params.get("log_type", "progress")
-            )
-
-            return emergency_config, {
-                "healing_applied": True,
-                "emergency_fallback": True,
-                "fallback_params": fallback_params
-            }
+        # Fail cleanly - no emergency fallbacks
+        raise ValueError(f"Config validation failed: {e}") from e
 
 
 async def _process_single_entry(
@@ -452,21 +389,10 @@ async def _process_single_entry(
         tags = final_config.tags
         confidence = final_config.confidence
 
-        # Validate message content with enhanced healing
+        # Validate message content - fail if invalid
         validation_error = _validate_message(message)
         if validation_error:
-            # Try to heal the validation error
-            healed_message = _EXCEPTION_HEALER.heal_document_operation_error(
-                ValueError(validation_error), {"message": message, "operation": "message_validation"}
-            )
-
-            if healed_message["success"]:
-                message = healed_message["healed_values"].get("message", message)
-            else:
-                fallback_result = _FALLBACK_MANAGER.apply_emergency_fallback(
-                    "append_entry", {"message": message}
-                )
-                message = fallback_result.get("message", "Message validation failed")
+            return {"ok": False, "error": f"Message validation failed: {validation_error}"}
 
         # Rate limiting removed; logging must never be blocked.
 
@@ -528,18 +454,7 @@ async def _process_single_entry(
 
         requirement_error = _validate_log_requirements(log_definition, meta_payload)
         if requirement_error:
-            # Try to heal metadata requirements
-            healed_meta = _EXCEPTION_HEALER.heal_parameter_validation_error(
-                ValueError(requirement_error), {"metadata": meta_payload, "requirements": log_definition}
-            )
-            if healed_meta["success"]:
-                meta_payload.update(healed_meta["healed_values"].get("metadata", {}))
-            else:
-                # Apply fallback metadata
-                fallback_meta = _FALLBACK_MANAGER.apply_context_aware_defaults(
-                    "append_entry", {"metadata": meta_payload, "log_type": entry_log_type}
-                )
-                meta_payload.update(fallback_meta.get("metadata", {}))
+            return {"ok": False, "error": f"Log requirements not met: {requirement_error}"}
 
         meta_payload.setdefault("log_type", entry_log_type)
         meta_payload.setdefault("content_type", "log")
@@ -784,46 +699,12 @@ async def _process_single_entry(
         return response
 
     except Exception as e:
-        # Apply comprehensive exception healing for single entry processing
-        healed_result = _EXCEPTION_HEALER.heal_complex_exception_combination(
-            e, {
-                "operation": "single_entry_processing",
-                "message": final_config.message,
-                "project": project,
-                "config": final_config.to_dict()
-            }
-        )
-
-        if healed_result and healed_result.get("success") and "healed_values" in healed_result:
-            # Create emergency entry with healed values
-            emergency_params = _FALLBACK_MANAGER.apply_emergency_fallback(
-                "append_entry", healed_result["healed_values"]
-            )
-
-            emergency_config = AppendEntryConfig.from_legacy_params(
-                message=emergency_params.get("message", "Emergency entry created after processing error"),
-                status=emergency_params.get("status", "error"),
-                emoji=emergency_params.get("emoji", "🚨"),
-                agent=emergency_params.get("agent", "Scribe"),
-                meta=emergency_params.get("meta", {"emergency_fallback": True, "original_error": str(e)}),
-                timestamp_utc=emergency_params.get("timestamp_utc", final_config.timestamp_utc),
-                agent_id=final_config.agent_id,
-                log_type=emergency_params.get("log_type", "progress")
-            )
-
-            # Try to process emergency entry
-            return await _process_single_entry(
-                emergency_config, context, project, recent, log_cache,
-                tuple(emergency_params.get("meta", {}).items())
-            )
-        else:
-            # Return error response
-            return {
-                "ok": False,
-                "error": f"Failed to process entry: {str(e)}",
-                "suggestion": "Try with simpler parameters or check project configuration",
-                "recent_projects": list(recent),
-            }
+        # Fail cleanly - no emergency entries
+        return {
+            "ok": False,
+            "error": f"Failed to process entry: {str(e)}",
+            "recent_projects": list(recent),
+        }
 
 
 async def _process_bulk_entries(
@@ -938,19 +819,12 @@ async def _process_bulk_entries(
                 normalized_bulk, final_config.timestamp_utc, stagger_seconds
             )
         except Exception as prep_error:
-            # Try to heal bulk preparation error
-            healed_prep = _EXCEPTION_HEALER.heal_bulk_processing_error(
-                prep_error, {"bulk_items": bulk_items}
-            )
-
-            if healed_prep["success"]:
-                bulk_items = healed_prep["healed_values"].get("bulk_items", [])
-            else:
-                # Apply fallback preparation
-                fallback_prep = _FALLBACK_MANAGER.apply_context_aware_defaults(
-                    "append_entry", {"bulk_items": bulk_items, "operation": "bulk_preparation"}
-                )
-                bulk_items = fallback_prep.get("bulk_items", [])
+            # Fail cleanly
+            return {
+                "ok": False,
+                "error": f"Bulk preparation failed: {str(prep_error)}",
+                "recent_projects": list(recent),
+            }
 
         # Process bulk items with enhanced error handling
         try:
@@ -1040,38 +914,21 @@ async def _process_bulk_entries(
                         )
                         results.append(result)
 
-                    except Exception:
-                        # Add fallback result
-                        fallback_result = {
-                            "ok": True,
-                            "id": f"fallback-{uuid.uuid4().hex[:16]}",
-                            "fallback": True,
-                            "message": "Fallback bulk entry created"
-                        }
-                        results.append(fallback_result)
+                    except Exception as item_error:
+                        # Fail cleanly - report the error for this item
+                        results.append({
+                            "ok": False,
+                            "error": f"Failed to process bulk item: {str(item_error)}",
+                            "item_index": i
+                        })
             else:
-                # Ultimate fallback - process single emergency entry
-                emergency_params = _FALLBACK_MANAGER.apply_emergency_fallback(
-                    "append_entry", {"message": "Bulk processing failed, emergency entry created"}
-                )
-
-                emergency_config = AppendEntryConfig.from_legacy_params(
-                    message=emergency_params.get("message", "Emergency bulk entry"),
-                    status=emergency_params.get("status", "warn"),
-                    emoji=emergency_params.get("emoji", "⚠️"),
-                    agent=emergency_params.get("agent", final_config.agent),
-                    meta=emergency_params.get("meta", {"bulk_processing_failed": True, "original_error": str(bulk_error)}),
-                    timestamp_utc=emergency_params.get("timestamp_utc", final_config.timestamp_utc),
-                    agent_id=agent_id,
-                    log_type=emergency_params.get("log_type", base_log_type)
-                )
-
-                emergency_result = await _process_single_entry(
-                    emergency_config, context, project, recent, log_cache,
-                    tuple(emergency_params.get("meta", {}).items())
-                )
-
-                return emergency_result
+                # No items to process - return clean error
+                return {
+                    "ok": False,
+                    "error": f"Bulk processing failed: {str(bulk_error)}",
+                    "suggestion": "Check items format and try again",
+                    "recent_projects": list(recent),
+                }
 
         # Prepare bulk response
         successful_results = [r for r in results if r.get("ok", False)]
@@ -1108,39 +965,13 @@ async def _process_bulk_entries(
         return response
 
     except Exception as e:
-        # Apply ultimate exception healing for bulk processing
-        healed_result = _EXCEPTION_HEALER.heal_emergency_exception(
-            e, {"operation": "bulk_entry_processing", "project": project}
-        )
-
-        if healed_result and healed_result.get("success") and "healed_values" in healed_result:
-            # Create emergency bulk entry
-            emergency_params = _FALLBACK_MANAGER.apply_emergency_fallback(
-                "append_entry", healed_result["healed_values"]
-            )
-
-            emergency_config = AppendEntryConfig.from_legacy_params(
-                message=emergency_params.get("message", "Emergency bulk entry after critical error"),
-                status=emergency_params.get("status", "error"),
-                emoji=emergency_params.get("emoji", "🚨"),
-                agent=emergency_params.get("agent", "Scribe"),
-                meta=emergency_params.get("meta", {"emergency_bulk_fallback": True, "critical_error": str(e)}),
-                timestamp_utc=emergency_params.get("timestamp_utc", final_config.timestamp_utc),
-                agent_id=final_config.agent_id,
-                log_type=emergency_params.get("log_type", "progress")
-            )
-
-            return await _process_single_entry(
-                emergency_config, context, project, recent, log_cache,
-                tuple(emergency_params.get("meta", {}).items())
-            )
-        else:
-            return {
-                "ok": False,
-                "error": f"Bulk processing failed critically: {str(e)}",
-                "suggestion": "Try processing items individually or use simpler parameters",
-                "recent_projects": list(recent),
-            }
+        # Fail cleanly - no emergency fallbacks
+        return {
+            "ok": False,
+            "error": f"Bulk processing failed: {str(e)}",
+            "suggestion": "Try processing items individually or check parameters",
+            "recent_projects": list(recent),
+        }
 
 
 def _should_use_bulk_mode(message: str, items: Optional[str] = None, items_list: Optional[List[Dict[str, Any]]] = None) -> bool:
@@ -1539,25 +1370,16 @@ async def append_entry(
         recent = list(context.recent_projects)
         reminders_payload: List[Dict[str, Any]] = list(context.reminders)
 
-        # === INPUT VALIDATION WITH ENHANCED HEALING ===
+        # === INPUT VALIDATION ===
         # Validate that either message, items, or items_list is provided
         if not items and not items_list and not message:
-            # Try to heal missing content with fallback
-            fallback_content = _FALLBACK_MANAGER.apply_emergency_fallback(
-                "append_entry", {"error": "No content provided", "validation_failed": True}
-            )
-
-            if fallback_content.get("success", False):
-                message = fallback_content.get("message", "Entry created from fallback")
-                final_config.message = message
-            else:
-                return {
-                    "ok": False,
-                    "error": "Either 'message', 'items', or 'items_list' must be provided",
-                    "suggestion": "Use message for single/multiline entries, items for JSON bulk, or items_list for direct list bulk",
-                    "recent_projects": list(recent),
-                    "debug_path": "no_content_provided",
-                }
+            return {
+                "ok": False,
+                "error": "Either 'message', 'items', or 'items_list' must be provided",
+                "suggestion": "Use message for single/multiline entries, items for JSON bulk, or items_list for direct list bulk",
+                "recent_projects": list(recent),
+                "debug_path": "no_content_provided",
+            }
 
         log_cache: Dict[str, Tuple[Path, Dict[str, Any]]] = {}
         base_log_type = (log_type or "progress").lower()
@@ -1597,75 +1419,13 @@ async def append_entry(
         )
 
     except Exception as e:
-        # === ULTIMATE EXCEPTION HANDLING AND FALLBACK ===
-        # Apply Phase 2 ExceptionHealer for unexpected errors
-        healed_result = _EXCEPTION_HEALER.heal_emergency_exception(
-            e, {
-                "operation": "append_entry_main",
-                "message": message,
-                "agent_id": agent_id,
-                "tool": "append_entry"
-            }
-        )
-
-        if healed_result and healed_result.get("success") and "healed_values" in healed_result:
-            # Create emergency entry with healed parameters
-            emergency_params = _FALLBACK_MANAGER.apply_emergency_fallback(
-                "append_entry", healed_result["healed_values"]
-            )
-
-            emergency_config = AppendEntryConfig.from_legacy_params(
-                message=emergency_params.get("message", "Emergency entry created after critical error"),
-                status=emergency_params.get("status", "error"),
-                emoji=emergency_params.get("emoji", "🚨"),
-                agent=emergency_params.get("agent", "Scribe"),
-                meta=emergency_params.get("meta", {
-                    "emergency_fallback": True,
-                    "critical_error": str(e),
-                    "healed_exception": True
-                }),
-                timestamp_utc=emergency_params.get("timestamp_utc", timestamp_utc),
-                agent_id=agent_id,
-                log_type=emergency_params.get("log_type", "progress")
-            )
-
-            # Try to process emergency entry with minimal context
-            try:
-                # Create minimal fallback context
-                fallback_context = type('obj', (object,), {
-                    'project': {"name": "emergency_project", "root": Path("."), "defaults": {}},
-                    'recent_projects': [],
-                    'reminders': []
-                })()
-
-                emergency_result = await _process_single_entry(
-                    emergency_config, fallback_context,
-                    fallback_context.project, [], {},
-                    tuple(emergency_params.get("meta", {}).items())
-                )
-
-                emergency_result["emergency_fallback"] = True
-                emergency_result["original_error"] = str(e)
-                return emergency_result
-
-            except Exception:
-                # Ultimate fallback return
-                return {
-                    "ok": False,
-                    "error": f"Critical error in append_entry: {str(e)}",
-                    "emergency_fallback_attempted": True,
-                    "suggestion": "Check system configuration and try again",
-                    "recent_projects": [],
-                }
-        else:
-            # Return error if even emergency healing fails
-            return {
-                "ok": False,
-                "error": f"Critical error in append_entry: {str(e)}",
-                "emergency_healing_failed": True,
-                "suggestion": "Check system configuration and try again",
-                "recent_projects": [],
-            }
+        # Fail cleanly with error details - no emergency fallbacks
+        return {
+            "ok": False,
+            "error": f"append_entry failed: {str(e)}",
+            "suggestion": "Check parameters and try again",
+            "recent_projects": [],
+        }
 
 def _resolve_emoji(
     explicit: Optional[str],

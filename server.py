@@ -282,8 +282,10 @@ if _MCP_AVAILABLE:
             if not func:
                 raise ValueError(f"Unknown tool '{name}'")
 
-            sentinel_only = {"append_event", "open_bug", "open_security", "link_fix"}
-            sentinel_allowed = sentinel_only | {"read_file", "query_entries", "read_recent", "set_project", "append_entry", "list_projects", "get_project"}
+            # Tools that ONLY work in sentinel mode (blocked in project mode)
+            sentinel_only = {"append_event"}
+            # Tools allowed in sentinel mode (superset includes dual-mode tools)
+            sentinel_allowed = sentinel_only | {"open_bug", "open_security", "link_fix", "read_file", "query_entries", "read_recent", "set_project", "append_entry", "list_projects", "get_project"}
 
             def derive_session_identity(exec_context, arguments: dict) -> tuple[str, dict]:
                 """Derive stable session identity from execution context.

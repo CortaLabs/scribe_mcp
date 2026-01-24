@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from scribe_mcp import server as server_module
@@ -23,6 +25,88 @@ def _get_context():
     if not context:
         raise ValueError("ExecutionContext missing")
     return context
+
+
+def _unwrap_result(result: Any) -> Dict[str, Any]:
+    """Extract dict from result, handling MCP CallToolResult wrapper if present."""
+    import json
+
+    if isinstance(result, dict):
+        return result
+
+    # Handle MCP CallToolResult wrapper
+    if hasattr(result, "content"):
+        content = result.content
+        if isinstance(content, list) and content:
+            first = content[0]
+            if hasattr(first, "text"):
+                try:
+                    return json.loads(first.text)
+                except Exception:
+                    pass
+            # If first item is a dict directly
+            if isinstance(first, dict):
+                return first
+
+    # Try to serialize and deserialize to get a plain dict
+    try:
+        return json.loads(json.dumps(result, default=str))
+    except Exception:
+        pass
+
+    # Fallback: try to convert to dict
+    if hasattr(result, "__dict__"):
+        try:
+            return json.loads(json.dumps(result.__dict__, default=str))
+        except Exception:
+            return dict(result.__dict__)
+
+    return {"ok": False, "error": "Could not unwrap result"}
+
+
+def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
+    """Generate a case ID for project mode by scanning recent entries.
+
+    Args:
+        kind: "BUG" or "SEC"
+        result: The result from append_entry containing paths info
+
+    Returns:
+        Case ID like "BUG-2026-01-24-0001"
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    prefix = f"{kind}-{today}-"
+
+    # Try to scan the log file for existing case IDs with this prefix
+    last_seq = 0
+    paths = result.get("paths", [])
+    primary_path = result.get("path")
+    if primary_path:
+        paths = [primary_path] + [p for p in paths if p != primary_path]
+
+    case_id_pattern = re.compile(rf"{re.escape(prefix)}(\d+)")
+
+    for log_path in paths:
+        try:
+            from pathlib import Path
+            path = Path(log_path)
+            if not path.exists():
+                continue
+            # Read last 64KB to find recent case IDs
+            size = path.stat().st_size
+            read_size = min(size, 65536)
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                if size > read_size:
+                    f.seek(size - read_size)
+                content = f.read()
+                for match in case_id_pattern.finditer(content):
+                    seq = int(match.group(1))
+                    if seq > last_seq:
+                        last_seq = seq
+        except Exception:
+            continue
+
+    return f"{prefix}{last_seq + 1:04d}"
 
 
 def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[str, Any]]) -> str:
@@ -195,10 +279,108 @@ async def open_bug(
     agent: str,
     title: str,
     symptoms: str,
+    category: str,
     affected_paths: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
-    """Open a BUG case with per-day stable ID."""
-    context = _require_sentinel_context()
+    """Open a BUG case with per-day stable ID and create a detailed bug report document.
+
+    Args:
+        agent: Agent identifier
+        title: Short bug title
+        symptoms: Description of the bug symptoms
+        category: Bug category for organization (e.g., 'auth', 'api', 'ui')
+        affected_paths: Optional list of affected file paths
+    """
+    if not category or not category.strip():
+        return {"ok": False, "error": "category is required"}
+
+    context = _get_context()
+
+    # Project mode: route through append_entry with bug status AND create bug report doc
+    if context.mode == "project":
+        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
+
+        # Generate case ID first so we can use it in the document
+        # We'll use a temporary result to get paths, then generate ID
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        case_id_prefix = f"BUG-{today}-"
+
+        message = f"[BUG] {title}: {symptoms}"
+        meta = {
+            "case_type": "bug",
+            "title": title,
+            "symptoms": symptoms,
+            "affected_paths": affected_paths or [],
+            "landing_status": "proposed",
+        }
+
+        result = await append_entry_tool(
+            message=message,
+            status="bug",
+            agent=agent,
+            meta=meta,
+            format="structured",  # Returns plain dict, not MCP-wrapped
+        )
+
+        if not result.get("ok"):
+            return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
+
+        # Generate case ID after entry is written (so we can scan for existing IDs)
+        case_id = _next_case_id_for_project("BUG", result)
+
+        # Create detailed bug report document
+        doc_result = await manage_docs_tool(
+            agent=agent,
+            action="create",
+            metadata={
+                "doc_type": "bug",
+                "category": category,
+                "slug": case_id,
+                "title": title,
+                "case_id": case_id,
+                "symptoms": symptoms,
+                "affected_paths": affected_paths or [],
+                "body": f"""# {case_id}: {title}
+
+**Status:** Open
+**Reported:** {today}
+**Reporter:** {agent}
+
+## Symptoms
+{symptoms}
+
+## Affected Paths
+{chr(10).join(f'- `{p}`' for p in (affected_paths or [])) or '_None specified_'}
+
+## Investigation
+_Add investigation notes here_
+
+## Root Cause
+_To be determined_
+
+## Fix
+_To be determined_
+
+## Verification
+- [ ] Root cause identified
+- [ ] Fix implemented
+- [ ] Tests added/updated
+- [ ] Fix verified
+""",
+            },
+        )
+
+        return {
+            "ok": True,
+            "case_id": str(case_id),
+            "entry_id": str(result.get("id", "")),
+            "path": str(result.get("path", "")),
+            "project_name": str(result.get("project_name", "")),
+            "bug_report": str(doc_result.get("path", "")) if isinstance(doc_result, dict) and doc_result.get("ok") else None,
+        }
+
+    # Sentinel mode: original behavior
     case_id = append_case_event(
         context,
         kind="BUG",
@@ -219,10 +401,111 @@ async def open_security(
     agent: str,
     title: str,
     symptoms: str,
+    category: str,
     affected_paths: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
-    """Open a SECURITY case with per-day stable ID."""
-    context = _require_sentinel_context()
+    """Open a SECURITY case with per-day stable ID and create a detailed security report document.
+
+    Args:
+        agent: Agent identifier
+        title: Short security issue title
+        symptoms: Description of the security issue
+        category: Category for organization (e.g., 'auth', 'injection', 'xss')
+        affected_paths: Optional list of affected file paths
+    """
+    if not category or not category.strip():
+        return {"ok": False, "error": "category is required"}
+
+    context = _get_context()
+
+    # Project mode: route through append_entry with security flag AND create security report doc
+    if context.mode == "project":
+        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        message = f"[SECURITY] {title}: {symptoms}"
+        meta = {
+            "case_type": "security",
+            "security_event": "1",  # Triggers auto-tee to security log
+            "title": title,
+            "symptoms": symptoms,
+            "affected_paths": affected_paths or [],
+            "landing_status": "proposed",
+        }
+
+        result = await append_entry_tool(
+            message=message,
+            status="warn",  # Security issues are warnings
+            agent=agent,
+            meta=meta,
+            format="structured",  # Returns plain dict, not MCP-wrapped
+        )
+
+        if not result.get("ok"):
+            return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
+
+        # Generate case ID after entry is written (so we can scan for existing IDs)
+        case_id = _next_case_id_for_project("SEC", result)
+
+        # Create detailed security report document
+        doc_result = await manage_docs_tool(
+            agent=agent,
+            action="create",
+            metadata={
+                "doc_type": "bug",  # Use bug template for security too
+                "category": category,
+                "slug": case_id,
+                "title": title,
+                "case_id": case_id,
+                "symptoms": symptoms,
+                "affected_paths": affected_paths or [],
+                "body": f"""# {case_id}: {title}
+
+**Status:** Open
+**Severity:** To be assessed
+**Reported:** {today}
+**Reporter:** {agent}
+
+## Description
+{symptoms}
+
+## Affected Paths
+{chr(10).join(f'- `{p}`' for p in (affected_paths or [])) or '_None specified_'}
+
+## Security Impact
+_Assess the security impact here_
+
+## Attack Vector
+_Describe how this could be exploited_
+
+## Mitigation
+_Immediate mitigation steps_
+
+## Permanent Fix
+_Long-term fix approach_
+
+## Verification
+- [ ] Impact assessed
+- [ ] Mitigation applied
+- [ ] Permanent fix implemented
+- [ ] Security review completed
+- [ ] No regression introduced
+""",
+            },
+        )
+
+        return {
+            "ok": True,
+            "case_id": str(case_id),
+            "entry_id": str(result.get("id", "")),
+            "path": str(result.get("path", "")),
+            "project_name": str(result.get("project_name", "")),
+            "security_report": str(doc_result.get("path", "")) if isinstance(doc_result, dict) and doc_result.get("ok") else None,
+        }
+
+    # Sentinel mode: original behavior
     case_id = append_case_event(
         context,
         kind="SEC",
@@ -247,7 +530,8 @@ async def link_fix(
     landing_status: str,
 ) -> Dict[str, Any]:
     """Link a fix artifact to a BUG/SEC case."""
-    context = _require_sentinel_context()
+    context = _get_context()
+
     case_id_upper = case_id.upper()
     if case_id_upper.startswith("BUG-"):
         event_type = "bug_fix_linked"
@@ -258,6 +542,45 @@ async def link_fix(
     else:
         return {"ok": False, "error": "case_id must start with BUG- or SEC-"}
 
+    # Project mode: route through append_entry
+    if context.mode == "project":
+        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+
+        message = f"[FIX LINKED] {case_id}: {artifact_ref} ({landing_status})"
+        meta = {
+            "case_type": "bug" if kind == "BUG" else "security",
+            "case_id": case_id,
+            "fix_link": {
+                "execution_id": execution_id,
+                "artifact_ref": artifact_ref,
+            },
+            "landing_status": landing_status,
+        }
+
+        # Add security_event flag for security cases to trigger auto-tee
+        if kind == "SEC":
+            meta["security_event"] = "1"
+
+        result = await append_entry_tool(
+            message=message,
+            status="success" if landing_status in ("merged", "landed", "done") else "info",
+            agent=agent,
+            meta=meta,
+            format="structured",  # Returns plain dict, not MCP-wrapped
+        )
+
+        if not result.get("ok"):
+            return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
+
+        return {
+            "ok": True,
+            "case_id": str(case_id),
+            "entry_id": str(result.get("id", "")),
+            "path": str(result.get("path", "")),
+            "project_name": str(result.get("project_name", "")),
+        }
+
+    # Sentinel mode: original behavior
     append_case_event(
         context,
         kind=kind,
@@ -272,4 +595,4 @@ async def link_fix(
         },
         include_md=True,
     )
-    return {"ok": True, "case_id": case_id}
+    return {"ok": True, "case_id": str(case_id)}
