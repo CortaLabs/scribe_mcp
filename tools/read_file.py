@@ -1725,7 +1725,7 @@ async def read_file(
     if include_impact and not include_dependencies:
         return {"ok": False, "error": "include_impact=True requires include_dependencies=True"}
 
-    repo_root = Path(exec_context.repo_root)
+    repo_root = Path(exec_context.repo_root).resolve()
     requested_mode = mode.lower()
     target = Path(path).expanduser()
     if not target.is_absolute():
@@ -1832,6 +1832,16 @@ async def read_file(
         "repo_relative_path": rel_path,
         **scan,
     }
+
+    # Record file read for edit_file enforcement (session tracking)
+    if exec_context.session_id:
+        try:
+            await server_module.router_context_manager.record_file_read(
+                exec_context.session_id,
+                str(target),
+            )
+        except Exception:
+            pass  # Non-critical: don't block reads if tracking fails
 
     encoding = scan["encoding"]
     frontmatter_info = _read_frontmatter_header(target, encoding)

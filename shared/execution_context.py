@@ -9,7 +9,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from collections import defaultdict
+from typing import Any, Dict, Optional, Set
 
 
 _CURRENT_CONTEXT: contextvars.ContextVar["ExecutionContext | None"] = contextvars.ContextVar(
@@ -57,6 +58,7 @@ class RouterContextManager:
         self._lock = asyncio.Lock()
         self._transport_sessions: Dict[str, str] = {}  # Keep as performance cache
         self._session_projects: Dict[str, str] = {}  # session_id -> project_name cache
+        self._files_read_in_session: Dict[str, Set[str]] = defaultdict(set)  # session_id -> set of file paths
         self._process_instance_id = str(uuid.uuid4())
         self._storage_backend = storage_backend  # NEW: Injected dependency
 
@@ -137,6 +139,27 @@ class RouterContextManager:
             return None
         async with self._lock:
             return self._session_projects.get(session_id)
+
+    async def record_file_read(self, session_id: str, file_path: str) -> None:
+        """Record that a file was read in this session. Called by read_file."""
+        if not session_id or not file_path:
+            return
+        async with self._lock:
+            self._files_read_in_session[session_id].add(file_path)
+
+    async def has_file_been_read(self, session_id: str, file_path: str) -> bool:
+        """Check if a file was read in this session. Called by edit_file."""
+        if not session_id or not file_path:
+            return False
+        async with self._lock:
+            return file_path in self._files_read_in_session.get(session_id, set())
+
+    async def cleanup_session(self, session_id: str) -> None:
+        """Remove session from all caches. Called by session cleanup task."""
+        async with self._lock:
+            self._transport_sessions.pop(session_id, None)
+            self._session_projects.pop(session_id, None)
+            self._files_read_in_session.pop(session_id, None)
 
     def _build_agent_identity(self, payload: Dict[str, Any]) -> AgentIdentity:
         agent_kind = os.environ.get("SCRIBE_AGENT_KIND", "other")
