@@ -198,13 +198,26 @@ def _iterate_files(
             if fname.startswith("."):
                 continue
 
-            # Skip binary by extension
+            # Type filter FIRST -- so skip stats only count relevant files
+            if type_extensions and fpath.suffix.lower() not in type_extensions:
+                continue
+
+            # Glob filter FIRST -- match against repo-relative path
+            if glob_pattern:
+                try:
+                    rel = str(fpath.relative_to(root))
+                except ValueError:
+                    continue
+                if not fnmatch(rel, glob_pattern) and not fnmatch(fname, glob_pattern):
+                    continue
+
+            # Skip binary by extension (only for files that passed type/glob)
             if skip_binary and _is_binary_extension(fpath):
                 if stats:
                     stats.skipped_binary += 1
                 continue
 
-            # Size check
+            # Size check (only for files that passed type/glob)
             try:
                 fsize = fpath.stat().st_size
                 if fsize > max_file_size_bytes:
@@ -213,19 +226,6 @@ def _iterate_files(
                     continue
             except OSError:
                 continue
-
-            # Type filter
-            if type_extensions and fpath.suffix.lower() not in type_extensions:
-                continue
-
-            # Glob filter -- match against repo-relative path
-            if glob_pattern:
-                try:
-                    rel = str(fpath.relative_to(root))
-                except ValueError:
-                    continue
-                if not fnmatch(rel, glob_pattern) and not fnmatch(fname, glob_pattern):
-                    continue
 
             # Binary content check (null bytes)
             if skip_binary and _is_binary_content(fpath):
