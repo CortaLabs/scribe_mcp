@@ -126,6 +126,8 @@ MCP_SPINE/
         │   ├── project_management/      # Project lifecycle tools
         │   ├── documentation/           # Document management tools
         │   ├── logging/                 # Logging and analytics tools
+        │   ├── search.py                 # Multi-file codebase search (grep/rg replacement)
+        │   ├── edit_file.py              # Safe file editing with audit trail
         │   └── utilities/               # Helper and maintenance tools
         ├── utils/                       # Core utilities and helpers
         │   ├── files.py                 # Atomic file operations & WAL
@@ -398,6 +400,10 @@ The Modern Tool Architecture provides a unified foundation for all Scribe MCP to
 **Read + Diagnostics (v2.1.1 additions):**
 - `read_file`: Repo-scoped file access with scan/chunk/line/page/full_stream/search modes plus provenance logging for every read.
 - `scribe_doctor`: Readiness diagnostics (repo root, config paths, plugin status, vector index readiness).
+
+**Codebase Search & Edit (v2.2 additions):**
+- `search`: Multi-file codebase search with grep/ripgrep feature parity. Supports regex and literal patterns, file type and glob filtering, three output modes (content/files_with_matches/count), configurable context lines, multiline matching, and safety limits (max matches per file/total, max files, file size cap). Enforces repo-boundary access control.
+- `edit_file`: Safe file editing with exact string replacement. Enforces read-before-edit (file must be read with `read_file` in current session), dry-run by default, replace-all mode for bulk renaming, unified diff preview, and repo-boundary enforcement. All edits are audit-logged.
 
 **Semantic Search (v2.1.1 additions):**
 - `manage_docs` supports `action="search"` with `search_mode="semantic"` (doc/log partitioned search in a single FAISS index).

@@ -3377,12 +3377,26 @@
       "name": "read_file_search_audit",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
       "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit",
       "docs": {
         "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
         "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
         "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md",
-        "IMPLEMENTATION_REPORT_20260129_0445": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/IMPLEMENTATION_REPORT_20260129_0445.md"
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ResearchAgent-ManageDocs"
+      },
+      "author": "ResearchAgent-ManageDocs",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
+        }
       }
     }
   },
@@ -6860,9 +6874,111 @@
         "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "ResearchAgent-DocsAudit"
+        "agent": "CoderAgent-Docs-B4"
       },
-      "author": "ResearchAgent-DocsAudit",
+      "author": "CoderAgent-Docs-B4",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "3016475c-d92e-4356-880b-b0441fc46e69": {
+      "name": "read_file_search_audit",
+      "root": "/home/austin/projects/MCP_SPINE",
+      "progress_log": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "dfc1d682",
+            "phase_plan": "50578018",
+            "checklist": "9d8be4d3"
+          },
+          "current_hashes": {
+            "architecture": "dfc1d682",
+            "phase_plan": "50578018",
+            "checklist": "9d8be4d3"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "CoderAgent-Docs-B5"
+      },
+      "author": "CoderAgent-Docs-B5",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "dfc1d682",
+              "phase_plan": "50578018",
+              "checklist": "9d8be4d3"
+            },
+            "current_hashes": {
+              "architecture": "dfc1d682",
+              "phase_plan": "50578018",
+              "checklist": "9d8be4d3"
+            }
+          }
+        }
+      }
+    },
+    "74b79916-1a18-48e0-943a-06fae8a15c55": {
+      "name": "read_file_search_audit",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ResearchAgent-ToolContracts"
+      },
+      "author": "ResearchAgent-ToolContracts",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "ceda4851-8856-4e78-8b4c-b11e58b6ab0a": {
+      "name": "read_file_search_audit",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ResearchAgent-ManageDocs"
+      },
+      "author": "ResearchAgent-ManageDocs",
       "description": null,
       "tags": [],
       "meta": {
@@ -6992,7 +7108,10 @@
     "1404f8d4-1e43-4869-b5d8-79b092f83461": "project",
     "834978a8-488d-4084-81be-24e9547aae2d": "project",
     "38a3dc6b-b39c-493d-b49c-c247ad603306": "project",
-    "78057967-2174-4765-809f-b5d70d31d516": "project"
+    "78057967-2174-4765-809f-b5d70d31d516": "project",
+    "3016475c-d92e-4356-880b-b0441fc46e69": "project",
+    "74b79916-1a18-48e0-943a-06fae8a15c55": "project",
+    "ceda4851-8856-4e78-8b4c-b11e58b6ab0a": "project"
   },
   "recent_tools": [
     {
@@ -7038,7 +7157,7 @@
   ],
   "last_activity_at": "2026-01-24 08:32:14 UTC",
   "session_started_at": "2026-01-24 03:45:39 UTC",
-  "version": 1881,
-  "last_updated_by": "Scribe",
-  "operation_timestamp": "2026-01-29 04:48:30 UTC"
+  "version": 1899,
+  "last_updated_by": "ResearchAgent-ManageDocs",
+  "operation_timestamp": "2026-01-29 06:26:14 UTC"
 }

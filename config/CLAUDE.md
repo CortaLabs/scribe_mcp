@@ -286,6 +286,8 @@ python -m MCP_SPINE.scripts.scribe "Test message" --dry-run
 - `query_entries.py` - Advanced log searching and filtering
 - `generate_doc_templates.py` - Documentation template generation
 - `rotate_log.py` - Log archiving and cleanup
+- `search.py` - Multi-file codebase search (grep/rg replacement)
+- `edit_file.py` - Safe file editing with exact string replacement
 
 **Storage Layer** (`MCP_SPINE/scribe_mcp/storage/`)
 - `base.py` - Abstract storage interface

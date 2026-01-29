@@ -106,6 +106,54 @@ Edit(file_path="storage/sqlite.py", old_string="...", new_string="...")
 
 Parameters: `path`, `mode` (scan_only/chunk/page/line_range/search), `structure_filter`, `structure_page`, `structure_page_size`, `include_dependencies`, `format`
 
+**New: `search` - Multi-File Codebase Search (v2.2)**
+
+The `search` tool provides grep/ripgrep-equivalent codebase search directly through MCP, with repo-boundary enforcement and audit logging:
+
+- **Regex and Literal Patterns**: Full regex by default, with `regex=False` for literal string matching
+- **File Filtering**: Filter by glob pattern (`glob="*.py"`) or file type (`type="py"`)
+- **Three Output Modes**: `content` (matching lines with context), `files_with_matches` (file paths only), `count` (match counts per file)
+- **Context Control**: Configurable before/after context lines around matches
+- **Multiline Matching**: Patterns can span multiple lines with `multiline=True`
+- **Safety Limits**: Configurable max matches per file (50), total matches (200), max files (100), and file size cap (10MB)
+
+```python
+# Find all async methods in Python files
+search(agent="CoderAgent", pattern="async def ", type="py", output_mode="content", context_lines=2)
+
+# Count occurrences of a function across the codebase
+search(agent="CoderAgent", pattern="append_entry", output_mode="count")
+
+# Search with glob filter
+search(agent="CoderAgent", pattern="class.*Storage", glob="storage/*.py", output_mode="files_with_matches")
+```
+
+Parameters: `agent`, `pattern`, `path`, `glob`, `type`, `output_mode`, `format`, `context_lines`, `before_context`, `after_context`, `case_insensitive`, `regex`, `multiline`, `max_matches_per_file`, `max_total_matches`, `max_files`, `line_numbers`, `skip_binary`, `max_file_size_mb`
+
+**New: `edit_file` - Safe File Editing with Audit Trail (v2.2)**
+
+The `edit_file` tool provides exact string replacement with built-in safety mechanisms:
+
+- **Read-Before-Edit Enforcement**: The file MUST have been read with `read_file` in the current session before editing (tool-enforced)
+- **Dry-Run by Default**: `dry_run=True` is the default -- you must explicitly set `dry_run=False` to commit changes
+- **Exact String Matching**: Finds and replaces exact strings (no regex), failing clearly if the target string is not found or is ambiguous
+- **Replace All Mode**: Optional `replace_all=True` for renaming variables or updating repeated patterns
+- **Diff Preview**: Dry-run mode returns a unified diff preview before committing
+- **Repo-Boundary Enforcement**: Cannot edit files outside the repository root
+
+```python
+# Preview a change (dry_run=True is default)
+edit_file(agent="CoderAgent", path="config/settings.py", old_string="DEBUG = True", new_string="DEBUG = False")
+
+# Commit a change
+edit_file(agent="CoderAgent", path="config/settings.py", old_string="DEBUG = True", new_string="DEBUG = False", dry_run=False)
+
+# Rename across file
+edit_file(agent="CoderAgent", path="utils/helpers.py", old_string="old_name", new_string="new_name", replace_all=True, dry_run=False)
+```
+
+Parameters: `agent`, `path`, `old_string`, `new_string`, `replace_all` (default: False), `dry_run` (default: True), `format`
+
 - `scribe_doctor` reports repo root, config, plugin status, and vector readiness for faster diagnostics.
 - `manage_docs` now supports semantic search via `action="search"` with `search_mode="semantic"`, including doc/log separation and `doc_k`/`log_k` overrides.
 - Vector indexing now prefers registry-managed docs only; log/rotated-log files are excluded from doc indexing.
@@ -781,6 +829,10 @@ python -m scribe_mcp.scripts.scribe "Added new feature: description" --status su
 - **[🔧 API Reference](docs/api/)** - Complete MCP tool documentation
 - **[🎨 Template Guide](docs/templates/)** - Custom template development
 - **[🏗️ Architecture Patterns](docs/architecture/)** - System design and integration
+
+### 🔒 Hooks & Enforcement
+- **[Hooks Setup Guide](docs/guides/hooks_setup.md)** - Protect managed docs from direct Write/Edit with Claude Code hooks
+- **[Scribe Onboarding Prompt](docs/guides/scribe_onboarding_prompt.md)** - Full instructional prompt for onboarding any project to Scribe MCP (protocol, tools, manage_docs, hooks)
 
 ### 🌟 Advanced Features
 - **🤖 Claude Code Integration** - Structured workflows and subagent coordination

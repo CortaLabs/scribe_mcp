@@ -36,6 +36,10 @@ If you haven’t internalized it, stop and request the skill text before proceed
 
 **Read-file policy (auditability):** Any time you need repository file contents or metadata, you must use `read_file` (scan-only allowed) instead of manual/implicit reads.
 
+**Search policy:** All multi-file content searches must use `search` (NOT grep, rg, find, or bash search commands). Supports regex, glob filtering, file type filtering, and multiple output modes.
+
+**Edit-file policy:** File edits should use `edit_file` for auditable, safe string replacement. The tool enforces read-before-edit (file must be read via `read_file` first). Defaults to `dry_run=True` for safety.
+
 ---
 
 ### COMMANDMENT #0 — Always Check Progress Log First
@@ -122,6 +126,16 @@ If it’s not Scribed, it didn’t happen.
 **Why:** Consistency keeps the repo navigable and prevents “mystery behavior” from untracked changes.
 
 **How to comply:** Mirror existing test patterns and module structure. When in doubt: search existing tests first.
+
+---
+
+### COMMANDMENT #5 — Complete the Integration
+
+**Rule:** If you build new infrastructure (DB tables, classes, methods), you MUST wire it to production code in THE SAME implementation phase. Infrastructure that only exists in tests is NOT DONE.
+
+**Why:** Unconnected infrastructure is dead code. It passes tests but doesn't ship.
+
+**How to comply:** Every new class/method/table must have a call site in production code before the phase is complete.
 
 ---
 

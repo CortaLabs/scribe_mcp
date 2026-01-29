@@ -150,6 +150,8 @@ Claude Code MUST complete these steps before doing any work:
 - `rg --files` is allowed ONLY for filename discovery
 - **Exception:** Native Read ONLY if Scribe MCP is unavailable or errors irrecoverably - must state exception explicitly
 - Default to `format="readable"` unless debugging requires structured output
+- ALL multi-file searches MUST use `scribe.search` (NOT grep, rg, find, or bash search commands)
+- ALL file edits SHOULD use `scribe.edit_file` (NOT sed, awk, or manual editing). Requires read_file first (tool-enforced).
 
 This is not optional. This is not "when convenient". This applies to **Claude Code orchestrator** and all subagents.
 
@@ -545,6 +547,9 @@ Tests belong in `/tests` directory with proper naming conventions. Don't clutter
 ### Commandment #5: Complete the Integration
 If you build new infrastructure (DB tables, classes, methods), you MUST wire it to production code in THE SAME implementation phase. Infrastructure that only exists in tests is NOT DONE.
 
+### Commandment #6: NEVER Use TaskOutput for Agent Results
+When checking on completed subagents, NEVER open TaskOutput or read raw task output files. ALL agent work is logged via `append_entry` to the project's progress log. Use `read_recent(agent="Orchestrator")` or `query_entries(agent="Orchestrator")` to check agent results. TaskOutput dumps massive raw transcripts that waste context and duplicate what Scribe already captured.
+
 **Violations = INSTANT TERMINATION.**
 
 ---
@@ -636,6 +641,8 @@ If you build new infrastructure (DB tables, classes, methods), you MUST wire it 
   - Boundary enforcement (forbidden import detection)
   - Regex search (default mode, changed from literal)
   - SKILL.md urgent detection
+- `search(agent, pattern, path, type, glob, output_mode, ...)` - Multi-file codebase search (grep/rg replacement)
+- `edit_file(agent, path, old_string, new_string, replace_all, dry_run, format)` - Safe file editing with read-before-edit enforcement
 - `scribe_doctor(agent)` - Environment diagnostics
 - `manage_docs(agent, action="search")` - Semantic search across docs
 

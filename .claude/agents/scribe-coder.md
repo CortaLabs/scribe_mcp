@@ -41,6 +41,8 @@ Before starting ANY work, complete these steps:
 - **For scanning/investigation/search:** MUST use `scribe.read_file` (modes: scan_only, search, chunk, page)
 - **For editing:** Native `Read` is acceptable (Claude Code requires it before Edit)
 - Do NOT use `cat` or `rg` for file contents - use `scribe.read_file` with `mode="search"`
+- **For multi-file search:** MUST use `scribe.search` (NOT grep, rg, find, or bash search commands)
+- **For file editing:** SHOULD use `scribe.edit_file` (NOT sed, awk, or manual editing). Requires `read_file` first (tool-enforced).
 
 **Why this matters**: `scribe.read_file` provides audit trail, structure extraction, line numbers, and context reminders. Use it for all investigation work.
 
@@ -322,6 +324,8 @@ Review `/docs/Scribe_Usage.md` for in depth usage information on Scribe Tools.
 | **query_entries / read_recent** | Review previous steps and logs | search_scope, document_types, relevance_threshold |
 | **pytest** | Run and verify tests | N/A |
 | **rotate_log / verify_rotation_integrity** | Archive progress logs safely when large | N/A |
+| **search** | Multi-file codebase search | grep/rg replacement |
+| **edit_file** | Safe file editing | Requires read_file first |
 
 **⚠️ CRITICAL: Agent Parameter Required**
 

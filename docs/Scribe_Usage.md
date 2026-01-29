@@ -980,6 +980,135 @@ rules:
 - Dependency analysis is static only - does not execute code or resolve runtime imports
 - Impact radius requires workspace root detection (looks for .git, pyproject.toml markers)
 
+### `search`
+**Purpose**: Multi-file codebase search with grep/rg feature parity. Searches across repository files using regex or literal patterns with file type filtering, glob patterns, and multiple output modes. Replaces direct use of `grep`, `rg`, or `find` for content searching.
+
+**Required Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `agent` | string | *(required)* | Agent identifier for session tracking |
+| `pattern` | string | *(required)* | Search pattern (regex by default, literal if `regex=False`) |
+| `path` | string | repo root | Directory or file to search |
+| `glob` | string | `None` | Glob pattern to filter files (e.g. `"*.py"`, `"src/**/*.ts"`) |
+| `type` | string | `None` | File type filter (`py`, `js`, `ts`, `rust`, `go`, `java`, etc.) |
+| `output_mode` | string | `"content"` | `"content"` (lines), `"files_with_matches"` (paths), `"count"` (counts) |
+| `format` | string | `"readable"` | Output format (`readable`, `structured`, `compact`) |
+| `context_lines` | int | `0` | Lines of context around matches (both before and after) |
+| `before_context` | int | `None` | Lines before match (overrides `context_lines` for before) |
+| `after_context` | int | `None` | Lines after match (overrides `context_lines` for after) |
+| `case_insensitive` | bool | `False` | Case-insensitive matching |
+| `regex` | bool | `True` | `True` for regex, `False` for literal string matching |
+| `multiline` | bool | `False` | Enable multiline matching (pattern can span lines) |
+| `max_matches_per_file` | int | `50` | Max matches per file |
+| `max_total_matches` | int | `200` | Max total matches across all files |
+| `max_files` | int | `100` | Max files to include in results |
+| `line_numbers` | bool | `True` | Show line numbers in output |
+| `skip_binary` | bool | `True` | Skip binary files |
+| `max_file_size_mb` | int | `10` | Max file size in MB to search |
+
+**Output Modes:**
+
+| Mode | Returns | Use Case |
+|------|---------|----------|
+| `content` | Matching lines with context | Viewing code matches in place |
+| `files_with_matches` | File paths only | Finding which files contain a pattern |
+| `count` | Match counts per file | Measuring pattern frequency |
+
+**Example Usage:**
+
+```python
+# Basic regex search across repo
+await search(agent="Coder", pattern="def handle_request")
+
+# Search Python files only with context
+await search(agent="Coder", pattern="async def .*storage", type="py", context_lines=3)
+
+# Case-insensitive literal search in specific directory
+await search(agent="Coder", pattern="TODO", path="tools/", case_insensitive=True, regex=False)
+
+# Find files containing a pattern (paths only)
+await search(agent="Coder", pattern="import asyncio", output_mode="files_with_matches")
+
+# Glob-filtered search with limited results
+await search(agent="Coder", pattern="class.*Backend", glob="**/*.py", max_total_matches=50)
+
+# Multiline search for function signatures spanning lines
+await search(agent="Coder", pattern="async def search\\(.*\\):", multiline=True, type="py")
+
+# Count occurrences across all files
+await search(agent="Coder", pattern="append_entry", output_mode="count")
+
+# Search with before/after context asymmetry
+await search(agent="Coder", pattern="raise.*Error", before_context=2, after_context=5)
+```
+
+**Notes:**
+- Enforces repo boundary - cannot search outside the repository root
+- Binary files are skipped by default (`skip_binary=True`)
+- Results are paginated by `max_matches_per_file` and `max_total_matches`
+- Regex is the default search mode (unlike `read_file` search which defaults to regex as well)
+
+### `edit_file`
+**Purpose**: Safe file editing with exact string replacement. Enforces a read-before-edit policy: the file MUST have been read via `read_file` in the current session before any edit is allowed.
+
+**Required Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `agent` | string | *(required)* | Agent identifier for session tracking |
+| `path` | string | *(required)* | File to edit (repo-relative or absolute) |
+| `old_string` | string | *(required)* | Exact string to find in the file |
+| `new_string` | string | *(required)* | Replacement string |
+| `replace_all` | bool | `False` | Replace all occurrences (default: first only) |
+| `dry_run` | bool | `True` | Preview without writing (default: `True` for safety) |
+| `format` | string | `"readable"` | Output format (`readable`, `structured`, `compact`) |
+
+**Read-Before-Edit Enforcement:**
+- The tool checks that `read_file` was called on the target path in the current session
+- If not, the edit is rejected with `READ_BEFORE_EDIT_REQUIRED` error
+- This prevents blind edits and ensures the agent has seen the current file state
+
+**Dry-Run Workflow (Recommended):**
+1. `read_file(path="target.py", mode="search", query="old pattern")` - Find the text
+2. `edit_file(path="target.py", old_string="old text", new_string="new text")` - Preview (dry_run=True default)
+3. `edit_file(path="target.py", old_string="old text", new_string="new text", dry_run=False)` - Commit
+
+**Error Codes:**
+
+| Code | Meaning |
+|------|---------|
+| `READ_BEFORE_EDIT_REQUIRED` | File was not read via `read_file` in this session |
+| `STRING_NOT_FOUND` | `old_string` does not exist in the file |
+| `STRING_NOT_UNIQUE` | `old_string` matches multiple locations (use `replace_all=True` or provide more context) |
+| `SANDBOX_VIOLATION` | Path is outside the repo boundary |
+| `SESSION_REQUIRED` | No active agent session |
+| `WRITE_FAILED` | Filesystem write error |
+
+**Example Usage:**
+
+```python
+# Preview a replacement (dry_run=True by default)
+await edit_file(agent="Coder", path="tools/config.py", old_string="MAX_RETRIES = 3", new_string="MAX_RETRIES = 5")
+
+# Commit the replacement
+await edit_file(agent="Coder", path="tools/config.py", old_string="MAX_RETRIES = 3", new_string="MAX_RETRIES = 5", dry_run=False)
+
+# Replace all occurrences of a string
+await edit_file(agent="Coder", path="utils/helpers.py", old_string="old_name", new_string="new_name", replace_all=True, dry_run=False)
+
+# Full workflow: read, preview, commit
+await read_file(agent="Coder", path="server.py", mode="search", query="def handle_error")
+await edit_file(agent="Coder", path="server.py", old_string="def handle_error(self):", new_string="def handle_error(self, context=None):")
+await edit_file(agent="Coder", path="server.py", old_string="def handle_error(self):", new_string="def handle_error(self, context=None):", dry_run=False)
+```
+
+**Notes:**
+- `dry_run=True` is the default for safety - always preview before committing
+- Only exact string matching is supported (no regex)
+- Edits are logged with provenance for full audit trail
+- The tool respects repo sandbox boundaries
+
 ### `scribe_doctor`
 **Purpose**: Diagnostics for repo root, config resolution, plugin status, and vector readiness.
 
