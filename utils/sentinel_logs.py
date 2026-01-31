@@ -47,7 +47,7 @@ def _bounded_append(path: Path, line: str, *, repo_root: Path, timeout_seconds: 
 
 
 def _next_case_id(path: Path, prefix: str, *, repo_root: Path) -> str:
-    ensure_parent(path, repo_root=repo_root)
+    ensure_parent_sync(path, repo_root=repo_root)
     with file_lock(path, mode="a+", timeout=0.25, repo_root=repo_root) as handle:
         handle.seek(0, os.SEEK_END)
         size = handle.tell()

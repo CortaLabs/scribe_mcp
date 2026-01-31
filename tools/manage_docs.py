@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +39,9 @@ from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.project_registry import ProjectRegistry
 
 
+logger = logging.getLogger(__name__)
+
+
 class _ManageDocsHelper(LoggingToolMixin):
     def __init__(self) -> None:
         self.server_module = server_module
@@ -47,7 +51,6 @@ class _ManageDocsHelper(LoggingToolMixin):
 
 
 _MANAGE_DOCS_HELPER = _ManageDocsHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
 _PROJECT_REGISTRY = ProjectRegistry()
 
 # === ACTION REGISTRY (Module Level) ===
@@ -1076,6 +1079,7 @@ def _resolve_custom_doc_path(
             return None
 
         # Search all category directories for matching slug
+        # Support both full case_id (BUG-2026-01-31-001) and short slug formats
         for category_dir in bugs_root.iterdir():
             if not category_dir.is_dir():
                 continue
@@ -1083,8 +1087,10 @@ def _resolve_custom_doc_path(
             for bug_dir in category_dir.iterdir():
                 if not bug_dir.is_dir():
                     continue
-                # Check if directory name ends with _<slug>
-                if bug_dir.name.endswith(f"_{doc_name}"):
+                # Check if directory name ends with _<slug> OR contains case_id anywhere
+                # This handles both "{date}_{full_case_id}" and "{date}_{short_slug}" patterns
+                if (bug_dir.name.endswith(f"_{doc_name}") or 
+                    doc_name in bug_dir.name):
                     report_file = bug_dir / "report.md"
                     if report_file.exists():
                         return report_file
@@ -1310,7 +1316,9 @@ async def manage_docs(
                 # No progress_log - use absolute path
                 project["docs"][doc_category] = str(resolved_path)
 
-            logger.info(f"Temporarily registered custom doc '{doc_category}' at: {project['docs'][doc_category]}")
+            # Also register under doc_name so downstream checks find it
+            project["docs"][doc_name] = project["docs"][doc_category]
+            logger.info(f"Temporarily registered custom doc '{doc_category}' (also as '{doc_name}') at: {project['docs'][doc_category]}")
             # Continue to edit logic (skip auto-registration)
         else:
             # Custom doc not found - return helpful error
@@ -1339,8 +1347,6 @@ async def manage_docs(
 
         # Check if document is registered
         if doc_name not in docs:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"Document '{doc_name}' not registered, attempting auto-registration...")
 
             try:

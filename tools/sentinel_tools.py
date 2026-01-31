@@ -340,36 +340,27 @@ async def open_bug(
                 "title": title,
                 "case_id": case_id,
                 "symptoms": symptoms,
+                "summary_long": symptoms,  # Map to template field
+                "actual_behavior": symptoms,  # Map to template field
                 "affected_paths": affected_paths or [],
-                "body": f"""# {case_id}: {title}
-
-**Status:** Open
-**Reported:** {today}
-**Reporter:** {agent}
-
-## Symptoms
-{symptoms}
-
-## Affected Paths
-{chr(10).join(f'- `{p}`' for p in (affected_paths or [])) or '_None specified_'}
-
-## Investigation
-_Add investigation notes here_
-
-## Root Cause
-_To be determined_
-
-## Fix
-_To be determined_
-
-## Verification
-- [ ] Root cause identified
-- [ ] Fix implemented
-- [ ] Tests added/updated
-- [ ] Fix verified
-""",
+                "affected_areas": affected_paths or [],  # Map to template field
+                "reporter": agent,  # Map to template field
+                "status": "INVESTIGATING",  # Default status
+                "severity": "medium",  # Default severity
             },
         )
+
+        # Check if document creation succeeded
+        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
+            error_msg = doc_result.get("error", "Unknown error") if isinstance(doc_result, dict) else "manage_docs returned non-dict"
+            return {
+                "ok": False,
+                "error": f"Bug report document creation failed: {error_msg}",
+                "case_id": str(case_id),
+                "entry_id": str(result.get("id", "")),
+                "path": str(result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            }
 
         return {
             "ok": True,
@@ -377,7 +368,15 @@ _To be determined_
             "entry_id": str(result.get("id", "")),
             "path": str(result.get("path", "")),
             "project_name": str(result.get("project_name", "")),
-            "bug_report": str(doc_result.get("path", "")) if isinstance(doc_result, dict) and doc_result.get("ok") else None,
+            "bug_report": str(doc_result.get("path", "")),
+            "unfilled_sections": [
+                "description",
+                "investigation", 
+                "resolution_plan",
+                "timeline",
+                "appendix"
+            ],
+            "next_steps": f"Bug report created. Use manage_docs(agent='{agent}', action='replace_section', doc_category='bugs', doc_name='{case_id}', section='<section_id>', content='...') to fill remaining sections.",
         }
 
     # Sentinel mode: original behavior
@@ -460,41 +459,27 @@ async def open_security(
                 "title": title,
                 "case_id": case_id,
                 "symptoms": symptoms,
+                "summary_long": symptoms,  # Map to template field
+                "actual_behavior": symptoms,  # Map to template field
                 "affected_paths": affected_paths or [],
-                "body": f"""# {case_id}: {title}
-
-**Status:** Open
-**Severity:** To be assessed
-**Reported:** {today}
-**Reporter:** {agent}
-
-## Description
-{symptoms}
-
-## Affected Paths
-{chr(10).join(f'- `{p}`' for p in (affected_paths or [])) or '_None specified_'}
-
-## Security Impact
-_Assess the security impact here_
-
-## Attack Vector
-_Describe how this could be exploited_
-
-## Mitigation
-_Immediate mitigation steps_
-
-## Permanent Fix
-_Long-term fix approach_
-
-## Verification
-- [ ] Impact assessed
-- [ ] Mitigation applied
-- [ ] Permanent fix implemented
-- [ ] Security review completed
-- [ ] No regression introduced
-""",
+                "affected_areas": affected_paths or [],  # Map to template field
+                "reporter": agent,  # Map to template field
+                "status": "INVESTIGATING",  # Default status
+                "severity": "high",  # Default severity for security issues
             },
         )
+
+        # Check if document creation succeeded
+        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
+            error_msg = doc_result.get("error", "Unknown error") if isinstance(doc_result, dict) else "manage_docs returned non-dict"
+            return {
+                "ok": False,
+                "error": f"Security report document creation failed: {error_msg}",
+                "case_id": str(case_id),
+                "entry_id": str(result.get("id", "")),
+                "path": str(result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            }
 
         return {
             "ok": True,
@@ -502,7 +487,15 @@ _Long-term fix approach_
             "entry_id": str(result.get("id", "")),
             "path": str(result.get("path", "")),
             "project_name": str(result.get("project_name", "")),
-            "security_report": str(doc_result.get("path", "")) if isinstance(doc_result, dict) and doc_result.get("ok") else None,
+            "security_report": str(doc_result.get("path", "")),
+            "unfilled_sections": [
+                "description",
+                "investigation",
+                "resolution_plan",
+                "timeline",
+                "appendix"
+            ],
+            "next_steps": f"Security report created. Use manage_docs(agent='{agent}', action='replace_section', doc_category='bugs', doc_name='{case_id}', section='<section_id>', content='...') to fill remaining sections.",
         }
 
     # Sentinel mode: original behavior
