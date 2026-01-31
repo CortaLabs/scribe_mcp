@@ -1,5 +1,5 @@
 {
-  "current_project": "read_file_search_audit",
+  "current_project": "bug_report_template_enhancement",
   "projects": {
     "scribe_mcp": {
       "name": "scribe_mcp",
@@ -3398,14 +3398,182 @@
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
         }
       }
+    },
+    "RuneLab-init": {
+      "name": "RuneLab-init",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md",
+        "IMPLEMENTATION_REPORT_20260129_0414": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/IMPLEMENTATION_REPORT_20260129_0414.md"
+      }
+    },
+    "RuneLab-MCP": {
+      "name": "RuneLab-MCP",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "BugHunterAgent"
+      },
+      "author": "BugHunterAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "catherby-plugin-api": {
+      "name": "catherby-plugin-api",
+      "root": "/home/austin/projects/runescape/osrs_hiscore_pull",
+      "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent"
+      },
+      "author": "ReviewAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_governance_audit": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "forge"
+      },
+      "author": "forge",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_scribe_integration": {
+      "name": "council_scribe_integration",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Lens"
+      },
+      "author": "Lens",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "council_bug_fixes": {
+      "name": "council_bug_fixes",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "mantis"
+      },
+      "author": "mantis",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "bug_report_template_enhancement": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "recent_projects": [
-    "read_file_search_audit",
-    "invite-admincp-restructure",
-    "invite-admincp-audit",
-    "invite-email-enhancements",
-    "invite-system-audit-2"
+    "bug_report_template_enhancement",
+    "council_governance_audit",
+    "council_bug_fixes",
+    "council_scribe_integration",
+    "RuneLab-MCP"
   ],
   "session_projects": {
     "7abacdd3-c859-479c-a7ed-60191e179e8f": {
@@ -5377,28 +5545,28 @@
       }
     },
     "5d3ec2d0-1f4f-4c41-9c3c-d0efac2aacd5": {
-      "name": "osrs-hiscore-dashboard",
+      "name": "catherby-plugin-api",
       "root": "/home/austin/projects/runescape/osrs_hiscore_pull",
-      "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard",
+      "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api",
       "docs": {
-        "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "CoderAgent"
+        "agent": "ArchitectAgent"
       },
-      "author": "CoderAgent",
+      "author": "ArchitectAgent",
       "description": null,
       "tags": [],
       "meta": {
         "docs": {
-          "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/PHASE_PLAN.md",
-          "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/CHECKLIST.md",
-          "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/osrs_hiscore_dashboard/PROGRESS_LOG.md"
+          "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
         }
       }
     },
@@ -6989,6 +7157,858 @@
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/read_file_search_audit/PROGRESS_LOG.md"
         }
       }
+    },
+    "78a714e0-535f-479d-9f1f-11c79bbda15f": {
+      "name": "RuneLab-init",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "35a007b7",
+            "phase_plan": "46f56f77",
+            "checklist": "a6bfbc0f"
+          },
+          "current_hashes": {
+            "architecture": "35a007b7",
+            "phase_plan": "46f56f77",
+            "checklist": "a6bfbc0f"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": "RuneLab project initialization \u2014 environment setup, install.sh, MCP server foundation, agent system bootstrap",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "35a007b7",
+              "phase_plan": "46f56f77",
+              "checklist": "a6bfbc0f"
+            },
+            "current_hashes": {
+              "architecture": "35a007b7",
+              "phase_plan": "46f56f77",
+              "checklist": "a6bfbc0f"
+            }
+          }
+        }
+      }
+    },
+    "fea3a6b5-d2d2-4c7b-88a8-74176072f5e0": {
+      "name": "RuneLab-MCP",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "CoderAgent"
+      },
+      "author": "CoderAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "c606391d-ec1d-42fa-ac7e-8eaa7df247c1": {
+      "name": "RuneLab-init",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "CoderAgent"
+      },
+      "author": "CoderAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_init/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "83ccd227-28d5-4b13-b89a-781db9a1bd69": {
+      "name": "RuneLab-MCP",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "0ec991cf",
+            "phase_plan": "083b5669",
+            "checklist": "598c04f2"
+          },
+          "current_hashes": {
+            "architecture": "0ec991cf",
+            "phase_plan": "083b5669",
+            "checklist": "598c04f2"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": "RuneLab MCP server \u2014 Python MCP server with modular handler architecture for scaffolding, building, analyzing, and managing RuneLite plugins",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "0ec991cf",
+              "phase_plan": "083b5669",
+              "checklist": "598c04f2"
+            },
+            "current_hashes": {
+              "architecture": "0ec991cf",
+              "phase_plan": "083b5669",
+              "checklist": "598c04f2"
+            }
+          }
+        }
+      }
+    },
+    "154ae22e-607c-4d09-b618-3109e801f672": {
+      "name": "catherby-plugin-api",
+      "root": "/home/austin/projects/runescape/osrs_hiscore_pull",
+      "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent"
+      },
+      "author": "ReviewAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "c1cd4504-83e1-4390-99ad-61308b9ad81a": {
+      "name": "catherby-plugin-api",
+      "root": "/home/austin/projects/runescape/osrs_hiscore_pull",
+      "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "CoderAgent"
+      },
+      "author": "CoderAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "902453be-be2f-43c6-bd0f-651744cb9852": {
+      "name": "catherby-plugin-api",
+      "root": "/home/austin/projects/runescape/osrs_hiscore_pull",
+      "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent"
+      },
+      "author": "ReviewAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/osrs_hiscore_pull/.scribe/docs/dev_plans/catherby_plugin_api/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "017cc8b8-d3e2-4493-831f-f5f07b078730": {
+      "name": "RuneLab-MCP",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "b8365e1f-d0e3-44ec-b6e5-8c49a3b5f0f0": {
+      "name": "RuneLab-MCP",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ReviewAgent"
+      },
+      "author": "ReviewAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "5a904ffc-7dff-4a04-851b-b16160226361": {
+      "name": "RuneLab-MCP",
+      "root": "/home/austin/projects/runescape/RuneLab",
+      "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "BugHunterAgent"
+      },
+      "author": "BugHunterAgent",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/runescape/RuneLab/.scribe/docs/dev_plans/runelab_mcp/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "493df84f-756e-4ef9-b1a7-ff8cffb1777e": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "2bf8788c",
+            "phase_plan": "8c8ef3f0",
+            "checklist": "fccd3f49"
+          },
+          "current_hashes": {
+            "architecture": "2bf8788c",
+            "phase_plan": "8c8ef3f0",
+            "checklist": "fccd3f49"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "atlas"
+      },
+      "author": "atlas",
+      "description": "Comprehensive audit of Council MCP: inventory what exists, identify gaps for true council governance, and plan next steps.",
+      "tags": [
+        "audit",
+        "governance",
+        "planning"
+      ],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "2bf8788c",
+              "phase_plan": "8c8ef3f0",
+              "checklist": "fccd3f49"
+            },
+            "current_hashes": {
+              "architecture": "2bf8788c",
+              "phase_plan": "8c8ef3f0",
+              "checklist": "fccd3f49"
+            }
+          }
+        }
+      }
+    },
+    "467a1b5e-b463-436a-82f2-122b31beed73": {
+      "name": "council_scribe_integration",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Lens"
+      },
+      "author": "Lens",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_scribe_integration/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "7205be35-b468-4723-9b9c-45e495fc969e": {
+      "name": "council_bug_fixes",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "2d141ccd",
+            "phase_plan": "590eb1a0",
+            "checklist": "b1867f58"
+          },
+          "current_hashes": {
+            "architecture": "2d141ccd",
+            "phase_plan": "590eb1a0",
+            "checklist": "b1867f58"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "atlas"
+      },
+      "author": "atlas",
+      "description": "Bug fixes for Council MCP - end_session ClosedResourceError, audit relay bugs, and related issues",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "2d141ccd",
+              "phase_plan": "590eb1a0",
+              "checklist": "b1867f58"
+            },
+            "current_hashes": {
+              "architecture": "2d141ccd",
+              "phase_plan": "590eb1a0",
+              "checklist": "b1867f58"
+            }
+          }
+        }
+      }
+    },
+    "a85a29c3-11ea-48e0-8923-1b1844e47766": {
+      "name": "council_bug_fixes",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "lens"
+      },
+      "author": "lens",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "7a6ec673-ee7a-4bff-a512-44e74aaab707": {
+      "name": "council_bug_fixes",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "mantis"
+      },
+      "author": "mantis",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_bug_fixes/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "7813b6c5-fa3b-4e70-ae58-ff98e6e5bb3c": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "lens"
+      },
+      "author": "lens",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "5c256c42-0ebc-4330-af33-02a20eb6dc6e": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "mantis"
+      },
+      "author": "mantis",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "e3e7ed06-f304-4ab0-a480-d2d1906994db": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "forge"
+      },
+      "author": "forge",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "3c26c89b-926e-40cf-9f8b-2719d673e22a": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "forge"
+      },
+      "author": "forge",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "7d88a82f-3929-4865-b5b5-0a0f98142c99": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "mantis"
+      },
+      "author": "mantis",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "848bc467-4ef1-424a-adec-692da7a68339": {
+      "name": "council_governance_audit",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "forge"
+      },
+      "author": "forge",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_governance_audit/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "1823e63e-2a6f-422c-8c2e-9de5f362083a": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "e259a6f5",
+            "phase_plan": "ef20ac89",
+            "checklist": "2d2216d9"
+          },
+          "current_hashes": {
+            "architecture": "e259a6f5",
+            "phase_plan": "ef20ac89",
+            "checklist": "2d2216d9"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": "Enhance open_bug to populate Jinja template with passed info and instruct agents to fill remaining fields. Ensure bug reports work as managed docs.",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "e259a6f5",
+              "phase_plan": "ef20ac89",
+              "checklist": "2d2216d9"
+            },
+            "current_hashes": {
+              "architecture": "e259a6f5",
+              "phase_plan": "ef20ac89",
+              "checklist": "2d2216d9"
+            }
+          }
+        }
+      }
+    },
+    "a5e2b9ae-2609-431c-bbcc-a05c29e1c753": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "BugHunterAgent-BugTemplateImpl"
+      },
+      "author": "BugHunterAgent-BugTemplateImpl",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "1f886bc0-3d8a-4802-876e-ddbf9b0181f9": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "BugHunterAgent-BugFix"
+      },
+      "author": "BugHunterAgent-BugFix",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "17c05245-fcd9-41b6-bd8d-e8dab7b4896a": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "dbe8d03f-b2e3-43b7-becb-7d7174f4e29c": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "c490af2f-9e56-4710-9718-813f3e4e9ea0": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "5bcfd2f4-91e9-47e3-b7cd-b29ba3c1a08c": {
+      "name": "bug_report_template_enhancement",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Orchestrator"
+      },
+      "author": "Orchestrator",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/bug_report_template_enhancement/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "session_modes": {
@@ -7111,7 +8131,35 @@
     "78057967-2174-4765-809f-b5d70d31d516": "project",
     "3016475c-d92e-4356-880b-b0441fc46e69": "project",
     "74b79916-1a18-48e0-943a-06fae8a15c55": "project",
-    "ceda4851-8856-4e78-8b4c-b11e58b6ab0a": "project"
+    "ceda4851-8856-4e78-8b4c-b11e58b6ab0a": "project",
+    "78a714e0-535f-479d-9f1f-11c79bbda15f": "project",
+    "fea3a6b5-d2d2-4c7b-88a8-74176072f5e0": "project",
+    "c606391d-ec1d-42fa-ac7e-8eaa7df247c1": "project",
+    "83ccd227-28d5-4b13-b89a-781db9a1bd69": "project",
+    "154ae22e-607c-4d09-b618-3109e801f672": "project",
+    "c1cd4504-83e1-4390-99ad-61308b9ad81a": "project",
+    "902453be-be2f-43c6-bd0f-651744cb9852": "project",
+    "017cc8b8-d3e2-4493-831f-f5f07b078730": "project",
+    "b8365e1f-d0e3-44ec-b6e5-8c49a3b5f0f0": "project",
+    "5a904ffc-7dff-4a04-851b-b16160226361": "project",
+    "493df84f-756e-4ef9-b1a7-ff8cffb1777e": "project",
+    "467a1b5e-b463-436a-82f2-122b31beed73": "project",
+    "7205be35-b468-4723-9b9c-45e495fc969e": "project",
+    "a85a29c3-11ea-48e0-8923-1b1844e47766": "project",
+    "7a6ec673-ee7a-4bff-a512-44e74aaab707": "project",
+    "7813b6c5-fa3b-4e70-ae58-ff98e6e5bb3c": "project",
+    "5c256c42-0ebc-4330-af33-02a20eb6dc6e": "project",
+    "e3e7ed06-f304-4ab0-a480-d2d1906994db": "project",
+    "3c26c89b-926e-40cf-9f8b-2719d673e22a": "project",
+    "7d88a82f-3929-4865-b5b5-0a0f98142c99": "project",
+    "848bc467-4ef1-424a-adec-692da7a68339": "project",
+    "1823e63e-2a6f-422c-8c2e-9de5f362083a": "project",
+    "a5e2b9ae-2609-431c-bbcc-a05c29e1c753": "project",
+    "1f886bc0-3d8a-4802-876e-ddbf9b0181f9": "project",
+    "17c05245-fcd9-41b6-bd8d-e8dab7b4896a": "project",
+    "dbe8d03f-b2e3-43b7-becb-7d7174f4e29c": "project",
+    "c490af2f-9e56-4710-9718-813f3e4e9ea0": "project",
+    "5bcfd2f4-91e9-47e3-b7cd-b29ba3c1a08c": "project"
   },
   "recent_tools": [
     {
@@ -7157,7 +8205,7 @@
   ],
   "last_activity_at": "2026-01-24 08:32:14 UTC",
   "session_started_at": "2026-01-24 03:45:39 UTC",
-  "version": 1899,
-  "last_updated_by": "ResearchAgent-ManageDocs",
-  "operation_timestamp": "2026-01-29 06:26:14 UTC"
+  "version": 2012,
+  "last_updated_by": "Orchestrator",
+  "operation_timestamp": "2026-01-31 12:12:10 UTC"
 }
