@@ -7,6 +7,7 @@ when configuration files are missing or malformed.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -235,23 +236,23 @@ def validate_and_load_engine(config_path: Optional[str] = None) -> ReminderEngin
         rules_valid = validator.validate_rules(engine.rules)
 
         if not config_valid or not reminders_valid:
-            print("🚨 REMINDER CONFIGURATION VALIDATION FAILED - USING FALLBACKS")
-            print(f"📋 Configuration valid: {config_valid}")
-            print(f"📋 Reminders valid: {reminders_valid}")
-            print(f"📋 Rules valid: {rules_valid}")
+            print("🚨 REMINDER CONFIGURATION VALIDATION FAILED - USING FALLBACKS", file=sys.stderr)
+            print(f"📋 Configuration valid: {config_valid}", file=sys.stderr)
+            print(f"📋 Reminders valid: {reminders_valid}", file=sys.stderr)
+            print(f"📋 Rules valid: {rules_valid}", file=sys.stderr)
 
             if validator.errors:
-                print("🔴 ERRORS FOUND:")
+                print("🔴 ERRORS FOUND:", file=sys.stderr)
                 for i, error in enumerate(validator.errors, 1):
-                    print(f"  {i}. {error}")
+                    print(f"  {i}. {error}", file=sys.stderr)
 
             if validator.warnings:
-                print("🟡 WARNINGS:")
+                print("🟡 WARNINGS:", file=sys.stderr)
                 for i, warning in enumerate(validator.warnings, 1):
-                    print(f"  {i}. {warning}")
+                    print(f"  {i}. {warning}", file=sys.stderr)
 
             # Load fallback configuration
-            print("🔄 Loading fallback reminder configuration...")
+            print("🔄 Loading fallback reminder configuration...", file=sys.stderr)
             fallback_config = validator.get_fallback_config()
             fallback_reminders = validator.get_fallback_reminders()
 
@@ -260,17 +261,17 @@ def validate_and_load_engine(config_path: Optional[str] = None) -> ReminderEngin
             engine.variables = fallback_reminders.get("variables", {})
             engine.formatting = fallback_reminders.get("formatting", {})
 
-            print("⚠️  New project tutorial reminders will be limited due to configuration errors")
+            print("⚠️  New project tutorial reminders will be limited due to configuration errors", file=sys.stderr)
         else:
-            print("✅ Reminder configuration loaded successfully")
+            print("✅ Reminder configuration loaded successfully", file=sys.stderr)
             if validator.warnings:
-                print(f"⚠️  {len(validator.warnings)} warnings found")
+                print(f"⚠️  {len(validator.warnings)} warnings found", file=sys.stderr)
                 for i, warning in enumerate(validator.warnings, 1):
-                    print(f"  {i}. {warning}")
+                    print(f"  {i}. {warning}", file=sys.stderr)
 
     except Exception as e:
-        print(f"Failed to validate reminder configuration: {e}")
-        print("Using minimal fallback configuration")
+        print(f"Failed to validate reminder configuration: {e}", file=sys.stderr)
+        print("Using minimal fallback configuration", file=sys.stderr)
 
         # Emergency fallback
         engine.config = validator.get_fallback_config()

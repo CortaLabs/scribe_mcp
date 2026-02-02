@@ -484,23 +484,6 @@ def _format_search_readable(data: Dict[str, Any], line_numbers: bool) -> str:
         parts.append(f"WARNING: Results truncated - {data.get('truncation_reason', 'limit reached')}")
         parts.append("")
 
-    # Add pagination header if present
-    if "pagination" in data:
-        p = data["pagination"]
-        parts.append(f"📄 Page {p['page']}/{p['total_pages']}")
-        
-        start_match = (p['page'] - 1) * p['page_size'] + 1
-        end_match = min(p['page'] * p['page_size'], p['total_matches'])
-        
-        parts.append(f"   Showing matches {start_match}-{end_match} of {p['total_matches']} total")
-        
-        if p['has_next']:
-            parts.append(f"   → Use page={p['page'] + 1} to see next {p['page_size']} matches")
-        if p['has_prev']:
-            parts.append(f"   ← Use page={p['page'] - 1} to see previous matches")
-        
-        parts.append("")
-
     if output_mode == "content":
         for file_block in data.get("matches", []):
             # File separator matching read_file style
@@ -571,10 +554,6 @@ async def search(
     output_mode: str = "content",
     format: str = "readable",
 
-    # Pagination
-    page: int = 1,
-    page_size: int = 10,
-
     # Context lines
     context_lines: int = 0,
     before_context: Optional[int] = None,
@@ -610,8 +589,6 @@ async def search(
         type: File type filter (py, js, ts, rust, go, java, etc.)
         output_mode: "content" (lines), "files_with_matches" (paths), "count" (counts)
         format: Output format - "readable", "structured", "compact"
-        page: Page number for pagination (default 1, min 1)
-        page_size: Number of matches per page (default 10, min 1, max 100)
         context_lines: Lines of context around matches (both before and after)
         before_context: Lines before match (overrides context_lines for before)
         after_context: Lines after match (overrides context_lines for after)
@@ -635,15 +612,6 @@ async def search(
 
     repo_root = Path(exec_context.repo_root)
 
-    # --- Pagination validation ---
-    MAX_PAGE_SIZE = 100
-    if page < 1:
-        page = 1
-    if page_size < 1:
-        page_size = 1
-    if page_size > MAX_PAGE_SIZE:
-        page_size = MAX_PAGE_SIZE
-
     # --- Resolve search root ---
     if path:
         search_root = Path(path).expanduser()
@@ -661,45 +629,7 @@ async def search(
         return {"ok": False, "error": "search path outside repository boundary", "path": str(search_root)}
 
     if not search_root.exists():
-        from utils.path_suggestions import (
-            get_fuzzy_file_suggestions,
-            get_directory_listing,
-        )
-
-        error_response = {
-            "ok": False,
-            "error": "search path does not exist",
-            "path": str(search_root),
-            "error_type": "not_found"
-        }
-
-        # Only enrich for readable format
-        if format == "readable":
-            # Fuzzy directory suggestions from parent
-            if search_root.parent.exists():
-                suggestions = get_fuzzy_file_suggestions(
-                    search_root.name,
-                    search_root.parent,
-                    include_directories=True  # Prioritize directories for search paths
-                )
-                if suggestions:
-                    # Filter to prioritize directory suggestions
-                    dir_suggestions = [s for s in suggestions if s.get("is_dir")]
-                    if dir_suggestions:
-                        error_response["similar_paths"] = dir_suggestions
-                        best = dir_suggestions[0]
-                        error_response["suggestion"] = (
-                            f"Did you mean '{best['name']}'? "
-                            f"({int(best['score'] * 100)}% match)"
-                        )
-
-                # Parent directory listing
-                listing = get_directory_listing(search_root.parent)
-                if listing and not listing.get("permission_error"):
-                    error_response["parent_directory"] = str(search_root.parent)
-                    error_response["parent_listing"] = listing
-
-        return error_response
+        return {"ok": False, "error": "search path does not exist", "path": str(search_root)}
 
     # --- Validate output_mode ---
     valid_modes = {"content", "files_with_matches", "count"}
@@ -786,49 +716,6 @@ async def search(
             if len(results) >= max_files:
                 break
 
-    # --- Pagination logic (TP-3.2) ---
-    # Flatten all matches across files for pagination
-    all_matches = []
-    for file_result in results:
-        for match in file_result.matches:
-            all_matches.append({"file": file_result.file, "match": match})
-
-    total_matches_for_pagination = len(all_matches)
-    total_pages = (total_matches_for_pagination + page_size - 1) // page_size if total_matches_for_pagination > 0 else 1
-
-    # Clamp page to valid range
-    if page > total_pages:
-        page = total_pages
-
-    # Slice matches for requested page
-    start_idx = (page - 1) * page_size
-    end_idx = start_idx + page_size
-    paginated_matches = all_matches[start_idx:end_idx]
-
-    # Rebuild FileResult structure from paginated matches
-    from collections import defaultdict
-    file_groups = defaultdict(list)
-    for item in paginated_matches:
-        file_groups[item["file"]].append(item["match"])
-
-    paginated_results = [
-        FileResult(file=str(fpath), matches=matches, match_count=len(matches))
-        for fpath, matches in file_groups.items()
-    ]
-
-    # Create pagination metadata
-    pagination_info = {
-        "page": page,
-        "page_size": page_size,
-        "total_matches": total_matches_for_pagination,
-        "total_pages": total_pages,
-        "has_next": page < total_pages,
-        "has_prev": page > 1,
-    }
-
-    # Replace results with paginated results for output
-    results = paginated_results
-
     # --- Build output ---
     structured = _build_structured_result(
         results=results,
@@ -839,9 +726,6 @@ async def search(
         line_numbers=line_numbers,
         traversal_stats=traversal_stats,
     )
-
-    # Add pagination metadata to structured result
-    structured["pagination"] = pagination_info
 
     if hit_total_limit:
         structured["truncated"] = True

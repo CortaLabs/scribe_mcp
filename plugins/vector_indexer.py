@@ -23,6 +23,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import threading
 
+# Suppress HuggingFace progress bars that pollute stdout (breaks MCP JSON-RPC)
+import os
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
 # Vector processing imports (optional)
 try:
     import faiss

@@ -21,6 +21,8 @@ from tools.search import (
     _search_file_multiline,
     _build_structured_result,
     _format_search_readable,
+    _truncate_line,
+    MAX_LINE_LENGTH,
 )
 
 
@@ -297,3 +299,70 @@ class TestReadableFormatting:
         assert "target line" in text
         assert "line before" in text
         assert "line after" in text
+
+
+# ---------------------------------------------------------------------------
+# Task 1.3: Line Truncation
+# ---------------------------------------------------------------------------
+
+class TestLineTruncation:
+    """Test suite for _truncate_line function"""
+
+    def test_truncate_line_short(self):
+        """Short lines pass through unchanged."""
+        short_line = "short line"
+        assert _truncate_line(short_line) == short_line
+
+    def test_truncate_line_long(self):
+        """Long lines get truncated with indicator."""
+        long_line = "x" * 1000
+        result = _truncate_line(long_line)
+        assert len(result) <= 550
+        assert "TRUNCATED" in result
+        assert "1000" in result
+
+    def test_truncate_line_exact_boundary(self):
+        """Line at exactly MAX_LINE_LENGTH passes through."""
+        line = "x" * MAX_LINE_LENGTH
+        assert _truncate_line(line) == line
+
+    def test_truncate_line_one_over(self):
+        """Line at MAX_LINE_LENGTH + 1 gets truncated."""
+        line = "x" * (MAX_LINE_LENGTH + 1)
+        result = _truncate_line(line)
+        assert "TRUNCATED" in result
+        assert str(MAX_LINE_LENGTH + 1) in result
+
+    def test_truncate_line_preserves_prefix(self):
+        """Truncation preserves the first MAX_LINE_LENGTH characters."""
+        line = "A" * 600
+        result = _truncate_line(line)
+        assert result.startswith("A" * MAX_LINE_LENGTH)
+        assert "... [TRUNCATED" in result
+
+    def test_truncate_line_empty_string(self):
+        """Empty string passes through unchanged."""
+        assert _truncate_line("") == ""
+
+    def test_truncate_line_single_char(self):
+        """Single character passes through unchanged."""
+        assert _truncate_line("x") == "x"
+
+    def test_truncate_line_whitespace(self):
+        """Lines with only whitespace pass through if short enough."""
+        whitespace = " " * 100
+        assert _truncate_line(whitespace) == whitespace
+
+    def test_truncate_line_unicode(self):
+        """Unicode characters handled correctly in length calculation."""
+        # Unicode emoji are single characters but multiple bytes
+        line = "🔥" * 600  # Well over MAX_LINE_LENGTH
+        result = _truncate_line(line)
+        assert "TRUNCATED" in result
+        assert len(line) > MAX_LINE_LENGTH
+
+    def test_truncate_line_format_message(self):
+        """Truncation message includes original length."""
+        line = "y" * 750
+        result = _truncate_line(line)
+        assert "[TRUNCATED - 750 chars total]" in result

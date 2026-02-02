@@ -674,7 +674,7 @@ async def _replay_journals_background() -> None:
     """
     global _journal_replay_complete
 
-    print("🔄 Starting background journal replay...")
+    print("🔄 Starting background journal replay...", file=sys.stderr)
 
     from scribe_mcp.utils.files import WriteAheadLog
     from scribe_mcp.tools.list_projects import list_projects
@@ -708,7 +708,7 @@ async def _replay_journals_background() -> None:
                             total_replayed += replayed
                             recovered_projects.append(project_name)
         except Exception as list_error:
-            print(f"⚠️  Project listing failed during recovery: {list_error}")
+            print(f"⚠️  Project listing failed during recovery: {list_error}", file=sys.stderr)
 
         # Method 2: Fallback - scan for orphaned journal files in project directories
         try:
@@ -734,21 +734,21 @@ async def _replay_journals_background() -> None:
                                 if project_name not in recovered_projects:
                                     recovered_projects.append(project_name)
         except Exception as scan_error:
-            print(f"⚠️  Journal scan failed during recovery: {scan_error}")
+            print(f"⚠️  Journal scan failed during recovery: {scan_error}", file=sys.stderr)
 
         # Report recovery results
         if total_replayed > 0:
-            print(f"🛡️  CRASH RECOVERY: Replayed {total_replayed} uncommitted entries across {len(recovered_projects)} projects")
+            print(f"🛡️  CRASH RECOVERY: Replayed {total_replayed} uncommitted entries across {len(recovered_projects)} projects", file=sys.stderr)
             for project_name in recovered_projects:
-                print(f"   📋 Recovered entries for project: {project_name}")
-            print("   ✅ Audit trail integrity maintained despite crash")
+                print(f"   📋 Recovered entries for project: {project_name}", file=sys.stderr)
+            print("   ✅ Audit trail integrity maintained despite crash", file=sys.stderr)
         else:
-            print("✅ Background journal replay completed (no uncommitted entries)")
+            print("✅ Background journal replay completed (no uncommitted entries)", file=sys.stderr)
 
     except Exception as e:
         # Journal recovery should not prevent server operation
-        print(f"⚠️  Journal recovery warning: {e}")
-        print("   💡 Server will continue but some audit entries may be missing")
+        print(f"⚠️  Journal recovery warning: {e}", file=sys.stderr)
+        print("   💡 Server will continue but some audit entries may be missing", file=sys.stderr)
     finally:
         _journal_replay_complete = True
 
@@ -767,9 +767,9 @@ async def _startup() -> None:
         try:
             deleted = await storage_backend.cleanup_old_entries(retention_days=settings.retention_days)
             if deleted > 0:
-                print(f"🗑️  Cleaned up {deleted} old log entries (>{settings.retention_days} days)")
+                print(f"🗑️  Cleaned up {deleted} old log entries (>{settings.retention_days} days)", file=sys.stderr)
         except Exception as e:
-            print(f"⚠️  Entry cleanup failed (non-fatal): {e}")
+            print(f"⚠️  Entry cleanup failed (non-fatal): {e}", file=sys.stderr)
 
     # Initialize plugins for the current repository
     try:
@@ -781,10 +781,10 @@ async def _startup() -> None:
         repo_root = settings.project_root or Path.cwd()
         repo_config = RepoConfig.from_directory(Path(repo_root))
         initialize_plugins(repo_config)
-        print("🔌 Plugin system initialized")
+        print("🔌 Plugin system initialized", file=sys.stderr)
     except Exception as e:
-        print(f"⚠️  Plugin initialization failed: {e}")
-        print("   💡 Continuing without plugins (vector search will not be available)")
+        print(f"⚠️  Plugin initialization failed: {e}", file=sys.stderr)
+        print("   💡 Continuing without plugins (vector search will not be available)", file=sys.stderr)
 
     # Initialize Bridge System (optional feature)
     bridge_registry = None
@@ -798,7 +798,7 @@ async def _startup() -> None:
                 storage_backend=storage_backend,
                 config_dir=Path(".scribe/config/bridges")
             )
-            print("🌉 BridgeRegistry initialized")
+            print("🌉 BridgeRegistry initialized", file=sys.stderr)
 
             # Task Package 1.2: Discover and register manifests
             manifests = bridge_registry.discover_manifests()
@@ -811,17 +811,17 @@ async def _startup() -> None:
                     manifest = bridge_registry.load_manifest(manifest_path)
                     await bridge_registry.register_bridge(manifest)
                     await bridge_registry.activate_bridge(manifest.bridge_id)
-                    print(f"   ✅ Registered & activated bridge: {manifest.bridge_id}")
+                    print(f"   ✅ Registered & activated bridge: {manifest.bridge_id}", file=sys.stderr)
                     bridges_activated += 1
                 except Exception as bridge_error:
-                    print(f"   ⚠️  Failed to register bridge from {manifest_path}: {bridge_error}")
+                    print(f"   ⚠️  Failed to register bridge from {manifest_path}: {bridge_error}", file=sys.stderr)
                     # Continue with next manifest
 
             # Print summary
             if bridges_total > 0:
-                print(f"🌉 Bridge system initialized ({bridges_activated}/{bridges_total} bridges active)")
+                print(f"🌉 Bridge system initialized ({bridges_activated}/{bridges_total} bridges active)", file=sys.stderr)
             else:
-                print("🌉 Bridge system initialized (no manifests found)")
+                print("🌉 Bridge system initialized (no manifests found)", file=sys.stderr)
 
             # Task Package 1.3: Start health monitor background task
             if bridge_registry:
@@ -831,31 +831,31 @@ async def _startup() -> None:
                 )
                 set_health_monitor(health_monitor)
                 asyncio.create_task(health_monitor.start())
-                print("🏥 Bridge health monitor started (60s interval)")
+                print("🏥 Bridge health monitor started (60s interval)", file=sys.stderr)
 
         except Exception as e:
-            print(f"⚠️  Bridge system initialization failed: {e}")
-            print("   💡 Continuing without bridge support")
+            print(f"⚠️  Bridge system initialization failed: {e}", file=sys.stderr)
+            print("   💡 Continuing without bridge support", file=sys.stderr)
             bridge_registry = None
 
     # Initialize AgentContextManager for agent-scoped project context
     if storage_backend and state_manager:
         agent_context_manager = init_agent_context_manager(storage_backend, state_manager)
         agent_identity = init_agent_identity(state_manager)
-        print("🤖 AgentContextManager initialized for multi-agent support")
-        print("🆔 AgentIdentity system initialized for automatic agent detection")
+        print("🤖 AgentContextManager initialized for multi-agent support", file=sys.stderr)
+        print("🆔 AgentIdentity system initialized for automatic agent detection", file=sys.stderr)
 
         # Migrate legacy global state to agent-scoped context
         from scribe_mcp.state.agent_manager import migrate_legacy_state
         try:
             await migrate_legacy_state(state_manager, storage_backend)
         except Exception as e:
-            print(f"⚠️  Legacy state migration failed: {e}")
-            print("   💡 Continuing with agent-scoped context (legacy state may be lost)")
+            print(f"⚠️  Legacy state migration failed: {e}", file=sys.stderr)
+            print("   💡 Continuing with agent-scoped context (legacy state may be lost)", file=sys.stderr)
 
         # Start background session cleanup task
         asyncio.create_task(_session_cleanup_task(agent_context_manager))
-        print("🧹 Session cleanup task started")
+        print("🧹 Session cleanup task started", file=sys.stderr)
 
     # Register bridge custom tools with MCP server
     if BRIDGES_AVAILABLE:
@@ -874,15 +874,15 @@ async def _startup() -> None:
                     # Register with MCP server
                     # The tool name will be prefixed: council_mcp:custom_audit
                     Server._scribe_tool_registry[full_name] = impl
-                    print(f"🔧 Registered bridge tool: {full_name}")
+                    print(f"🔧 Registered bridge tool: {full_name}", file=sys.stderr)
         except Exception as e:
-            print(f"⚠️  Bridge tool registration failed: {e}")
-            print("   💡 Continuing without bridge tools")
+            print(f"⚠️  Bridge tool registration failed: {e}", file=sys.stderr)
+            print("   💡 Continuing without bridge tools", file=sys.stderr)
 
     # Start background journal replay (non-blocking)
     # Journal recovery happens in background so server can respond to tool calls immediately
     schedule_background_task(_replay_journals_background())
-    print("✅ Server ready (journal replay continuing in background)")
+    print("✅ Server ready (journal replay continuing in background)", file=sys.stderr)
 
 
 async def _shutdown() -> None:
@@ -925,11 +925,11 @@ async def _session_cleanup_task(agent_manager):
             await asyncio.sleep(300)  # Clean every 5 minutes
             cleaned = await agent_manager.cleanup_expired_sessions()
             if cleaned > 0:
-                print(f"🧹 Cleaned up {cleaned} expired sessions")
+                print(f"🧹 Cleaned up {cleaned} expired sessions", file=sys.stderr)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"⚠️  Session cleanup error: {e}")
+            print(f"⚠️  Session cleanup error: {e}", file=sys.stderr)
             # Continue cleaning despite errors
 
 

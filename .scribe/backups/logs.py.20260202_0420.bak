@@ -13,29 +13,16 @@ LOG_LINE_PATTERN = re.compile(
 
 
 def _is_template_entry(timestamp: str, emoji: str, agent: str, message: str) -> bool:
-    """Check if entry is a template/placeholder (requires 2+ indicators)."""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    # Structural indicators suggest template formatting
-    structural_indicators = ["YYYY-MM-DD", "HH:MM:SS", "<name>", "EMOJI"]
-    
-    # Content indicators suggest placeholder content
-    content_indicators = ["Message text", "key=value", "placeholder", "example"]
+    """Check if this appears to be a template/example entry rather than a real one."""
+    # Check for placeholder patterns
+    template_indicators = [
+        "YYYY-MM-DD", "HH:MM:SS", "<name>", "EMOJI", "Message text",
+        "key=value", "placeholder", "example", "template"
+    ]
 
     combined_text = f"{timestamp} {emoji} {agent} {message}".lower()
-    
-    # Count indicators in each category
-    structural_count = sum(1 for ind in structural_indicators if ind.lower() in combined_text)
-    content_count = sum(1 for ind in content_indicators if ind.lower() in combined_text)
-    
-    # Require multiple indicators to filter
-    is_template = structural_count >= 2 or (structural_count >= 1 and content_count >= 2)
-    
-    if is_template:
-        logger.debug(f"Filtered template entry: {message[:100]}...")
-    
-    return is_template
+
+    return any(indicator.lower() in combined_text for indicator in template_indicators)
 
 
 def parse_log_line(line: str) -> Optional[Dict[str, Any]]:
