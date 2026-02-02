@@ -578,21 +578,6 @@ async def open_security(
                 "project_name": str(result.get("project_name", "")),
             }
 
-        # Calculate completeness score
-        filled_sections = []
-        unfilled_sections = []
-        
-        for field in _BUG_TEMPLATE_FIELDS:
-            value = security_metadata.get(field)
-            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
-                filled_sections.append(field)
-            else:
-                unfilled_sections.append(field)
-        
-        total_fields = len(_BUG_TEMPLATE_FIELDS)
-        filled_count = len(filled_sections)
-        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
-
         return {
             "ok": True,
             "case_id": str(case_id),
@@ -600,21 +585,14 @@ async def open_security(
             "path": str(result.get("path", "")),
             "project_name": str(result.get("project_name", "")),
             "security_report": str(doc_result.get("path", "")),
-            # NEW completeness metadata:
-            "completeness": {
-                "score": f"{filled_count}/{total_fields}",
-                "percentage": percentage,
-                "filled_sections": filled_sections,
-                "unfilled_sections": unfilled_sections,
-            },
-            # UPDATED action_required with specific guidance:
-            "action_required": (
-                f"Security report {percentage}% complete. "
-                f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_id>', content='...') "
-                f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
-                + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
-            ),
+            "unfilled_sections": [
+                "description",
+                "investigation",
+                "resolution_plan",
+                "timeline",
+                "appendix"
+            ],
+            "next_steps": f"Security report created. Use manage_docs(agent='{agent}', action='replace_section', doc_category='bugs', doc_name='{case_id}', section='<section_id>', content='...') to fill remaining sections.",
         }
 
     # Sentinel mode: original behavior

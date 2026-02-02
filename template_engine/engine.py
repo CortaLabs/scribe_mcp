@@ -388,8 +388,8 @@ class Jinja2TemplateEngine:
             template_logger.debug("Legacy template rendering successful")
             return result
         except Exception as e:
-            template_logger.warning(f"Legacy template rendering failed: {e}")
-            return template_string  # Return original if fallback fails
+            template_logger.error(f"Legacy template rendering failed: {e}")
+            raise TemplateRenderError(f"Both Jinja2 and legacy template rendering failed: {e}")
 
     def render_template(
         self,

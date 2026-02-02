@@ -394,4 +394,42 @@ class FormatterDispatcher:
 
         lines.append("\u255a" + "\u2550" * 78 + "\u255d")
 
+        # Path context
+        if context.get('absolute_path'):
+            lines.append(f"\n  Path: {context['absolute_path']}")
+
+        # Fuzzy suggestions (from path_suggestions enrichment)
+        if context.get('suggestion'):
+            lines.append(f"\n  {context['suggestion']}")
+        if context.get('similar_files'):
+            for sf in context['similar_files'][:5]:
+                name = sf['name'] if isinstance(sf, dict) else sf
+                score = f" ({int(sf['score']*100)}%)" if isinstance(sf, dict) and 'score' in sf else ""
+                lines.append(f"    - {name}{score}")
+
+        # Directory contents listing (from path_suggestions enrichment)
+        if context.get('parent_listing'):
+            listing = context['parent_listing']
+            dirs = listing.get('directories', [])
+            files = listing.get('files', [])
+            total = len(dirs) + len(files)
+            truncated = listing.get('truncated', False)
+            lines.append(f"\n  Contents ({total} items):")
+            # Always show ALL directories
+            if dirs:
+                for d in dirs:
+                    lines.append(f"    {d}/")
+            # Show files (capped at 20)
+            if files:
+                for f in files[:20]:
+                    lines.append(f"    {f}")
+                remaining = len(files) - 20
+                if remaining > 0 or truncated:
+                    extra = remaining if remaining > 0 else 0
+                    lines.append(f"    ... and {extra} more files" if extra else "    (truncated)")
+
+        # Cross-tool search suggestion
+        if context.get('search_suggestion'):
+            lines.append(f"\n  Tip: {context['search_suggestion']}")
+
         return '\n'.join(lines)

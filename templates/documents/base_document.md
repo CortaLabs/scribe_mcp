@@ -42,9 +42,9 @@
     {%- set seq = [items] %}
 {%- endif %}
 {%- if seq %}
-{%- for item in seq %}
+{% for item in seq %}
 - {{ item }}
-{%- endfor %}
+{% endfor %}
 {%- else %}
 - {{ placeholder }}
 {%- endif %}
@@ -58,9 +58,11 @@
     {%- set seq = [items] %}
 {%- endif %}
 {%- if seq %}
-{%- for item in seq %}
-- [ ] {{ item.label | default(item) }}{% if item.proof %} (proof: {{ item.proof }}){% endif %}
-{%- endfor %}
+{% for item in seq %}
+{% if item is mapping %}{% set label = item.label | default(item) %}{% set proof = item.proof | default("") %}{% else %}{% set label = item %}{% set proof = "" %}{% endif %}
+- [ ] {{ label }}{% if proof %} (proof: {{ proof }}){% endif %}
+
+{% endfor -%}
 {%- else %}
 - [ ] {{ placeholder }}
 {%- endif %}

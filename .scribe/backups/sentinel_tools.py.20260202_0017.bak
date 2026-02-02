@@ -11,25 +11,6 @@ from scribe_mcp.server import app
 from scribe_mcp.utils.sentinel_logs import append_case_event, append_sentinel_event
 
 
-# Template field list for completeness scoring
-_BUG_TEMPLATE_FIELDS = [
-    "summary_long",
-    "symptoms",
-    "category",
-    "severity",
-    "status",
-    "expected_behavior",
-    "actual_behavior",
-    "reproduction_steps",
-    "component",
-    "environment",
-    "customer_impact",
-    "affected_areas",
-    "root_cause",
-    "immediate_actions",
-]
-
-
 def _require_sentinel_context():
     context = server_module.get_execution_context()
     if not context:
@@ -366,35 +347,24 @@ async def open_bug(
         case_id = _next_case_id_for_project("BUG", result)
 
         # Create detailed bug report document
-        # Build metadata dict (used for both doc creation and completeness scoring)
-        bug_metadata = {
-            "doc_type": "bug",
-            "category": category,
-            "slug": case_id,
-            "title": title,
-            "case_id": case_id,
-            "symptoms": symptoms,
-            "summary_long": symptoms,  # Map to template field
-            "actual_behavior": symptoms,  # Map to template field
-            "affected_paths": affected_paths or [],
-            "affected_areas": affected_paths or [],  # Map to template field
-            "reporter": agent,  # Map to template field
-            "status": "INVESTIGATING",  # Default status
-            "severity": severity if severity is not None else "medium",  # Default severity
-            # NEW parameter mappings (use [UNFILLED] for missing values):
-            "expected_behavior": expected_behaviour if expected_behaviour is not None else "[UNFILLED]",
-            "reproduction_steps": steps_to_reproduce if steps_to_reproduce is not None else ["[UNFILLED]"],
-            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
-            "immediate_actions": resolution_notes if resolution_notes is not None else "[UNFILLED]",
-            "component": component if component is not None else "[UNFILLED]",
-            "environment": environment if environment is not None else "[UNFILLED]",
-            "customer_impact": customer_impact if customer_impact is not None else "[UNFILLED]",
-        }
-        
         doc_result = await manage_docs_tool(
             agent=agent,
             action="create",
-            metadata=bug_metadata,
+            metadata={
+                "doc_type": "bug",
+                "category": category,
+                "slug": case_id,
+                "title": title,
+                "case_id": case_id,
+                "symptoms": symptoms,
+                "summary_long": symptoms,  # Map to template field
+                "actual_behavior": symptoms,  # Map to template field
+                "affected_paths": affected_paths or [],
+                "affected_areas": affected_paths or [],  # Map to template field
+                "reporter": agent,  # Map to template field
+                "status": "INVESTIGATING",  # Default status
+                "severity": "medium",  # Default severity
+            },
         )
 
         # Check if document creation succeeded
@@ -409,21 +379,6 @@ async def open_bug(
                 "project_name": str(result.get("project_name", "")),
             }
 
-        # Calculate completeness score
-        filled_sections = []
-        unfilled_sections = []
-        
-        for field in _BUG_TEMPLATE_FIELDS:
-            value = bug_metadata.get(field)
-            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
-                filled_sections.append(field)
-            else:
-                unfilled_sections.append(field)
-        
-        total_fields = len(_BUG_TEMPLATE_FIELDS)
-        filled_count = len(filled_sections)
-        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
-
         return {
             "ok": True,
             "case_id": str(case_id),
@@ -431,21 +386,14 @@ async def open_bug(
             "path": str(result.get("path", "")),
             "project_name": str(result.get("project_name", "")),
             "bug_report": str(doc_result.get("path", "")),
-            # NEW completeness metadata:
-            "completeness": {
-                "score": f"{filled_count}/{total_fields}",
-                "percentage": percentage,
-                "filled_sections": filled_sections,
-                "unfilled_sections": unfilled_sections,
-            },
-            # UPDATED action_required with specific guidance:
-            "action_required": (
-                f"Bug report {percentage}% complete. "
-                f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_id>', content='...') "
-                f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
-                + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
-            ),
+            "unfilled_sections": [
+                "description",
+                "investigation", 
+                "resolution_plan",
+                "timeline",
+                "appendix"
+            ],
+            "next_steps": f"Bug report created. Use manage_docs(agent='{agent}', action='replace_section', doc_category='bugs', doc_name='{case_id}', section='<section_id>', content='...') to fill remaining sections.",
         }
 
     # Sentinel mode: original behavior
@@ -471,15 +419,6 @@ async def open_security(
     symptoms: str,
     category: str,
     affected_paths: Optional[list[str]] = None,
-    # NEW optional parameters for richer security reports:
-    expected_behaviour: Optional[str] = None,
-    steps_to_reproduce: Optional[list[str]] = None,
-    root_cause: Optional[str] = None,
-    resolution_notes: Optional[str] = None,
-    severity: Optional[str] = None,
-    component: Optional[str] = None,
-    environment: Optional[str] = None,
-    customer_impact: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Open a SECURITY case with per-day stable ID and create a detailed security report document.
 
@@ -489,14 +428,6 @@ async def open_security(
         symptoms: Description of the security issue
         category: Category for organization (e.g., 'auth', 'injection', 'xss')
         affected_paths: Optional list of affected file paths
-        expected_behaviour: What should happen (populates Expected Behaviour section)
-        steps_to_reproduce: List of steps to reproduce the security issue (populates Steps to Reproduce)
-        root_cause: Suspected or confirmed root cause (populates Investigation section)
-        resolution_notes: Immediate actions or fix notes (populates Resolution Plan)
-        severity: Security severity level (low/medium/high/critical), defaults to 'high'
-        component: Affected component or subsystem name
-        environment: Environment where issue occurs (local/staging/production)
-        customer_impact: Description of impact on users/customers
     """
     if not category or not category.strip():
         return {"ok": False, "error": "category is required"}
@@ -535,35 +466,24 @@ async def open_security(
         case_id = _next_case_id_for_project("SEC", result)
 
         # Create detailed security report document
-        # Build metadata dict (used for both doc creation and completeness scoring)
-        security_metadata = {
-            "doc_type": "bug",  # Use bug template for security too
-            "category": category,
-            "slug": case_id,
-            "title": title,
-            "case_id": case_id,
-            "symptoms": symptoms,
-            "summary_long": symptoms,  # Map to template field
-            "actual_behavior": symptoms,  # Map to template field
-            "affected_paths": affected_paths or [],
-            "affected_areas": affected_paths or [],  # Map to template field
-            "reporter": agent,  # Map to template field
-            "status": "INVESTIGATING",  # Default status
-            "severity": severity if severity is not None else "high",  # Default severity for security issues
-            # NEW parameter mappings (use [UNFILLED] for missing values):
-            "expected_behavior": expected_behaviour if expected_behaviour is not None else "[UNFILLED]",
-            "reproduction_steps": steps_to_reproduce if steps_to_reproduce is not None else ["[UNFILLED]"],
-            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
-            "immediate_actions": resolution_notes if resolution_notes is not None else "[UNFILLED]",
-            "component": component if component is not None else "[UNFILLED]",
-            "environment": environment if environment is not None else "[UNFILLED]",
-            "customer_impact": customer_impact if customer_impact is not None else "[UNFILLED]",
-        }
-        
         doc_result = await manage_docs_tool(
             agent=agent,
             action="create",
-            metadata=security_metadata,
+            metadata={
+                "doc_type": "bug",  # Use bug template for security too
+                "category": category,
+                "slug": case_id,
+                "title": title,
+                "case_id": case_id,
+                "symptoms": symptoms,
+                "summary_long": symptoms,  # Map to template field
+                "actual_behavior": symptoms,  # Map to template field
+                "affected_paths": affected_paths or [],
+                "affected_areas": affected_paths or [],  # Map to template field
+                "reporter": agent,  # Map to template field
+                "status": "INVESTIGATING",  # Default status
+                "severity": "high",  # Default severity for security issues
+            },
         )
 
         # Check if document creation succeeded
@@ -578,21 +498,6 @@ async def open_security(
                 "project_name": str(result.get("project_name", "")),
             }
 
-        # Calculate completeness score
-        filled_sections = []
-        unfilled_sections = []
-        
-        for field in _BUG_TEMPLATE_FIELDS:
-            value = security_metadata.get(field)
-            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
-                filled_sections.append(field)
-            else:
-                unfilled_sections.append(field)
-        
-        total_fields = len(_BUG_TEMPLATE_FIELDS)
-        filled_count = len(filled_sections)
-        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
-
         return {
             "ok": True,
             "case_id": str(case_id),
@@ -600,21 +505,14 @@ async def open_security(
             "path": str(result.get("path", "")),
             "project_name": str(result.get("project_name", "")),
             "security_report": str(doc_result.get("path", "")),
-            # NEW completeness metadata:
-            "completeness": {
-                "score": f"{filled_count}/{total_fields}",
-                "percentage": percentage,
-                "filled_sections": filled_sections,
-                "unfilled_sections": unfilled_sections,
-            },
-            # UPDATED action_required with specific guidance:
-            "action_required": (
-                f"Security report {percentage}% complete. "
-                f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_id>', content='...') "
-                f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
-                + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
-            ),
+            "unfilled_sections": [
+                "description",
+                "investigation",
+                "resolution_plan",
+                "timeline",
+                "appendix"
+            ],
+            "next_steps": f"Security report created. Use manage_docs(agent='{agent}', action='replace_section', doc_category='bugs', doc_name='{case_id}', section='<section_id>', content='...') to fill remaining sections.",
         }
 
     # Sentinel mode: original behavior

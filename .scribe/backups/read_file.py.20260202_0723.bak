@@ -1814,70 +1814,17 @@ async def read_file(
         }, requested_mode)
 
     if not target.exists() or not target.is_file():
-        from utils.path_suggestions import (
-            classify_path_error,
-            get_fuzzy_file_suggestions,
-            get_directory_listing,
-            build_search_suggestion,
-        )
-
-        # Classify the specific error type
-        error_type = classify_path_error(target)
-        error_messages = {
-            "not_found": "file not found",
-            "is_directory": "path is a directory",
-            "permission_denied": "permission denied",
-            "is_symlink": "path is a symbolic link (not a regular file)",
-            "unknown": "file not accessible"
-        }
-        error_message = error_messages.get(error_type, "file not found")
-
-        error_response = {
-            "ok": False,
-            "error": error_message,
-            "error_type": error_type,
-            "absolute_path": str(target),
-            "repo_relative_path": rel_path,
-        }
-
-        # Only enrich errors for readable format (performance optimization)
-        if format == "readable":
-            # Fuzzy suggestions
-            if target.parent.exists():
-                suggestions = get_fuzzy_file_suggestions(
-                    target.name,
-                    target.parent,
-                    include_directories=(error_type == "is_directory")
-                )
-                if suggestions:
-                    error_response["similar_files"] = suggestions
-                    best_match = suggestions[0]
-                    error_response["suggestion"] = (
-                        f"Did you mean '{best_match['name']}'? "
-                        f"({int(best_match['score'] * 100)}% match)"
-                    )
-
-                # Parent directory listing
-                listing = get_directory_listing(target.parent)
-                if listing and not listing.get("permission_error"):
-                    error_response["parent_directory"] = str(target.parent)
-                    error_response["parent_listing"] = listing
-
-            # Cross-tool suggestion
-            if error_type in ("not_found", "permission_denied"):
-                error_response["search_suggestion"] = build_search_suggestion(
-                    pattern=target.stem,  # filename without extension
-                    path=str(target.parent) if target.parent.exists() else str(repo_root),
-                    agent=agent
-                )
-
         await log_read(
             "read_file_error",
-            {"reason": error_type, "path": str(target)},
+            {"reason": "file_not_found", "path": str(target)},
             include_md=True,
         )
-
-        return await finalize_response(error_response, requested_mode)
+        return await finalize_response({
+            "ok": False,
+            "error": "file not found",
+            "absolute_path": str(target),
+            "repo_relative_path": rel_path,
+        }, requested_mode)
 
     scan = _scan_file(target)
     scan_payload = {
