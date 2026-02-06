@@ -38,3 +38,30 @@ TOOL_LOG.*.*.md
 data/scribe_projects.db-shm
 data/scribe_projects.db-wal
 .scribe/state.json
+
+# Pip install artifacts
+=*
+
+# Broken file creation
+None
+None.*
+
+# Temp files
+tmp_state*.json
+
+# Temp directories (broader pattern)
+tmp_manual*/
+
+# Backups (all .bak files)
+*.bak
+
+# Lock/journal artifacts
+*.journal
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage artifacts
+.coverage
+htmlcov/
