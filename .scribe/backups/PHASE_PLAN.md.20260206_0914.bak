@@ -777,14 +777,14 @@ summary: ''
 |-----------|--------|-------|--------|----------|
 | Repository Clean (P1) | Week 1 | Coder | Planned | Git diff shows deletions |
 | Logging + Security (P2) | Week 1-2 | Coder | Planned | Zero print in production |
-| Dead Code Clean (P3) | Week 2 | Coder | Planned | Zero bare except + optimization.py deleted |
+| Dead Code Clean (P3) | Week 2 | Coder | Planned | Zero bare except |
 | Storage Decomposed (P4) | Week 2-3 | Coder | Planned | 9 modules, all < 800 lines |
-| Docs Decomposed (P5) | Week 2-3 (PARALLEL with P4) | Coder | Planned | 12 modules in doc_management/, tool < 300 lines |
-| Packaged + src/ (P6) | Week 4 | Coder | Planned | pip install works, reminders.py path fixed |
-| DB Consolidated (P7) | Week 4-5 | Coder | Planned | Single DB, no state.json |
-| Postgres Complete (P8) | Week 5 | Coder | Planned | 31/31 methods, pg_trgm FTS contract verified |
-| Reminders Live (P9) | Week 5-6 | Coder | Planned | 3 tools in list_tools |
-| Optimized + Scaffold (P10) | Week 6 | Coder | Planned | Startup < 2s |
+| Docs Decomposed (P5) | Week 3-4 | Coder | Planned | 12 modules, all < 800 lines |
+| Packaged + src/ (P6) | Week 4-5 | Coder | Planned | pip install works |
+| DB Consolidated (P7) | Week 5 | Coder | Planned | Single DB, no state.json |
+| Postgres Complete (P8) | Week 5-6 | Coder | Planned | 31/31 methods |
+| Reminders Live (P9) | Week 6 | Coder | Planned | 3 tools in list_tools |
+| Optimized + Scaffold (P10) | Week 6-7 | Coder | Planned | Startup < 2s |
 
 ---
 ## Retro Notes and Adjustments

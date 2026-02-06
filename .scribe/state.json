@@ -4126,9 +4126,9 @@
         "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "patch-b2"
+        "agent": "patch"
       },
-      "author": "patch-b2",
+      "author": "patch",
       "description": null,
       "tags": [],
       "meta": {
@@ -4152,9 +4152,9 @@
         "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "ReviewAgent-ProCleanup"
+        "agent": "ArchitectAgent-FinalPolish"
       },
-      "author": "ReviewAgent-ProCleanup",
+      "author": "ArchitectAgent-FinalPolish",
       "description": null,
       "tags": [],
       "meta": {
@@ -4169,8 +4169,8 @@
   },
   "recent_projects": [
     "scribe_pro_cleanup",
-    "multi-game-learning",
     "council_app_modularization",
+    "multi-game-learning",
     "romlab-v2",
     "rom-lab"
   ],
@@ -5416,9 +5416,9 @@
         "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "ReviewAgent-ProCleanup"
+        "agent": "ArchitectAgent-FinalPolish"
       },
-      "author": "ReviewAgent-ProCleanup",
+      "author": "ArchitectAgent-FinalPolish",
       "description": null,
       "tags": [],
       "meta": {
@@ -5442,9 +5442,9 @@
         "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "patch-a1"
+        "agent": "patch"
       },
-      "author": "patch-a1",
+      "author": "patch",
       "description": null,
       "tags": [],
       "meta": {
@@ -5468,9 +5468,9 @@
         "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "patch-b2"
+        "agent": "patch-c"
       },
-      "author": "patch-b2",
+      "author": "patch-c",
       "description": null,
       "tags": [],
       "meta": {
@@ -5479,6 +5479,84 @@
           "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PHASE_PLAN.md",
           "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/CHECKLIST.md",
           "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "15739910-9f12-4b9e-b09b-cb9b774ed01d": {
+      "name": "multi-game-learning",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "2f58a30d-f812-4a47-8a48-44af4e9b7d08": {
+      "name": "council_app_modularization",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "forge"
+      },
+      "author": "forge",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "8bc7e889-73f7-4f45-89ae-60141a0023fa": {
+      "name": "scribe_pro_cleanup",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "ArchitectAgent-FinalPolish"
+      },
+      "author": "ArchitectAgent-FinalPolish",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
         }
       }
     }
@@ -5529,7 +5607,10 @@
     "41b9855b-40c3-47fa-a06c-ae4956437c64": "project",
     "202f9d9f-590f-4431-ad43-711fa13057d1": "project",
     "54e60037-560f-433e-a5aa-1574b26f88db": "project",
-    "edeb2568-773a-48d8-b0e3-ea744f336381": "project"
+    "edeb2568-773a-48d8-b0e3-ea744f336381": "project",
+    "15739910-9f12-4b9e-b09b-cb9b774ed01d": "project",
+    "2f58a30d-f812-4a47-8a48-44af4e9b7d08": "project",
+    "8bc7e889-73f7-4f45-89ae-60141a0023fa": "project"
   },
   "recent_tools": [
     {
@@ -5575,7 +5656,7 @@
   ],
   "last_activity_at": "2026-01-24 08:32:14 UTC",
   "session_started_at": "2026-01-24 03:45:39 UTC",
-  "version": 2562,
-  "last_updated_by": "ReviewAgent-ProCleanup",
-  "operation_timestamp": "2026-02-06 08:38:55 UTC"
+  "version": 2579,
+  "last_updated_by": "ArchitectAgent-FinalPolish",
+  "operation_timestamp": "2026-02-06 09:16:47 UTC"
 }

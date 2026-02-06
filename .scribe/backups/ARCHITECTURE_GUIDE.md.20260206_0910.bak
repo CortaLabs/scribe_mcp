@@ -16,10 +16,9 @@ summary: ''
 
 # Architecture Guide -- scribe_pro_cleanup
 **Author:** ArchitectAgent-ProCleanup (Opus 4.6)
-**Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
-**Version:** v1.1 (post-review revision)
-**Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Version:** v1.0
+**Status:** Approved
+**Last Updated:** 2026-02-06 08:20 UTC
 
 > Comprehensive architecture for the Scribe MCP professional cleanup, packaging, and modernization project. This document is the single source of truth for all implementation work.
 
@@ -49,7 +48,7 @@ Scribe MCP v2.2 is a production documentation governance system used by multiple
 ### Goals
 
 1. **Pip-installable package** -- `pip install -e .` with pyproject.toml, entry points, package data
-2. **No god modules** -- Every module under 800 lines; storage/ decomposed into sqlite/ subpackage, tools/manage_docs.py logic pushed into doc_management/ backend engine
+2. **No god modules** -- Every module under 800 lines; storage/ and doc_management/ are proper subpackages
 3. **Single database** -- One SQLite path, no state.json, clean XDG-compliant defaults
 4. **Postgres feature parity** -- Full asyncpg implementation matching all 31 StorageBackend methods
 5. **Reminder system live** -- 3 MCP tools exposing the existing reminder engine to users
@@ -468,7 +467,7 @@ See Section 3 for complete target tree. Key changes:
 |---------|--------|--------|
 | `scribe_mcp/*.py` (flat) | `src/scribe_mcp/*.py` | Standard src/ layout |
 | `storage/sqlite.py` (3050 lines) | `storage/sqlite/` (9 modules) | God module decomposition |
-| `tools/manage_docs.py` (3410 lines) | `tools/manage_docs.py` (~200 lines) + `doc_management/` (12 new modules) | Logic pushed into backend engine; tool stays as thin router |
+| `tools/manage_docs.py` (3410 lines) | `tools/manage_docs/` (12 modules) | God module decomposition |
 | `db/ops.py`, `db/pool.py` | DELETED | Dead code (0 imports) |
 | `.scribe/state.json` | DELETED | Migrated to DB |
 | No config/paths.py | `config/paths.py` | Centralized path resolution |
@@ -525,7 +524,7 @@ Claude Desktop config updated to use `scribe-server` entry point.
 
 ### Research Documents
 - RESEARCH_STRUCTURE_MAP_20260206_0755.md (265 files, 50+ __file__ risks)
-- RESEARCH_STDERR_AUDIT_FIXED_20260206.md (535 lines; 1954 print() calls catalogued, 120-150 production actionable) -- replaces original empty template
+- RESEARCH_STDERR_AUDIT_20260206_0755.md (115+ stderr sources)
 - RESEARCH_STARTUP_PERF_20260206_0755.md (DB init bottleneck, eager loading)
 - RESEARCH_DATABASE_STORAGE_AUDIT_20260206.md (4 DBs, state.json, Postgres 40%)
 - RESEARCH_DEAD_CODE_AUDIT_20260206.md (483 dead, 2000+ unwired)

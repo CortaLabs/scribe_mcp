@@ -16,10 +16,9 @@ summary: ''
 
 # Phase Plan -- scribe_pro_cleanup
 **Author:** ArchitectAgent-ProCleanup (Opus 4.6)
-**Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
-**Version:** v1.1 (post-review revision)
-**Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Version:** v1.0
+**Status:** Approved
+**Last Updated:** 2026-02-06 08:26 UTC
 
 > Ordered execution plan for the Scribe MCP professional cleanup. 10 phases, 6-7 weeks, covering cleanup through packaging. Each phase has scoped task packages executable by Coder agents.
 
@@ -131,8 +130,6 @@ summary: ''
 **Objective:** Replace 115+ print/stderr calls with Python logging. Fix security vulnerabilities. Foundation for all subsequent phases.
 
 **Duration:** 3 days | **Risk:** LOW | **Dependencies:** None
-
-**Key Reference (review recommendation #3):** Comprehensive stderr audit findings are in `RESEARCH_STDERR_AUDIT_FIXED_20260206.md` (535 lines). This document contains: categorized inventory of 1954 print() calls (120-150 in production code), severity-based prioritization, 4-phase implementation plan with specific code examples, and testing strategy. Coders MUST read this research doc before starting P2.
 
 ### Task Package 2.1: Logging Infrastructure
 
@@ -777,14 +774,14 @@ summary: ''
 |-----------|--------|-------|--------|----------|
 | Repository Clean (P1) | Week 1 | Coder | Planned | Git diff shows deletions |
 | Logging + Security (P2) | Week 1-2 | Coder | Planned | Zero print in production |
-| Dead Code Clean (P3) | Week 2 | Coder | Planned | Zero bare except + optimization.py deleted |
+| Dead Code Clean (P3) | Week 2 | Coder | Planned | Zero bare except |
 | Storage Decomposed (P4) | Week 2-3 | Coder | Planned | 9 modules, all < 800 lines |
-| Docs Decomposed (P5) | Week 2-3 (PARALLEL with P4) | Coder | Planned | 12 modules in doc_management/, tool < 300 lines |
-| Packaged + src/ (P6) | Week 4 | Coder | Planned | pip install works, reminders.py path fixed |
-| DB Consolidated (P7) | Week 4-5 | Coder | Planned | Single DB, no state.json |
-| Postgres Complete (P8) | Week 5 | Coder | Planned | 31/31 methods, pg_trgm FTS contract verified |
-| Reminders Live (P9) | Week 5-6 | Coder | Planned | 3 tools in list_tools |
-| Optimized + Scaffold (P10) | Week 6 | Coder | Planned | Startup < 2s |
+| Docs Decomposed (P5) | Week 3-4 | Coder | Planned | 12 modules, all < 800 lines |
+| Packaged + src/ (P6) | Week 4-5 | Coder | Planned | pip install works |
+| DB Consolidated (P7) | Week 5 | Coder | Planned | Single DB, no state.json |
+| Postgres Complete (P8) | Week 5-6 | Coder | Planned | 31/31 methods |
+| Reminders Live (P9) | Week 6 | Coder | Planned | 3 tools in list_tools |
+| Optimized + Scaffold (P10) | Week 6-7 | Coder | Planned | Startup < 2s |
 
 ---
 ## Retro Notes and Adjustments

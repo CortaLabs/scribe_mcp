@@ -16,10 +16,9 @@ summary: ''
 
 # Acceptance Checklist -- scribe_pro_cleanup
 **Author:** ArchitectAgent-ProCleanup (Opus 4.6)
-**Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
-**Version:** v1.1 (post-review revision)
-**Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Version:** v1.0
+**Status:** Approved
+**Last Updated:** 2026-02-06 09:00 UTC
 
 > Granular phase-by-phase verification checklist with pass/fail criteria, verification commands, and proof requirements. Each item maps to a task package in PHASE_PLAN.md.
 
@@ -264,7 +263,7 @@ summary: ''
 - [ ] Test suite passes <!-- ID: p7_state_tests -->
 
 ### P7.3 Fix Hardcoded DB Paths
-- [ ] reminders.py uses config.paths.default_db_path() (ALREADY FIXED in P6.3 -- verify it persists) <!-- ID: p7_reminder_path -->
+- [ ] reminders.py uses settings.sqlite_path (not hardcoded .scribe/data/scribe.db) <!-- ID: p7_reminder_path -->
 - [ ] Zero hardcoded DB paths: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/ --include='*.py' | wc -l` returns 0 <!-- ID: p7_no_hardcoded -->
 - [ ] Legacy DBs backed up; empty DB deleted <!-- ID: p7_legacy_cleanup -->
 

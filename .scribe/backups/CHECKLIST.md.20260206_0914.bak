@@ -16,10 +16,9 @@ summary: ''
 
 # Acceptance Checklist -- scribe_pro_cleanup
 **Author:** ArchitectAgent-ProCleanup (Opus 4.6)
-**Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
-**Version:** v1.1 (post-review revision)
-**Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Version:** v1.0
+**Status:** Approved
+**Last Updated:** 2026-02-06 09:00 UTC
 
 > Granular phase-by-phase verification checklist with pass/fail criteria, verification commands, and proof requirements. Each item maps to a task package in PHASE_PLAN.md.
 

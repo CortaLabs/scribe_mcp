@@ -16,10 +16,9 @@ summary: ''
 
 # Acceptance Checklist -- scribe_pro_cleanup
 **Author:** ArchitectAgent-ProCleanup (Opus 4.6)
-**Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
-**Version:** v1.1 (post-review revision)
-**Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Version:** v1.0
+**Status:** Approved
+**Last Updated:** 2026-02-06 09:00 UTC
 
 > Granular phase-by-phase verification checklist with pass/fail criteria, verification commands, and proof requirements. Each item maps to a task package in PHASE_PLAN.md.
 
@@ -175,16 +174,17 @@ summary: ''
 ## Phase 5: Doc Management Decomposition
 <!-- ID: phase_4 -->
 
-### P5.1 doc_management/ Shared Modules (review recommendation #6)
-- [ ] doc_management/healing.py exists: param normalization, healing info (under 300 lines) <!-- ID: p5_healing -->
-- [ ] doc_management/validation.py exists: path safety, action validation (under 300 lines) <!-- ID: p5_validation -->
-- [ ] doc_management/utils.py exists: hashing, parsing, section splitting (under 300 lines) <!-- ID: p5_utils -->
-- [ ] doc_management/preflight.py exists: backup creation with 3-backup retention (under 300 lines) <!-- ID: p5_preflight -->
-- [ ] doc_management/indexing.py exists: vector chunking, entry IDs, index updates (under 300 lines) <!-- ID: p5_indexing -->
+### P5.1 Subpackage + Shared Modules
+- [ ] tools/manage_docs/ directory exists with __init__.py <!-- ID: p5_dir -->
+- [ ] healing.py: param normalization, healing info (under 300 lines) <!-- ID: p5_healing -->
+- [ ] validation.py: path safety, action validation (under 300 lines) <!-- ID: p5_validation -->
+- [ ] utils.py: hashing, parsing, section splitting (under 300 lines) <!-- ID: p5_utils -->
+- [ ] preflight.py: backup creation with 3-backup retention (under 300 lines) <!-- ID: p5_preflight -->
+- [ ] indexing.py: vector chunking, entry IDs, index updates (under 300 lines) <!-- ID: p5_indexing -->
 - [ ] `pytest tests/test_manage_docs*.py` passes <!-- ID: p5_shared_tests -->
 
-### P5.2 doc_management/actions/ Modules
-- [ ] doc_management/actions/ directory exists <!-- ID: p5_actions_dir -->
+### P5.2 Action Modules
+- [ ] tools/manage_docs/actions/ directory exists <!-- ID: p5_actions_dir -->
 - [ ] create.py: research, bug, custom, agent_card, review creation <!-- ID: p5_create -->
 - [ ] edit.py: replace_section, replace_range, replace_text, apply_patch <!-- ID: p5_edit -->
 - [ ] append.py: append action <!-- ID: p5_append -->
@@ -194,17 +194,17 @@ summary: ''
 - [ ] batch.py: batch action <!-- ID: p5_batch -->
 - [ ] Each action module under 500 lines <!-- ID: p5_action_size -->
 
-### P5.3 Slim Down tools/manage_docs.py to Thin Router
-- [ ] ACTION_ROUTER dict maps action names to doc_management/ handlers <!-- ID: p5_router -->
+### P5.3 Wire Up Router + Delete Old File
+- [ ] ACTION_ROUTER dict maps action names to handler functions <!-- ID: p5_router -->
 - [ ] Deprecated routes work: create_research_doc, create_bug_report, create_doc <!-- ID: p5_deprecated -->
-- [ ] manage_docs_main() accessible from server.py at same import path <!-- ID: p5_main_fn -->
-- [ ] tools/manage_docs.py under 300 lines (thin router only) <!-- ID: p5_thin_router -->
+- [ ] manage_docs_main() accessible from server.py <!-- ID: p5_main_fn -->
+- [ ] Old tools/manage_docs.py deleted <!-- ID: p5_old_deleted -->
 - [ ] All 7 primary actions work end-to-end <!-- ID: p5_all_actions -->
 - [ ] FULL test suite: `pytest tests/test_manage_docs*.py` passes <!-- ID: p5_full_tests -->
 
 ### P5 Exit Gate
-- [ ] tools/manage_docs.py reduced to thin router (~200 lines) <!-- ID: p5_exit_monolith -->
-- [ ] 12 new modules in doc_management/ <!-- ID: p5_exit_count -->
+- [ ] tools/manage_docs.py (3410-line monolith) eliminated <!-- ID: p5_exit_monolith -->
+- [ ] 12 focused modules total <!-- ID: p5_exit_count -->
 - [ ] All modules under 800 lines <!-- ID: p5_exit_size -->
 - [ ] All manage_docs actions verified working <!-- ID: p5_exit_actions -->
 
@@ -264,7 +264,7 @@ summary: ''
 - [ ] Test suite passes <!-- ID: p7_state_tests -->
 
 ### P7.3 Fix Hardcoded DB Paths
-- [ ] reminders.py uses config.paths.default_db_path() (ALREADY FIXED in P6.3 -- verify it persists) <!-- ID: p7_reminder_path -->
+- [ ] reminders.py uses settings.sqlite_path (not hardcoded .scribe/data/scribe.db) <!-- ID: p7_reminder_path -->
 - [ ] Zero hardcoded DB paths: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/ --include='*.py' | wc -l` returns 0 <!-- ID: p7_no_hardcoded -->
 - [ ] Legacy DBs backed up; empty DB deleted <!-- ID: p7_legacy_cleanup -->
 
@@ -290,14 +290,11 @@ summary: ''
 - [ ] sessions.py: upsert_agent_session, fetch_agent_session <!-- ID: p8_sessions -->
 - [ ] Parametrized dual-backend tests pass <!-- ID: p8_batch1_tests -->
 
-### P8.3 Missing Methods Batch 2 (6 methods) + FTS Behavior Contract
+### P8.3 Missing Methods Batch 2 (6 methods)
 - [ ] documents.py: section CRUD + pg_trgm search <!-- ID: p8_documents -->
-- [ ] pg_trgm search returns results with normalized score (0-1 float) matching FTS5 contract (review fix #3) <!-- ID: p8_fts_contract -->
-- [ ] search_document_sections() threshold parameter works (default 0.3) <!-- ID: p8_fts_threshold -->
 - [ ] planning.py: planning operations <!-- ID: p8_planning -->
 - [ ] telemetry.py: tool calls, report cards, bridges, reminders <!-- ID: p8_telemetry -->
 - [ ] All 31 StorageBackend abstract methods implemented <!-- ID: p8_31_methods -->
-- [ ] Parametrized dual-backend FTS tests verify identical result sets for common queries <!-- ID: p8_fts_dual_test -->
 
 ### P8.4 Migration System
 - [ ] migrations.py with information_schema (not PRAGMA) <!-- ID: p8_migrations -->

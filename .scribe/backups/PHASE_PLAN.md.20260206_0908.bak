@@ -16,10 +16,9 @@ summary: ''
 
 # Phase Plan -- scribe_pro_cleanup
 **Author:** ArchitectAgent-ProCleanup (Opus 4.6)
-**Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
-**Version:** v1.1 (post-review revision)
-**Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Version:** v1.0
+**Status:** Approved
+**Last Updated:** 2026-02-06 08:26 UTC
 
 > Ordered execution plan for the Scribe MCP professional cleanup. 10 phases, 6-7 weeks, covering cleanup through packaging. Each phase has scoped task packages executable by Coder agents.
 
@@ -37,22 +36,12 @@ summary: ''
 | P6: src/ Layout + Packaging | Create pyproject.toml, move to src/ layout, path resolution | 4 days | HIGH | P3, P4, P5 |
 | P7: DB Consolidation + state.json | Single DB, migrate state.json, fix hardcoded paths | 3 days | MEDIUM | P6 |
 | P8: Postgres Full Implementation | Complete all 31 StorageBackend methods for asyncpg | 5 days | MEDIUM | P4, P7 |
-| P9: Reminder Wire-Up | 3 MCP tools exposing reminder engine | 2 days | LOW | P7 |
+| P9: Reminder Wire-Up | 3 MCP tools, fix hardcoded DB path | 2 days | LOW | P7 |
 | P10: Startup Optimization + Test Cleanup + Scaffold | Lazy loading, test fixtures, auth/transport interfaces | 3 days | LOW | P6 |
 
-**Total Estimated Duration:** 26-27 days (~5-6 weeks with buffer) -- reduced from 31 days by P4/P5 parallelization
+**Total Estimated Duration:** 31 days (~6-7 weeks with buffer)
 
 **Ordering Rationale:** Low-risk cleanup first (P1-P3) builds confidence. God module decomposition (P4-P5) must precede src/ migration because moving 3000+ line files creates merge conflicts. Packaging (P6) requires decomposed modules and clean code. DB consolidation (P7) requires new path resolution from P6. Postgres (P8) requires decomposed storage from P4. Reminders (P9) need consolidated DB from P7. Optimization (P10) is final because it depends on stable architecture.
-
-**Parallelization Note (review recommendation #1):** P4 (storage decomposition) and P5 (doc management decomposition) can run in PARALLEL. P4 touches only `storage/sqlite.py` and `storage/sqlite/` modules. P5 touches only `tools/manage_docs.py` and `doc_management/` modules. Zero file overlap confirmed. Running in parallel saves 4-5 days. Coordination requirement: both phases must complete before P6 begins.
-
-**Execution Timeline:**
-- Week 1: P1 + P2 (sequential)
-- Week 2: P3 + begin P4/P5 (parallel)
-- Week 3: Continue P4/P5 (parallel)
-- Week 4: P6 (requires P4 + P5 complete)
-- Week 5: P7 + P8 (P8 can begin once P4 complete)
-- Week 6: P9 + P10
 
 ---
 ## Phase 1 -- Immediate Cleanup
@@ -131,8 +120,6 @@ summary: ''
 **Objective:** Replace 115+ print/stderr calls with Python logging. Fix security vulnerabilities. Foundation for all subsequent phases.
 
 **Duration:** 3 days | **Risk:** LOW | **Dependencies:** None
-
-**Key Reference (review recommendation #3):** Comprehensive stderr audit findings are in `RESEARCH_STDERR_AUDIT_FIXED_20260206.md` (535 lines). This document contains: categorized inventory of 1954 print() calls (120-150 in production code), severity-based prioritization, 4-phase implementation plan with specific code examples, and testing strategy. Coders MUST read this research doc before starting P2.
 
 ### Task Package 2.1: Logging Infrastructure
 
@@ -251,25 +238,7 @@ summary: ''
 - [ ] Create 5 edits to same file, verify only 3 .bak files remain
 - [ ] `pytest tests/test_manage_docs*.py` passes
 
-### Task Package 3.3: Dead Code File Deletion (Additional)
-
-**Scope:** Delete additional dead code files identified during review
-**Files to Delete:** utils/optimization.py
-**Dependencies:** None
-
-**Specifications:**
-1. Delete `utils/optimization.py` (confirmed 0 usage across codebase except utils/__init__.py re-export)
-2. Remove `from .optimization import (...)` line from `utils/__init__.py` (line 8)
-3. Verify no runtime imports reference optimization functions directly
-
-**Note:** utils/__init__.py re-exports from optimization.py, but search confirmed 0 external callers import these functions from utils/ or utils.optimization. The re-export exists but is never consumed.
-
-**Verification:**
-- [ ] `test -f utils/optimization.py && echo EXISTS || echo GONE` returns GONE
-- [ ] `grep -rn 'optimization' --include='*.py' utils/__init__.py` returns 0 (import removed)
-- [ ] `pytest tests/` passes
-
-**Exit Criteria:** Zero bare except clauses. Preflight backups bounded. Dead code optimization.py deleted.
+**Exit Criteria:** Zero bare except clauses. Preflight backups bounded.
 
 ---
 ## Phase 4 -- Storage Layer Decomposition
@@ -382,18 +351,14 @@ summary: ''
 ## Phase 5 -- Doc Management Decomposition
 <!-- ID: phase_4 -->
 
-**Objective:** Push logic from tools/manage_docs.py (3,410 lines, 29 functions) into doc_management/ backend engine submodules. Reduce tools/manage_docs.py to a thin MCP routing layer (~200 lines).
-
-**ARCHITECTURE NOTE (review recommendation #6):** `doc_management/` is the existing backend engine. `tools/manage_docs.py` is the MCP tool interface. The decomposition moves action logic FROM the tool file INTO `doc_management/` -- they are ONE system, not two.
+**Objective:** Decompose tools/manage_docs.py (3,410 lines, 29 functions) into tools/manage_docs/ subpackage.
 
 **Duration:** 4 days | **Risk:** HIGH | **Dependencies:** P2 (logging)
 
-**Can run in PARALLEL with P4** (review recommendation #1) -- P4 touches storage/sqlite.py, P5 touches tools/manage_docs.py and doc_management/. Zero file overlap.
+### Task Package 5.1: Create Subpackage + Shared Modules
 
-### Task Package 5.1: Create doc_management/ Shared Modules
-
-**Scope:** Create shared utility modules in doc_management/ for extracted logic
-**Files to Create:** doc_management/healing.py, doc_management/validation.py, doc_management/utils.py, doc_management/preflight.py, doc_management/indexing.py
+**Scope:** Create tools/manage_docs/ directory, extract healing, validation, utils
+**Files to Create:** tools/manage_docs/__init__.py, tools/manage_docs/healing.py, tools/manage_docs/validation.py, tools/manage_docs/utils.py, tools/manage_docs/preflight.py, tools/manage_docs/indexing.py
 
 **Specifications:**
 1. healing.py: Extract _normalize_metadata_with_healing (line 93), _heal_manage_docs_parameters (line 120), _add_healing_info_to_response (line 317), _coerce_line_number (line 243)
@@ -406,10 +371,10 @@ summary: ''
 - [ ] Each module under 300 lines
 - [ ] `pytest tests/test_manage_docs*.py` passes
 
-### Task Package 5.2: Create doc_management/actions/ Modules
+### Task Package 5.2: Extract Action Modules
 
-**Scope:** Create actions/ subdirectory in doc_management/ with one module per action group
-**Files to Create:** doc_management/actions/__init__.py, actions/create.py, actions/edit.py, actions/append.py, actions/status.py, actions/search.py, actions/query.py, actions/batch.py
+**Scope:** Create actions/ subdirectory with one module per action group
+**Files to Create:** tools/manage_docs/actions/__init__.py, actions/create.py, actions/edit.py, actions/append.py, actions/status.py, actions/search.py, actions/query.py, actions/batch.py
 
 **Specifications:**
 1. create.py: create action handler (research, bug, custom, agent_card, review docs)
@@ -424,25 +389,23 @@ summary: ''
 - [ ] Each action module under 500 lines
 - [ ] Every manage_docs action works: create, replace_section, append, status_update, search, list_sections, batch
 
-### Task Package 5.3: Slim Down tools/manage_docs.py to Thin Router
+### Task Package 5.3: Wire Up Router + Delete Old File
 
-**Scope:** Reduce tools/manage_docs.py to thin MCP routing layer; logic delegates to doc_management/
-**Files to Modify:** tools/manage_docs.py (slim from 3410 to ~200 lines)
+**Scope:** Create ACTION_ROUTER in __init__.py, delete old manage_docs.py
+**Files to Modify:** tools/manage_docs/__init__.py, DELETE tools/manage_docs.py
 
 **Specifications:**
-1. tools/manage_docs.py retains ONLY: manage_docs_main() entry point, ACTION_ROUTER dict, MCP parameter extraction
-2. ACTION_ROUTER maps action names to doc_management/actions/ handlers
-3. Include deprecated action routes (create_research_doc, create_bug_report, create_doc)
-4. manage_docs_main() (used by server.py) still accessible at same import path
-5. All business logic now lives in doc_management/ submodules
+1. manage_docs() in __init__.py: heals params, routes via ACTION_ROUTER dict
+2. Include deprecated action routes (create_research_doc, create_bug_report, create_doc)
+3. Delete old tools/manage_docs.py
+4. Verify manage_docs_main() (used by server.py) still accessible
 
 **Verification:**
-- [ ] `wc -l tools/manage_docs.py` -- under 300 lines
-- [ ] `wc -l doc_management/actions/*.py doc_management/healing.py doc_management/validation.py` -- all under 800
+- [ ] `wc -l tools/manage_docs/*.py tools/manage_docs/actions/*.py` -- all under 800
 - [ ] `pytest tests/test_manage_docs*.py` -- FULL pass
 - [ ] All 7 primary actions + deprecated routes work
 
-**Exit Criteria:** tools/manage_docs.py reduced to ~200 lines (thin router). 12 new modules in doc_management/, all under 800 lines. All actions verified working.
+**Exit Criteria:** tools/manage_docs.py eliminated. 12 focused modules, all under 800 lines.
 
 ---
 ## Phase 6 -- src/ Layout Migration + Packaging
@@ -777,14 +740,14 @@ summary: ''
 |-----------|--------|-------|--------|----------|
 | Repository Clean (P1) | Week 1 | Coder | Planned | Git diff shows deletions |
 | Logging + Security (P2) | Week 1-2 | Coder | Planned | Zero print in production |
-| Dead Code Clean (P3) | Week 2 | Coder | Planned | Zero bare except + optimization.py deleted |
+| Dead Code Clean (P3) | Week 2 | Coder | Planned | Zero bare except |
 | Storage Decomposed (P4) | Week 2-3 | Coder | Planned | 9 modules, all < 800 lines |
-| Docs Decomposed (P5) | Week 2-3 (PARALLEL with P4) | Coder | Planned | 12 modules in doc_management/, tool < 300 lines |
-| Packaged + src/ (P6) | Week 4 | Coder | Planned | pip install works, reminders.py path fixed |
-| DB Consolidated (P7) | Week 4-5 | Coder | Planned | Single DB, no state.json |
-| Postgres Complete (P8) | Week 5 | Coder | Planned | 31/31 methods, pg_trgm FTS contract verified |
-| Reminders Live (P9) | Week 5-6 | Coder | Planned | 3 tools in list_tools |
-| Optimized + Scaffold (P10) | Week 6 | Coder | Planned | Startup < 2s |
+| Docs Decomposed (P5) | Week 3-4 | Coder | Planned | 12 modules, all < 800 lines |
+| Packaged + src/ (P6) | Week 4-5 | Coder | Planned | pip install works |
+| DB Consolidated (P7) | Week 5 | Coder | Planned | Single DB, no state.json |
+| Postgres Complete (P8) | Week 5-6 | Coder | Planned | 31/31 methods |
+| Reminders Live (P9) | Week 6 | Coder | Planned | 3 tools in list_tools |
+| Optimized + Scaffold (P10) | Week 6-7 | Coder | Planned | Startup < 2s |
 
 ---
 ## Retro Notes and Adjustments
