@@ -27,17 +27,30 @@ import threading
 import os
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
-# Vector processing imports (optional)
-try:
-    import faiss
-    import numpy as np
-    from sentence_transformers import SentenceTransformer
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
-    faiss = None
-    np = None
-    SentenceTransformer = None
+# Vector processing imports — lazy loaded in _load_vector_deps() to avoid
+# 8+ second startup penalty from torch/transformers/faiss/numpy.
+FAISS_AVAILABLE: bool = False
+faiss = None
+np = None
+SentenceTransformer = None
+
+
+def _load_vector_deps() -> bool:
+    """Lazy-load heavy vector dependencies. Returns True if available."""
+    global FAISS_AVAILABLE, faiss, np, SentenceTransformer
+    if FAISS_AVAILABLE:
+        return True
+    try:
+        import faiss as _faiss
+        import numpy as _np
+        from sentence_transformers import SentenceTransformer as _ST
+        faiss = _faiss
+        np = _np
+        SentenceTransformer = _ST
+        FAISS_AVAILABLE = True
+        return True
+    except ImportError:
+        return False
 
 from scribe_mcp.plugins.registry import HookPlugin
 from scribe_mcp.config.repo_config import RepoConfig
@@ -96,7 +109,8 @@ class VectorIndexer(HookPlugin):
             plugin_logger.info("Vector indexing disabled via configuration")
             return
 
-        if not FAISS_AVAILABLE:
+        # Lazy-load heavy deps only when plugin is actually enabled
+        if not _load_vector_deps():
             plugin_logger.warning("FAISS dependencies not available, vector indexing disabled")
             self.enabled = False
             return

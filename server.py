@@ -778,20 +778,22 @@ async def _startup() -> None:
         except Exception as e:
             logger.warning("Entry cleanup failed (non-fatal): %s", e)
 
-    # Initialize plugins for the current repository
-    try:
-        from scribe_mcp.config.repo_config import RepoConfig
-        from scribe_mcp.plugins.registry import initialize_plugins
+    # Initialize plugins in background — vector indexer loads torch/faiss/transformers
+    # which takes 8-10s and must not block the MCP readiness signal.
+    async def _init_plugins_background():
+        try:
+            from scribe_mcp.config.repo_config import RepoConfig
+            from scribe_mcp.plugins.registry import initialize_plugins
 
-        # Create repository configuration using the resolved project root.
-        # Avoid relying on cwd, which may be MCP_SPINE when launched from a wrapper.
-        repo_root = settings.project_root or Path.cwd()
-        repo_config = RepoConfig.from_directory(Path(repo_root))
-        initialize_plugins(repo_config)
-        logger.info("Plugin system initialized")
-    except Exception as e:
-        logger.warning("Plugin initialization failed: %s", e)
-        logger.warning("  Continuing without plugins (vector search will not be available)")
+            repo_root = settings.project_root or Path.cwd()
+            repo_config = RepoConfig.from_directory(Path(repo_root))
+            initialize_plugins(repo_config)
+            logger.info("Plugin system initialized (background)")
+        except Exception as e:
+            logger.warning("Plugin initialization failed: %s", e)
+            logger.warning("  Continuing without plugins (vector search will not be available)")
+
+    schedule_background_task(_init_plugins_background())
 
     # Initialize Bridge System (optional feature)
     bridge_registry = None
@@ -888,7 +890,10 @@ async def _startup() -> None:
     # Start background journal replay (non-blocking)
     # Journal recovery happens in background so server can respond to tool calls immediately
     schedule_background_task(_replay_journals_background())
-    logger.info("Server ready (journal replay continuing in background)")
+    # Protocol signal — Council MCP and other process managers pattern-match
+    # stderr for "Server ready" to know the subprocess is ready for MCP
+    # handshake. WARNING level ensures visibility at the default log level.
+    logger.warning("Server ready (journal replay continuing in background)")
 
 
 async def _shutdown() -> None:
