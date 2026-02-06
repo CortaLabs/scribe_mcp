@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 import shutil
 import tempfile
 import time
@@ -268,7 +271,7 @@ class WriteAheadLog:
                     self.commit_entry(entry['id'])
                     replayed += 1
                 except Exception as e:
-                    print(f"Warning: Failed to replay journal entry {entry['id']}: {e}")
+                    logger.warning("Failed to replay journal entry %s: %s", entry['id'], e)
 
         return replayed
 
@@ -605,7 +608,7 @@ def _write_line_with_wal(
         # Commit the operation
         wal.commit_entry(entry_id)
     except Exception as e:
-        print(f"Warning: Failed to append line {entry_id}: {e}")
+        logger.warning("Failed to append line %s: %s", entry_id, e)
         raise
 
 
@@ -772,7 +775,7 @@ async def rotate_file(
             if backup_path.exists():
                 await asyncio.to_thread(backup_path.rename, path)
         except Exception as rollback_error:
-            print(f"Critical: Failed to rollback rotation: {rollback_error}")
+            logger.error("Critical: Failed to rollback rotation: %s", rollback_error)
 
         raise AtomicFileError(f"Rotation failed and was rolled back: {e}")
 

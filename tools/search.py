@@ -644,9 +644,22 @@ async def search(
     if page_size > MAX_PAGE_SIZE:
         page_size = MAX_PAGE_SIZE
 
-    # --- Resolve search root ---
+    # --- Resolve search root with symlink-aware traversal prevention ---
+    repo_root = repo_root.resolve()
     if path:
         search_root = Path(path).expanduser()
+
+        # Step 1: Check unresolved path for boundary escape attempts
+        if not search_root.is_absolute():
+            unresolved = repo_root / search_root
+            try:
+                normalized = unresolved.resolve(strict=False)
+                if not str(normalized).startswith(str(repo_root)):
+                    return {"ok": False, "error": "search path escapes repository boundary", "path": path}
+            except (OSError, ValueError):
+                pass  # Let downstream checks handle broken paths
+
+        # Step 2: Resolve path (follows symlinks)
         if not search_root.is_absolute():
             search_root = (repo_root / search_root).resolve()
         else:
@@ -654,11 +667,21 @@ async def search(
     else:
         search_root = repo_root
 
-    # --- Sandbox: ensure search root is within repo ---
+    # Step 3: Sandbox check on resolved path
     try:
         search_root.relative_to(repo_root)
     except ValueError:
         return {"ok": False, "error": "search path outside repository boundary", "path": str(search_root)}
+
+    # Step 4: If original path is a symlink, verify target is within repo
+    if path:
+        raw_path = Path(path).expanduser()
+        if not raw_path.is_absolute():
+            raw_path = repo_root / raw_path
+        if raw_path.is_symlink():
+            link_dest = raw_path.resolve()
+            if not str(link_dest).startswith(str(repo_root)):
+                return {"ok": False, "error": "symlink target escapes repository boundary", "path": path}
 
     if not search_root.exists():
         from utils.path_suggestions import (

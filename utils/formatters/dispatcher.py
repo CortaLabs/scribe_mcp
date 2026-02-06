@@ -13,7 +13,10 @@ Design:
 """
 
 import json
+import logging
 from typing import Dict, List, Any, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 # Import domain formatters
 from .base import BaseFormatter
@@ -220,12 +223,10 @@ class FormatterDispatcher:
                     ))
             except Exception as e:
                 # SQL logging is optional, never block tools
-                import sys
-                print(f"Warning: SQL tool logging failed: {e}", file=sys.stderr)
+                logger.warning("SQL tool logging failed: %s", e)
         except Exception as e:
             # Tool logging must never block tool execution
-            import sys
-            print(f"Warning: Tool logging failed: {e}", file=sys.stderr)
+            logger.warning("Tool logging failed: %s", e)
 
         # STEP 2: Format based on parameter
         if format == self.FORMAT_READABLE:

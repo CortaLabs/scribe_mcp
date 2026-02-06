@@ -6,9 +6,12 @@ maintaining complete audit trails for log integrity verification.
 """
 
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import threading
@@ -93,7 +96,7 @@ class AuditTrailManager:
 
         except Exception as e:
             # Log error but don't raise - rotation should continue
-            print(f"Error storing rotation metadata for {project_name}: {e}")
+            logger.warning("Error storing rotation metadata for %s: %s", project_name, e)
             return False
 
     def _load_audit_trail(self, project_name: str) -> Dict[str, Any]:
@@ -136,7 +139,7 @@ class AuditTrailManager:
             return audit_trail
 
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"Error loading audit trail for {project_name}: {e}")
+            logger.warning("Error loading audit trail for %s: %s", project_name, e)
             # Return fresh structure if file is corrupted
             return {
                 "project_name": project_name,
@@ -172,7 +175,7 @@ class AuditTrailManager:
             return rotations
 
         except Exception as e:
-            print(f"Error getting rotation history for {project_name}: {e}")
+            logger.warning("Error getting rotation history for %s: %s", project_name, e)
             return []
 
     def get_rotation_by_uuid(self, project_name: str, rotation_uuid: str) -> Optional[Dict[str, Any]]:
@@ -197,7 +200,7 @@ class AuditTrailManager:
             return None
 
         except Exception as e:
-            print(f"Error getting rotation {rotation_uuid} for {project_name}: {e}")
+            logger.warning("Error getting rotation %s for %s: %s", rotation_uuid, project_name, e)
             return None
 
     def verify_rotation_integrity(self, project_name: str, rotation_uuid: str) -> Tuple[bool, str]:
@@ -330,7 +333,7 @@ class AuditTrailManager:
                 return removed_count, True
 
         except Exception as e:
-            print(f"Error cleaning up old rotations for {project_name}: {e}")
+            logger.warning("Error cleaning up old rotations for %s: %s", project_name, e)
             return 0, False
 
     def list_audited_projects(self) -> List[str]:
@@ -354,7 +357,7 @@ class AuditTrailManager:
             return sorted(projects)
 
         except Exception as e:
-            print(f"Error listing audited projects: {e}")
+            logger.warning("Error listing audited projects: %s", e)
             return []
 
 

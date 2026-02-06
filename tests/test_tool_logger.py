@@ -407,8 +407,9 @@ class TestLogToolCall:
         entry = json.loads(content)
         assert "repo_root" not in entry
 
-    def test_graceful_error_handling(self, monkeypatch, capsys):
-        """Test that errors are logged to stderr but don't raise."""
+    def test_graceful_error_handling(self, monkeypatch, caplog):
+        """Test that errors are logged via logging but don't raise."""
+        import logging
         # Make get_tool_log_path raise an error (accepts optional params)
         def mock_error(repo_root=None, project_name=None, progress_log_path=None):
             raise RuntimeError("Simulated error")
@@ -418,16 +419,16 @@ class TestLogToolCall:
             mock_error
         )
 
-        # Should not raise, just log to stderr
-        log_tool_call(
-            tool_name="test_tool",
-            session_id="session_123"
-        )
+        # Should not raise, just log via logger.warning
+        with caplog.at_level(logging.WARNING, logger="scribe_mcp.utils.tool_logger"):
+            log_tool_call(
+                tool_name="test_tool",
+                session_id="session_123"
+            )
 
-        # Check stderr was written
-        captured = capsys.readouterr()
-        assert "Warning: Failed to write tool log to JSONL" in captured.err
-        assert "Simulated error" in captured.err
+        # Check logger captured the warning
+        assert "Failed to write tool log to JSONL" in caplog.text
+        assert "Simulated error" in caplog.text
 
     def test_valid_json_format(self, tmp_path, monkeypatch):
         """Test that logged entries are valid JSON."""

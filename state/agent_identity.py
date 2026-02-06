@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from scribe_mcp.utils.time import utcnow
+
+logger = logging.getLogger(__name__)
 
 
 class AgentIdentity:
@@ -167,9 +170,8 @@ class AgentIdentity:
                     metadata=session_metadata
                 )
 
-                print(f"🔄 Resumed agent '{agent_id}' session")
-                print(f"   📋 Previous project: {agent_project['project_name']}")
-                print(f"   🆔 Session ID: {session_id}")
+                logger.debug("Resumed agent '%s' session (previous project: %s, session: %s)",
+                             agent_id, agent_project['project_name'], session_id)
 
                 return session_id
             else:
@@ -186,13 +188,12 @@ class AgentIdentity:
                     metadata=session_metadata
                 )
 
-                print(f"🆕 Created fresh session for agent '{agent_id}'")
-                print(f"   🆔 Session ID: {session_id}")
+                logger.debug("Created fresh session for agent '%s' (session: %s)", agent_id, session_id)
 
                 return session_id
 
         except Exception as e:
-            print(f"⚠️  Failed to resume session for agent '{agent_id}': {e}")
+            logger.warning("Failed to resume session for agent '%s': %s", agent_id, e)
             return None
 
     async def update_agent_activity(self, agent_id: str, activity_type: str, metadata: Optional[Dict[str, Any]] = None) -> None:

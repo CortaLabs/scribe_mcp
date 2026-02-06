@@ -15,9 +15,12 @@ By providing direct JSONL + SQL logging without any tool invocation.
 """
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -159,7 +162,7 @@ def log_tool_call(
 
     except Exception as e:
         # Log to stderr but don't raise - JSONL write failure shouldn't break tools
-        print(f"Warning: Failed to write tool log to JSONL: {e}", file=sys.stderr)
+        logger.warning("Failed to write tool log to JSONL: %s", e)
 
 
 # Module-level verification: ensure no imports of recursion sources

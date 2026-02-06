@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, Union
 import time
+
+logger = logging.getLogger(__name__)
 
 import asyncio
 
@@ -1024,7 +1027,7 @@ async def _process_large_bulk_chunked(
     chunk_calc = _BULK_CALCULATOR.calculate_chunks(len(items), chunk_size)
     total_chunks = chunk_calc.total_chunks
 
-    print(f"📊 Processing {len(items)} items in {total_chunks} chunks of {chunk_size}")
+    logger.debug("Processing %d items in %d chunks of %d", len(items), total_chunks, chunk_size)
 
     last_result: Optional[Dict[str, Any]] = None
     paths_accum: set[str] = set()
@@ -1032,7 +1035,7 @@ async def _process_large_bulk_chunked(
         chunk = items[i:i + chunk_size]
         chunk_num = i // chunk_size + 1
 
-        print(f"📦 Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} items)")
+        logger.debug("Processing chunk %d/%d (%d items)", chunk_num, total_chunks, len(chunk))
 
         result = await _append_bulk_entries(chunk, project, recent, state_snapshot, base_log_type, log_cache)
         last_result = result
@@ -1879,7 +1882,7 @@ async def _append_bulk_entries(
                         progress_log_path=project["progress_log"],
                     )
         except Exception as exc:
-            print(f"⚠️  Warning: Database setup failed: {exc}")
+            logger.warning("Database setup failed: %s", exc)
             backend = None  # Disable database for this batch
 
     # Determine if parallel processing should be used (Phase 1 optimization)
@@ -1907,7 +1910,7 @@ async def _append_bulk_entries(
 
         except Exception as parallel_error:
             # Fallback to sequential processing if parallel fails
-            print(f"⚠️  Parallel processing failed, falling back to sequential: {parallel_error}")
+            logger.warning("Parallel processing failed, falling back to sequential: %s", parallel_error)
             use_parallel_processing = False
 
     if not use_parallel_processing:
@@ -1924,13 +1927,13 @@ async def _append_bulk_entries(
                     items[i] = await hook_manager.execute_pre_append(item)
                 except Exception as hook_error:
                     # Critical hooks will raise RuntimeError, others are logged
-                    print(f"⚠️  Pre-append hook failed for item {i}: {hook_error}")
+                    logger.warning("Pre-append hook failed for item %d: %s", i, hook_error)
                     # If it's a RuntimeError (critical hook failure), propagate it
                     if isinstance(hook_error, RuntimeError):
                         raise
         except Exception as hooks_error:
             # If hooks are completely broken, log but continue
-            print(f"⚠️  Bridge hooks unavailable or failed: {hooks_error}")
+            logger.warning("Bridge hooks unavailable or failed: %s", hooks_error)
 
     for i, item in enumerate(items):
         try:
@@ -2093,10 +2096,10 @@ async def _append_bulk_entries(
                             await hook_manager.execute_post_append(db_entry)
                         except Exception as hook_error:
                             # Post hooks are non-blocking, just log errors
-                            print(f"⚠️  Post-append hook failed: {hook_error}")
+                            logger.warning("Post-append hook failed: %s", hook_error)
                 except Exception as hooks_error:
                     # If hooks are completely broken, log but continue
-                    print(f"⚠️  Bridge post hooks unavailable or failed: {hooks_error}")
+                    logger.warning("Bridge post hooks unavailable or failed: %s", hooks_error)
 
         except Exception as exc:
             # Mark all items in this batch as failed
@@ -2106,7 +2109,7 @@ async def _append_bulk_entries(
                     "error": f"Database error: {exc}",
                     "retry_possible": True
                 })
-            print(f"⚠️  Warning: Batch database write failed: {exc}")
+            logger.warning("Batch database write failed: %s", exc)
 
     # Get reminders
     reminders_payload = await reminders.get_reminders(

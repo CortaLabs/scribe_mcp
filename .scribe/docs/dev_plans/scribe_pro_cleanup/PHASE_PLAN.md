@@ -450,6 +450,8 @@ summary: ''
 
 **Objective:** Move to src/ layout, create pyproject.toml, fix path resolution, enable pip install.
 
+**CRITICAL REQUIREMENT (user mandate):** Fix the MCP_SPINE pathing hackiness. The server MUST boot cleanly from `scribe_mcp/` repo root — no path gymnastics, no `sys.path.insert` hacks. Clean entry point from repo root via `python -m scribe_mcp` or a console_scripts entry point. All current `sys.path` manipulation and `__file__` resolution hacks must be eliminated.
+
 **Duration:** 4 days | **Risk:** HIGH | **Dependencies:** P3, P4, P5
 
 ### Task Package 6.1: Create config/paths.py + pyproject.toml

@@ -6,8 +6,11 @@ including sequence numbers, hash chains, and rotation metadata.
 """
 
 import json
+import logging
 import uuid
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from typing import Dict, Optional, Any, Tuple, List
 from datetime import datetime
 import threading
@@ -81,7 +84,7 @@ class RotationStateManager:
             return state
 
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"Error loading rotation state: {e}")
+            logger.warning("Error loading rotation state: %s", e)
             # Return fresh state if file is corrupted
             return {
                 "version": "1.0",
@@ -127,7 +130,7 @@ class RotationStateManager:
                     raise e
 
         except Exception as e:
-            print(f"Error saving rotation state: {e}")
+            logger.warning("Error saving rotation state: %s", e)
             return False
 
     def get_project_state(self, project_name: str) -> Dict[str, Any]:
@@ -203,7 +206,7 @@ class RotationStateManager:
                 return self._save_state()
 
         except Exception as e:
-            print(f"Error updating project state for {project_name}: {e}")
+            logger.warning("Error updating project state for %s: %s", project_name, e)
             return False
 
     def get_log_stats(self, project_name: str, log_type: str) -> Dict[str, Any]:
@@ -392,7 +395,7 @@ class RotationStateManager:
                 return removed_count, success
 
         except Exception as e:
-            print(f"Error cleaning up project state for {project_name}: {e}")
+            logger.warning("Error cleaning up project state for %s: %s", project_name, e)
             return 0, False
 
     def update_global_settings(self, settings: Dict[str, Any]) -> bool:
@@ -411,7 +414,7 @@ class RotationStateManager:
                 return self._save_state()
 
         except Exception as e:
-            print(f"Error updating global settings: {e}")
+            logger.warning("Error updating global settings: %s", e)
             return False
 
     def get_global_settings(self) -> Dict[str, Any]:
@@ -452,7 +455,7 @@ class RotationStateManager:
                 return True  # Project didn't exist, success by default
 
         except Exception as e:
-            print(f"Error resetting project state for {project_name}: {e}")
+            logger.warning("Error resetting project state for %s: %s", project_name, e)
             return False
 
 

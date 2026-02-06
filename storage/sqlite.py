@@ -2759,8 +2759,7 @@ class SQLiteStorage(StorageBackend):
 
         except Exception as e:
             # SQL logging is optional, never block or raise
-            import sys
-            print(f"Warning: SQL tool logging failed in background thread: {e}", file=sys.stderr)
+            logger.warning("SQL tool logging failed in background thread: %s", e)
 
     async def get_session_tool_calls(
         self,

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -402,7 +405,7 @@ async def set_project(
             )
             _PROJECT_REGISTRY.touch_access(project_record.name)
         except Exception as exc:  # pragma: no cover - defensive
-            print(f"⚠️  ProjectRegistry ensure/touch_access failed in set_project: {exc}")
+            logger.warning("ProjectRegistry ensure/touch_access failed in set_project: %s", exc)
 
         # Populate dev_plans table for core docs so lifecycle rules can see them.
         try:
@@ -430,7 +433,7 @@ async def set_project(
                         metadata={"source": "set_project"},
                     )
         except Exception as exc:  # pragma: no cover - defensive
-            print(f"⚠️  dev_plans upsert failed in set_project: {exc}")
+            logger.warning("dev_plans upsert failed in set_project: %s", exc)
 
         # Best-effort Project Registry touch for this project (SQLite-first).
         try:
@@ -442,7 +445,7 @@ async def set_project(
             )
             _PROJECT_REGISTRY.touch_access(project_record.name)
         except Exception as exc:  # pragma: no cover - defensive
-            print(f"⚠️  ProjectRegistry ensure/touch_access failed in set_project: {exc}")
+            logger.warning("ProjectRegistry ensure/touch_access failed in set_project: %s", exc)
 
     # Use AgentContextManager for agent-scoped project context
     agent_manager = server_module.get_agent_context_manager()
@@ -487,8 +490,8 @@ async def set_project(
 
         except Exception as e:
             # Fallback to legacy behavior if agent context fails
-            print(f"⚠️  Agent context management failed: {e}")
-            print("   💡 Falling back to legacy global state management")
+            logger.warning("Agent context management failed: %s", e)
+            logger.warning("  Falling back to legacy global state management")
             mirror_global = True
     # Mirror project data into JSON state; global current_project only updates for legacy fallback.
 

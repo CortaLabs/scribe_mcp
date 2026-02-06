@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from scribe_mcp.state.manager import StateManager
+
+logger = logging.getLogger(__name__)
 
 
 class SessionLeaseExpired(Exception):
@@ -365,11 +368,11 @@ class AgentContextManager:
                     )
             except Exception as db_error:
                 # Database audit logging failed, but don't fail the operation
-                print(f"Warning: Database audit logging failed: {db_error}")
+                logger.warning("Database audit logging failed: %s", db_error)
 
         except Exception as e:
             # Don't fail the operation if audit logging fails
-            print(f"Warning: Failed to log agent event: {e}")
+            logger.warning("Failed to log agent event: %s", e)
 
     async def get_agent_events(
         self,
@@ -416,7 +419,7 @@ class AgentContextManager:
             return [dict(row) for row in rows]
 
         except Exception as e:
-            print(f"Warning: Failed to retrieve agent events: {e}")
+            logger.warning("Failed to retrieve agent events: %s", e)
             return []
 
 
@@ -498,18 +501,18 @@ async def migrate_legacy_state(state_manager: StateManager, storage) -> None:
                     progress_log_path="/tmp/migrated/log.md"
                 )
         except Exception as e:
-            print(f"Warning: Failed to create legacy project in database: {e}")
+            logger.warning("Failed to create legacy project in database: %s", e)
 
         # Migrate current project to Scribe agent
         try:
             await manager.set_current_project("Scribe", legacy_state.current_project, session_id)
         except Exception as e:
-            print(f"Warning: Failed to migrate legacy project: {e}")
+            logger.warning("Failed to migrate legacy project: %s", e)
 
         # Clear global current_project to avoid dual sources of truth
         await state_manager.set_current_project(None, None, agent_id="migration")
 
-        print(f"✅ Migrated legacy project '{legacy_state.current_project}' to agent 'Scribe'")
+        logger.info("Migrated legacy project '%s' to agent 'Scribe'", legacy_state.current_project)
 
 
 def utcnow() -> datetime:

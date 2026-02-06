@@ -206,17 +206,33 @@ async def edit_file(
     if exec_context is None:
         return {"ok": False, "error": "ExecutionContext missing"}
 
-    repo_root = Path(exec_context.repo_root)
+    repo_root = Path(exec_context.repo_root).resolve()
     session_id = exec_context.session_id
 
-    # --- Resolve path ---
+    # --- Resolve path with symlink-aware traversal prevention ---
     file_path = Path(path).expanduser()
+
+    # Step 1: Check unresolved path for boundary escape attempts
+    if not file_path.is_absolute():
+        unresolved = repo_root / file_path
+        try:
+            normalized = unresolved.resolve(strict=False)
+            if not str(normalized).startswith(str(repo_root)):
+                return {
+                    "ok": False,
+                    "error": "SANDBOX_VIOLATION",
+                    "message": f"Path escapes repository boundary: {path}",
+                }
+        except (OSError, ValueError):
+            pass  # Let downstream checks handle broken paths
+
+    # Step 2: Resolve path (follows symlinks)
     if not file_path.is_absolute():
         file_path = (repo_root / file_path).resolve()
     else:
         file_path = file_path.resolve()
 
-    # --- Sandbox: ensure path is within repo ---
+    # Step 3: Sandbox check on resolved path
     try:
         file_path.relative_to(repo_root)
     except ValueError:
@@ -225,6 +241,19 @@ async def edit_file(
             "error": "SANDBOX_VIOLATION",
             "message": f"Cannot edit file outside repository boundary: {file_path}",
         }
+
+    # Step 4: If original path is a symlink, verify target is within repo
+    raw_path = Path(path).expanduser()
+    if not raw_path.is_absolute():
+        raw_path = repo_root / raw_path
+    if raw_path.is_symlink():
+        link_dest = raw_path.resolve()
+        if not str(link_dest).startswith(str(repo_root)):
+            return {
+                "ok": False,
+                "error": "SANDBOX_VIOLATION",
+                "message": f"Symlink target escapes repository boundary: {path}",
+            }
 
     # --- Read-before-edit enforcement ---
     if session_id:

@@ -1,5 +1,5 @@
 {
-  "current_project": "scribe_pro_cleanup",
+  "current_project": "PokeAPI",
   "projects": {
     "scribe_mcp": {
       "name": "scribe_mcp",
@@ -3992,9 +3992,9 @@
         "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "nexus"
+        "agent": "specter"
       },
-      "author": "nexus",
+      "author": "specter",
       "description": null,
       "tags": [],
       "meta": {
@@ -4018,9 +4018,9 @@
         "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "forge"
+        "agent": "mantis"
       },
-      "author": "forge",
+      "author": "mantis",
       "description": null,
       "tags": [],
       "meta": {
@@ -4144,34 +4144,46 @@
       "name": "scribe_pro_cleanup",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
       "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup",
       "docs": {
         "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
         "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
         "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md",
+        "IMPLEMENTATION_REPORT_20260206_1338": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/IMPLEMENTATION_REPORT_20260206_1338.md"
+      }
+    },
+    "PokeAPI": {
+      "name": "PokeAPI",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "ArchitectAgent-FinalPolish"
+        "agent": "nexus"
       },
-      "author": "ArchitectAgent-FinalPolish",
+      "author": "nexus",
       "description": null,
       "tags": [],
       "meta": {
         "docs": {
-          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
-          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
-          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
         }
       }
     }
   },
   "recent_projects": [
+    "PokeAPI",
+    "council_custom_pages",
     "scribe_pro_cleanup",
     "council_app_modularization",
-    "multi-game-learning",
-    "romlab-v2",
     "rom-lab"
   ],
   "session_projects": {
@@ -5321,60 +5333,28 @@
       }
     },
     "f2ceca2d-436e-456e-8b49-c3e00711b5d5": {
-      "name": "multi-game-learning",
+      "name": "PokeAPI",
       "root": "/home/austin/projects/pokemon/rom_lab",
-      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi",
       "docs": {
-        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md",
-        "_hashes": {
-          "baseline_hashes": {
-            "architecture": "ce0a0bcc",
-            "phase_plan": "a69d3d57",
-            "checklist": "4eac8377"
-          },
-          "current_hashes": {
-            "architecture": "ce0a0bcc",
-            "phase_plan": "a69d3d57",
-            "checklist": "4eac8377"
-          }
-        }
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "nexus"
+        "agent": "ArchitectAgent"
       },
-      "author": "nexus",
-      "description": "Decouple Pokemon Red hardcoding, build game-agnostic AI/ML intelligence layer, generalize plugin system. Observation pipeline, 5 learning models (spatial/battle/navigation/progress/text), common Lua infrastructure, KnowledgeProvider interface.",
-      "tags": [
-        "architecture",
-        "ai-ml",
-        "multi-game",
-        "learning",
-        "plugin-system",
-        "perception",
-        "intelligence"
-      ],
+      "author": "ArchitectAgent",
+      "description": "Internal Pokemon API, debugging toolkit, and decomp exploration system for ROMLab",
+      "tags": [],
       "meta": {
         "docs": {
-          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PHASE_PLAN.md",
-          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/CHECKLIST.md",
-          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md",
-          "_hashes": {
-            "baseline_hashes": {
-              "architecture": "ce0a0bcc",
-              "phase_plan": "a69d3d57",
-              "checklist": "4eac8377"
-            },
-            "current_hashes": {
-              "architecture": "ce0a0bcc",
-              "phase_plan": "a69d3d57",
-              "checklist": "4eac8377"
-            }
-          }
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
         }
       }
     },
@@ -5442,9 +5422,9 @@
         "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/multi_game_learning/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "patch"
+        "agent": "specter"
       },
-      "author": "patch",
+      "author": "specter",
       "description": null,
       "tags": [],
       "meta": {
@@ -5509,28 +5489,28 @@
       }
     },
     "2f58a30d-f812-4a47-8a48-44af4e9b7d08": {
-      "name": "council_app_modularization",
+      "name": "council_custom_pages",
       "root": "/home/austin/projects/MCP_SPINE/council_mcp",
-      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PROGRESS_LOG.md",
-      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages",
       "docs": {
-        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/ARCHITECTURE_GUIDE.md",
-        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PHASE_PLAN.md",
-        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PROGRESS_LOG.md"
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "forge"
+        "agent": "atlas"
       },
-      "author": "forge",
+      "author": "atlas",
       "description": null,
       "tags": [],
       "meta": {
         "docs": {
-          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/ARCHITECTURE_GUIDE.md",
-          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PHASE_PLAN.md",
-          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/CHECKLIST.md",
-          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_app_modularization/PROGRESS_LOG.md"
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md"
         }
       }
     },
@@ -5546,9 +5526,9 @@
         "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
       },
       "defaults": {
-        "agent": "ArchitectAgent-FinalPolish"
+        "agent": "CoderAgent-Logging"
       },
-      "author": "ArchitectAgent-FinalPolish",
+      "author": "CoderAgent-Logging",
       "description": null,
       "tags": [],
       "meta": {
@@ -5557,6 +5537,110 @@
           "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
           "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "a7f71f33-275a-4529-8619-e0c868fa77e5": {
+      "name": "PokeAPI",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "14548c36-40f8-424d-8ce4-76a7d5417108": {
+      "name": "council_custom_pages",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "lens"
+      },
+      "author": "lens",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "dfdbc887-9e3b-4416-ad45-4d3b2e539a58": {
+      "name": "PokeAPI",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "patch"
+      },
+      "author": "patch",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/pokeapi/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "c1f9307c-2747-4d00-baca-5e9674421e74": {
+      "name": "council_custom_pages",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "mantis"
+      },
+      "author": "mantis",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_custom_pages/PROGRESS_LOG.md"
         }
       }
     }
@@ -5610,7 +5694,11 @@
     "edeb2568-773a-48d8-b0e3-ea744f336381": "project",
     "15739910-9f12-4b9e-b09b-cb9b774ed01d": "project",
     "2f58a30d-f812-4a47-8a48-44af4e9b7d08": "project",
-    "8bc7e889-73f7-4f45-89ae-60141a0023fa": "project"
+    "8bc7e889-73f7-4f45-89ae-60141a0023fa": "project",
+    "a7f71f33-275a-4529-8619-e0c868fa77e5": "project",
+    "14548c36-40f8-424d-8ce4-76a7d5417108": "project",
+    "dfdbc887-9e3b-4416-ad45-4d3b2e539a58": "project",
+    "c1f9307c-2747-4d00-baca-5e9674421e74": "project"
   },
   "recent_tools": [
     {
@@ -5656,7 +5744,7 @@
   ],
   "last_activity_at": "2026-01-24 08:32:14 UTC",
   "session_started_at": "2026-01-24 03:45:39 UTC",
-  "version": 2579,
-  "last_updated_by": "ArchitectAgent-FinalPolish",
-  "operation_timestamp": "2026-02-06 09:16:47 UTC"
+  "version": 2622,
+  "last_updated_by": "nexus",
+  "operation_timestamp": "2026-02-06 13:40:16 UTC"
 }

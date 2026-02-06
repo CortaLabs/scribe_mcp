@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -129,7 +132,7 @@ class ReminderEngine:
             self._load_rules()
 
         except Exception as e:
-            print(f"Warning: Failed to load reminder configuration: {e}")
+            logger.warning("Failed to load reminder configuration: %s", e)
             self._load_fallback_reminders()
 
     def _load_reminders(self) -> None:

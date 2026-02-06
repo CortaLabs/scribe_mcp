@@ -97,13 +97,13 @@ async def generate_doc_templates(
             else:
                 # Try to convert to dict if it's not already
                 render_context = substitution_context(project_name, author)
-                print(f"Warning: custom_context should be a dict, got {type(custom_context).__name__}")
+                logger.warning("custom_context should be a dict, got %s", type(custom_context).__name__)
         else:
             render_context = substitution_context(project_name, author)
     except Exception as e:
         # Graceful fallback if context handling fails
         render_context = substitution_context(project_name, author)
-        print(f"Warning: Error handling custom_context: {e}. Using base context.")
+        logger.warning("Error handling custom_context: %s. Using base context.", e)
 
     engine_error: Exception | None = None
     try:

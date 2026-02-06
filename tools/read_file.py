@@ -1752,14 +1752,43 @@ async def read_file(
     repo_root = Path(exec_context.repo_root).resolve()
     requested_mode = mode.lower()
     target = Path(path).expanduser()
+
+    # --- Security: symlink-aware path traversal prevention ---
+    # Step 1: Check unresolved path for boundary escape attempts
+    if not target.is_absolute():
+        unresolved = repo_root / target
+        # Normalize without resolving symlinks to catch '..' escapes
+        try:
+            normalized = unresolved.resolve(strict=False)
+            if not str(normalized).startswith(str(repo_root)):
+                return {"ok": False, "error": "read_file denied",
+                        "reason": "path_traversal_blocked",
+                        "message": f"Path escapes repository boundary: {path}"}
+        except (OSError, ValueError):
+            pass  # Let downstream checks handle truly broken paths
+
+    # Step 2: Resolve path (follows symlinks)
     if not target.is_absolute():
         target = (repo_root / target).resolve()
     else:
         target = target.resolve()
+
+    # Step 3: Verify resolved path is still within repo (catches symlink escapes)
     try:
         rel_path = str(target.relative_to(repo_root))
     except ValueError:
         rel_path = None
+
+    # Step 4: If target is a symlink, verify the symlink target is within repo
+    raw_target = Path(path).expanduser()
+    if not raw_target.is_absolute():
+        raw_target = repo_root / raw_target
+    if raw_target.is_symlink():
+        link_dest = raw_target.resolve()
+        if not str(link_dest).startswith(str(repo_root)):
+            return {"ok": False, "error": "read_file denied",
+                    "reason": "symlink_escape_blocked",
+                    "message": f"Symlink target escapes repository boundary: {path}"}
 
     external_skill_path = _is_external_skill_path(target)
     audit_meta = {

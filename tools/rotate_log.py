@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 import uuid
 import time
 from datetime import datetime
@@ -1631,7 +1634,7 @@ async def _build_template_content(
             security_mode="sandbox",
         )
     except Exception as engine_error:  # pragma: no cover - defensive path
-        print(f"Warning: Failed to initialize Jinja2 template engine for rotation: {engine_error}")
+        logger.warning("Failed to initialize Jinja2 template engine for rotation: %s", engine_error)
 
     template_name = f"documents/{TEMPLATE_FILENAMES['progress_log']}"
     if template_engine:
@@ -1640,7 +1643,7 @@ async def _build_template_content(
             if rendered:
                 return rendered
         except TemplateEngineError as render_error:
-            print(f"Warning: Jinja2 rendering failed for {template_name}: {render_error}")
+            logger.warning("Jinja2 rendering failed for %s: %s", template_name, render_error)
 
     from scribe_mcp.tools.generate_doc_templates import _render_template
 
@@ -1651,7 +1654,7 @@ async def _build_template_content(
         if rendered:
             return rendered
     except Exception as template_error:  # pragma: no cover - defensive
-        print(f"Warning: Template generation failed: {template_error}")
+        logger.warning("Template generation failed: %s", template_error)
 
     rotation_id = rotation_context.get("rotation_id", "unknown")
     timestamp = rotation_context.get("rotation_timestamp_utc", "Unknown")
@@ -1931,7 +1934,7 @@ async def _rotate_single_log(
         }
         wal.write_entry(rotation_journal_entry)
     except Exception as wal_error:  # pragma: no cover - defensive
-        print(f"Warning: Failed to write rotation journal entry: {wal_error}")
+        logger.warning("Failed to write rotation journal entry: %s", wal_error)
 
     rotation_metadata = create_rotation_metadata(
         archived_file_path=str(archive_path),

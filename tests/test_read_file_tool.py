@@ -44,6 +44,80 @@ async def test_read_file_search_default_max_matches(tmp_path):
         server_module.router_context_manager.reset(token)
 
 
+# ---------------------------------------------------------------------------
+# Security: Path Traversal Tests (Task 2.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_file_blocks_dotdot_path_escape(tmp_path):
+    """Verify that ../../etc/passwd style paths are blocked."""
+    token = _install_execution_context(tmp_path)
+    try:
+        # Create a file inside the repo
+        target = tmp_path / "safe.txt"
+        target.write_text("safe content", encoding="utf-8")
+
+        # Attempt to escape using ..
+        result = await read_file(
+            agent="test_agent",
+            path="../../etc/passwd",
+            format="structured",
+        )
+        assert result["ok"] is False
+        assert "denied" in result.get("error", "") or "boundary" in str(result).lower()
+    finally:
+        server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_read_file_blocks_symlink_escape(tmp_path):
+    """Verify that symlinks pointing outside the repo are blocked."""
+    import os
+
+    token = _install_execution_context(tmp_path)
+    try:
+        # Create a symlink inside the repo that points outside
+        symlink_path = tmp_path / "escape_link"
+        try:
+            os.symlink("/etc/hostname", str(symlink_path))
+        except OSError:
+            pytest.skip("Cannot create symlinks on this platform")
+
+        result = await read_file(
+            agent="test_agent",
+            path="escape_link",
+            format="structured",
+        )
+        assert result["ok"] is False
+        reason = result.get("reason", "")
+        error = result.get("error", "")
+        assert "symlink_escape_blocked" in reason or "denied" in error or "denylist_match" in reason
+    finally:
+        server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_read_file_allows_normal_relative_paths(tmp_path):
+    """Verify normal relative paths within the repo still work."""
+    token = _install_execution_context(tmp_path)
+    try:
+        subdir = tmp_path / "src"
+        subdir.mkdir()
+        target = subdir / "module.py"
+        target.write_text("# test module", encoding="utf-8")
+
+        result = await read_file(
+            agent="test_agent",
+            path="src/module.py",
+            mode="full",
+            format="structured",
+        )
+        assert result["ok"] is True
+    finally:
+        server_module.router_context_manager.reset(token)
+
+
 @pytest.mark.asyncio
 async def test_read_file_invalid_regex_returns_error(tmp_path):
     token = _install_execution_context(tmp_path)

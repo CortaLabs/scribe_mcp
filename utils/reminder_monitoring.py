@@ -20,8 +20,11 @@ Usage:
 """
 
 import asyncio
+import logging
 import time
 from typing import Dict, Any, List
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -457,37 +460,34 @@ async def run_all_validations() -> Dict[str, Any]:
             "timestamp": "..."
         }
     """
-    print("Running DB Mode Activation Validation Suite...\n")
+    logger.info("Running DB Mode Activation Validation Suite...")
 
-    print("1. Performance Benchmark...")
+    logger.info("1. Performance Benchmark...")
     perf = await validate_db_performance()
-    print(f"   Result: {'PASS' if perf['ok'] else 'FAIL'}")
+    logger.info("   Result: %s", "PASS" if perf["ok"] else "FAIL")
     if perf["ok"]:
-        print(f"   - record_reminder p95: {perf['operations']['record_reminder']['p95_ms']:.2f}ms")
-        print(f"   - check_cooldown p95: {perf['operations']['check_cooldown']['p95_ms']:.2f}ms")
-        print(f"   - cleanup max: {perf['operations']['cleanup']['max_ms']:.2f}ms")
+        logger.info("   - record_reminder p95: %.2fms", perf["operations"]["record_reminder"]["p95_ms"])
+        logger.info("   - check_cooldown p95: %.2fms", perf["operations"]["check_cooldown"]["p95_ms"])
+        logger.info("   - cleanup max: %.2fms", perf["operations"]["cleanup"]["max_ms"])
     else:
-        print(f"   - FAILED: {perf.get('error', 'SLA violations')}")
-    print()
+        logger.info("   - FAILED: %s", perf.get("error", "SLA violations"))
 
-    print("2. Session Isolation Check...")
+    logger.info("2. Session Isolation Check...")
     isolation = await validate_session_isolation()
-    print(f"   Result: {'PASS' if isolation['ok'] else 'SKIP/INFO'}")
-    print(f"   - Cooldown isolation: {isolation['cooldown_isolation']}")
-    print(f"   - Details: {isolation['details'].get('cooldown_isolation', 'N/A')}")
-    print()
+    logger.info("   Result: %s", "PASS" if isolation["ok"] else "SKIP/INFO")
+    logger.info("   - Cooldown isolation: %s", isolation["cooldown_isolation"])
+    logger.info("   - Details: %s", isolation["details"].get("cooldown_isolation", "N/A"))
 
-    print("3. Reminder Statistics...")
+    logger.info("3. Reminder Statistics...")
     stats = await get_reminder_statistics()
-    print(f"   Result: {'PASS' if stats['ok'] else 'FAIL'}")
+    logger.info("   Result: %s", "PASS" if stats["ok"] else "FAIL")
     if stats["ok"]:
-        print(f"   - Total reminders: {stats['total_reminders']}")
-        print(f"   - Active sessions (24h): {stats['active_sessions']}")
-        print(f"   - Recent activity (24h): {stats['recent_24h']}")
-    print()
+        logger.info("   - Total reminders: %s", stats["total_reminders"])
+        logger.info("   - Active sessions (24h): %s", stats["active_sessions"])
+        logger.info("   - Recent activity (24h): %s", stats["recent_24h"])
 
     overall = "PASS" if perf["ok"] and isolation["ok"] and stats["ok"] else "PARTIAL"
-    print(f"Overall Status: {overall}")
+    logger.info("Overall Status: %s", overall)
 
     return {
         "performance": perf,

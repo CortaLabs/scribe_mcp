@@ -14,6 +14,7 @@ import pytest
 from scribe_mcp.shared.logging_utils import (
     LoggingContext,
     ProjectResolutionError,
+    _sanitize_log_field,
     clean_list,
     compose_log_line,
     default_status_emoji,
@@ -93,6 +94,36 @@ def test_compose_log_line_includes_metadata() -> None:
         entry_id="abc123",
     )
     assert line == "[✅] [2025-10-31 17:00:00 UTC] [Agent: Scribe] [Project: demo] [ID: abc123] Task complete | phase=alpha"
+
+
+def test_sanitize_log_field_strips_newlines() -> None:
+    """Verify _sanitize_log_field strips newline/carriage-return/null characters."""
+    assert _sanitize_log_field("clean") == "clean"
+    assert _sanitize_log_field("line1\nline2") == "line1 line2"
+    assert _sanitize_log_field("line1\rline2") == "line1 line2"
+    assert _sanitize_log_field("has\x00null") == "hasnull"
+    assert _sanitize_log_field("multi\n\r\x00bad") == "multi  bad"
+    # Non-string input
+    assert _sanitize_log_field(12345) == "12345"
+
+
+def test_compose_log_line_sanitizes_injection() -> None:
+    """Verify compose_log_line prevents log injection via newlines in user fields."""
+    injected_msg = "Legitimate entry\n[FAKE] [2026-01-01T00:00:00Z] [Agent: Attacker] Injected"
+    line = compose_log_line(
+        emoji="info",
+        timestamp="2026-02-06T00:00:00Z",
+        agent="Test\nAgent",
+        project_name="proj\rname",
+        message=injected_msg,
+        meta_pairs=(),
+    )
+    # The entire output must be a single line (no newlines)
+    assert "\n" not in line
+    assert "\r" not in line
+    # Sanitized fields should have spaces replacing newlines
+    assert "[Agent: Test Agent]" in line
+    assert "[Project: proj name]" in line
 
 
 def test_default_status_emoji_prefers_explicit() -> None:

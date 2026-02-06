@@ -701,17 +701,17 @@ def _write_file_atomically(file_path: Path, content: str) -> bool:
             temp_path.replace(file_path)
             return True
         else:
-            print(f"⚠️ Failed to write {file_path.name}: temporary file not created properly")
+            logger.warning("Failed to write %s: temporary file not created properly", file_path.name)
             # Clean up temp file if it exists
             if temp_path.exists():
                 temp_path.unlink()
             return False
 
     except (OSError, IOError) as exc:
-        print(f"⚠️ Failed to write {file_path.name}: {exc}")
+        logger.warning("Failed to write %s: %s", file_path.name, exc)
         return False
     except Exception as exc:
-        print(f"❌ Unexpected error writing {file_path.name}: {exc}")
+        logger.error("Unexpected error writing %s: %s", file_path.name, exc)
         return False
 
 
@@ -720,7 +720,7 @@ def _validate_and_repair_index(index_path: Path, doc_dir: Path) -> bool:
     try:
         # Check if index exists and is readable
         if not index_path.exists():
-            print(f"🔧 Index file {index_path.name} missing, will create new one")
+            logger.debug("Index file %s missing, will create new one", index_path.name)
             return False
 
         # Try to read the index
@@ -728,7 +728,7 @@ def _validate_and_repair_index(index_path: Path, doc_dir: Path) -> bool:
             with open(index_path, 'r', encoding='utf-8') as f:
                 content = f.read()
         except (UnicodeDecodeError, IOError) as exc:
-            print(f"🔧 Index file {index_path.name} corrupted ({exc}), will repair")
+            logger.debug("Index file %s corrupted (%s), will repair", index_path.name, exc)
             # Backup corrupted file
             backup_path = index_path.with_suffix('.corrupted.backup')
             if index_path.exists():
@@ -737,7 +737,7 @@ def _validate_and_repair_index(index_path: Path, doc_dir: Path) -> bool:
 
         # Basic validation - check if it looks like a proper index
         if not content.strip().startswith('#'):
-            print(f"🔧 Index file {index_path.name} doesn't look like valid index, will repair")
+            logger.debug("Index file %s doesn't look like valid index, will repair", index_path.name)
             backup_path = index_path.with_suffix('.invalid.backup')
             index_path.rename(backup_path)
             return False
@@ -749,13 +749,13 @@ def _validate_and_repair_index(index_path: Path, doc_dir: Path) -> bool:
 
             # Simple heuristic: if index says 0 docs but we have actual docs, it's stale
             if "Total Documents:** 0" in content and actual_docs:
-                print(f"🔧 Index file {index_path.name} stale (shows 0 docs but {len(actual_docs)} found), will repair")
+                logger.debug("Index file %s stale (shows 0 docs but %d found), will repair", index_path.name, len(actual_docs))
                 return False
 
         return True
 
     except Exception as exc:
-        print(f"🔧 Error validating index {index_path.name}: {exc}, will repair")
+        logger.debug("Error validating index %s: %s, will repair", index_path.name, exc)
         return False
 
 
@@ -841,7 +841,7 @@ async def _record_special_doc_change(
     try:
         storage_record = await _get_or_create_storage_project(backend, project)
     except Exception as exc:  # pragma: no cover - defensive logging mirror behaviour above
-        print(f"⚠️  Failed to prepare storage record for {doc_label}: {exc}")
+        logger.warning("Failed to prepare storage record for %s: %s", doc_label, exc)
         return
 
     action = "create" if not before_hash else "update"
@@ -857,7 +857,7 @@ async def _record_special_doc_change(
             sha_after=after_hash,
         )
     except Exception as exc:
-        print(f"⚠️  Failed to record special doc change for {doc_label}: {exc}")
+        logger.warning("Failed to record special doc change for %s: %s", doc_label, exc)
 
 
 def _parse_numeric_grade(value: Any) -> Optional[float]:
@@ -890,7 +890,7 @@ async def _record_agent_report_card_metadata(
     try:
         storage_record = await _get_or_create_storage_project(backend, project)
     except Exception as exc:
-        print(f"⚠️  Failed to prepare storage project for agent card: {exc}")
+        logger.warning("Failed to prepare storage project for agent card: %s", exc)
         return
 
     try:
@@ -904,7 +904,7 @@ async def _record_agent_report_card_metadata(
             metadata=metadata,
         )
     except Exception as exc:
-        print(f"⚠️  Failed to record agent report card metadata: {exc}")
+        logger.warning("Failed to record agent report card metadata: %s", exc)
 
 
 async def _auto_register_document(
@@ -1813,7 +1813,7 @@ async def manage_docs(
                 sha_after=change.after_hash,
             )
         except Exception as exc:
-            print(f"⚠️  Failed to record doc change in storage: {exc}")
+            logger.warning("Failed to record doc change in storage: %s", exc)
         else:
             # Update Project Registry doc metrics (best-effort, SQLite-first).
             try:
@@ -1889,7 +1889,7 @@ async def manage_docs(
             except Exception as exc:
                 # Don't fail the whole operation if index update fails
                 # The document was edited successfully, just the index may be stale
-                print(f"⚠️ Failed to update index after edit: {exc}")
+                logger.warning("Failed to update index after edit: %s", exc)
 
     registry_warning = None
     response: Dict[str, Any] = {
@@ -2242,10 +2242,10 @@ async def _handle_list_sections(
         from storage import get_storage
         import json
 
-        print(f"DEBUG: Attempting auto-registration for doc_name='{doc_name}', project='{project.get('name')}'")
+        logger.debug("Attempting auto-registration for doc_name='%s', project='%s'", doc_name, project.get('name'))
         try:
             resolved_path = _resolve_doc_path(project, doc_name)
-            print(f"DEBUG: Resolved path: {resolved_path}, exists: {resolved_path.exists()}")
+            logger.debug("Resolved path: %s, exists: %s", resolved_path, resolved_path.exists())
             if resolved_path.exists():
                 # Auto-register the document by updating docs_json in database
                 project_name = project.get("name")
@@ -2269,8 +2269,7 @@ async def _handle_list_sections(
         except Exception as e:
             # If auto-registration fails, fall through to error
             import traceback
-            print(f"DEBUG: Auto-registration failed: {e}")
-            traceback.print_exc()
+            logger.debug("Auto-registration failed: %s", e, exc_info=True)
             pass
 
         # If still not registered, return error
@@ -2804,7 +2803,7 @@ async def _handle_special_document_creation(
             try:
                 await index_updater()
             except Exception as exc:
-                print(f"⚠️ Failed to update index for {doc_label}: {exc}")
+                logger.warning("Failed to update index for %s: %s", doc_label, exc)
                 # Don't fail the whole operation if index update fails
                 # The document was created successfully, just the index is stale
 
@@ -2939,7 +2938,7 @@ async def _update_research_index(research_dir: Path, agent_id: str) -> None:
 
     # Self-healing: validate and repair index if needed
     if not _validate_and_repair_index(index_path, research_dir):
-        print(f"🔧 Auto-repairing research index for {research_dir.name}")
+        logger.debug("Auto-repairing research index for %s", research_dir.name)
 
     # Get all research documents
     research_docs = []
@@ -2989,7 +2988,7 @@ This directory contains research documents generated during the development proc
 
     # Write the index atomically
     if not _write_file_atomically(index_path, content):
-        print(f"⚠️ Failed to update research index at {index_path}")
+        logger.warning("Failed to update research index at %s", index_path)
 
 
 async def _update_bug_index(bugs_dir: Path, agent_id: str) -> None:
@@ -3305,7 +3304,7 @@ async def _render_review_report_template(
         return rendered
 
     except (TemplateEngineError, ImportError) as e:
-        print(f"⚠️ Template engine error for review report: {e}")
+        logger.warning("Template engine error for review report: %s", e)
         # Fallback to basic content if template engine fails
         stage = prepared_metadata.get("stage", "unknown")
         overall_decision = prepared_metadata.get("overall_decision", "[PENDING]")
@@ -3334,7 +3333,7 @@ async def _render_review_report_template(
 *This review report is part of the quality assurance process for {project.get('name')}.*
 """
     except Exception as e:
-        print(f"❌ Unexpected error rendering review report template: {e}")
+        logger.error("Unexpected error rendering review report template: %s", e)
         raise DocumentOperationError(f"Failed to render review report template: {e}")
 
 
@@ -3371,7 +3370,7 @@ async def _render_agent_report_card_template(
         return rendered
 
     except (TemplateEngineError, ImportError) as e:
-        print(f"⚠️ Template engine error for agent report card: {e}")
+        logger.warning("Template engine error for agent report card: %s", e)
         # Fallback to basic content if template engine fails
         agent_name = prepared_metadata.get("agent_name", agent_id)
         stage = prepared_metadata.get("stage", "unknown")
@@ -3402,7 +3401,7 @@ async def _render_agent_report_card_template(
 *This agent report card is part of the performance management system for {project.get('name')}.*
 """
     except Exception as e:
-        print(f"❌ Unexpected error rendering agent report card template: {e}")
+        logger.error("Unexpected error rendering agent report card template: %s", e)
         raise DocumentOperationError(f"Failed to render agent report card template: {e}")
 
 

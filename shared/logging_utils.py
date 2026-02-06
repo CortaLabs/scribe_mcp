@@ -578,6 +578,17 @@ def resolve_log_definition(
     return path, definition
 
 
+def _sanitize_log_field(value: str) -> str:
+    """Strip characters that could forge log entries.
+
+    Removes newlines (\\n, \\r) and null bytes (\\x00) to prevent
+    log injection attacks where user input could create fake log lines.
+    """
+    if not isinstance(value, str):
+        return str(value)
+    return value.replace('\n', ' ').replace('\r', ' ').replace('\x00', '')
+
+
 def compose_log_line(
     *,
     emoji: str,
@@ -589,6 +600,11 @@ def compose_log_line(
     entry_id: Optional[str] = None,
 ) -> str:
     """Compose a formatted log line with metadata pairs."""
+    # Sanitize user-controlled fields to prevent log injection
+    agent = _sanitize_log_field(agent)
+    project_name = _sanitize_log_field(project_name)
+    message = _sanitize_log_field(message)
+
     segments = [
         f"[{emoji}]",
         f"[{timestamp}]",

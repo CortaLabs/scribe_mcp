@@ -390,3 +390,54 @@ Maps to 9 success criteria from ARCHITECTURE_GUIDE.md Section 1.
 - [ ] Retro documented in PHASE_PLAN.md retro_notes <!-- ID: final_retro -->
 
 ---
+
+<!-- ID: p1_pip_artifacts -->
+- [x] P1 Pip Artifacts | proof=CoderAgent-Phase1 deleted =0.1.0, =1.7.0, =1.20.0, =2.0.0
+
+<!-- ID: p1_none_artifacts -->
+- [x] P1 None Artifacts | proof=CoderAgent-Phase1 deleted None, None.journal, None.lock, None.journal.lock
+
+<!-- ID: p1_temp_state -->
+- [x] P1 Temp State | proof=CoderAgent-Phase1 deleted tmp_state.json, tmp_state_cli.json, tmp_state_probe.json
+
+<!-- ID: p1_backups -->
+- [x] P1 Backups | proof=CoderAgent-Phase1 deleted CLAUDE.md.bak, AGENTS.md.bak, old_agents.md
+
+<!-- ID: p1_debug -->
+- [x] P1 Debug | proof=debug_append_entry.py deleted
+
+<!-- ID: p1_codedump -->
+- [x] P1 Codedump | proof=scribe_mcp_fullcode.txt deleted
+
+<!-- ID: p1_locks -->
+- [x] P1 Locks | proof=TOKEN_OPTIMIZATION_LOG.md.journal and lock files deleted
+
+<!-- ID: p1_test_files -->
+- [x] P1 Test Files | proof=4 test files moved to tests/
+
+<!-- ID: p1_reports -->
+- [x] P1 Reports | proof=12 reports moved to docs/historical/
+
+<!-- ID: p1_preflight -->
+- [x] P1 Preflight | proof=401 preflight backups deleted
+
+<!-- ID: p1_tmp_tests -->
+- [x] P1 Tmp Tests | proof=tmp_tests/ directory deleted (~560MB)
+
+<!-- ID: p1_zone_id -->
+- [x] P1 Zone Id | proof=67 Zone.Identifier files deleted
+
+<!-- ID: p1_gitignore -->
+- [x] P1 Gitignore | proof=11 pattern categories added to .gitignore
+
+<!-- ID: p1_git_clean -->
+- [x] P1 Git Clean | proof=~130 files untracked via git rm --cached
+
+<!-- ID: p1_dead_ops -->
+- [x] P1 Dead Ops | proof=db/ops.py deleted (435 lines, 0 imports)
+
+<!-- ID: p1_dead_pool -->
+- [x] P1 Dead Pool | proof=db/pool.py deleted (15 lines, 0 imports)
+
+<!-- ID: p1_exit -->
+- [x] P1 Exit | proof=All P1 tasks complete — 506+ files removed, 4 tests relocated, 12 reports relocated

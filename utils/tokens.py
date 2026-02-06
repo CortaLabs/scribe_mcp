@@ -7,9 +7,12 @@ and budget management for response optimization.
 """
 
 import json
+import logging
 import time
 import os
 from typing import Dict, Any, Optional, Union, List
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -209,13 +212,13 @@ class TokenEstimator:
 
         # Log warning if needed
         if self.budget.should_warn(total_tokens):
-            print(f"⚠️  Token Warning: {operation} used {total_tokens} tokens "
-                  f"({total_tokens/self.budget.operation_limit:.1%} of limit)")
+            logger.warning("Token Warning: %s used %d tokens (%.1f%% of limit)",
+                           operation, total_tokens, total_tokens / self.budget.operation_limit * 100)
 
         # Log if over limit
         if self.budget.is_over_limit(total_tokens):
-            print(f"🚨 Token Limit Exceeded: {operation} used {total_tokens} tokens "
-                  f"(limit: {self.budget.operation_limit})")
+            logger.warning("Token Limit Exceeded: %s used %d tokens (limit: %d)",
+                           operation, total_tokens, self.budget.operation_limit)
 
         return metrics
 
@@ -337,7 +340,7 @@ class TokenEstimator:
             with open(self.metrics_file, 'w') as f:
                 json.dump(metrics_data, f, indent=2)
         except Exception as e:
-            print(f"Failed to save metrics: {e}")
+            logger.warning("Failed to save metrics: %s", e)
 
     def load_metrics(self):
         """Load metrics history from file."""
@@ -350,7 +353,7 @@ class TokenEstimator:
                 for data in metrics_data:
                     self.metrics_history.append(TokenMetrics(**data))
         except Exception as e:
-            print(f"Failed to load metrics: {e}")
+            logger.warning("Failed to load metrics: %s", e)
 
 
 # Global estimator instance
