@@ -1,0 +1,378 @@
+---
+id: scribe_pro_cleanup-checklist
+title: Acceptance Checklist -- scribe_pro_cleanup
+doc_name: checklist
+category: engineering
+status: draft
+version: '0.1'
+last_updated: '2026-02-06'
+maintained_by: Corta Labs
+created_by: Corta Labs
+owners: []
+related_docs: []
+tags: []
+summary: ''
+---
+
+# Acceptance Checklist -- scribe_pro_cleanup
+**Author:** ArchitectAgent-ProCleanup (Opus 4.6)
+**Version:** v1.0
+**Status:** Approved
+**Last Updated:** 2026-02-06 09:00 UTC
+
+> Granular phase-by-phase verification checklist with pass/fail criteria, verification commands, and proof requirements. Each item maps to a task package in PHASE_PLAN.md.
+
+---
+## Documentation Hygiene
+<!-- ID: documentation_hygiene -->
+- [ ] Architecture guide finalized (proof: ARCHITECTURE_GUIDE.md >= 20KB with all 10 sections) <!-- ID: doc_arch -->
+- [ ] Phase plan finalized (proof: PHASE_PLAN.md >= 30KB with all 10 phases) <!-- ID: doc_phase -->
+- [ ] Checklist finalized (proof: CHECKLIST.md with items for all 10 phases) <!-- ID: doc_checklist -->
+- [ ] All research documents indexed (proof: research/INDEX.md lists 8 documents) <!-- ID: doc_research -->
+
+---
+## Phase 1: Immediate Cleanup
+<!-- ID: phase_0 -->
+
+### P1.1 Root Directory Junk Deletion
+- [ ] Broken pip artifacts deleted: `ls =0.1.0 =1.7.0 =1.20.0 =2.0.0 2>/dev/null` returns nothing <!-- ID: p1_pip_artifacts -->
+- [ ] Broken file artifacts deleted: `ls None None.journal None.lock None.journal.lock 2>/dev/null` returns nothing <!-- ID: p1_none_artifacts -->
+- [ ] Temp state files deleted: `ls tmp_state*.json 2>/dev/null` returns nothing <!-- ID: p1_temp_state -->
+- [ ] Backup files deleted: `ls *.bak old_agents.md 2>/dev/null` returns nothing <!-- ID: p1_backups -->
+- [ ] Debug script deleted: `ls debug_append_entry.py 2>/dev/null` returns nothing <!-- ID: p1_debug -->
+- [ ] Code dump deleted: `ls scribe_mcp_fullcode.txt 2>/dev/null` returns nothing <!-- ID: p1_codedump -->
+- [ ] Lock artifacts deleted: `ls TOKEN_OPTIMIZATION_LOG.md.journal .lock .journal.lock 2>/dev/null` returns nothing <!-- ID: p1_locks -->
+- [ ] Misplaced test files moved to tests/: `ls test_*.py` in root returns nothing <!-- ID: p1_test_files -->
+- [ ] Implementation reports moved to docs/: all IMPLEMENTATION_REPORT and BUG_FIX_REPORT files in docs/ <!-- ID: p1_reports -->
+
+### P1.2 Preflight Backup and Test Data Cleanup
+- [ ] Preflight backups deleted: `find . -name '*.preflight-*.bak' | wc -l` returns 0 <!-- ID: p1_preflight -->
+- [ ] tmp_tests/ deleted: `test -d tmp_tests && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_tmp_tests -->
+- [ ] Zone.Identifier files deleted: `find . -name '*Zone.Identifier' | wc -l` returns 0 <!-- ID: p1_zone_id -->
+- [ ] Patterns added to .gitignore: `grep 'preflight' .gitignore` returns match <!-- ID: p1_gitignore -->
+- [ ] Git tracking cleaned: `git status` shows no untracked files matching cleanup patterns <!-- ID: p1_git_clean -->
+
+### P1.3 Dead Code File Deletion
+- [ ] db/ops.py deleted: `test -f db/ops.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_dead_ops -->
+- [ ] db/pool.py deleted: `test -f db/pool.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_dead_pool -->
+- [ ] db/init.sql preserved: `test -f db/init.sql && echo EXISTS || echo GONE` returns EXISTS <!-- ID: p1_keep_init -->
+- [ ] storage/pool.py preserved (active): `test -f storage/pool.py && echo EXISTS || echo GONE` returns EXISTS <!-- ID: p1_keep_storage_pool -->
+- [ ] Baseline test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p1_tests -->
+
+### P1 Exit Gate
+- [ ] Zero junk files in root: `find . -maxdepth 1 -name '*.bak' -o -name 'None*' -o -name 'tmp_state*' -o -name 'debug_*' -o -name 'test_*.py' | wc -l` returns 0 <!-- ID: p1_exit -->
+
+---
+## Phase 2: Centralized Logging + Security Fixes
+<!-- ID: phase_1 -->
+
+### P2.1 Logging Infrastructure
+- [ ] config/logging.py exists with LOGGING_CONFIG: `test -f config/logging.py && echo EXISTS` <!-- ID: p2_logging_file -->
+- [ ] configure_logging() callable: `python -c "from scribe_mcp.config.logging import configure_logging; configure_logging()"` succeeds <!-- ID: p2_logging_call -->
+- [ ] SCRIBE_LOG_LEVEL respected: setting to ERROR suppresses WARNING messages <!-- ID: p2_log_level -->
+
+### P2.2 Print/Stderr Batch 1 (Critical Path)
+- [ ] server.py clean: `grep -c 'print(' server.py` returns 0 <!-- ID: p2_print_server -->
+- [ ] storage/sqlite.py clean: `grep -c 'print(' storage/sqlite.py` returns 0 <!-- ID: p2_print_sqlite -->
+- [ ] config/settings.py clean: `grep -c 'print(' config/settings.py` returns 0 <!-- ID: p2_print_settings -->
+- [ ] Each file has `import logging; logger = logging.getLogger(__name__)` <!-- ID: p2_logger_setup -->
+
+### P2.3 Print/Stderr Batch 2 (Tools and Utils)
+- [ ] All production code clean: `grep -rn 'print(' --include='*.py' tools/ utils/ shared/ state/ bridges/ storage/ config/ | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p2_print_all -->
+- [ ] scripts/ print() calls preserved (intentional CLI output) <!-- ID: p2_scripts_keep -->
+- [ ] Test suite passes after conversion: `pytest tests/ --tb=short` exit code 0 <!-- ID: p2_tests_batch2 -->
+
+### P2.4 Security: Symlink Path Traversal Fix
+- [ ] read_file.py: boundary check BEFORE Path.resolve() (code review lines 1754-1760) <!-- ID: p2_symlink_read -->
+- [ ] edit_file.py: boundary check BEFORE Path.resolve() (code review lines 215-221) <!-- ID: p2_symlink_edit -->
+- [ ] search.py: boundary check BEFORE Path.resolve() (code review lines 651-659) <!-- ID: p2_symlink_search -->
+- [ ] Dotdot component check on unresolved path <!-- ID: p2_dotdot_check -->
+- [ ] Symlink escape test exists and passes: `pytest tests/test_read_file*.py -k symlink` <!-- ID: p2_symlink_test -->
+
+### P2.5 Security: Log Injection Sanitization
+- [ ] _sanitize_log_field() exists in shared/logging_utils.py: strips newline, carriage return, null <!-- ID: p2_sanitize_fn -->
+- [ ] compose_log_line() calls _sanitize_log_field on agent, project_name, message <!-- ID: p2_sanitize_call -->
+- [ ] Injection test passes: injected newline produces single log line <!-- ID: p2_injection_test -->
+
+### P2 Exit Gate
+- [ ] Zero print/stderr in production: `grep -rn 'print(' --include='*.py' tools/ utils/ shared/ state/ bridges/ storage/ config/ server.py | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p2_exit_print -->
+- [ ] Symlink escape blocked (tested) <!-- ID: p2_exit_symlink -->
+- [ ] Full test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p2_exit_tests -->
+
+---
+## Phase 3: Dead Code Removal + Error Handling
+<!-- ID: phase_2 -->
+
+### P3.1 Bare Except Fix
+- [ ] Zero bare except in production: `grep -rn 'except:$' --include='*.py' tools/ utils/ storage/ shared/ config/ | wc -l` returns 0 <!-- ID: p3_bare_all -->
+- [ ] All 14 bare except clauses replaced with specific exception types <!-- ID: p3_bare_count -->
+- [ ] Each replaced clause includes `logger.error("...", exc_info=True)` <!-- ID: p3_bare_logging -->
+- [ ] Test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p3_bare_tests -->
+
+### P3.2 Preflight Backup Retention Policy
+- [ ] 3-backup retention limit implemented in manage_docs preflight <!-- ID: p3_retention_impl -->
+- [ ] After 5 edits to same file, only 3 .bak files remain <!-- ID: p3_retention_verify -->
+- [ ] Cleanup logged via logger.debug() <!-- ID: p3_retention_logging -->
+- [ ] `pytest tests/test_manage_docs*.py` passes <!-- ID: p3_retention_test -->
+
+### P3 Exit Gate
+- [ ] Zero bare except in production code <!-- ID: p3_exit_bare -->
+- [ ] Preflight backup bounded to 3 per file <!-- ID: p3_exit_retention -->
+
+---
+## Phase 4: Storage Layer Decomposition
+<!-- ID: phase_3 -->
+
+### P4.1 Subpackage Structure + internals.py
+- [ ] storage/sqlite/ directory exists with __init__.py <!-- ID: p4_dir -->
+- [ ] storage/sqlite/internals.py contains SQLiteInternals class <!-- ID: p4_internals -->
+- [ ] Methods extracted: _execute, _fetchall, _fetchone, setup, close (and sync variants) <!-- ID: p4_methods -->
+- [ ] `from scribe_mcp.storage.sqlite import SQLiteStorage` works <!-- ID: p4_import -->
+
+### P4.2 Extract schema.py
+- [ ] storage/sqlite/schema.py exists with all CREATE TABLE statements <!-- ID: p4_schema_file -->
+- [ ] Schema module under 500 lines: `wc -l storage/sqlite/schema.py` <!-- ID: p4_schema_size -->
+- [ ] Fresh DB creation works from schema functions <!-- ID: p4_schema_fresh -->
+
+### P4.3 Extract migrations.py
+- [ ] storage/sqlite/migrations.py exists <!-- ID: p4_migrations_file -->
+- [ ] run_all_migrations() orchestrator function present <!-- ID: p4_migrations_run -->
+- [ ] Fresh DB: migrations run without error <!-- ID: p4_migrations_fresh -->
+- [ ] Existing DB: migrations skip completed ones <!-- ID: p4_migrations_skip -->
+
+### P4.4 Domain Modules (projects, entries, sessions)
+- [ ] storage/sqlite/projects.py: upsert, fetch, list, delete, update <!-- ID: p4_projects -->
+- [ ] storage/sqlite/entries.py: insert, fetch_recent, query, count, cleanup, archive <!-- ID: p4_entries -->
+- [ ] storage/sqlite/sessions.py: upsert, fetch, update, list, record, cleanup <!-- ID: p4_sessions -->
+- [ ] Each module under 500 lines <!-- ID: p4_domain_size -->
+
+### P4.5 Domain Modules (documents, planning, telemetry)
+- [ ] storage/sqlite/documents.py: section CRUD, FTS5 search, sync status <!-- ID: p4_documents -->
+- [ ] storage/sqlite/planning.py: dev plans, phases, milestones, benchmarks <!-- ID: p4_planning -->
+- [ ] storage/sqlite/telemetry.py: tool calls, reminder history, report cards, bridges <!-- ID: p4_telemetry -->
+- [ ] Each module under 400 lines <!-- ID: p4_extended_size -->
+
+### P4.6 Cleanup and Final Verification
+- [ ] Old storage/sqlite.py deleted or reduced to import-only facade <!-- ID: p4_old_deleted -->
+- [ ] Factory updated: `from scribe_mcp.storage import create_storage_backend` works <!-- ID: p4_factory -->
+- [ ] No file in storage/sqlite/ exceeds 800 lines <!-- ID: p4_size_limit -->
+- [ ] FULL test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p4_full_tests -->
+
+### P4 Exit Gate
+- [ ] storage/sqlite.py (3050-line monolith) eliminated <!-- ID: p4_exit_monolith -->
+- [ ] 9 focused modules in storage/sqlite/ <!-- ID: p4_exit_count -->
+- [ ] All modules under 800 lines <!-- ID: p4_exit_size -->
+- [ ] Zero import errors in test suite <!-- ID: p4_exit_tests -->
+
+---
+## Phase 5: Doc Management Decomposition
+<!-- ID: phase_4 -->
+
+### P5.1 Subpackage + Shared Modules
+- [ ] tools/manage_docs/ directory exists with __init__.py <!-- ID: p5_dir -->
+- [ ] healing.py: param normalization, healing info (under 300 lines) <!-- ID: p5_healing -->
+- [ ] validation.py: path safety, action validation (under 300 lines) <!-- ID: p5_validation -->
+- [ ] utils.py: hashing, parsing, section splitting (under 300 lines) <!-- ID: p5_utils -->
+- [ ] preflight.py: backup creation with 3-backup retention (under 300 lines) <!-- ID: p5_preflight -->
+- [ ] indexing.py: vector chunking, entry IDs, index updates (under 300 lines) <!-- ID: p5_indexing -->
+- [ ] `pytest tests/test_manage_docs*.py` passes <!-- ID: p5_shared_tests -->
+
+### P5.2 Action Modules
+- [ ] tools/manage_docs/actions/ directory exists <!-- ID: p5_actions_dir -->
+- [ ] create.py: research, bug, custom, agent_card, review creation <!-- ID: p5_create -->
+- [ ] edit.py: replace_section, replace_range, replace_text, apply_patch <!-- ID: p5_edit -->
+- [ ] append.py: append action <!-- ID: p5_append -->
+- [ ] status.py: status_update, checklist management <!-- ID: p5_status -->
+- [ ] search.py: vector + text search <!-- ID: p5_search -->
+- [ ] query.py: list_sections, list_checklist_items, normalize_headers, toc, crosslinks <!-- ID: p5_query -->
+- [ ] batch.py: batch action <!-- ID: p5_batch -->
+- [ ] Each action module under 500 lines <!-- ID: p5_action_size -->
+
+### P5.3 Wire Up Router + Delete Old File
+- [ ] ACTION_ROUTER dict maps action names to handler functions <!-- ID: p5_router -->
+- [ ] Deprecated routes work: create_research_doc, create_bug_report, create_doc <!-- ID: p5_deprecated -->
+- [ ] manage_docs_main() accessible from server.py <!-- ID: p5_main_fn -->
+- [ ] Old tools/manage_docs.py deleted <!-- ID: p5_old_deleted -->
+- [ ] All 7 primary actions work end-to-end <!-- ID: p5_all_actions -->
+- [ ] FULL test suite: `pytest tests/test_manage_docs*.py` passes <!-- ID: p5_full_tests -->
+
+### P5 Exit Gate
+- [ ] tools/manage_docs.py (3410-line monolith) eliminated <!-- ID: p5_exit_monolith -->
+- [ ] 12 focused modules total <!-- ID: p5_exit_count -->
+- [ ] All modules under 800 lines <!-- ID: p5_exit_size -->
+- [ ] All manage_docs actions verified working <!-- ID: p5_exit_actions -->
+
+---
+## Phase 6: src/ Layout Migration + Packaging
+<!-- ID: phase_5 -->
+
+### P6.1 config/paths.py + pyproject.toml
+- [ ] config/paths.py exists with all 8 path functions <!-- ID: p6_paths_file -->
+- [ ] All path functions use importlib.resources (not __file__) <!-- ID: p6_importlib -->
+- [ ] Environment variable overrides work (SCRIBE_DATA_DIR, SCRIBE_DB_PATH) <!-- ID: p6_env_vars -->
+- [ ] pyproject.toml exists with metadata, deps, console scripts, find where=src <!-- ID: p6_pyproject -->
+- [ ] `pip install -e . --dry-run` succeeds <!-- ID: p6_pip_dryrun -->
+
+### P6.2 Move to src/ Layout
+- [ ] src/scribe_mcp/ directory exists with all packages <!-- ID: p6_src_dir -->
+- [ ] All 14+ packages moved to src/scribe_mcp/ <!-- ID: p6_packages_moved -->
+- [ ] tests/ at repo root (not in src/) <!-- ID: p6_tests_root -->
+- [ ] `pip install -e .` succeeds <!-- ID: p6_pip_install -->
+- [ ] `python -c "from scribe_mcp.server import main"` works <!-- ID: p6_import_test -->
+- [ ] `scribe-server --help` works <!-- ID: p6_console_script -->
+
+### P6.3 Fix __file__ Path Resolutions
+- [ ] Zero __file__ in production: `grep -rn '__file__' src/scribe_mcp/ --include='*.py' | grep -v test | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p6_no_file_refs -->
+- [ ] All 50+ locations use config.paths.* calls <!-- ID: p6_paths_replaced -->
+- [ ] sys.path hacks removed from server.py <!-- ID: p6_no_syspath -->
+
+### P6.4 Test Suite Migration
+- [ ] conftest.py updated for src/ layout <!-- ID: p6_conftest -->
+- [ ] Zero hardcoded paths: `grep -rn '/home/austin' tests/ | wc -l` returns 0 <!-- ID: p6_no_hardcoded -->
+- [ ] tests/fixtures/ directory with storage.py and projects.py <!-- ID: p6_fixtures -->
+- [ ] `pip install -e ".[dev]" && pytest tests/` all pass <!-- ID: p6_full_tests -->
+
+### P6 Exit Gate
+- [ ] Package installable and console scripts work <!-- ID: p6_exit_pip -->
+- [ ] Zero __file__ in production code <!-- ID: p6_exit_file -->
+- [ ] All tests pass from installed package <!-- ID: p6_exit_tests -->
+
+---
+## Phase 7: Database Consolidation + state.json Migration
+<!-- ID: phase_6 -->
+
+### P7.1 State Migration Script
+- [ ] scripts/migrate_state.py exists and runs: `scribe-migrate` <!-- ID: p7_script -->
+- [ ] Reads state.json, inserts via StorageBackend methods <!-- ID: p7_insert_db -->
+- [ ] Renames state.json to state.json.migrated <!-- ID: p7_rename -->
+- [ ] Idempotent: running twice is safe <!-- ID: p7_idempotent -->
+
+### P7.2 StateManager DB Refactor
+- [ ] StateManager.__init__ takes StorageBackend <!-- ID: p7_backend_init -->
+- [ ] Zero JSON file ops: `grep -n 'state.json\|json.load\|json.dump' state/manager.py | wc -l` returns 0 <!-- ID: p7_no_json -->
+- [ ] get/set_active_project read/write agent_sessions table <!-- ID: p7_state_methods -->
+- [ ] Test suite passes <!-- ID: p7_state_tests -->
+
+### P7.3 Fix Hardcoded DB Paths
+- [ ] reminders.py uses settings.sqlite_path (not hardcoded .scribe/data/scribe.db) <!-- ID: p7_reminder_path -->
+- [ ] Zero hardcoded DB paths: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/ --include='*.py' | wc -l` returns 0 <!-- ID: p7_no_hardcoded -->
+- [ ] Legacy DBs backed up; empty DB deleted <!-- ID: p7_legacy_cleanup -->
+
+### P7 Exit Gate
+- [ ] Single DB path across codebase <!-- ID: p7_exit_single -->
+- [ ] state.json eliminated <!-- ID: p7_exit_state -->
+- [ ] All tests pass <!-- ID: p7_exit_tests -->
+
+---
+## Phase 8: Postgres Full Implementation
+<!-- ID: phase_7 -->
+
+### P8.1 Postgres Subpackage + Connection Pool
+- [ ] storage/postgres/ mirrors sqlite/ structure <!-- ID: p8_dir -->
+- [ ] internals.py with asyncpg.create_pool() <!-- ID: p8_internals -->
+- [ ] schema.py with pg_trgm + GIN (not FTS5) <!-- ID: p8_schema -->
+- [ ] Connection to test Postgres works <!-- ID: p8_connection -->
+
+### P8.2 Missing Methods Batch 1 (7 methods)
+- [ ] projects.py: list_projects_by_repo, update_project_docs <!-- ID: p8_projects -->
+- [ ] entries.py: count_entries, cleanup_old_entries, archive_entries <!-- ID: p8_entries -->
+- [ ] sessions.py: upsert_agent_session, fetch_agent_session <!-- ID: p8_sessions -->
+- [ ] Parametrized dual-backend tests pass <!-- ID: p8_batch1_tests -->
+
+### P8.3 Missing Methods Batch 2 (6 methods)
+- [ ] documents.py: section CRUD + pg_trgm search <!-- ID: p8_documents -->
+- [ ] planning.py: planning operations <!-- ID: p8_planning -->
+- [ ] telemetry.py: tool calls, report cards, bridges, reminders <!-- ID: p8_telemetry -->
+- [ ] All 31 StorageBackend abstract methods implemented <!-- ID: p8_31_methods -->
+
+### P8.4 Migration System
+- [ ] migrations.py with information_schema (not PRAGMA) <!-- ID: p8_migrations -->
+- [ ] Fresh and existing Postgres DB migrations work <!-- ID: p8_migrate_test -->
+
+### P8 Exit Gate
+- [ ] 31/31 methods implemented <!-- ID: p8_exit_parity -->
+- [ ] Dual-backend tests pass <!-- ID: p8_exit_tests -->
+- [ ] pg_trgm search works <!-- ID: p8_exit_search -->
+
+---
+## Phase 9: Reminder System Wire-Up
+<!-- ID: phase_8 -->
+
+### P9.1 Reminder MCP Tools
+- [ ] tools/reminder_tools.py with 3 tool functions <!-- ID: p9_file -->
+- [ ] query_reminders implemented and tested <!-- ID: p9_query -->
+- [ ] configure_reminders implemented and tested <!-- ID: p9_configure -->
+- [ ] reset_reminders implemented and tested <!-- ID: p9_reset -->
+- [ ] All 3 registered in server.py tool registry <!-- ID: p9_registered -->
+- [ ] `list_tools` includes all 3 <!-- ID: p9_list_tools -->
+- [ ] tests/test_reminder_tools.py passes <!-- ID: p9_unit_tests -->
+
+### P9.2 Documentation
+- [ ] CLAUDE.md lists all 3 reminder tools <!-- ID: p9_claude_md -->
+- [ ] Scribe_Usage.md has examples <!-- ID: p9_usage_md -->
+- [ ] Tool count updated 18 to 21 <!-- ID: p9_tool_count -->
+
+### P9 Exit Gate
+- [ ] 3 reminder MCP tools operational <!-- ID: p9_exit_tools -->
+- [ ] Documentation complete <!-- ID: p9_exit_docs -->
+
+---
+## Phase 10: Startup Optimization + Test Cleanup + Scaffold
+<!-- ID: phase_9 -->
+
+### P10.1 Lazy Tool Loading
+- [ ] _TOOL_MODULES dict maps tool names to module paths <!-- ID: p10_tool_map -->
+- [ ] __getattr__ deferred import implemented <!-- ID: p10_getattr -->
+- [ ] All tools work on first call <!-- ID: p10_tools_work -->
+
+### P10.2 Deferred Startup
+- [ ] cleanup_old_entries() moved to background task <!-- ID: p10_deferred_cleanup -->
+- [ ] Migration completion cached in memory <!-- ID: p10_migration_cache -->
+- [ ] Startup under 2 seconds: `time python -c "from scribe_mcp.server import main"` <!-- ID: p10_startup_time -->
+
+### P10.3 Test Suite Cleanup
+- [ ] tests/fixtures/ with storage.py, projects.py <!-- ID: p10_fixtures -->
+- [ ] All fixtures use tmp_path <!-- ID: p10_tmp_path -->
+- [ ] Autouse DB cleanup fixture <!-- ID: p10_autouse -->
+
+### P10.4 Auth + Transport Scaffold
+- [ ] auth/base.py: AuthProvider ABC <!-- ID: p10_auth_base -->
+- [ ] auth/api_key.py + auth/jwt_auth.py stubs (NotImplementedError) <!-- ID: p10_auth_stubs -->
+- [ ] transport/base.py: TransportProvider ABC <!-- ID: p10_transport_base -->
+- [ ] transport/http_sse.py + transport/websocket.py stubs (NotImplementedError) <!-- ID: p10_transport_stubs -->
+- [ ] All stubs importable and have docstrings <!-- ID: p10_stub_docs -->
+- [ ] `from scribe_mcp.auth.base import AuthProvider` works <!-- ID: p10_auth_import -->
+- [ ] `from scribe_mcp.transport.base import TransportProvider` works <!-- ID: p10_transport_import -->
+
+### P10 Exit Gate
+- [ ] Startup under 2 seconds <!-- ID: p10_exit_startup -->
+- [ ] Test fixtures shared and clean <!-- ID: p10_exit_fixtures -->
+- [ ] Auth/transport interfaces defined and importable <!-- ID: p10_exit_scaffold -->
+
+---
+## Final Verification
+<!-- ID: final_verification -->
+
+Maps to 9 success criteria from ARCHITECTURE_GUIDE.md Section 1.
+
+| # | Criterion | Verification | Status |
+|---|-----------|-------------|--------|
+| 1 | pip install -e . succeeds | `pip install -e . && scribe-server --help` | [ ] |
+| 2 | No file > 800 lines in src/ | `find src/ -name '*.py' -exec wc -l {} + \| awk '$1>800'` empty | [ ] |
+| 3 | pytest >= 90% tests pass | Compare pre/post test counts | [ ] |
+| 4 | Single DB, state.json gone | `find . -name state.json -not -name '*.migrated'` empty | [ ] |
+| 5 | Postgres passes same tests | `pytest tests/ -k postgres` pass | [ ] |
+| 6 | 3 reminder tools operational | `list_tools` includes all 3 | [ ] |
+| 7 | Zero print/stderr | `grep -r 'print(' src/ --include='*.py' \| grep -v test` returns 0 | [ ] |
+| 8 | Zero junk files | Root clean of artifacts | [ ] |
+| 9 | Startup < 2 seconds | Instrumented benchmark | [ ] |
+
+### Final Sign-Off
+- [ ] All 10 phase exit gates passed <!-- ID: final_all_phases -->
+- [ ] All 9 success criteria verified <!-- ID: final_criteria -->
+- [ ] No regressions from P1 baseline <!-- ID: final_no_regression -->
+- [ ] Milestone tracking table updated with evidence <!-- ID: final_milestones -->
+- [ ] Stakeholder sign-off (name + date) <!-- ID: final_signoff -->
+- [ ] Retro documented in PHASE_PLAN.md retro_notes <!-- ID: final_retro -->
+
+---

@@ -1,0 +1,719 @@
+---
+id: scribe_pro_cleanup-phase-plan
+title: "\u2699\uFE0F Phase Plan \u2014 scribe_pro_cleanup"
+doc_name: phase_plan
+category: engineering
+status: draft
+version: '0.1'
+last_updated: '2026-02-06'
+maintained_by: Corta Labs
+created_by: Corta Labs
+owners: []
+related_docs: []
+tags: []
+summary: ''
+---
+
+# ⚙️ Phase Plan — scribe_pro_cleanup
+**Author:** Scribe
+**Version:** Draft v0.1
+**Status:** active
+**Last Updated:** 2026-02-06 07:50:33 UTC
+
+> Execution roadmap for scribe_pro_cleanup.
+
+---
+## Phase Overview
+
+This plan breaks the professional cleanup into 10 ordered phases. Each phase is self-contained, builds on previous work, and has clear entry/exit criteria. **Total estimated effort: 3-4 weeks full-time.**
+
+**Key Principles:**
+- **Low-risk first**: Delete junk and fix security before structural changes
+- **Foundation before features**: Logging and DB consolidation before god module decomposition
+- **Verify continuously**: All tests pass after each phase
+- **Maintain functionality**: No breaking changes within phases (only between phases)
+
+---
+
+## Phase 1: Immediate Cleanup (Low Risk, High Impact)
+
+**Duration**: 1-2 days  
+**Risk Level**: Low  
+**Dependencies**: None
+
+**Scope**: Delete confirmed junk, fix .gitignore, move misplaced files
+
+**Task Packages**:
+
+**Task 1.1: Root Directory Junk Deletion**
+- **Files to Modify**: None (only deletions)
+- **Deletions** (30 files):
+  - Broken pip artifacts: `=0.1.0`, `=1.7.0`, `=1.20.0`, `=2.0.0`
+  - Broken file creation: `None`, `None.journal`, `None.journal.lock`, `None.lock`
+  - Temp state: `tmp_state.json`, `tmp_state_cli.json`, `tmp_state_probe.json`
+  - Old backups: `AGENTS.md.bak`, `CLAUDE.md.bak`
+  - Code dumps: `scribe_mcp_fullcode.txt`, `old_agents.md`
+  - Test files in root: `test_*.py` (4 files)
+  - Debug scripts: `debug_append_entry.py`
+  - Windows artifacts: `*:Zone.Identifier` (in .claude/skills/, 70+ files)
+- **Verification**: 
+  - [ ] Root directory has <15 files
+  - [ ] `git status` shows deletions
+  - [ ] All tests still pass
+
+**Task 1.2: tmp_tests/ Cleanup (560MB)**
+- **Scope**: Delete orphaned test databases
+- **Command**: `rm -rf tmp_tests/`
+- **Verification**: 
+  - [ ] Disk space freed (~560MB)
+  - [ ] No test failures
+
+**Task 1.3: .bak File Cleanup (100+ files)**
+- **Scope**: Delete all preflight .bak files
+- **Files**: `.scribe/docs/dev_plans/*/*.preflight-*.bak`
+- **Command**: `find .scribe/docs/dev_plans -name '*.preflight-*.bak' -delete`
+- **Verification**: 
+  - [ ] No .bak files remain
+  - [ ] Git shows deletions
+
+**Task 1.4: .gitignore Enforcement**
+- **Files to Modify**: `.gitignore` (ensure rules exist)
+- **Git Operations**:
+  ```bash
+  # Remove cached junk from git
+  git rm --cached '=0.1.0' '=1.7.0' '=1.20.0' '=2.0.0'
+  git rm --cached 'None*'
+  git rm --cached '*.preflight-*.bak'
+  git rm --cached '*:Zone.Identifier'
+  git rm --cached 'tmp_*'
+  git rm --cached 'scribe_mcp_fullcode.txt'
+  ```
+- **Verification**: 
+  - [ ] `.gitignore` includes: `*.bak`, `tmp_*`, `*:Zone.Identifier`, `*_fullcode.txt`, `tmp_tests/`
+  - [ ] `git status` shows no unwanted files
+
+**Task 1.5: Move Docs to docs/**
+- **Files to Move** (12 files):
+  - `IMPLEMENTATION_REPORT_*.md` → `docs/implementation/`
+  - `BUG_FIX_REPORT_*.md` → `docs/bugs/`
+  - `ARCHITECTURE_TOOL_LOGGING_FIX.md` → `docs/`
+  - `TOKEN_OPTIMIZATION_LOG.md` → `docs/`
+  - Others per research audit
+- **Verification**: 
+  - [ ] Root has only: pyproject.toml, README, LICENSE, .gitignore, CLAUDE.md, AGENTS.md, pytest.ini, .env.example, server.py, __init__.py
+  - [ ] All moved docs accessible in docs/
+
+**Exit Criteria**:
+- ✅ Root directory has ≤10 files (down from 50+)
+- ✅ 560MB disk space freed
+- ✅ .gitignore enforced (no tracked junk)
+- ✅ All tests pass
+
+---
+
+## Phase 2: Foundation (Logging + Security Fixes)
+
+**Duration**: 2-3 days  
+**Risk Level**: Low  
+**Dependencies**: Phase 1 complete
+
+**Scope**: Centralized logging, security vulnerability fixes, dependency pinning
+
+**Task Packages**:
+
+**Task 2.1: Centralized Logging Configuration**
+- **New File**: `src/scribe_mcp/config/logging.py`
+- **Specifications**:
+  ```python
+  import logging
+  import os
+  
+  def configure_logging():
+      level_str = os.getenv("SCRIBE_LOG_LEVEL", "WARNING")
+      level = getattr(logging, level_str.upper(), logging.WARNING)
+      logging.basicConfig(
+          level=level,
+          format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+      )
+      return logging.getLogger("scribe_mcp")
+  ```
+- **Verification**: 
+  - [ ] `SCRIBE_LOG_LEVEL=DEBUG` enables debug logging
+  - [ ] Default level is WARNING
+
+**Task 2.2: Convert 115+ print/stderr Sources**
+- **Files to Modify**: All files with `print()` or sys.stderr.write()
+- **Pattern**:
+  ```python
+  # Before
+  print(f"Debug: {value}")
+  
+  # After
+  from scribe_mcp.config.logging import configure_logging
+  logger = configure_logging()
+  logger.debug(f"Debug: {value}")
+  ```
+- **Search Command**: `scribe.search(agent="ArchitectAgent-ProCleanup", pattern="print\\(", type="py")`
+- **Verification**: 
+  - [ ] No `print()` calls in production code (tests OK)
+  - [ ] Logging respects SCRIBE_LOG_LEVEL
+
+**Task 2.3: Fix Path Traversal Vulnerability**
+- **File**: `tools/read_file.py` lines 1754-1821
+- **Issue**: Symlink resolution happens BEFORE boundary check
+- **Fix**: Reorder checks - boundary check BEFORE symlink resolution
+- **Specifications**:
+  ```python
+  # Check boundaries FIRST (before resolving symlinks)
+  if not is_within_repo(requested_path):
+      raise SecurityError("Path outside repository")
+  
+  # THEN resolve symlinks
+  resolved_path = requested_path.resolve()
+  ```
+- **Verification**: 
+  - [ ] Test case: Symlink pointing outside repo is rejected
+  - [ ] Existing functionality preserved
+
+**Task 2.4: Fix Log Injection Vulnerability**
+- **Files**: `shared/logging_utils.py` lines 592-607
+- **Issue**: User input written to logs without sanitization
+- **Fix**: Sanitize newlines and control characters
+- **Specifications**:
+  ```python
+  def sanitize_log_message(msg: str) -> str:
+      return msg.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
+  
+  def log_entry(message: str):
+      safe_message = sanitize_log_message(message)
+      logger.info(safe_message)
+  ```
+- **Verification**: 
+  - [ ] Test case: Message with \\n doesn't create fake log entries
+  - [ ] Existing log format preserved
+
+**Task 2.5: Pin Dependencies**
+- **File**: `requirements.txt` (or future pyproject.toml)
+- **Change**: Pin all versions with ==
+- **Specifications**:
+  ```
+  asyncpg==0.29.0
+  jinja2==3.1.2
+  mcp==0.1.0
+  # ... (all 17 dependencies)
+  ```
+- **Verification**: 
+  - [ ] `pip install -r requirements.txt` installs exact versions
+  - [ ] No security vulnerabilities (pip-audit)
+
+**Exit Criteria**:
+- ✅ Centralized logging with SCRIBE_LOG_LEVEL env var
+- ✅ Zero print() calls in production code
+- ✅ Security vulnerabilities fixed (path traversal, log injection)
+- ✅ All dependencies pinned
+- ✅ All tests pass
+
+---
+
+## Phase 3: God Module Decomposition (Part 1: Storage)
+
+**Duration**: 4-5 days  
+**Risk Level**: Medium  
+**Dependencies**: Phases 1-2 complete
+
+**Scope**: Break storage/sqlite.py (3050 lines) into storage/sqlite/ subpackage (6 modules)
+
+**Task Packages**:
+
+**Task 3.1: Create storage/sqlite/ Directory Structure**
+- **New Files**:
+  - `storage/sqlite/__init__.py` (empty initially)
+  - `storage/sqlite/schema.py` (empty)
+  - `storage/sqlite/queries.py` (empty)
+  - `storage/sqlite/migrations.py` (empty)
+  - `storage/sqlite/fts.py` (empty)
+  - `storage/sqlite/pool.py` (copy from storage/pool.py)
+- **Verification**: 
+  - [ ] Directory exists
+  - [ ] All files importable
+
+**Task 3.2: Extract Schema Definitions**
+- **Source**: `storage/sqlite.py` lines 849-1350 (_initialise method)
+- **Target**: `storage/sqlite/schema.py` (~500 lines)
+- **Specifications**:
+  - Extract all CREATE TABLE statements
+  - Create `SchemaManager` class with `create_all_tables()` method
+  - No query logic, no migrations
+- **Verification**: 
+  - [ ] All 30+ tables defined
+  - [ ] `SchemaManager.create_all_tables()` creates schema
+  - [ ] Original _initialise method calls SchemaManager
+
+**Task 3.3: Extract CRUD Operations**
+- **Source**: `storage/sqlite.py` (all upsert/fetch/list/delete methods, ~1200 lines)
+- **Target**: `storage/sqlite/queries.py` (~800 lines)
+- **Specifications**:
+  - Extract all query methods
+  - Create `QueryManager` class
+  - Use connection pool for all queries
+- **Verification**: 
+  - [ ] All 79 methods extracted
+  - [ ] All tests pass
+  - [ ] No duplicate code
+
+**Task 3.4: Extract Migration System**
+- **Source**: `storage/sqlite.py` (migration helpers + migration functions, ~600 lines)
+- **Target**: `storage/sqlite/migrations.py` (~400 lines)
+- **Specifications**:
+  - Extract `_ensure_column`, `_ensure_index`, `_migration_completed`
+  - Extract all migration functions
+  - Create migration registry
+- **Verification**: 
+  - [ ] Migrations still run idempotently
+  - [ ] scribe_migrations table tracks correctly
+
+**Task 3.5: Extract FTS5 System**
+- **Source**: `storage/sqlite.py` (FTS5 virtual table + triggers, ~450 lines)
+- **Target**: `storage/sqlite/fts.py` (~300 lines)
+- **Specifications**:
+  - Extract FTS5 table creation
+  - Extract trigger setup
+  - Extract search methods
+- **Verification**: 
+  - [ ] Full-text search works
+  - [ ] Triggers update FTS5 index
+
+**Task 3.6: Create SQLiteStorage Orchestrator**
+- **Target**: `storage/sqlite/__init__.py` (~150 lines)
+- **Specifications**:
+  - Import all managers (Schema, Queries, Migrations, FTS, Pool)
+  - Delegate all StorageBackend methods
+  - Initialize in correct order: schema → migrations → FTS
+- **Verification**: 
+  - [ ] All 79 methods work via delegation
+  - [ ] Initialization order correct
+  - [ ] All tests pass
+
+**Task 3.7: Update Imports Across Codebase**
+- **Files**: All files importing `from scribe_mcp.storage.sqlite import SQLiteStorage`
+- **No Change Needed**: Import path stays the same (from storage/sqlite/__init__.py)
+- **Verification**: 
+  - [ ] No import errors
+  - [ ] All functionality preserved
+
+**Task 3.8: Delete Original storage/sqlite.py**
+- **After**: All functionality verified in subpackage
+- **Verification**: 
+  - [ ] storage/sqlite.py deleted
+  - [ ] All tests pass
+  - [ ] No references to old file
+
+**Exit Criteria**:
+- ✅ storage/sqlite/ subpackage with 6 modules
+- ✅ Each module <800 lines (was 3050 total)
+- ✅ All 79 methods work via delegation
+- ✅ All tests pass
+- ✅ No duplicate code
+
+---
+
+## Phase 4: God Module Decomposition (Part 2: Doc Management)
+
+**Duration**: 4-5 days  
+**Risk Level**: Medium  
+**Dependencies**: Phases 1-3 complete
+
+**Scope**: Break tools/manage_docs.py (3410 lines) into doc_management/ subpackage (8 modules)
+
+**Task Packages**:
+
+**Task 4.1: Create doc_management/ Structure** (Similar to 3.1)
+**Task 4.2: Extract Document Creation Logic** (~600 lines to create.py)
+**Task 4.3: Extract Edit Operations** (~800 lines to edit.py)
+**Task 4.4: Extract Validation Logic** (~400 lines to validate.py)
+**Task 4.5: Extract Search Logic** (~300 lines to search.py)
+**Task 4.6: Create DocManagementCore Router** (~200 lines to core.py)
+**Task 4.7: Convert tools/manage_docs.py to Thin Wrapper** (~150 lines)
+**Task 4.8: Verify All manage_docs Actions Work**
+
+**(Similar structure to Phase 3, detailed task packages omitted for brevity)**
+
+**Exit Criteria**:
+- ✅ doc_management/ subpackage with 8 modules
+- ✅ Each module <800 lines (was 3410 total)
+- ✅ All 29 actions work via routing
+- ✅ All tests pass
+
+---
+
+## Phase 5: src/ Layout Migration + Packaging
+
+**Duration**: 5-6 days  
+**Risk Level**: High (breaking changes)  
+**Dependencies**: Phases 1-4 complete
+
+**Scope**: Move code to src/scribe_mcp/, fix 50+ path resolutions, create pyproject.toml
+
+**Task Packages**:
+
+**Task 5.1: Create pyproject.toml**
+- **New File**: `pyproject.toml`
+- **Content**: Use template from Architecture Guide section 4.1
+- **Verification**: 
+  - [ ] File parses correctly
+  - [ ] Dependencies listed
+
+**Task 5.2: Create src/ Directory Structure**
+- **Command**: `mkdir -p src/scribe_mcp`
+- **Verification**: 
+  - [ ] Directory exists
+
+**Task 5.3: Move Code to src/scribe_mcp/**
+- **Command**: 
+  ```bash
+  mv tools/ src/scribe_mcp/
+  mv storage/ src/scribe_mcp/
+  mv doc_management/ src/scribe_mcp/
+  mv config/ src/scribe_mcp/
+  # ... (move all 15 top-level packages)
+  ```
+- **Verification**: 
+  - [ ] All packages moved
+  - [ ] src/scribe_mcp/ has all subpackages
+
+**Task 5.4: Fix Path Resolutions (50+ locations)**
+- **Files to Modify**: All files with `Path(__file__).parent.parent`
+- **Pattern**: Use importlib.resources (see Architecture Guide section 4.4)
+- **Checklist**:
+  - [ ] server.py line 16
+  - [ ] config/settings.py line 220
+  - [ ] template_engine/engine.py line 36
+  - [ ] utils/reminder_monitoring.py line 31
+  - [ ] (46 more locations)
+- **Verification**: 
+  - [ ] All path resolutions work
+  - [ ] Templates load correctly
+  - [ ] Config files accessible
+
+**Task 5.5: Update Entry Points**
+- **Files to Modify**: 
+  - `src/scribe_mcp/server.py`: Add `main()` function
+  - `src/scribe_mcp/scripts/scribe_cli.py`: Add `main()` function
+  - `src/scribe_mcp/scripts/scribe_admin.py`: Add `main()` function
+- **Verification**: 
+  - [ ] Entry points callable
+
+**Task 5.6: Test pip install**
+- **Command**: `pip install -e .`
+- **Verification**: 
+  - [ ] Install succeeds
+  - [ ] `scribe-server` command works
+  - [ ] `scribe` command works
+  - [ ] `scribe-admin` command works
+
+**Task 5.7: Verify Package Data**
+- **Check**: templates/, config/ files accessible
+- **Verification**: 
+  - [ ] Templates render
+  - [ ] Config files load
+
+**Exit Criteria**:
+- ✅ Code in src/scribe_mcp/
+- ✅ `pip install scribe_mcp` works
+- ✅ All 50+ path resolutions fixed
+- ✅ All entry points work
+- ✅ All tests pass
+
+---
+
+## Phase 6: Database Consolidation
+
+**Duration**: 2-3 days  
+**Risk Level**: Medium  
+**Dependencies**: Phases 1-5 complete
+
+**Scope**: Consolidate 4 DBs into 1, eliminate state.json
+
+**Task Packages**:
+
+**Task 6.1: Audit Legacy Databases**
+- **Files**: `.scribe/scribe.db`, `.scribe/data/scribe.db`, `data/scribe_projects.db`
+- **Action**: Back up, compare schemas, verify no unique data
+- **Verification**: 
+  - [ ] Backups created
+  - [ ] No unique data in legacy DBs
+
+**Task 6.2: Fix Hardcoded DB Paths**
+- **File**: `reminders.py` line 31 (hardcodes `.scribe/data/scribe.db`)
+- **Change**: Use `settings.sqlite_path`
+- **Verification**: 
+  - [ ] Reminders use correct DB
+  - [ ] No hardcoded paths remain
+
+**Task 6.3: Move DB to XDG Location**
+- **New Path**: `~/.local/share/scribe_mcp/scribe.db`
+- **Update**: `config/settings.py` default path
+- **Command**: 
+  ```python
+  from pathlib import Path
+  xdg_data_home = Path.home() / ".local/share/scribe_mcp"
+  xdg_data_home.mkdir(parents=True, exist_ok=True)
+  ```
+- **Verification**: 
+  - [ ] DB creates in XDG location
+  - [ ] SCRIBE_DB_PATH env var override works
+
+**Task 6.4: Create state.json Migration Script**
+- **New File**: `scripts/migrate_state_json.py`
+- **Specifications**: See Architecture Guide section 4.5
+- **Verification**: 
+  - [ ] Script loads state.json
+  - [ ] Data populates database tables
+  - [ ] Renames state.json to .deprecated
+
+**Task 6.5: Update StateManager to Use Database**
+- **File**: `state/manager.py`
+- **Change**: DB-first with JSON fallback (see Architecture Guide)
+- **Verification**: 
+  - [ ] StateManager reads from DB
+  - [ ] Falls back to JSON if DB empty
+  - [ ] All state operations work
+
+**Task 6.6: Run Migration**
+- **Command**: `python scripts/migrate_state_json.py`
+- **Verification**: 
+  - [ ] state.json renamed to .deprecated
+  - [ ] All project state in database
+  - [ ] Agent sessions preserved
+
+**Exit Criteria**:
+- ✅ Single database at XDG location
+- ✅ No state.json (migrated to DB)
+- ✅ All state operations work
+- ✅ All tests pass
+
+---
+
+## Phase 7: Postgres Completion
+
+**Duration**: 5-6 days  
+**Risk Level**: Medium  
+**Dependencies**: Phases 1-6 complete
+
+**Scope**: Complete Postgres backend to match SQLite (30+ tables, FTS, connection pooling)
+
+**Task Packages**:
+
+**Task 7.1: Create storage/postgres/ Subpackage** (parallel to sqlite/)
+**Task 7.2: Implement PostgresStorage Schema** (30+ tables)
+**Task 7.3: Implement PostgresStorage Queries** (all 79 methods)
+**Task 7.4: Implement PostgresStorage Migrations**
+**Task 7.5: Implement pg_trgm Full-Text Search**
+**Task 7.6: Implement asyncpg Connection Pooling**
+**Task 7.7: Create SQLite → Postgres Migration Tool**
+**Task 7.8: Test Postgres Backend End-to-End**
+
+**(Detailed task packages omitted for brevity - similar structure to Phase 3)**
+
+**Exit Criteria**:
+- ✅ Postgres backend feature-complete
+- ✅ All 79 methods work
+- ✅ Connection pooling functional
+- ✅ pg_trgm search works
+- ✅ Migration tool works
+- ✅ All tests pass with Postgres
+
+---
+
+## Phase 8: Reminder System Wire-Up
+
+**Duration**: 3-4 days  
+**Risk Level**: Low  
+**Dependencies**: Phases 1-7 complete
+
+**Scope**: Create reminders/ subpackage, add 3 MCP tools, document
+
+**Task Packages**:
+
+**Task 8.1: Create reminders/ Subpackage**
+- **Move Files**:
+  - `utils/reminder_engine.py` → `src/scribe_mcp/reminders/engine.py`
+  - `utils/reminder_validator.py` → `src/scribe_mcp/reminders/validator.py`
+  - `utils/reminder_monitoring.py` → `src/scribe_mcp/reminders/monitoring.py`
+  - Create `src/scribe_mcp/reminders/config.py` (new)
+- **Verification**: 
+  - [ ] All imports updated
+  - [ ] Reminders still work in append_entry
+
+**Task 8.2: Create reminder_tools.py MCP Tools**
+- **New File**: `src/scribe_mcp/tools/reminder_tools.py`
+- **Tool 1**: `query_reminders(agent, filters)`
+  - Query reminder history from database
+  - Return paginated results
+- **Tool 2**: `configure_reminders(agent, project, config)`
+  - Update per-project reminder settings
+  - Store in database
+- **Tool 3**: `reset_reminder_cooldowns(agent)`
+  - Clear cooldown tracking
+  - Allow reminders to re-trigger
+- **Verification**: 
+  - [ ] All 3 tools work
+  - [ ] Tools registered in server.py
+
+**Task 8.3: Update Documentation**
+- **Files**: `CLAUDE.md`, agent prompts, skill pack
+- **Add**: Reminder tool usage examples
+- **Verification**: 
+  - [ ] Documentation complete
+  - [ ] Examples work
+
+**Exit Criteria**:
+- ✅ reminders/ subpackage created
+- ✅ 3 MCP reminder tools work
+- ✅ Documentation updated
+- ✅ All tests pass
+
+---
+
+## Phase 9: Startup Performance Optimization
+
+**Duration**: 2-3 days  
+**Risk Level**: Low  
+**Dependencies**: Phases 1-8 complete
+
+**Scope**: Lazy tool loading, deferred DB init, background cleanup
+
+**Task Packages**:
+
+**Task 9.1: Implement Lazy Tool Loading**
+**Task 9.2: Defer DB Initialization**
+**Task 9.3: Move cleanup_old_entries() to Background Task**
+**Task 9.4: Benchmark Startup Time**
+
+**(Detailed task packages omitted for brevity)**
+
+**Exit Criteria**:
+- ✅ Startup time <2 seconds (from research: ~5 seconds currently)
+- ✅ Tools load on-demand
+- ✅ DB init deferred until first use
+- ✅ All tests pass
+
+---
+
+## Phase 10: Test Suite Cleanup + Auth/Transport Scaffold
+
+**Duration**: 3-4 days  
+**Risk Level**: Low  
+**Dependencies**: Phases 1-9 complete
+
+**Scope**: Fix test fixtures, add auth/transport stubs
+
+**Task Packages**:
+
+**Task 10.1: Fix Test Fixture Cleanup**
+- **File**: `tests/conftest.py`
+- **Issue**: 97 fixtures created, only 41 cleaned up (research verified)
+- **Fix**: Add autouse fixture for tmpdir cleanup
+- **Verification**: 
+  - [ ] All fixtures cleaned up
+  - [ ] No tmp_tests/ directories created
+
+**Task 10.2: Replace Hardcoded Paths in Tests** (121 instances)
+**Task 10.3: Add Storage Unit Tests**
+**Task 10.4: Create auth/ Package with Stubs**
+**Task 10.5: Create transport/ Package with Stubs**
+
+**(Detailed task packages omitted for brevity)**
+
+**Exit Criteria**:
+- ✅ All test fixtures cleaned up
+- ✅ No hardcoded paths in tests
+- ✅ Auth/transport stubs documented
+- ✅ All tests pass
+
+---
+
+## Milestone Tracking
+
+**Phase 1**: Immediate Cleanup → **Week 1, Day 1-2**  
+**Phase 2**: Foundation (Logging + Security) → **Week 1, Day 3-5**  
+**Phase 3**: Storage Decomposition → **Week 2, Day 1-5**  
+**Phase 4**: Doc Management Decomposition → **Week 3, Day 1-5**  
+**Phase 5**: src/ Layout Migration → **Week 4, Day 1-6**  
+**Phase 6**: Database Consolidation → **Week 4, Day 7 + Week 5, Day 1**  
+**Phase 7**: Postgres Completion → **Week 5, Day 2-7**  
+**Phase 8**: Reminder Wire-Up → **Week 6, Day 1-4**  
+**Phase 9**: Startup Performance → **Week 6, Day 5-7**  
+**Phase 10**: Test Suite + Auth Scaffold → **Week 7, Day 1-4**
+
+**Total Duration**: 6-7 weeks full-time (estimated)
+
+---
+
+## Retro Notes & Adjustments
+
+**(This section will be populated during implementation with lessons learned, scope adjustments, and blockers encountered)**
+## Phase 0 — Phase 0 — Foundation
+<!-- ID: phase_0 -->
+**Objective:** Stabilize document writes and storage.
+
+**Key Tasks:**
+- Fix async bug
+- Add verification
+
+
+**Deliverables:**
+- Async atomic write
+- SQLite mirror
+
+
+**Acceptance Criteria:**
+- [ ] No silent failures (proof: tests)
+
+
+**Dependencies:** Existing storage layer
+
+**Notes:** Must complete before template overhaul.
+
+
+---## Phase 1 — Phase 1 — Templates
+<!-- ID: phase_1 -->
+**Objective:** Introduce advanced Jinja2 template system.
+
+**Key Tasks:**
+- Add inheritance
+- Add sandboxing
+
+
+**Deliverables:**
+- Base templates
+- Custom template discovery
+
+
+**Acceptance Criteria:**
+- [ ] All built-in templates render (proof: pytest)
+
+
+**Dependencies:** Phase 0
+
+**Notes:** Focus on template authoring UX.
+
+
+---
+## Milestone Tracking
+<!-- ID: milestone_tracking -->
+| Milestone | Target Date | Owner | Status | Evidence/Link |
+|-----------|-------------|-------|--------|---------------|
+| Foundation Complete | 2025-10-29 | DevTeam | 🚧 In Progress | PROGRESS_LOG.md |
+| Template Engine Ship | 2025-11-02 | DevTeam | ⏳ Planned | Phase 1 tasks |
+Update status and evidence as work progresses. Always link to PROGRESS_LOG entries or commits.
+
+
+---
+## Retro Notes & Adjustments
+<!-- ID: retro_notes -->
+- Summarise lessons learned after each phase completes.  
+- Document any scope changes or re-planning decisions here.
+
+
+---

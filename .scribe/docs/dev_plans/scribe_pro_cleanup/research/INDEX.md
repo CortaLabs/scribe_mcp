@@ -1,0 +1,26 @@
+# Research Documents Index
+
+*Last Updated: 2026-02-06 02:59:09 UTC*
+
+This directory contains research documents generated during the development process.
+
+## Available Research Documents
+
+- **[RESEARCH_CODE_QUALITY_REPO_HYGIENE_20260206](RESEARCH_CODE_QUALITY_REPO_HYGIENE_20260206.md)** - 2026-02-06 02:59 (2046 bytes)
+- **[RESEARCH_SECURITY_AUDIT_20260206_0758](RESEARCH_SECURITY_AUDIT_20260206_0758.md)** - 2026-02-06 02:58 (2040 bytes)
+- **[RESEARCH_TEST_AUDIT_20260206](RESEARCH_TEST_AUDIT_20260206.md)** - 2026-02-06 02:58 (19547 bytes)
+- **[RESEARCH_DEAD_CODE_AUDIT_20260206](RESEARCH_DEAD_CODE_AUDIT_20260206.md)** - 2026-02-06 02:58 (16325 bytes)
+- **[RESEARCH_STRUCTURE_MAP_20260206_0755](RESEARCH_STRUCTURE_MAP_20260206_0755.md)** - 2026-02-06 02:58 (26537 bytes)
+- **[RESEARCH_STARTUP_PERF_20260206_0755](RESEARCH_STARTUP_PERF_20260206_0755.md)** - 2026-02-06 02:57 (15178 bytes)
+- **[RESEARCH_DATABASE_STORAGE_AUDIT_20260206](RESEARCH_DATABASE_STORAGE_AUDIT_20260206.md)** - 2026-02-06 02:57 (16955 bytes)
+- **[RESEARCH_STDERR_AUDIT_20260206_0755](RESEARCH_STDERR_AUDIT_20260206_0755.md)** - 2026-02-06 02:57 (2038 bytes)
+
+
+## Index Information
+
+- **Total Documents:** 8
+- **Index Location:** `scribe_pro_cleanup/research/INDEX.md`
+
+---
+
+*This index is automatically updated when research documents are created or modified.*
