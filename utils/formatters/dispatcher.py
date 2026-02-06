@@ -432,4 +432,18 @@ class FormatterDispatcher:
         if context.get('search_suggestion'):
             lines.append(f"\n  Tip: {context['search_suggestion']}")
 
+        # Valid modes (for unsupported mode errors)
+        if context.get('valid_modes'):
+            lines.append(f"\n  Valid modes: {', '.join(context['valid_modes'])}")
+
+        # Mode descriptions (for unsupported mode errors)
+        if context.get('mode_descriptions'):
+            lines.append("\n  Mode reference:")
+            for mode_name, desc in context['mode_descriptions'].items():
+                lines.append(f"    • {mode_name}: {desc}")
+
+        # General suggestion (for unsupported mode errors)
+        if context.get('suggestion') and not context.get('search_suggestion'):
+            lines.append(f"\n  💡 {context['suggestion']}")
+
         return '\n'.join(lines)

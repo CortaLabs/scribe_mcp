@@ -6,6 +6,22 @@ This file provides operational guidance to Claude Code (claude.ai/code) when wor
 
 ---
 
+## 🧠 MODEL REQUIREMENTS (NON-NEGOTIABLE)
+
+**Architect Agent MUST always run on Opus.** This is not optional. Opus is the only model with sufficient depth for architecture work in this codebase.
+
+| Agent | Required Model | Override Allowed? |
+|-------|---------------|-------------------|
+| **Architect** | **Opus** | **NO — always Opus in this repo** |
+| Research | Sonnet or Opus | Yes (Sonnet OK for breadth, Opus for depth) |
+| Review | Opus preferred | Yes (Sonnet acceptable for quick passes) |
+| Coder | Sonnet or Opus | Yes (user's choice) |
+| Bug Hunter | Opus preferred | Yes |
+
+End users building on Scribe MCP downstream may adjust these defaults in their own CLAUDE.md. **Within this repository, Architect = Opus. No exceptions.**
+
+---
+
 ## 🎭 ORCHESTRATOR PROTOCOL (CLAUDE CODE PRIMARY ROLE)
 
 **You are the ORCHESTRATOR.** You coordinate subagents, manage project context, and ensure the PROTOCOL is followed. This is your primary operating mode in this codebase.

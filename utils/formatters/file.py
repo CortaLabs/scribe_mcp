@@ -17,7 +17,7 @@ class FileFormatter(BaseFormatter):
     """Formats file content, structure, and search results.
 
     Extracted from ResponseFormatter.format_readable_file_content.
-    Handles multiple modes: scan_only, chunk, page, line_range, search.
+    Handles multiple modes: scan_only, chunk, page, line_range, full, full_stream, search.
     """
 
     def __init__(self, token_warning_threshold: int = 4000):
@@ -578,6 +578,22 @@ class FileFormatter(BaseFormatter):
                         parts.append(f"    {message}")
                     parts.append("")  # Blank line between violations
 
+        # LARGE FILE WARNING (mode='full' auto-pagination)
+        large_file_warning = data.get('large_file_warning')
+        if large_file_warning:
+            parts.append("")
+            parts.append("⚠️  " + "─" * 59)
+            parts.append(f"  {large_file_warning.get('message', 'Large file detected')}")
+            parts.append("")
+            parts.append(f"  💡 {large_file_warning.get('recommendation', 'Use pagination to read more')}")
+            examples = large_file_warning.get('examples', [])
+            if examples:
+                parts.append("")
+                parts.append("  Examples:")
+                for example in examples[:3]:
+                    parts.append(f"    • {example}")
+            parts.append("⚠️  " + "─" * 59)
+
         # METADATA AT BOTTOM
         parts.append("")  # Blank line before metadata
         parts.append("─" * 63)  # Separator line
@@ -591,9 +607,25 @@ class FileFormatter(BaseFormatter):
         if 'chunks' in data and len(data['chunks']) > 1:
             metadata_lines.append(f"Chunks: {len(data['chunks'])} of {scan.get('estimated_chunk_count', '?')}")
         if data.get('page_number'):
-            metadata_lines.append(f"Page: {data['page_number']} (size: {data.get('page_size', '?')})")
+            page_info = f"Page: {data['page_number']} (size: {data.get('page_size', '?')})"
+            if data.get('total_pages'):
+                page_info += f" of {data['total_pages']} total"
+            if data.get('auto_paginated'):
+                page_info += " [auto-paginated]"
+            metadata_lines.append(page_info)
         if 'max_matches' in data:
             metadata_lines.append(f"Matches: {len(data.get('matches', []))} of {data.get('max_matches', '?')} max")
+        # Token count for full mode
+        if data.get('token_count'):
+            metadata_lines.append(f"Tokens: {data['token_count']:,}")
+        if data.get('tokens_shown'):
+            metadata_lines.append(f"Tokens shown: {data['tokens_shown']:,} of {data.get('token_limit', '?'):,} limit")
+        if data.get('auto_truncated'):
+            metadata_lines.append(f"Lines shown: {data.get('lines_shown', '?'):,} of {data.get('total_lines', '?'):,} [auto-truncated]")
+        # Full content bypass warning (web dashboard mode)
+        if data.get('full_content_warning'):
+            warning = data['full_content_warning']
+            metadata_lines.append(f"⚠️ Full content mode: {warning.get('message', 'Large file returned untruncated')}")
 
         # Add SHA256 (truncated)
         if scan.get('sha256'):
@@ -622,6 +654,18 @@ class FileFormatter(BaseFormatter):
             parts.append(f"   {adv_hint.get('message', '')}")
             if adv_hint.get('example'):
                 parts.append(f"   Example: {adv_hint['example']}")
+
+        # Add usage hint if present (mode='full' token warnings)
+        usage_hint = data.get('usage_hint')
+        if usage_hint:
+            parts.append("")
+            parts.append("💡 Usage Hint:")
+            parts.append(f"   {usage_hint.get('message', '')}")
+            if usage_hint.get('tip'):
+                parts.append(f"   Tip: {usage_hint['tip']}")
+            if usage_hint.get('alternatives'):
+                for alt in usage_hint['alternatives']:
+                    parts.append(f"   • {alt}")
 
         # Add reminders if present
         reminders = data.get('reminders', [])

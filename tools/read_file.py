@@ -39,6 +39,29 @@ _CHUNK_LINES = 200
 _CHUNK_MAX_BYTES = 131072
 _GLOB_CHARS = {"*", "?", "["}
 _DEFAULT_MAX_MATCHES = 200
+_FULL_MODE_TOKEN_LIMIT = 12000  # Max content tokens for mode='full' (formatted output ~80k chars)
+
+# Lazy-load tiktoken encoder
+_tiktoken_encoder = None
+
+def _get_tiktoken_encoder():
+    """Get or create tiktoken encoder (lazy loaded)."""
+    global _tiktoken_encoder
+    if _tiktoken_encoder is None:
+        try:
+            import tiktoken
+            _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")  # Claude's encoding
+        except ImportError:
+            return None
+    return _tiktoken_encoder
+
+def _count_tokens(text: str) -> int:
+    """Count tokens in text using tiktoken, fallback to char estimate."""
+    encoder = _get_tiktoken_encoder()
+    if encoder:
+        return len(encoder.encode(text))
+    # Fallback: ~4 chars per token
+    return len(text) // 4
 
 
 def _load_sentinel_config(repo_root: Path) -> Dict[str, Any]:
@@ -1716,6 +1739,7 @@ async def read_file(
     structure_page: int = 1,  # Phase 5: Page number for paginating structure results (methods, classes, functions)
     structure_page_size: int = 10,  # Phase 5: Items per page for structure pagination
     allow_outside_repo: bool = False,  # Allow reads outside repo_root (denylist still enforced)
+    include_full_content: bool = False,  # Bypass token limit in mode='full' (for web dashboard/API use)
 ) -> Union[Dict[str, Any], str]:
     exec_context = server_module.get_execution_context()
     if exec_context is None:
@@ -2359,4 +2383,110 @@ async def read_file(
         )
         return await finalize_response(response, "search")
 
-    return await finalize_response({"ok": False, "error": f"Unsupported read mode '{mode}'"}, mode)
+    if mode == "full":
+        line_count = scan.get("line_count", 0)
+        byte_size = scan.get("byte_size", 0)
+
+        # Read file and check token count
+        chunk = _extract_line_range(target, encoding, 1, line_count)
+        content = chunk.get("content", "")
+        token_count = _count_tokens(content)
+
+        # Bypass truncation if include_full_content=True (for web dashboard/API use)
+        if include_full_content or token_count <= _FULL_MODE_TOKEN_LIMIT:
+            # File fits within token limit OR full content explicitly requested - return full file
+            response["chunk"] = chunk
+            response["full_file"] = True
+            response["token_count"] = token_count
+            response["include_full_content"] = include_full_content  # Track if bypass was used
+            # Add warning when include_full_content bypasses normal limits
+            if include_full_content and token_count > _FULL_MODE_TOKEN_LIMIT:
+                response["full_content_warning"] = {
+                    "message": f"Returning full file ({token_count:,} tokens) - exceeds normal limit of {_FULL_MODE_TOKEN_LIMIT:,}.",
+                    "reason": "include_full_content=True requested (web dashboard/API mode)",
+                    "byte_size": byte_size,
+                    "line_count": line_count,
+                }
+            # Add usage hint for token-heavy operations
+            if token_count > 5000 and not include_full_content:
+                response["usage_hint"] = {
+                    "message": f"This response uses {token_count:,} tokens. Consider mode='scan_only' for structure, or mode='search' for specific content.",
+                    "alternatives": [
+                        "mode='scan_only' - Get file structure without content (minimal tokens)",
+                        "mode='search' - Find specific patterns (returns only matching lines)",
+                        "mode='line_range' - Read specific sections you need",
+                    ],
+                }
+            log_meta = {"read_mode": "full", "line_count": line_count, "token_count": token_count, **scan_payload}
+            if include_full_content:
+                log_meta["include_full_content"] = True
+            await log_read(
+                "read_file",
+                log_meta,
+                include_md=True,
+            )
+            return await finalize_response(response, "full")
+        else:
+            # File exceeds token limit - truncate to fit
+            # Binary search to find how many lines fit in token limit
+            low, high = 1, line_count
+            best_lines = 100  # Minimum
+            while low <= high:
+                mid = (low + high) // 2
+                test_chunk = _extract_line_range(target, encoding, 1, mid)
+                test_tokens = _count_tokens(test_chunk.get("content", ""))
+                if test_tokens <= _FULL_MODE_TOKEN_LIMIT:
+                    best_lines = mid
+                    low = mid + 1
+                else:
+                    high = mid - 1
+
+            # Read the optimal number of lines
+            chunk = _extract_line_range(target, encoding, 1, best_lines)
+            actual_tokens = _count_tokens(chunk.get("content", ""))
+
+            response["chunk"] = chunk
+            response["full_file"] = False
+            response["auto_truncated"] = True
+            response["lines_shown"] = best_lines
+            response["total_lines"] = line_count
+            response["tokens_shown"] = actual_tokens
+            response["token_limit"] = _FULL_MODE_TOKEN_LIMIT
+            response["large_file_warning"] = {
+                "message": f"File has {line_count:,} lines ({token_count:,} tokens). Showing first {best_lines:,} lines ({actual_tokens:,} tokens, limit: {_FULL_MODE_TOKEN_LIMIT:,}).",
+                "recommendation": "Use mode='line_range' to read more, or mode='search' to find specific content.",
+                "remaining_lines": line_count - best_lines,
+                "examples": [
+                    f"read_file(path='{rel_path or target}', mode='line_range', start_line={best_lines + 1}, end_line={min(best_lines + 500, line_count)})",
+                    f"read_file(path='{rel_path or target}', mode='search', search='<pattern>')",
+                    f"read_file(path='{rel_path or target}', mode='scan_only')  # Get structure without content",
+                ],
+            }
+            response["usage_hint"] = {
+                "message": f"mode='full' uses {actual_tokens:,} tokens. Consider targeted reads to save context.",
+                "tip": "Use mode='scan_only' first to see structure, then mode='line_range' for specific sections.",
+            }
+            await log_read(
+                "read_file",
+                {"read_mode": "full", "auto_truncated": True, "line_count": line_count, "lines_shown": best_lines, "tokens_shown": actual_tokens, **scan_payload},
+                include_md=True,
+            )
+            return await finalize_response(response, "full")
+
+    # Unsupported mode - provide helpful error with valid options
+    valid_modes = ["scan_only", "chunk", "line_range", "page", "full", "full_stream", "search"]
+    return await finalize_response({
+        "ok": False,
+        "error": f"Unsupported read mode '{mode}'",
+        "valid_modes": valid_modes,
+        "mode_descriptions": {
+            "scan_only": "Get file metadata and structure without content",
+            "full": "Read entire file (auto-truncates large files to ~20k tokens)",
+            "page": "Read paginated content (requires page_number)",
+            "line_range": "Read specific lines (requires start_line, end_line)",
+            "search": "Search for pattern in file (requires search parameter)",
+            "chunk": "Read specific chunks by index (requires chunk_index)",
+            "full_stream": "Stream chunks with pagination control",
+        },
+        "suggestion": f"Try mode='full' to read the file, or mode='page' with page_number=1 for pagination.",
+    }, mode)

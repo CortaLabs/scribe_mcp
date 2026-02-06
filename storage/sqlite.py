@@ -120,6 +120,20 @@ class SQLiteStorage(StorageBackend):
                     (canonical,),
                 )
 
+        # If still not found, try de-normalized form (underscores → hyphens)
+        # Handles case where input was pre-normalized but DB stores original hyphenated name
+        if not row and "_" in name:
+            denormalized = name.replace("_", "-")
+            if denormalized != name:
+                row = await self._fetchone(
+                    """
+                    SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                    FROM scribe_projects
+                    WHERE name = ?;
+                    """,
+                    (denormalized,),
+                )
+
         if not row:
             return None
         return ProjectRecord(
@@ -175,6 +189,20 @@ class SQLiteStorage(StorageBackend):
                         WHERE name = ?;
                         """,
                         (canonical,),
+                    )
+                    row = cursor.fetchone()
+
+            # If still not found, try de-normalized form (underscores → hyphens)
+            if not row and "_" in name:
+                denormalized = name.replace("_", "-")
+                if denormalized != name:
+                    cursor = conn.execute(
+                        """
+                        SELECT id, name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed
+                        FROM scribe_projects
+                        WHERE name = ?;
+                        """,
+                        (denormalized,),
                     )
                     row = cursor.fetchone()
 
