@@ -54,6 +54,12 @@ class AgentContextManager:
         Returns:
             Session ID for tracking
         """
+        # Backward compatibility: historical callsites passed metadata as the
+        # second positional argument.
+        if isinstance(session_id, dict) and metadata is None:
+            metadata = session_id
+            session_id = None
+
         # Use provided stable session if available, otherwise generate UUID
         if not session_id:
             session_id = str(uuid.uuid4())

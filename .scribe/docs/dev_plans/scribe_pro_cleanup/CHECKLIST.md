@@ -131,10 +131,10 @@ summary: ''
 <!-- ID: phase_3 -->
 
 ### P4.1 Subpackage Structure + internals.py
-- [ ] storage/sqlite/ directory exists with __init__.py <!-- ID: p4_dir -->
-- [ ] storage/sqlite/internals.py contains SQLiteInternals class <!-- ID: p4_internals -->
-- [ ] Methods extracted: _execute, _fetchall, _fetchone, setup, close (and sync variants) <!-- ID: p4_methods -->
-- [ ] `from scribe_mcp.storage.sqlite import SQLiteStorage` works <!-- ID: p4_import -->
+- [x] storage/sqlite/ directory exists with __init__.py <!-- ID: p4_dir -->
+- [x] storage/sqlite/internals.py contains SQLiteInternals class <!-- ID: p4_internals -->
+- [x] Methods extracted: _execute, _fetchall, _fetchone, setup, close (and sync variants) <!-- ID: p4_methods -->
+- [x] `from scribe_mcp.storage.sqlite import SQLiteStorage` works <!-- ID: p4_import -->
 
 ### P4.2 Extract schema.py
 - [ ] storage/sqlite/schema.py exists with all CREATE TABLE statements <!-- ID: p4_schema_file -->
