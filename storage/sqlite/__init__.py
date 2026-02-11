@@ -36,7 +36,7 @@ from .migrations import (
 from .schema import create_schema
 
 # Performance monitoring configuration (Stage 6)
-SLOW_QUERY_THRESHOLD_MS = 5.0  # Log warnings for queries slower than 5ms
+SLOW_QUERY_THRESHOLD_MS = 25.0  # Log reminder query warnings above practical async/thread overhead
 logger = logging.getLogger(__name__)
 
 

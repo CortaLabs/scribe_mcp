@@ -1152,10 +1152,10 @@ class TestImpactIntegration:
         token = server_module.router_context_manager.set_current(exec_context)
 
         try:
-            # Test on a file that's likely to have importers (storage/sqlite.py)
+            # Test on a file that's likely to have importers (storage/sqlite/__init__.py)
             result = await read_file_module.read_file(
                 agent="test_agent",
-                path="storage/sqlite.py",
+                path="storage/sqlite/__init__.py",
                 mode="scan_only",
                 include_dependencies=True,
                 include_impact=True,
@@ -1173,7 +1173,7 @@ class TestImpactIntegration:
             assert "importers" in impact
             assert "truncated" in impact
 
-            # storage/sqlite.py should have importers (used by many tools)
+            # storage/sqlite/__init__.py should have importers (used by many tools)
             # But we don't assert specific count (changes with codebase)
             assert isinstance(impact["count"], int)
             assert impact["level"] in ["low", "medium", "high"]
