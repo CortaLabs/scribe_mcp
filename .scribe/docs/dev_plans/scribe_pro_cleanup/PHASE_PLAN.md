@@ -234,8 +234,8 @@ summary: ''
 4. NEVER catch BaseException (preserves SystemExit, KeyboardInterrupt)
 
 **Verification:**
-- [ ] `grep -rn 'except:$' --include='*.py' tools/ utils/` returns 0
-- [ ] `pytest tests/` passes
+- [x] `grep -rn 'except:$' --include='*.py' tools/ utils/` returns 0
+- [x] `pytest tests/` passes
 
 ### Task Package 3.2: Preflight Backup Retention Policy
 
@@ -248,8 +248,8 @@ summary: ''
 3. Log cleanup via logger.debug()
 
 **Verification:**
-- [ ] Create 5 edits to same file, verify only 3 .bak files remain
-- [ ] `pytest tests/test_manage_docs*.py` passes
+- [x] Create 5 edits to same file, verify only 3 .bak files remain
+- [x] `pytest tests/test_manage_docs*.py` passes
 
 ### Task Package 3.3: Dead Code File Deletion (Additional)
 
@@ -265,13 +265,13 @@ summary: ''
 **Note:** utils/__init__.py re-exports from optimization.py, but search confirmed 0 external callers import these functions from utils/ or utils.optimization. The re-export exists but is never consumed.
 
 **Verification:**
-- [ ] `test -f utils/optimization.py && echo EXISTS || echo GONE` returns GONE
-- [ ] `grep -rn 'optimization' --include='*.py' utils/__init__.py` returns 0 (import removed)
-- [ ] `pytest tests/` passes
+- [x] `test -f utils/optimization.py && echo EXISTS || echo GONE` returns GONE
+- [x] `grep -rn 'optimization' --include='*.py' utils/__init__.py` returns 0 (import removed)
+- [x] `pytest tests/` passes
 
 **Exit Criteria:** Zero bare except clauses. Preflight backups bounded. Dead code optimization.py deleted.
 
-**Execution Status (2026-02-11):** Core Phase 3 objectives implemented and verified in targeted suites (`manage_docs`, `format_fixes`, `read_search_error_integration`, `vector_integration` batch green). Full `pytest` still reports unrelated legacy failures outside Phase 3 scope; those are tracked as follow-on stabilization work.
+**Execution Status (2026-02-11):** Phase 3 completed. Fail-hard and DB-first compatibility work closed the remaining regressions, and full validation now passes: `pytest tests/` => 1804 passed, 22 skipped, 7 deselected.
 
 ---
 ## Phase 4 -- Storage Layer Decomposition

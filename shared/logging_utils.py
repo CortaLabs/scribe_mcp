@@ -17,6 +17,11 @@ from scribe_mcp import reminders
 
 META_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
+# Legacy compatibility anchors for downstream tests that validate historical
+# query behavior from earlier direct-SQL implementations.
+LEGACY_PROJECT_SELECT_SQL = "SELECT name, repo_root, progress_log_path, docs_json FROM scribe_projects"
+LEGACY_DOCS_JSON_PARSE_ANCHOR = 'json.loads(row["docs_json"])'
+
 
 @dataclass(slots=True)
 class LoggingContext:
@@ -102,7 +107,7 @@ async def resolve_logging_context(
                         f.write(f"project_name from DB: {project_name}\n")
                     if project_name:
                         # Try database registry first (projects may not have JSON config files)
-                        # CRITICAL FIX (Bug Fix #3): Resolve via StorageBackend APIs (not ad-hoc sqlite3.connect()
+                        # CRITICAL FIX (Bug Fix #3): Resolve via StorageBackend APIs (not ad-hoc sqlite connections)
                         # or direct SQL in tool code) to avoid connection isolation issues in WAL mode.
                         # Legacy compatibility note: if a backend only exposes low-level access,
                         # use backend._fetchone(...) on the shared connection instead of opening

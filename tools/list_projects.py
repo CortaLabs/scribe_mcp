@@ -638,26 +638,12 @@ async def list_projects(
             "pg": compact_pagination
         }
 
-    # PHASE 3: Structured mode optimization - remove unnecessary fields
     if format == "structured":
-        # Keep only essential fields per spec
-        structured_projects = []
-        for project in formatted_projects:
-            structured_proj = {
-                "name": project.get("name"),
-                "status": project.get("status"),
-                "entries": project.get("entry_count", project.get("total_entries", 0))
-            }
-            # Only include last_entry_at if it exists
-            if project.get("last_entry_at"):
-                structured_proj["last_entry_at"] = project["last_entry_at"]
-            structured_projects.append(structured_proj)
-
-        # Return optimized response while preserving legacy field names.
-        return {
+        summary_stats = _compute_summary_stats(formatted_projects)
+        response = {
             "ok": True,
-            "projects": structured_projects,
-            "count": len(structured_projects),
+            "projects": formatted_projects,
+            "count": len(formatted_projects),
             "total": total_available,
             "pagination": {
                 "page": pagination_info["page"],
@@ -666,7 +652,15 @@ async def list_projects(
                 "has_next": pagination_info.get("has_next", False),
                 "has_prev": pagination_info.get("has_prev", False),
             },
+            "summary": summary_stats,
+            "recent_projects": list(recent),
+            "active_project": (
+                current_name
+                if current_name
+                else (context.project.get("name") if context.project else None)
+            ),
         }
+        return _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
 
     # Legacy fallback for backward compatibility (compact parameter, not format)
     token_check = context_manager.token_guard.check_limits(

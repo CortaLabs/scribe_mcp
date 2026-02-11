@@ -44,8 +44,8 @@ _PROJECT_REGISTRY = ProjectRegistry()
 
 @app.tool()
 async def generate_doc_templates(
-    agent: str,
-    project_name: str,
+    agent: str = "Codex",
+    project_name: str = "",
     author: str | None = None,
     overwrite: bool = False,
     force: bool = False,
@@ -64,6 +64,14 @@ async def generate_doc_templates(
     - Use documents=[...] to regenerate a single doc instead of all.
     """
     state_snapshot = await server_module.state_manager.record_tool("generate_doc_templates")
+    if not project_name:
+        return {
+            "ok": False,
+            "error": "project_name is required",
+            "generated": [],
+            "created": [],
+            "warnings": [],
+        }
     try:
         logging_context = await _GENERATE_DOC_TEMPLATES_HELPER.prepare_context(
             tool_name="generate_doc_templates",

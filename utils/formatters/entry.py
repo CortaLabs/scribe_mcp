@@ -546,12 +546,16 @@ class EntryFormatter(BaseFormatter):
                     ]
                     metadata_str = '; '.join(filtered_pairs) if filtered_pairs else ""
 
-            # Line 2: compact line with emoji + message
-            compact_line = self._extract_compact_log_line(written_line) if written_line else ""
-            if compact_line:
+            # Line 2: compact line with emoji + message + filtered metadata
+            if message:
+                compact_line = f"[{emoji_symbol}] {message}"
+                if metadata_str:
+                    compact_line += f" | {metadata_str}"
                 parts.append(compact_line)
-            elif message:
-                parts.append(f"[{emoji_symbol}] {message}")
+            else:
+                compact_line = self._extract_compact_log_line(written_line) if written_line else ""
+                if compact_line:
+                    parts.append(compact_line)
 
             # Line 2: Compact metadata line with timestamp, agent, and custom metadata
             # Only show if there's custom metadata or reasoning block

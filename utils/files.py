@@ -439,6 +439,40 @@ def preflight_backup(
 
     shutil.copy2(file_path, backup_path)
 
+    # Compatibility mirror: keep sibling backups only for core plan docs.
+    # Research and nested artifacts must remain clean (no local .bak files).
+    core_plan_docs = {
+        "ARCHITECTURE_GUIDE.md",
+        "PHASE_PLAN.md",
+        "CHECKLIST.md",
+        "PROGRESS_LOG.md",
+        "BUG_LOG.md",
+        "SECURITY_LOG.md",
+        "DOC_UPDATES.md",
+    }
+    if file_path.name in core_plan_docs:
+        legacy_backup_path = file_path.parent / f"{file_path.stem}.preflight-{timestamp}.bak"
+        if legacy_backup_path != backup_path:
+            try:
+                shutil.copy2(file_path, legacy_backup_path)
+                legacy_backups = sorted(
+                    file_path.parent.glob(f"{file_path.stem}.preflight-*.bak"),
+                    key=lambda candidate: candidate.name,
+                    reverse=True,
+                )
+                for stale_backup in legacy_backups[3:]:
+                    try:
+                        stale_backup.unlink()
+                        logger.debug("Pruned stale legacy preflight backup: %s", stale_backup)
+                    except OSError as exc:
+                        logger.warning(
+                            "Failed to prune stale legacy preflight backup %s: %s",
+                            stale_backup,
+                            exc,
+                        )
+            except OSError as exc:
+                logger.warning("Failed to write legacy preflight backup %s: %s", legacy_backup_path, exc)
+
     # Enforce retention: keep only the 3 most recent preflight backups per source file.
     backups_for_file = sorted(
         backup_dir.glob(f"{backup_name}.preflight-*.bak"),

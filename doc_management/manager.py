@@ -565,14 +565,7 @@ async def apply_doc_change(
 
         if not dry_run:
             try:
-                doc_snapshots_enabled = True
-                try:
-                    repo_config = RepoDiscovery.load_config(repo_root)
-                    doc_snapshots_enabled = bool(getattr(repo_config, "doc_snapshots", True))
-                except Exception:
-                    doc_snapshots_enabled = True
-
-                if doc_path.exists() and doc_snapshots_enabled:
+                if doc_path.exists():
                     try:
                         backup_path = await asyncio.to_thread(
                             preflight_backup,
@@ -1715,6 +1708,13 @@ def _apply_unified_patch_smart(
         if actual_pos is None:
             # Context not found anywhere
             context_preview = context_lines[:3] if context_lines else ["<no context>"]
+            delete_lines = [line[1:] for line in hunk_lines if line.startswith("-")]
+            if delete_lines:
+                raise DocumentOperationError(
+                    f"PATCH_DELETE_MISMATCH: hunk {hunks_applied + 1} delete lines not found in document "
+                    f"context (PATCH_CONTEXT_NOT_FOUND). Expected at line {hunk_old_start}. "
+                    f"Delete starts with: {delete_lines[:3]}"
+                )
             raise DocumentOperationError(
                 f"PATCH_CONTEXT_NOT_FOUND: hunk {hunks_applied + 1} context not found in document. "
                 f"Expected at line {hunk_old_start}, searched entire file. "
@@ -2602,10 +2602,10 @@ def _validate_crosslinks(
 
 
 def _validate_and_correct_inputs(
-    doc_name: str,
-    action: str,
-    section: Optional[str],
-    content: Optional[str],
+    doc_name: Optional[str] = None,
+    action: str = "append",
+    section: Optional[str] = None,
+    content: Optional[str] = None,
     patch: Optional[str] = None,
     patch_source_hash: Optional[str] = None,
     edit: Optional[Dict[str, Any]] = None,
@@ -2613,6 +2613,7 @@ def _validate_and_correct_inputs(
     end_line: Optional[int] = None,
     template: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    doc: Optional[str] = None,
 ) -> tuple[str, str, Optional[str], Optional[str], Optional[str], Dict[str, Any]]:
     """
     Bulletproof parameter validation and correction that NEVER fails.
@@ -2657,8 +2658,10 @@ def _validate_and_correct_inputs(
     }
 
     # Apply bulletproof parameter correction
+    provided_doc_name = doc_name or doc or ""
+
     input_params = {
-        "doc_name": doc_name,
+        "doc_name": provided_doc_name,
         "action": action,
         "section": section,
         "content": content,
@@ -2688,8 +2691,8 @@ def _validate_and_correct_inputs(
         "validate_crosslinks",
         "create_doc",
     }
-    if action in strict_doc_actions and doc_name is not None:
-        corrected_doc_name = str(doc_name).strip()
+    if action in strict_doc_actions and provided_doc_name:
+        corrected_doc_name = str(provided_doc_name).strip()
     if corrected_action == "list_sections":
         return corrected_doc_name, corrected_action, None, None, None, {}
 

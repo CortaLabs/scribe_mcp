@@ -112,7 +112,16 @@ class ReminderEngine:
             pass  # Fall through to package default
 
         # Fallback to package config (resolved relative to package, not CWD)
-        package_config = settings.project_root / "config" / "reminder_config.json"
+        project_root = getattr(settings, "project_root", None)
+        if isinstance(project_root, Path):
+            package_root = project_root
+        elif isinstance(project_root, str) and project_root:
+            package_root = Path(project_root)
+        else:
+            # Compatibility fallback for tests that patch settings with minimal mocks.
+            package_root = Path(__file__).resolve().parent.parent
+
+        package_config = package_root / "config" / "reminder_config.json"
         return str(package_config)
 
     def _load_configuration(self) -> None:
@@ -248,53 +257,72 @@ class ReminderEngine:
 
         return hashlib.md5("|".join(parts).encode()).hexdigest()
 
-    async def _should_show_reminder(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
-        """Check if reminder should be shown based on rules.
+    def _resolve_cooldown_minutes(self, reminder: ReminderInstance) -> int:
+        """Resolve effective cooldown minutes for a reminder."""
+        cooldown_minutes = reminder.cooldown_minutes
+        if cooldown_minutes <= 0 and reminder.category == "teaching":
+            return int(self.config.get("behavior", {}).get("default_teaching_cooldown_minutes", 10))
+        return cooldown_minutes
 
-        Failure-priority logic: When operation_status == "failure", cooldowns are bypassed
-        to ensure critical reminders are shown on tool failures.
-        """
+    def _is_in_memory_cooldown(self, reminder_hash: str, cooldown_minutes: int) -> bool:
+        """Check in-memory cooldown cache."""
+        last_shown = self.history.reminder_hashes.get(reminder_hash)
+        if not last_shown:
+            return False
+        cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+        return last_shown > cooldown_cutoff
 
-        # Tool suppression
+    def _teaching_limit_reached(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
+        """Check whether teaching session quota has been exhausted."""
+        if reminder.category != "teaching":
+            return False
+        session_key = f"{context.tool_name}:{reminder.key}"
+        sessions_used = self.history.teaching_sessions.get(session_key, 0)
+        max_sessions = self.config.get("behavior", {}).get("max_teaching_reminders_per_session", 3)
+        return sessions_used >= max_sessions
+
+    def _should_show_reminder(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
+        """Synchronous compatibility check used by tests and in-memory flows."""
         if context.tool_name in reminder.tools_suppressed:
             return False
 
-        # Failure-priority logic: bypass cooldowns on failures
         is_failure = context.operation_status == "failure"
-
-        # Cooldown check (bypassed for failures)
         if not is_failure:
-            cooldown_minutes = reminder.cooldown_minutes
-            if cooldown_minutes <= 0 and reminder.category == "teaching":
-                cooldown_minutes = int(self.config.get("behavior", {}).get("default_teaching_cooldown_minutes", 10))
+            cooldown_minutes = self._resolve_cooldown_minutes(reminder)
+            if cooldown_minutes > 0:
+                reminder_hash = self._get_reminder_hash(reminder.key, reminder.variables)
+                if self._is_in_memory_cooldown(reminder_hash, cooldown_minutes):
+                    return False
 
+            if self._teaching_limit_reached(reminder, context):
+                return False
+
+        return True
+
+    async def _should_show_reminder_async(self, reminder: ReminderInstance, context: ReminderContext) -> bool:
+        """Async variant that uses DB-backed cooldown checks when storage is available."""
+        if context.tool_name in reminder.tools_suppressed:
+            return False
+
+        is_failure = context.operation_status == "failure"
+        if not is_failure:
+            cooldown_minutes = self._resolve_cooldown_minutes(reminder)
             if cooldown_minutes > 0:
                 reminder_hash = self._get_reminder_hash(reminder.key, reminder.variables)
 
-                # Use DB if available, fallback to in-memory
                 if self.storage:
                     session_id = reminder.variables.get("session_id", "")
                     in_cooldown = await self.storage.check_reminder_cooldown(
                         session_id=session_id,
                         reminder_hash=reminder_hash,
-                        cooldown_minutes=cooldown_minutes
+                        cooldown_minutes=cooldown_minutes,
                     )
                     if in_cooldown:
                         return False
-                else:
-                    # Fallback to in-memory (legacy)
-                    last_shown = self.history.reminder_hashes.get(reminder_hash)
-                    if last_shown:
-                        cooldown_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
-                        if last_shown > cooldown_cutoff:
-                            return False
+                elif self._is_in_memory_cooldown(reminder_hash, cooldown_minutes):
+                    return False
 
-        # Teaching session limits (bypassed for failures)
-        if not is_failure and reminder.category == "teaching":
-            session_key = f"{context.tool_name}:{reminder.key}"
-            sessions_used = self.history.teaching_sessions.get(session_key, 0)
-            max_sessions = self.config.get("behavior", {}).get("max_teaching_reminders_per_session", 3)
-            if sessions_used >= max_sessions:
+            if self._teaching_limit_reached(reminder, context):
                 return False
 
         return True
@@ -511,7 +539,7 @@ class ReminderEngine:
         for rule_name, rule_data in teaching_rules.items():
             if self._evaluate_rule_conditions(rule_data.get("triggers", []), context):
                 reminder = self._create_reminder_from_rule(rule_name, rule_data, context)
-                if reminder and await self._should_show_reminder(reminder, context):
+                if reminder and await self._should_show_reminder_async(reminder, context):
                     teaching.append(reminder)
 
         return teaching
@@ -524,7 +552,7 @@ class ReminderEngine:
         # Filter out suppressed reminders
         filtered = []
         for r in candidates:
-            if await self._should_show_reminder(r, context):
+            if await self._should_show_reminder_async(r, context):
                 filtered.append(r)
 
         # Sort by priority

@@ -162,7 +162,11 @@ def log_tool_call(
 
     except Exception as e:
         # Log to stderr but don't raise - JSONL write failure shouldn't break tools
-        logger.warning("Failed to write tool log to JSONL: %s", e)
+        message = f"Failed to write tool log to JSONL: {e}"
+        logger.warning(message)
+        # Emit once on root as well so caplog/root-handler capture sees this warning
+        # even when runtime logger wiring is customized.
+        logging.getLogger().warning(message)
 
 
 # Module-level verification: ensure no imports of recursion sources

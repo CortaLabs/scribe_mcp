@@ -93,6 +93,11 @@ class FileFormatter(BaseFormatter):
 
         # Build readable output
         parts = []
+        # Legacy compatibility header expected by downstream tests/consumers.
+        parts.append(f"READ FILE {filename}")
+        if line_range:
+            parts.append(f"Lines read: {line_range}")
+        parts.append("")
         header_meta = {
             "path": path,
             "mode": mode,

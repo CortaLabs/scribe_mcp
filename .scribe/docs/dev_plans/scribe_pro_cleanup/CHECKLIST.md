@@ -108,7 +108,7 @@ summary: ''
 - [x] Zero bare except in production: `grep -rn 'except:$' --include='*.py' tools/ utils/ storage/ shared/ config/ | wc -l` returns 0 <!-- ID: p3_bare_all -->
 - [x] All 14 bare except clauses replaced with specific exception types <!-- ID: p3_bare_count -->
 - [x] Each replaced clause includes `logger.error("...", exc_info=True)` <!-- ID: p3_bare_logging -->
-- [ ] Test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p3_bare_tests -->
+- [x] Test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p3_bare_tests -->
 
 ### P3.2 Preflight Backup Retention Policy
 - [x] 3-backup retention limit implemented in centralized preflight backup helper <!-- ID: p3_retention_impl -->
@@ -119,7 +119,7 @@ summary: ''
 ### P3.3 Dead Code File Deletion (Additional -- review fix #5)
 - [x] utils/optimization.py deleted: `test -f utils/optimization.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p3_optimization_deleted -->
 - [x] utils/__init__.py import removed: `grep -n 'optimization' utils/__init__.py` returns 0 <!-- ID: p3_optimization_import -->
-- [ ] No runtime breakage: `pytest tests/` passes <!-- ID: p3_optimization_tests -->
+- [x] No runtime breakage: `pytest tests/` passes <!-- ID: p3_optimization_tests -->
 
 ### P3 Exit Gate
 - [x] Zero bare except in production code <!-- ID: p3_exit_bare -->
@@ -524,7 +524,7 @@ Maps to 9 success criteria from ARCHITECTURE_GUIDE.md Section 1.
 - [x] P3 Retention Test | proof=manage_docs patch/create/structured suites green in Phase 3 verification batch
 
 <!-- ID: p3_bare_tests -->
-- [ ] P3 Bare Tests | blocker=Global suite still has 55 fails + 1 error outside Phase 3 scope clusters
+- [x] P3 Bare Tests | proof=2026-02-11 full `pytest tests/` run green (1804 passed, 22 skipped, 7 deselected)
 
 <!-- ID: p3_optimization_tests -->
-- [ ] P3 Optimization Tests | blocker=Global suite still has unresolved non-P3 regressions
+- [x] P3 Optimization Tests | proof=post-optimization full-suite verification passed with no runtime regressions
