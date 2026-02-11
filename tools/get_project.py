@@ -429,7 +429,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         if not project_data and context.project and context.project.get("name") == project:
             project_data = context.project
         if not project_data:
-            config_project = load_project_config(project)
+            config_project = load_project_config(project, allow_fallback=False)
             if config_project:
                 project_data = config_project
         if not project_data:

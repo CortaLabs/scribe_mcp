@@ -187,7 +187,7 @@ async def test_resolve_logging_context_with_agent(monkeypatch: pytest.MonkeyPatc
     async def fake_load_active_project(state_manager):
         return (None, None, ())
 
-    def fake_load_project_config(name):
+    def fake_load_project_config(name, allow_fallback=True):
         return None
 
     project_module.load_active_project = fake_load_active_project  # type: ignore[attr-defined]
@@ -227,7 +227,7 @@ async def test_resolve_logging_context_requires_project(monkeypatch: pytest.Monk
 
     project_module = types.ModuleType("scribe_mcp.tools.project_utils")
     project_module.load_active_project = no_project  # type: ignore[attr-defined]
-    project_module.load_project_config = lambda name: None  # type: ignore[attr-defined]
+    project_module.load_project_config = lambda name, allow_fallback=True: None  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "scribe_mcp.tools.project_utils", project_module)
 
     monkeypatch.setattr("scribe_mcp.shared.logging_utils.reminders.get_reminders", lambda *args, **kwargs: asyncio.sleep(0.0, result=[]))
@@ -289,3 +289,63 @@ async def test_resolve_logging_context_explicit_project_uses_storage_backend() -
     assert context.project["root"] == "/tmp/council_mcp_v2"
     assert context.project["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"
     assert context.project["docs"]["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"
+
+
+@pytest.mark.asyncio
+async def test_resolve_logging_context_explicit_project_missing_fails_hard(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DummyState:
+        current_project = None
+        recent_projects = ["scribe_pro_cleanup", "scribe_mcp"]
+
+        def get_session_project(self, session_key: Optional[str]) -> Optional[Dict[str, Any]]:
+            return None
+
+    class DummyStateManager:
+        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
+            return {"tool": tool_name}
+
+        async def load(self) -> Any:
+            return DummyState()
+
+    class DummyBackend:
+        async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+            return None
+
+        async def list_projects(self):
+            return []
+
+    class DummyServerModule:
+        state_manager = DummyStateManager()
+        storage_backend = DummyBackend()
+
+        @staticmethod
+        def get_execution_context() -> Any:
+            return SimpleNamespace(mode="project", stable_session_id="session-1")
+
+    observed_allow_fallback: List[bool] = []
+
+    project_module = types.ModuleType("scribe_mcp.tools.project_utils")
+
+    async def fake_load_active_project(state_manager):
+        return (None, None, ())
+
+    def fake_load_project_config(name, allow_fallback=True):
+        observed_allow_fallback.append(bool(allow_fallback))
+        if allow_fallback:
+            return {"name": "scribe_mcp", "progress_log": "/tmp/scribe_mcp/PROGRESS_LOG.md"}
+        return None
+
+    project_module.load_active_project = fake_load_active_project  # type: ignore[attr-defined]
+    project_module.load_project_config = fake_load_project_config  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "scribe_mcp.tools.project_utils", project_module)
+
+    with pytest.raises(ProjectResolutionError, match="Explicit project 'missing_project' was not found"):
+        await resolve_logging_context(
+            tool_name="read_recent",
+            server_module=DummyServerModule(),
+            explicit_project="missing_project",
+            require_project=True,
+        )
+
+    assert observed_allow_fallback
+    assert all(flag is False for flag in observed_allow_fallback)

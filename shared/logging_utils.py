@@ -14,6 +14,7 @@ from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 from collections.abc import Mapping
 
 from scribe_mcp import reminders
+from scribe_mcp.utils.slug import normalize_project_input
 
 META_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
@@ -78,6 +79,8 @@ async def resolve_logging_context(
 
     project: Optional[Dict[str, Any]] = None
     recent_projects: List[str] = []
+    explicit_requested = bool(explicit_project and str(explicit_project).strip())
+    explicit_not_found = False
     exec_context = None
     if hasattr(server_module, "get_execution_context"):
         try:
@@ -137,7 +140,7 @@ async def resolve_logging_context(
                                 # Fallback to JSON config files for legacy projects
                                 from scribe_mcp.tools.project_utils import load_project_config
 
-                                session_project = load_project_config(project_name)
+                                session_project = load_project_config(project_name, allow_fallback=False)
                                 with open(debug_log, "a") as f:
                                     f.write(
                                         f"session_project from config: {session_project.get('name') if session_project else None}\n"
@@ -147,7 +150,7 @@ async def resolve_logging_context(
                                 f.write(f"ERROR resolving session project: {e}\n")
                             # Fallback to JSON config on error
                             from scribe_mcp.tools.project_utils import load_project_config
-                            session_project = load_project_config(project_name)
+                            session_project = load_project_config(project_name, allow_fallback=False)
             if not session_project:
                 state = await server_module.state_manager.load()
                 # Prefer stable_session_id for deterministic project resolution
@@ -180,14 +183,39 @@ async def resolve_logging_context(
 
     # EXPLICIT PROJECT OVERRIDE: If caller specifies a project, use it (cross-project support).
     # This takes precedence over session project to enable agents targeting other projects.
-    if explicit_project:
+    if explicit_requested:
+        explicit_name = str(explicit_project).strip()
+        explicit_alias = normalize_project_input(explicit_name)
+        explicit_candidates = [explicit_name]
+        if explicit_alias and explicit_alias not in explicit_candidates:
+            explicit_candidates.append(explicit_alias)
+
         backend = getattr(server_module, "storage_backend", None)
         record = None
         if backend and hasattr(backend, "fetch_project"):
-            try:
-                record = await backend.fetch_project(explicit_project)
-            except Exception:
-                record = None
+            for candidate in explicit_candidates:
+                try:
+                    record = await backend.fetch_project(candidate)
+                except Exception:
+                    record = None
+                if record:
+                    break
+
+            # Fallback: resolve aliases by normalized slug against DB names.
+            if (
+                not record
+                and explicit_alias
+                and hasattr(backend, "list_projects")
+            ):
+                try:
+                    records = await backend.list_projects()
+                    for candidate_record in records:
+                        candidate_name = getattr(candidate_record, "name", "")
+                        if normalize_project_input(candidate_name) == explicit_alias:
+                            record = candidate_record
+                            break
+                except Exception:
+                    record = None
 
         if record:
             project = {
@@ -204,11 +232,38 @@ async def resolve_logging_context(
         else:
             from scribe_mcp.tools.project_utils import load_project_config  # Lazy import.
 
-            explicit_resolved = load_project_config(explicit_project)
+            explicit_resolved = load_project_config(explicit_name, allow_fallback=False)
+            if not explicit_resolved and explicit_alias and explicit_alias != explicit_name:
+                explicit_resolved = load_project_config(explicit_alias, allow_fallback=False)
             if explicit_resolved:
                 project = explicit_resolved
                 recent_projects = [project["name"]]
-            # If explicit project not found, fall through to other resolution methods
+            else:
+                explicit_not_found = True
+
+    # Fail hard on unresolved explicit project requests. Never silently fall back
+    # to unrelated global/legacy project context.
+    if explicit_requested and explicit_not_found:
+        if not recent_projects:
+            try:
+                state = await server_module.state_manager.load()
+                recent_projects = list(state.recent_projects)[:10]
+            except Exception:
+                recent_projects = []
+
+        if require_project:
+            raise ProjectResolutionError(
+                f"Explicit project '{explicit_project}' was not found. Invoke set_project or pass a valid project name.",
+                recent_projects,
+            )
+        return LoggingContext(
+            tool_name=tool_name,
+            project=None,
+            recent_projects=recent_projects,
+            state_snapshot=state_snapshot,
+            reminders=[],
+            agent_id=agent_id,
+        )
 
     # Primary path: agent-specific context if an agent_id is available.
     if agent_id and not project:

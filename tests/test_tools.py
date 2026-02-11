@@ -613,7 +613,7 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
         monkeypatch.delenv("SCRIBE_DEFAULT_PROJECT", raising=False)
 
         # Mock load_project_config to return None (no project configuration found)
-        def mock_load_project_config(project_name=None):
+        def mock_load_project_config(project_name=None, allow_fallback=True):
             return None
 
         monkeypatch.setattr(project_utils, "load_project_config", mock_load_project_config)

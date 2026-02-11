@@ -173,7 +173,7 @@ async def _project_from_state_or_config(project_name: str) -> Optional[Dict[str,
     except Exception:
         pass
 
-    config_project = load_project_config(project_name)
+    config_project = load_project_config(project_name, allow_fallback=False)
     if config_project:
         return dict(config_project)
     return None

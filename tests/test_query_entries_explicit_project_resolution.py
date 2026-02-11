@@ -24,7 +24,11 @@ async def test_query_entries_passes_explicit_project_to_context(monkeypatch: pyt
 
     async def fake_resolve_logging_context(*, explicit_project: Optional[str] = None, **_kwargs: Any) -> Any:
         captured["explicit_project"] = explicit_project
-        return SimpleNamespace(project=None, recent_projects=[], reminders=[])
+        return SimpleNamespace(
+            project={"name": "council_mcp_v2", "progress_log": "/tmp/council_mcp_v2/PROGRESS_LOG.md"},
+            recent_projects=[],
+            reminders=[],
+        )
 
     async def fake_execute_search_with_fallbacks(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
         return {
@@ -47,4 +51,35 @@ async def test_query_entries_passes_explicit_project_to_context(monkeypatch: pyt
 
     assert captured["explicit_project"] == "council_mcp_v2"
     assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_query_entries_fails_hard_for_missing_explicit_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DummyStateManager:
+        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
+            return {"tool": tool_name}
+
+    monkeypatch.setattr(
+        query_entries_tool,
+        "server_module",
+        SimpleNamespace(state_manager=DummyStateManager()),
+    )
+
+    async def fake_resolve_logging_context(*, explicit_project: Optional[str] = None, **_kwargs: Any) -> Any:
+        return SimpleNamespace(project=None, recent_projects=["scribe_pro_cleanup"], reminders=[])
+
+    async def fail_if_called(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
+        raise AssertionError("_execute_search_with_fallbacks should not run when explicit project is missing")
+
+    monkeypatch.setattr(query_entries_tool, "resolve_logging_context", fake_resolve_logging_context)
+    monkeypatch.setattr(query_entries_tool, "_execute_search_with_fallbacks", fail_if_called)
+
+    result = await query_entries_tool.query_entries(
+        project="missing_project_name",
+        format="structured",
+    )
+
+    assert result["ok"] is False
+    assert "missing_project_name" in result["error"]
+    assert result["search_params"]["project"] == "missing_project_name"
 

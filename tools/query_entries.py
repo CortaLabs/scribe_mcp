@@ -759,7 +759,7 @@ async def _execute_search_with_fallbacks(
                 fallback_project = None
                 if resolved_project and resolved_project != "default":
                     try:
-                        fallback_project = load_project_config(resolved_project)
+                        fallback_project = load_project_config(resolved_project, allow_fallback=False)
                     except Exception:
                         fallback_project = None
 
@@ -1298,6 +1298,27 @@ async def query_entries(
 
         project = context.project or {}
 
+        explicit_project_requested = bool(final_config.project and str(final_config.project).strip())
+        if explicit_project_requested and not context.project:
+            return {
+                "ok": False,
+                "error": f"Explicit project '{final_config.project}' was not found. Invoke set_project or pass a valid project name.",
+                "search_params": {
+                    "project": final_config.project,
+                    "search_scope": final_config.search_scope,
+                },
+                "entries": [],
+                "pagination": {
+                    "page": final_config.page,
+                    "page_size": final_config.page_size,
+                    "total_count": 0,
+                    "has_next": False,
+                    "has_prev": False,
+                },
+                "recent_projects": getattr(context, "recent_projects", []),
+                "reminders": getattr(context, "reminders", []),
+            }
+
         # === ENHANCED SEARCH QUERY BUILDING ===
         search_query = _build_search_query(final_config, context, project)
 
@@ -1433,7 +1454,7 @@ async def _resolve_cross_project_projects(
             if project_dict:
                 # If project data is incomplete, load from config
                 if not project_dict.get("progress_log"):
-                    fallback_project = load_project_config(project_name)
+                    fallback_project = load_project_config(project_name, allow_fallback=False)
                     if fallback_project:
                         project_dict = fallback_project
                         project_dict["name"] = project_name
@@ -1464,7 +1485,7 @@ async def _resolve_cross_project_projects(
             if project_dict:
                 # If project data is incomplete, load from config
                 if not project_dict.get("progress_log"):
-                    fallback_project = load_project_config(project_name)
+                    fallback_project = load_project_config(project_name, allow_fallback=False)
                     if fallback_project:
                         project_dict = fallback_project
                         project_dict["name"] = project_name

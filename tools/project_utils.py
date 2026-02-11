@@ -81,11 +81,20 @@ def _is_temp_project(project_path: Path) -> bool:
     return False
 
 
-def load_project_config(project_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def load_project_config(
+    project_name: Optional[str] = None,
+    *,
+    allow_fallback: bool = True,
+) -> Optional[Dict[str, Any]]:
     if project_name:
         project = _load_project_file(PROJECTS_DIR / f"{normalize_project_input(project_name) or project_name}.json")
         if project:
             return dict(project)
+        if not allow_fallback:
+            return None
+
+    if not allow_fallback:
+        return None
 
     env_project = os.environ.get("SCRIBE_DEFAULT_PROJECT")
     if env_project and env_project != project_name:
