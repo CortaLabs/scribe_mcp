@@ -54,6 +54,7 @@ def _load_vector_deps() -> bool:
 
 from scribe_mcp.plugins.registry import HookPlugin
 from scribe_mcp.config.repo_config import RepoConfig
+from scribe_mcp.config.settings import settings
 from scribe_mcp.config.vector_config import load_vector_config
 from scribe_mcp.storage.models import VectorShardMetadata
 from scribe_mcp.utils.time import utcnow

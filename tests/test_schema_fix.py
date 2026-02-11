@@ -78,8 +78,8 @@ def _build_schema_from_signature(func) -> Dict[str, Any]:
     }
 
 
-# Test function signatures
-async def test_manage_docs(
+# Test function signature fixture (helper only; not a pytest test)
+async def _manage_docs_signature_stub(
     action: str,
     doc: str,
     section: Optional[str] = None,
@@ -98,7 +98,7 @@ def main():
     print("=" * 60)
 
     # Test manage_docs schema
-    schema = _build_schema_from_signature(test_manage_docs)
+    schema = _build_schema_from_signature(_manage_docs_signature_stub)
 
     print("\n1. Generated Schema Properties:")
     print("-" * 60)

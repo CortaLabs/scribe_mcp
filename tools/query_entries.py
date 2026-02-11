@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -49,6 +50,8 @@ _PAGINATION_CALCULATOR = PaginationCalculator()
 _PARAMETER_CORRECTOR = BulletproofParameterCorrector()
 _EXCEPTION_HEALER = ExceptionHealer()
 _FALLBACK_MANAGER = BulletproofFallbackManager()
+
+logger = logging.getLogger(__name__)
 
 
 class _QueryEntriesHelper(LoggingToolMixin):
@@ -1142,7 +1145,7 @@ async def _execute_search_with_fallbacks(
 
 @app.tool()
 async def query_entries(
-    agent: str,
+    agent: str = "Codex",
     project: Optional[str] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
@@ -1168,7 +1171,7 @@ async def query_entries(
     relevance_threshold: float = 0.0,  # 0.0-1.0 relevance scoring threshold
     max_results: Optional[int] = None,  # Override for limit (deprecated but kept for compatibility)
     config: Optional[QueryEntriesConfig] = None,  # Configuration object for dual parameter support
-    format: str = "readable",  # Output format: readable (default), structured, compact
+    format: str = "structured",  # Output format: readable, structured (default), compact
     # Phase 5 Priority/Category Filter Parameters
     priority: Optional[List[str]] = None,  # Filter by priority levels (e.g., ["critical", "high"])
     category: Optional[List[str]] = None,  # Filter by categories (e.g., ["bug", "security"])
@@ -2117,8 +2120,12 @@ def _calculate_basic_relevance(results: List[Dict[str, Any]], query_message: Opt
                         score += 0.5
                     elif days_ago <= 30:
                         score += 0.25
-            except:
-                pass
+            except (TypeError, ValueError) as exc:
+                logger.debug(
+                    "Skipping recency boost for malformed timestamp '%s': %s",
+                    timestamp,
+                    exc,
+                )
 
         result["relevance_score"] = min(score / len(query_terms) if query_terms else 0.5, 1.0)
 

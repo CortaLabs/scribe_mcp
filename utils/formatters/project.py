@@ -94,7 +94,12 @@ class ProjectFormatter(BaseFormatter):
     def _format_table(self, headers: List[str], rows: List[List[str]],
                       col_widths: List[int] = None) -> str:
         """Format table. Delegates to UIFormatter."""
-        return self._ui.format_table(headers, rows, col_widths)
+        if col_widths is None:
+            return self._ui.format_table(headers, rows)
+        try:
+            return self._ui.format_table(headers, rows, col_widths)
+        except TypeError:
+            return self._ui.format_table(headers, rows)
 
     # ==================== Delegated File Methods ====================
     # These delegate to FileFormatter (Phase 5 Task 5.3)

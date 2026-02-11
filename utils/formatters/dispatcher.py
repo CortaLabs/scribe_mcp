@@ -123,7 +123,10 @@ class FormatterDispatcher:
         # JSONL: via tool_logger.py (synchronous file write)
         # SQL: via storage.record_tool_call() (async DB insert for analytics)
         try:
-            from utils.tool_logger import log_tool_call
+            try:
+                from scribe_mcp.utils.tool_logger import log_tool_call
+            except ImportError:
+                from utils.tool_logger import log_tool_call
 
             # Extract session context from server module
             session_id = "unknown"
@@ -132,7 +135,10 @@ class FormatterDispatcher:
             repo_root = None  # Will be resolved below
 
             try:
-                import server as server_module
+                try:
+                    from scribe_mcp import server as server_module
+                except ImportError:
+                    import server as server_module
                 if hasattr(server_module, "get_execution_context"):
                     exec_context = server_module.get_execution_context()
                     if exec_context:
@@ -155,7 +161,10 @@ class FormatterDispatcher:
             #           3) None (falls back to SCRIBE_ROOT)
             progress_log_path = None
             try:
-                import server as server_module
+                try:
+                    from scribe_mcp import server as server_module
+                except ImportError:
+                    import server as server_module
                 storage = getattr(server_module, 'storage_backend', None)
 
                 # Try to get project details from DB
@@ -173,7 +182,10 @@ class FormatterDispatcher:
                 # Fallback: use current repo root from repo_config
                 if not repo_root:
                     try:
-                        from config.repo_config import get_current_repo_config
+                        try:
+                            from scribe_mcp.config.repo_config import get_current_repo_config
+                        except ImportError:
+                            from config.repo_config import get_current_repo_config
                         current_repo_root, _ = get_current_repo_config()
                         if current_repo_root:
                             repo_root = str(current_repo_root)
@@ -201,7 +213,10 @@ class FormatterDispatcher:
 
             # STEP 1.5: Write to SQL for cross-project analytics
             try:
-                import server as server_module
+                try:
+                    from scribe_mcp import server as server_module
+                except ImportError:
+                    import server as server_module
                 storage = getattr(server_module, 'storage_backend', None)
                 if storage and hasattr(storage, 'record_tool_call_sync'):
                     import asyncio

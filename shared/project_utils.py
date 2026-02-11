@@ -87,19 +87,27 @@ def detect_project_state(
     current_hashes = hashes.get("current_hashes", {}) or docs.get("current_hashes", {})
     flags = docs.get("flags", {})
 
+    if docs_were_generated and entry_count == 0:
+        return ("NEW", "🆕 New project initialized")
+
     # Four-state detection logic
     if not baseline_hashes:
-        # No baseline hashes exist - use docs_were_generated to distinguish NEW vs EXISTING
-        # SPEC-SET-001 fix: Use document generation status, not entry_count==0
+        # No baseline hashes exist.
+        # If entries already exist we can confidently classify legacy/existing.
+        if entry_count > 0:
+            return ("EXISTING_LEGACY", f"📋 Existing project ({entry_count} entries, pre-hash-tracking)")
+
+        # With zero entries, trust explicit generation signal when provided.
         if docs_were_generated:
-            # Documents were just created in this call - truly NEW project
             return ("NEW", "🆕 New project initialized")
-        else:
-            # Documents already existed - EXISTING project (may be post-rotation or legacy)
-            if entry_count == 0:
-                return ("EXISTING_LEGACY", f"📋 Existing project (0 entries, post-rotation or pre-hash-tracking)")
-            else:
-                return ("EXISTING_LEGACY", f"📋 Existing project ({entry_count} entries, pre-hash-tracking)")
+
+        # If caller provided a concrete progress log path and docs were not generated
+        # in this operation, treat as existing legacy (common post-rotation case).
+        if progress_log_path:
+            return ("EXISTING_LEGACY", "📋 Existing project (0 entries, post-rotation or pre-hash-tracking)")
+
+        # Default for context-poor callers/tests: preserve legacy NEW semantics.
+        return ("NEW", "🆕 New project initialized")
     else:
         # Baseline hashes exist - compare with current
         if baseline_hashes == current_hashes:

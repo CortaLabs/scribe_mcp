@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp.config.repo_config import RepoConfig
+from scribe_mcp.config.settings import settings
 from scribe_mcp.security.sandbox import safe_file_operation
 
 

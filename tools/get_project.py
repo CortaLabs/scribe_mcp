@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import inspect
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
@@ -26,6 +28,7 @@ class _GetProjectHelper(LoggingToolMixin):
 
 _GET_PROJECT_HELPER = _GetProjectHelper()
 _PROJECT_REGISTRY = ProjectRegistry()
+logger = logging.getLogger(__name__)
 
 
 async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -133,19 +136,24 @@ async def _read_recent_progress_entries(progress_log_path: str, limit: int = 5) 
 
         # Parse entries (lines starting with '[')
         entries = []
-        for line in lines:
-            line = line.strip()
+        for line_number, raw_line in enumerate(lines, start=1):
+            line = raw_line.strip()
             if not line.startswith('['):
                 continue
 
             # Parse entry format: [emoji] [timestamp] [Agent: name] [Project: name] message
             # Example: [ℹ️] [2026-01-03 09:53:42 UTC] [Agent: Orchestrator] [Project: xyz] Message here
+            parts = line.split('] ', 4)  # Split on '] ' up to 5 parts
+            if len(parts) < 5:
+                logger.debug(
+                    "Skipping malformed progress log line %d in %s: %s",
+                    line_number,
+                    progress_log_path,
+                    line,
+                )
+                continue
 
             try:
-                parts = line.split('] ', 4)  # Split on '] ' up to 5 parts
-                if len(parts) < 5:
-                    continue
-
                 emoji = parts[0].strip('[')
                 timestamp = parts[1].strip('[')
                 agent_part = parts[2].strip('[')  # "Agent: name"
@@ -161,13 +169,25 @@ async def _read_recent_progress_entries(progress_log_path: str, limit: int = 5) 
                     "agent": agent,
                     "message": message  # COMPLETE message - NO truncation!
                 })
-            except:
+            except (AttributeError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Failed to parse progress log line %d in %s: %s",
+                    line_number,
+                    progress_log_path,
+                    exc,
+                )
                 continue
 
         # Return last N entries
         return entries[-limit:] if len(entries) > limit else entries
 
-    except Exception:
+    except (OSError, UnicodeError) as exc:
+        logger.error(
+            "Failed to read recent entries from %s: %s",
+            progress_log_path,
+            exc,
+            exc_info=True,
+        )
         return []
 
 
@@ -343,14 +363,19 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
                 content = f.read()
                 entry_count = sum(1 for line in content.split('\n') if line.strip().startswith('['))
             result["progress"] = {"exists": True, "entries": entry_count}
-        except:
+        except (OSError, UnicodeError) as exc:
+            logger.warning(
+                "Failed to read progress log '%s' while building get_project docs status: %s",
+                prog_file,
+                exc,
+            )
             result["progress"] = {"exists": True, "entries": 0}
 
     return result
 
 
 @app.tool()
-async def get_project(agent: str, project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
+async def get_project(agent: str = "Codex", project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
     """Return the active project selection, resolving defaults when necessary.
 
     Args:
@@ -485,12 +510,25 @@ async def get_project(agent: str, project: Optional[str] = None, format: str = "
             # Get entry count from backend (Phase 4.2)
             # Only count meaningful log types: progress, bugs, security (NOT tool_logs)
             backend = server_module.storage_backend
-            # Fetch project record first to get proper ProjectRecord object
-            project_record = await backend.fetch_project(current_name) if backend else None
-            entry_count = await backend.count_entries(
-                project_record,
-                filters={"log_type": ["progress", "bugs", "bug", "security"]}
-            ) if project_record else 0
+            project_record = None
+            if backend:
+                fetch_project_fn = getattr(backend, "fetch_project", None)
+                if fetch_project_fn:
+                    fetched = fetch_project_fn(current_name)
+                    project_record = await fetched if inspect.isawaitable(fetched) else fetched
+                else:
+                    project_record = response
+
+                count_entries_fn = getattr(backend, "count_entries", None)
+                if count_entries_fn and project_record is not None:
+                    try:
+                        counted = count_entries_fn(
+                            project_record,
+                            filters={"log_type": ["progress", "bugs", "bug", "security"]},
+                        )
+                    except TypeError:
+                        counted = count_entries_fn(project_record)
+                    entry_count = await counted if inspect.isawaitable(counted) else counted
 
             # Detect project state (Phase 4.1 integration)
             state, sitrep_message = detect_project_state(response, entry_count)
@@ -518,10 +556,14 @@ async def get_project(agent: str, project: Optional[str] = None, format: str = "
         # Read recent entries from DB only if verbose=True
         recent_entries = []
         if verbose and current_name:
-            recent_entries = await _read_recent_entries_from_db(
-                current_name,
-                limit=3  # Use 3 for compact display (~150-200 tokens)
-            )
+            progress_log_path = target_project.get("progress_log")
+            if progress_log_path:
+                recent_entries = await _read_recent_progress_entries(progress_log_path, limit=3)
+            if not recent_entries:
+                recent_entries = await _read_recent_entries_from_db(
+                    current_name,
+                    limit=3,  # Use 3 for compact display (~150-200 tokens)
+                )
 
         # Get doc status with counts and list (pass target_project for live docs registry)
         doc_status = await _compute_doc_status(current_name, target_project) if current_name else {}
@@ -558,11 +600,13 @@ async def get_project(agent: str, project: Optional[str] = None, format: str = "
 
     # For structured/compact formats with enhanced SITREP (Phase 4.2)
     if format in ["structured", "json", "compact"]:
-        # Get recent entries from DB for JSON format
-        recent_entries = await _read_recent_entries_from_db(
-            current_name,
-            limit=5
-        ) if current_name else []
+        # Prefer progress log parsing for compatibility, fall back to DB.
+        recent_entries = []
+        progress_log_path = target_project.get("progress_log") if target_project else None
+        if progress_log_path:
+            recent_entries = await _read_recent_progress_entries(progress_log_path, limit=5)
+        if not recent_entries and current_name:
+            recent_entries = await _read_recent_entries_from_db(current_name, limit=5)
 
         # Get doc status (pass target_project for live docs registry)
         doc_status = await _compute_doc_status(current_name, target_project) if current_name else {}

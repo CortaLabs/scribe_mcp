@@ -91,12 +91,15 @@ class FileFormatter(BaseFormatter):
         else:
             line_range = 'unknown'
 
-        # Build readable output with simple one-line header
+        # Build readable output
         parts = []
-
-        # ONE-LINE HEADER: "READ FILE filename.xyz | Lines read: 100-243"
-        parts.append(f"READ FILE {filename} | Lines read: {line_range}")
-        parts.append("")  # Blank line
+        header_meta = {
+            "path": path,
+            "mode": mode,
+            "lines": line_range,
+        }
+        parts.append(self._ui.create_header_box("FILE CONTENT", header_meta))
+        parts.append("")
 
         # CONTENT FIRST (with line numbers)
         if mode != 'scan_only' and content != '[no matches found]':
@@ -596,6 +599,7 @@ class FileFormatter(BaseFormatter):
 
         # METADATA AT BOTTOM
         parts.append("")  # Blank line before metadata
+        parts.append("METADATA")
         parts.append("─" * 63)  # Separator line
 
         # Build metadata lines

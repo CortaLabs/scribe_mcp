@@ -104,6 +104,9 @@ async def resolve_logging_context(
                         # Try database registry first (projects may not have JSON config files)
                         # CRITICAL FIX (Bug Fix #3): Resolve via StorageBackend APIs (not ad-hoc sqlite3.connect()
                         # or direct SQL in tool code) to avoid connection isolation issues in WAL mode.
+                        # Legacy compatibility note: if a backend only exposes low-level access,
+                        # use backend._fetchone(...) on the shared connection instead of opening
+                        # a new sqlite connection.
                         try:
                             record = None
                             if hasattr(backend, "fetch_project"):

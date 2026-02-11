@@ -11,6 +11,7 @@ This module provides:
 """
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,9 @@ from typing import Any, Dict, List, Optional, Union
 from .base import BaseFormatter
 from .ui import UIFormatter
 from ..estimator import PaginationInfo
+
+
+logger = logging.getLogger(__name__)
 
 
 class EntryFormatter(BaseFormatter):
@@ -116,8 +120,12 @@ class EntryFormatter(BaseFormatter):
                 try:
                     dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
                     value = dt.strftime("%Y-%m-%d")
-                except:
-                    pass  # Keep original if parsing fails
+                except (TypeError, ValueError) as exc:
+                    logger.debug(
+                        "Unable to normalize timestamp '%s' in compact formatter: %s",
+                        value,
+                        exc,
+                    )
             elif field == "message" and isinstance(value, str) and len(value) > 100:
                 # Truncate long messages in compact mode
                 value = value[:97] + "..."
@@ -488,6 +496,7 @@ class EntryFormatter(BaseFormatter):
         meta = data.get('meta', {})
 
         if data.get('ok'):
+            parts.append("✅ Entry written to progress log")
             # Extract components from written_line
             # Format: [emoji] [timestamp] [Agent: name] [Project: name] message | metadata
             emoji_symbol = "info"
@@ -537,8 +546,12 @@ class EntryFormatter(BaseFormatter):
                     ]
                     metadata_str = '; '.join(filtered_pairs) if filtered_pairs else ""
 
-            # Line 1: Just emoji and message
-            parts.append(f"{emoji_symbol} {message}")
+            # Line 2: compact line with emoji + message
+            compact_line = self._extract_compact_log_line(written_line) if written_line else ""
+            if compact_line:
+                parts.append(compact_line)
+            elif message:
+                parts.append(f"[{emoji_symbol}] {message}")
 
             # Line 2: Compact metadata line with timestamp, agent, and custom metadata
             # Only show if there's custom metadata or reasoning block
@@ -557,7 +570,9 @@ class EntryFormatter(BaseFormatter):
             if metadata_line_parts and (metadata_str or has_reasoning):
                 parts.append(f"   {' | '.join(metadata_line_parts)}")
         else:
-            parts.append("Entry write failed")
+            parts.append("❌ Entry write failed")
+            if data.get("error"):
+                parts.append(f"   {data.get('error')}")
 
         # Reasoning block (if present in metadata)
         reasoning = self._parse_reasoning_block(meta)

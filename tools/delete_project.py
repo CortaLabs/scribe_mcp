@@ -22,9 +22,9 @@ from scribe_mcp.utils.slug import normalize_project_input
 
 @app.tool()
 async def delete_project(
-    agent: str,  # Agent identification (required)
-    name: str,
-    root: str,  # Required: repo root for safety (like set_project)
+    agent: str = "Codex",  # Agent identification
+    name: str = "",
+    root: str = "",  # Optional for legacy callers; validated when provided
     mode: str = "archive",  # "archive" or "permanent"
     confirm: bool = False,  # Must explicitly confirm
     force: bool = False,    # Override safety checks
@@ -33,9 +33,9 @@ async def delete_project(
     """Delete or archive a project and all associated data.
 
     Args:
-        agent: Agent identification (required)
+        agent: Agent identification
         name: Project name to delete
-        root: Repository root path (required for safety, must match project's root)
+        root: Repository root path (validated against project's root when provided)
         mode: "archive" (default) moves files to archive, "permanent" deletes everything
         confirm: Must be True to proceed with deletion
         force: Override safety checks (not recommended)
@@ -99,10 +99,12 @@ async def delete_project(
         if not project_record:
             response["warnings"].append(f"Project '{name}' not found in storage, checking state cache only.")
 
-        # Safety check: verify root matches project's repo_root
-        resolved_root = Path(root).resolve()
+        # Safety check: verify root matches project's repo_root when a root is provided.
+        resolved_root: Optional[Path] = Path(root).resolve() if root else None
         if project_record and project_record.repo_root:
             project_root = Path(project_record.repo_root).resolve()
+            if resolved_root is None:
+                resolved_root = project_root
             if resolved_root != project_root:
                 response["errors"].append(
                     f"Root mismatch: provided '{resolved_root}' does not match project root '{project_root}'"

@@ -1369,7 +1369,7 @@ def _format_readable(response: Dict[str, Any], project_name: str) -> str:
 
 @app.tool()
 async def rotate_log(
-    agent: str,
+    agent: str = "Codex",
     project: Optional[str] = None,
     suffix: Optional[str] = None,
     custom_metadata: Optional[str] = None,

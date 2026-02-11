@@ -105,26 +105,26 @@ summary: ''
 <!-- ID: phase_2 -->
 
 ### P3.1 Bare Except Fix
-- [ ] Zero bare except in production: `grep -rn 'except:$' --include='*.py' tools/ utils/ storage/ shared/ config/ | wc -l` returns 0 <!-- ID: p3_bare_all -->
-- [ ] All 14 bare except clauses replaced with specific exception types <!-- ID: p3_bare_count -->
-- [ ] Each replaced clause includes `logger.error("...", exc_info=True)` <!-- ID: p3_bare_logging -->
+- [x] Zero bare except in production: `grep -rn 'except:$' --include='*.py' tools/ utils/ storage/ shared/ config/ | wc -l` returns 0 <!-- ID: p3_bare_all -->
+- [x] All 14 bare except clauses replaced with specific exception types <!-- ID: p3_bare_count -->
+- [x] Each replaced clause includes `logger.error("...", exc_info=True)` <!-- ID: p3_bare_logging -->
 - [ ] Test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p3_bare_tests -->
 
 ### P3.2 Preflight Backup Retention Policy
-- [ ] 3-backup retention limit implemented in centralized preflight backup helper <!-- ID: p3_retention_impl -->
-- [ ] After 5 edits to same file, only 3 .bak files remain <!-- ID: p3_retention_verify -->
-- [ ] Cleanup logged via logger.debug() <!-- ID: p3_retention_logging -->
-- [ ] `pytest tests/test_manage_docs*.py` passes <!-- ID: p3_retention_test -->
+- [x] 3-backup retention limit implemented in centralized preflight backup helper <!-- ID: p3_retention_impl -->
+- [x] After 5 edits to same file, only 3 .bak files remain <!-- ID: p3_retention_verify -->
+- [x] Cleanup logged via logger.debug() <!-- ID: p3_retention_logging -->
+- [x] `pytest tests/test_manage_docs*.py` passes <!-- ID: p3_retention_test -->
 
 ### P3.3 Dead Code File Deletion (Additional -- review fix #5)
-- [ ] utils/optimization.py deleted: `test -f utils/optimization.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p3_optimization_deleted -->
-- [ ] utils/__init__.py import removed: `grep -n 'optimization' utils/__init__.py` returns 0 <!-- ID: p3_optimization_import -->
+- [x] utils/optimization.py deleted: `test -f utils/optimization.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p3_optimization_deleted -->
+- [x] utils/__init__.py import removed: `grep -n 'optimization' utils/__init__.py` returns 0 <!-- ID: p3_optimization_import -->
 - [ ] No runtime breakage: `pytest tests/` passes <!-- ID: p3_optimization_tests -->
 
 ### P3 Exit Gate
-- [ ] Zero bare except in production code <!-- ID: p3_exit_bare -->
-- [ ] Preflight backup bounded to 3 per file <!-- ID: p3_exit_retention -->
-- [ ] utils/optimization.py dead code deleted <!-- ID: p3_exit_optimization -->
+- [x] Zero bare except in production code <!-- ID: p3_exit_bare -->
+- [x] Preflight backup bounded to 3 per file <!-- ID: p3_exit_retention -->
+- [x] utils/optimization.py dead code deleted <!-- ID: p3_exit_optimization -->
 
 ---
 ## Phase 4: Storage Layer Decomposition
@@ -504,3 +504,27 @@ Maps to 9 success criteria from ARCHITECTURE_GUIDE.md Section 1.
 
 <!-- ID: p2_exit_tests -->
 - [x] P2 Exit Tests | proof=PHASE 2 complete log recorded 0 regressions with full-suite run (1562 passing)
+
+<!-- ID: p3_bare_all -->
+- [x] P3 Bare All | proof=2026-02-11 scan: 0 bare `except:` across tools/utils/storage/shared/config
+
+<!-- ID: p3_bare_count -->
+- [x] P3 Bare Count | proof=targeted P3 files remediated with explicit exception handling and logger instrumentation
+
+<!-- ID: p3_retention_impl -->
+- [x] P3 Retention Impl | proof=utils/files.py preflight_backup enforces newest-3 retention policy
+
+<!-- ID: p3_retention_verify -->
+- [x] P3 Retention Verify | proof=tests/test_preflight_backup.py includes retention window test (3 backups retained)
+
+<!-- ID: p3_optimization_deleted -->
+- [x] P3 Optimization Deleted | proof=utils/optimization.py removed and utils/__init__.py exports cleaned
+
+<!-- ID: p3_retention_test -->
+- [x] P3 Retention Test | proof=manage_docs patch/create/structured suites green in Phase 3 verification batch
+
+<!-- ID: p3_bare_tests -->
+- [ ] P3 Bare Tests | blocker=Global suite still has 55 fails + 1 error outside Phase 3 scope clusters
+
+<!-- ID: p3_optimization_tests -->
+- [ ] P3 Optimization Tests | blocker=Global suite still has unresolved non-P3 regressions

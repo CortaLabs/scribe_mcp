@@ -678,7 +678,16 @@ async def search(
         raw_path = Path(path).expanduser()
         if not raw_path.is_absolute():
             raw_path = repo_root / raw_path
-        if raw_path.is_symlink():
+        try:
+            is_symlink = raw_path.is_symlink()
+        except PermissionError:
+            return {
+                "ok": False,
+                "error": "permission denied",
+                "path": str(raw_path),
+                "error_type": "permission_denied",
+            }
+        if is_symlink:
             link_dest = raw_path.resolve()
             if not str(link_dest).startswith(str(repo_root)):
                 return {"ok": False, "error": "symlink target escapes repository boundary", "path": path}
@@ -709,8 +718,15 @@ async def search(
                     # Filter to prioritize directory suggestions
                     dir_suggestions = [s for s in suggestions if s.get("is_dir")]
                     if dir_suggestions:
-                        error_response["similar_paths"] = dir_suggestions
-                        best = dir_suggestions[0]
+                        normalized_suggestions = []
+                        for suggestion in dir_suggestions:
+                            normalized = dict(suggestion)
+                            name = str(normalized.get("name", ""))
+                            if normalized.get("is_dir") and name and not name.endswith("/"):
+                                normalized["name"] = f"{name}/"
+                            normalized_suggestions.append(normalized)
+                        error_response["similar_paths"] = normalized_suggestions
+                        best = normalized_suggestions[0]
                         error_response["suggestion"] = (
                             f"Did you mean '{best['name']}'? "
                             f"({int(best['score'] * 100)}% match)"
@@ -719,6 +735,11 @@ async def search(
                 # Parent directory listing
                 listing = get_directory_listing(search_root.parent)
                 if listing and not listing.get("permission_error"):
+                    if isinstance(listing.get("directories"), list):
+                        listing["directories"] = [
+                            d if str(d).endswith("/") else f"{d}/"
+                            for d in listing["directories"]
+                        ]
                     error_response["parent_directory"] = str(search_root.parent)
                     error_response["parent_listing"] = listing
 

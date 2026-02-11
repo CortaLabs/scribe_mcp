@@ -9,6 +9,7 @@ Created for TOOL_AUDIT_1112025 Phase 2 Task 2.1 - Configuration Objects
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
@@ -17,6 +18,9 @@ from scribe_mcp.utils.parameter_validator import ToolValidator
 from scribe_mcp.utils.config_manager import ConfigManager, resolve_fallback_chain
 from scribe_mcp.utils.error_handler import ErrorHandler
 from scribe_mcp.shared.logging_utils import coerce_metadata_mapping
+
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_boolean(value: Any) -> bool:
@@ -568,7 +572,15 @@ class AppendEntryConfig:
                 try:
                     parsed = json.loads(self.items)
                     items_to_process = len(parsed) if isinstance(parsed, list) else 1
-                except:
+                except (TypeError, json.JSONDecodeError) as exc:
+                    if self.strict_validation:
+                        raise ValueError(
+                            "Invalid JSON payload in AppendEntryConfig.items during bulk estimation"
+                        ) from exc
+                    logger.warning(
+                        "Falling back to single-item estimate due to invalid items payload: %s",
+                        exc,
+                    )
                     items_to_process = 1
 
             # Add chunking overhead for large content

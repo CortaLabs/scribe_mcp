@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import re
@@ -988,13 +989,14 @@ async def _auto_register_document(
 
     # Update ProjectRegistry for in-memory tracking
     try:
-        await _PROJECT_REGISTRY.record_doc_update(
+        registry_call = _PROJECT_REGISTRY.record_doc_update(
             project_name=project_name,
-            doc_key=doc_name,
-            file_path=str(doc_path),
-            baseline_hash=doc_hash,
-            current_hash=doc_hash,
+            doc=doc_name,
+            action="auto_register",
+            after_hash=doc_hash,
         )
+        if inspect.isawaitable(registry_call):
+            await registry_call
     except Exception as e:
         # Non-fatal - log warning but don't fail registration
         logger.warning(f"Failed to update ProjectRegistry for '{doc_name}': {e}")
@@ -1007,6 +1009,7 @@ async def _auto_register_document(
             agent="manage_docs",
             meta={
                 "action": "auto_register",
+                "doc": doc_name,
                 "doc_name": doc_name,
                 "path": str(doc_path),
                 "hash": doc_hash[:8],
@@ -1122,8 +1125,8 @@ def _resolve_custom_doc_path(
 
 @app.tool()
 async def manage_docs(
-    agent: str,
-    action: str,
+    agent: str = "Codex",
+    action: str = "",
     doc_category: str = "",  # Document category: architecture|phase_plan|checklist|research|bugs|wiki|custom
     section: Optional[str] = None,
     content: Optional[str] = None,
@@ -1137,11 +1140,16 @@ async def manage_docs(
     metadata: Optional[Dict[str, Any]] = None,
     dry_run: bool = False,
     doc_name: Optional[str] = None,
+    doc: Optional[str] = None,  # Backwards-compatible alias for doc_name
     target_dir: Optional[str] = None,
     project: Optional[str] = None,  # Explicit project override (allows cross-project doc management)
 ) -> Dict[str, Any]:
     """Apply structured updates to architecture/phase/checklist documents and create research/bug documents."""
     state_snapshot = await server_module.state_manager.record_tool("manage_docs")
+
+    if doc_name is None and doc is not None:
+        doc_name = doc
+
     # Apply Phase 1 exception healing to all parameters
     try:
         healed_params, healing_applied, healing_messages = _heal_manage_docs_parameters(
@@ -3093,20 +3101,16 @@ async def _update_review_index(docs_dir: Path, agent_id: str) -> None:
     for review_file in docs_dir.glob("REVIEW_REPORT_*.md"):
         if review_file.name != "REVIEW_INDEX.md":
             stat = review_file.stat()
-            # Extract stage from filename
-            try:
-                # Format: REVIEW_REPORT_Stage3_2025-10-31_1203.md
-                parts = review_file.stem.split('_')
-                stage = parts[2] if len(parts) > 2 else "unknown"
-                review_reports.append({
-                    "name": review_file.stem,
-                    "path": review_file.name,
-                    "stage": stage,
-                    "size": stat.st_size,
-                    "modified": stat.st_mtime,
-                })
-            except:
-                continue
+            # Format: REVIEW_REPORT_Stage3_2025-10-31_1203.md
+            parts = review_file.stem.split('_')
+            stage = parts[2] if len(parts) > 2 else "unknown"
+            review_reports.append({
+                "name": review_file.stem,
+                "path": review_file.name,
+                "stage": stage,
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+            })
 
     # Generate INDEX content
     content = f"""# Review Reports Index
@@ -3186,22 +3190,18 @@ async def _update_agent_card_index(docs_dir: Path, agent_id: str) -> None:
     for card_file in docs_dir.glob("AGENT_REPORT_CARD_*.md"):
         if card_file.name != "AGENT_CARDS_INDEX.md":
             stat = card_file.stat()
-            # Extract agent name from filename
-            try:
-                # Format: AGENT_REPORT_CARD_ResearchAnalyst_Stage3_20251031_1203.md
-                parts = card_file.stem.split('_')
-                agent_name = parts[3] if len(parts) > 3 else "unknown"
-                stage = parts[4] if len(parts) > 4 else "unknown"
-                agent_cards.append({
-                    "name": card_file.stem,
-                    "path": card_file.name,
-                    "agent": agent_name,
-                    "stage": stage,
-                    "size": stat.st_size,
-                    "modified": stat.st_mtime,
-                })
-            except:
-                continue
+            # Format: AGENT_REPORT_CARD_ResearchAnalyst_Stage3_20251031_1203.md
+            parts = card_file.stem.split('_')
+            agent_name = parts[3] if len(parts) > 3 else "unknown"
+            stage = parts[4] if len(parts) > 4 else "unknown"
+            agent_cards.append({
+                "name": card_file.stem,
+                "path": card_file.name,
+                "agent": agent_name,
+                "stage": stage,
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+            })
 
     # Generate INDEX content
     content = f"""# Agent Report Cards Index

@@ -1,5 +1,6 @@
 """Tests for preflight_backup centralized backup location."""
 
+import time
 import pytest
 import tempfile
 from pathlib import Path
@@ -94,6 +95,29 @@ def test_preflight_backup_preserves_file_content():
         # Verify file stats (modification time) preserved by shutil.copy2
         # Note: Just verify backup exists and has content, exact metadata may vary
         assert backup_path.stat().st_size == test_file.stat().st_size
+
+
+def test_preflight_backup_retains_only_three_latest_backups():
+    """Test that preflight_backup enforces a 3-backup retention policy per file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        test_file = tmpdir / "retention.md"
+
+        created_backups = []
+        for i in range(5):
+            test_file.write_text(f"content-{i}")
+            created_backups.append(preflight_backup(test_file, repo_root=tmpdir))
+            time.sleep(0.005)
+
+        backup_dir = tmpdir / ".scribe" / "backups"
+        backups = sorted(backup_dir.glob("retention.md.preflight-*.bak"), key=lambda p: p.name)
+
+        assert len(backups) == 3
+        assert created_backups[0].exists() is False
+        assert created_backups[1].exists() is False
+        assert created_backups[2].exists() is True
+        assert created_backups[3].exists() is True
+        assert created_backups[4].exists() is True
 
 
 def test_preflight_backup_nonexistent_file_raises():

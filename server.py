@@ -9,6 +9,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Protocol, Union, cast, get_origin, get_args
 
 # Ensure the repository root (which contains the `scribe_mcp` package) is on sys.path.
@@ -112,6 +113,10 @@ if TYPE_CHECKING:
     app = _server_instance
 else:
     app = Server(settings.mcp_server_name)
+if not hasattr(app, "state"):
+    app.state = SimpleNamespace()
+if not hasattr(app.state, "execution_context"):
+    app.state.execution_context = None
 state_manager = StateManager()
 storage_backend = create_storage_backend()
 agent_context_manager = None  # Will be initialized in startup
@@ -925,7 +930,10 @@ def get_agent_identity():
 
 def get_execution_context():
     """Return the active ExecutionContext for the current request."""
-    return router_context_manager.get_current()
+    current = router_context_manager.get_current()
+    if current is not None:
+        return current
+    return getattr(getattr(app, "state", None), "execution_context", None)
 
 
 async def _session_cleanup_task(agent_manager):

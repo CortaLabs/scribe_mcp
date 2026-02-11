@@ -330,8 +330,28 @@ def _validate_and_prepare_parameters(
             config_dict = config.to_dict()
             legacy_dict = legacy_config.to_dict()
 
+            explicit_overrides = {
+                "message": message not in (None, ""),
+                "status": status is not None,
+                "emoji": emoji is not None,
+                "agent": agent not in (None, "", "Codex"),
+                "meta": meta is not None,
+                "timestamp_utc": timestamp_utc is not None,
+                "items": items is not None,
+                "items_list": items_list is not None,
+                "auto_split": auto_split is not True,
+                "split_delimiter": split_delimiter != "\n",
+                "stagger_seconds": stagger_seconds != 1,
+                "agent_id": agent_id is not None,
+                "log_type": log_type not in (None, "progress"),
+                "priority": priority is not None,
+                "category": category is not None,
+                "tags": tags not in (None, []),
+                "confidence": confidence is not None,
+            }
+
             for key, value in legacy_dict.items():
-                if value is not None or key in ['message', 'auto_split']:
+                if explicit_overrides.get(key, False):
                     config_dict[key] = value
 
             final_config = AppendEntryConfig(**config_dict)
@@ -1073,7 +1093,7 @@ async def _process_large_bulk_chunked(
 
 @app.tool()
 async def append_entry(
-    agent: str,
+    agent: str = "Codex",
     message: str = "",
     status: Optional[str] = None,
     emoji: Optional[str] = None,
@@ -1091,7 +1111,7 @@ async def append_entry(
     tags: Optional[List[str]] = None,  # List of tags for entry
     confidence: Optional[float] = None,  # Confidence score 0.0-1.0
     config: Optional[AppendEntryConfig] = None,  # Configuration object for enhanced parameter handling
-    format: str = "readable",  # Output format: readable (default), structured, compact
+    format: str = "structured",  # Output format: readable, structured (default), compact
     **_kwargs: Any,  # tolerate unknown kwargs (contract: tools never TypeError)
 ) -> Union[Dict[str, Any], str]:
     """
@@ -1376,13 +1396,17 @@ async def append_entry(
         # === INPUT VALIDATION ===
         # Validate that either message, items, or items_list is provided
         if not items and not items_list and not message:
-            return {
-                "ok": False,
-                "error": "Either 'message', 'items', or 'items_list' must be provided",
-                "suggestion": "Use message for single/multiline entries, items for JSON bulk, or items_list for direct list bulk",
-                "recent_projects": list(recent),
-                "debug_path": "no_content_provided",
-            }
+            fallback_message = None
+            if config is not None:
+                try:
+                    fallback_message = config.message
+                except Exception:
+                    fallback_message = None
+            message = fallback_message or "No message provided"
+            if status is None:
+                status = "warn"
+            final_config.message = message
+            final_config.status = status
 
         log_cache: Dict[str, Tuple[Path, Dict[str, Any]]] = {}
         base_log_type = (log_type or "progress").lower()

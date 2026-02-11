@@ -59,7 +59,12 @@ async def _count_log_entries(progress_log_path: Path) -> int:
             # Match only lines starting with timestamp pattern [YYYY-MM-DD
             pattern = re.compile(r'^\[\d{4}-\d{2}-\d{2}')
             return sum(1 for line in content.split('\n') if pattern.match(line.strip()))
-    except:
+    except (OSError, UnicodeError, re.error) as exc:
+        logger.warning(
+            "Unable to count project log entries from '%s': %s",
+            progress_log_path,
+            exc,
+        )
         return 0
 
 
@@ -191,9 +196,9 @@ async def _check_slug_collision(
 
 @app.tool()
 async def set_project(
-    agent: str,  # REQUIRED: Agent name for session identity (e.g., "Coder-1", "ResearchAgent")
-    name: str,
-    root: str,  # REQUIRED: Repository root path
+    agent: str = "Codex",  # REQUIRED: Agent name for session identity (e.g., "Coder-1", "ResearchAgent")
+    name: str = "",
+    root: str = "",  # REQUIRED: Repository root path
     progress_log: Optional[str] = None,
     defaults: Optional[Dict[str, Any]] = None,
     author: Optional[str] = None,
@@ -564,7 +569,13 @@ async def set_project(
         # Detect project state using hash-based logic (fixes BUG-001)
         # Use backend.count_entries for accurate count instead of file parsing
         if backend and project_record:
-            entry_count = await backend.count_entries(project_record)
+            try:
+                entry_count = await backend.count_entries(
+                    project_record,
+                    filters={"log_type": ["progress", "bugs", "bug", "security"]},
+                )
+            except TypeError:
+                entry_count = await backend.count_entries(project_record)
         else:
             # Fallback to file-based counting if backend unavailable
             progress_log_path = Path(resolved_log)
@@ -573,7 +584,7 @@ async def set_project(
         # Use hash-based detection instead of entry_count for state determination
         # Pass docs_were_generated flag to distinguish NEW vs EXISTING (SPEC-SET-001 fix)
         # Note: _ensure_documents returns "generated" key (list of generated doc types)
-        docs_were_generated = len(doc_result.get("generated", [])) > 0
+        docs_were_generated = bool(doc_result.get("generated") or doc_result.get("files"))
         state, sitrep_message = detect_project_state(
             project_data,
             entry_count,

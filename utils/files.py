@@ -439,6 +439,20 @@ def preflight_backup(
 
     shutil.copy2(file_path, backup_path)
 
+    # Enforce retention: keep only the 3 most recent preflight backups per source file.
+    backups_for_file = sorted(
+        backup_dir.glob(f"{backup_name}.preflight-*.bak"),
+        key=lambda candidate: candidate.name,
+        reverse=True,
+    )
+    stale_backups = backups_for_file[3:]
+    for stale_backup in stale_backups:
+        try:
+            stale_backup.unlink()
+            logger.debug("Pruned stale preflight backup: %s", stale_backup)
+        except OSError as exc:
+            logger.warning("Failed to prune stale preflight backup %s: %s", stale_backup, exc)
+
     return backup_path
 
 

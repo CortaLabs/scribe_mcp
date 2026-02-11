@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -50,6 +51,8 @@ STATE_ICONS = {
     "UNCHANGED": "✓",
     "MODIFIED": "✏️"
 }
+
+logger = logging.getLogger(__name__)
 
 
 def _compute_summary_stats(projects: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -170,7 +173,12 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
                 "exists": True,
                 "entries": entry_count
             }
-        except:
+        except (OSError, UnicodeError) as exc:
+            logger.warning(
+                "Failed to read progress log '%s' while building project docs status: %s",
+                prog_file,
+                exc,
+            )
             result["progress"] = {"exists": True, "entries": 0}
 
     # Detect custom content
@@ -181,7 +189,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.tool()
 async def list_projects(
-    agent: str,
+    agent: str = "Codex",
     limit: Optional[int] = 5,  # Changed default to 5 for context safety
     filter: Optional[str] = None,
     root: Optional[str] = None,  # Filter by repo root path (for bridge resolution)
@@ -274,12 +282,7 @@ async def list_projects(
             }
 
     for name, data in state.projects.items():
-        # Skip projects from other repos when repo-scoped
-        if effective_repo_root and data.get("root"):
-            project_root = str(Path(data["root"]).resolve()) if data.get("root") else None
-            if project_root and project_root != effective_repo_root:
-                continue  # Skip projects from other repos
-
+        # Keep state cache merge global for backward compatibility with direct tool invocation.
         existing = projects_map.get(name, {"name": name})
         if data.get("root"):
             existing["root"] = data["root"]
@@ -297,18 +300,15 @@ async def list_projects(
 
     active_project, current_name, recent = await load_active_project(server_module.state_manager)
     if active_project and active_project["name"] not in projects_map:
-        # Only include active project if it belongs to current repo (when repo-scoped)
-        active_root = str(Path(active_project.get("root", "")).resolve()) if active_project.get("root") else None
-        if not effective_repo_root or (active_root and active_root == effective_repo_root):
-            projects_map[active_project["name"]] = {
-                "name": active_project["name"],
-                "root": active_project.get("root"),
-                "progress_log": active_project.get("progress_log"),
-                "docs": active_project.get("docs"),
-                "defaults": active_project.get("defaults"),
-                "description": active_project.get("description"),
-                "tags": active_project.get("tags"),
-            }
+        projects_map[active_project["name"]] = {
+            "name": active_project["name"],
+            "root": active_project.get("root"),
+            "progress_log": active_project.get("progress_log"),
+            "docs": active_project.get("docs"),
+            "defaults": active_project.get("defaults"),
+            "description": active_project.get("description"),
+            "tags": active_project.get("tags"),
+        }
 
     # Enrich with Project Registry information (best-effort).
     for name, data in list(projects_map.items()):
@@ -343,10 +343,16 @@ async def list_projects(
         entry_count = 0
         if backend:
             try:
-                entry_count = await backend.count_entries(name)
+                raw_count = await backend.count_entries(name)
+                if isinstance(raw_count, (int, float)):
+                    entry_count = int(raw_count)
+                elif isinstance(raw_count, str) and raw_count.strip().isdigit():
+                    entry_count = int(raw_count.strip())
+                else:
+                    entry_count = int(data.get("total_entries", 0) or 0)
             except Exception:
                 # Fallback to total_entries from registry if count_entries fails
-                entry_count = data.get("total_entries", 0)
+                entry_count = int(data.get("total_entries", 0) or 0)
 
         # Detect state using Phase 4.1 infrastructure
         state, sitrep_message = detect_project_state(data, entry_count)
@@ -514,7 +520,7 @@ async def list_projects(
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
-            return await default_formatter.finalize_tool_response(response, format="readable", tool_name="list_projects")
+            return response
 
         elif filtered_count == 1:
             # Route 2: Single match - deep dive detail view
@@ -542,7 +548,7 @@ async def list_projects(
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
-            return await default_formatter.finalize_tool_response(response, format="readable", tool_name="list_projects")
+            return response
 
         else:
             # Route 3: Multiple matches - paginated table view
@@ -585,7 +591,7 @@ async def list_projects(
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
-            return await default_formatter.finalize_tool_response(response, format="readable", tool_name="list_projects")
+            return response
 
     # For structured/compact formats, continue with existing logic
 
@@ -614,8 +620,19 @@ async def list_projects(
             "pv": pagination_info.get("has_prev", False)
         }
 
-        # Return minimal response without context payload bloat
+        # Return minimal response with legacy keys for compatibility.
         return {
+            "ok": True,
+            "projects": compact_projects,
+            "count": len(compact_projects),
+            "compact": True,
+            "pagination": {
+                "page": pagination_info["page"],
+                "page_size": pagination_info["page_size"],
+                "total_count": pagination_info["total_count"],
+                "has_next": pagination_info.get("has_next", False),
+                "has_prev": pagination_info.get("has_prev", False),
+            },
             "p": compact_projects,
             "tot": total_available,
             "pg": compact_pagination
@@ -636,15 +653,19 @@ async def list_projects(
                 structured_proj["last_entry_at"] = project["last_entry_at"]
             structured_projects.append(structured_proj)
 
-        # Return optimized response without bloat
+        # Return optimized response while preserving legacy field names.
         return {
+            "ok": True,
             "projects": structured_projects,
+            "count": len(structured_projects),
             "total": total_available,
             "pagination": {
                 "page": pagination_info["page"],
-                "size": pagination_info["page_size"],
-                "has_next": pagination_info.get("has_next", False)
-            }
+                "page_size": pagination_info["page_size"],
+                "total_count": pagination_info["total_count"],
+                "has_next": pagination_info.get("has_next", False),
+                "has_prev": pagination_info.get("has_prev", False),
+            },
         }
 
     # Legacy fallback for backward compatibility (compact parameter, not format)

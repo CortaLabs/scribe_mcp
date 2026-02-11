@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 # Import with absolute paths from scribe_mcp root
 from scribe_mcp.utils.files import async_atomic_write, ensure_parent, preflight_backup
-from scribe_mcp.utils.slug import slugify_filename
+from scribe_mcp.utils.slug import slugify_filename, slugify_project_name
 from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.utils.frontmatter import (
     apply_frontmatter_updates,
@@ -124,7 +124,8 @@ class DocumentValidationError(Exception):
 async def apply_doc_change(
     project: Dict[str, Any],
     *,
-    doc_name: str,
+    doc_name: Optional[str] = None,
+    doc: Optional[str] = None,
     doc_category: Optional[str] = None,
     action: str,
     section: Optional[str],
@@ -142,6 +143,25 @@ async def apply_doc_change(
     """Apply a document change with comprehensive error handling and verification."""
     start_time = time.time()
     file_size_before = 0
+    resolved_doc_name = doc_name or doc
+    if not resolved_doc_name:
+        return DocChangeResult(
+            doc_name="",
+            section=section,
+            action=action,
+            path=Path(""),
+            before_hash="",
+            after_hash="",
+            content_written="",
+            diff_preview="",
+            extra={"missing_field": "doc_name"},
+            success=False,
+            error_message="DOC_NOT_FOUND: doc_name is required",
+            verification_passed=False,
+            file_size_before=0,
+            file_size_after=0,
+        )
+    doc_name = resolved_doc_name
 
     try:
         # Validate and correct inputs (bulletproof - never fails)
@@ -291,6 +311,12 @@ async def apply_doc_change(
                 frontmatter_lines = 0
                 if original_parsed.has_frontmatter and original_parsed.frontmatter_raw:
                     frontmatter_lines = len(original_parsed.frontmatter_raw.splitlines())
+                body_line_count = len(original_body.splitlines())
+                declared_ranges = _compute_patch_ranges(patch_used)
+                header_out_of_date = any(
+                    int(range_info.get("start_line", 0)) > body_line_count
+                    for range_info in declared_ranges
+                )
 
                 try:
                     # Use context-aware smart patch application
@@ -303,6 +329,9 @@ async def apply_doc_change(
                         "patch_source_hash_source": patch_hash_source,
                         **smart_extra,
                     }
+                    if header_out_of_date:
+                        extra["rebase_attempted"] = True
+                        extra["rebase_applied"] = True
                 except DocumentOperationError as exc:
                     error_message = str(exc)
                     # If smart matching failed, try rebase as last resort
@@ -312,9 +341,18 @@ async def apply_doc_change(
                                 original_body, patch_used
                             )
                             patch_used = rebased_patch
-                            updated_body, hunks_applied = _apply_unified_patch(
-                                original_body, patch_used
-                            )
+                            try:
+                                updated_body, hunks_applied, smart_rebase_extra = _apply_unified_patch_smart(
+                                    original_body,
+                                    patch_used,
+                                    frontmatter_lines,
+                                )
+                            except DocumentOperationError:
+                                updated_body, hunks_applied = _apply_unified_patch(
+                                    original_body,
+                                    patch_used,
+                                )
+                                smart_rebase_extra = {}
                             extra = {
                                 "hunks_applied": hunks_applied,
                                 "patch_source_hash": current_hash,
@@ -322,6 +360,7 @@ async def apply_doc_change(
                                 "rebase_attempted": True,
                                 "rebase_applied": True,
                                 "rebase_info": rebase_info,
+                                **smart_rebase_extra,
                             }
                         except DocumentOperationError as rebase_error:
                             diagnostics = _build_patch_failure_diagnostics(
@@ -768,13 +807,19 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
     if docs_dir:
         docs_dir = Path(docs_dir).parent
     else:
-        # Try to use docs_dir from project configuration
         docs_dir_str = project.get("docs_dir", "")
         if docs_dir_str:
             docs_dir = Path(docs_dir_str)
         else:
-            # Final fallback to .scribe structure
-            docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / slugify_project_name(project_name)
+            slug = slugify_project_name(project_name)
+            scribe_docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / slug
+            legacy_docs_dir = project_root / "docs" / "dev_plans" / slug
+            if scribe_docs_dir.exists():
+                docs_dir = scribe_docs_dir
+            elif legacy_docs_dir.exists():
+                docs_dir = legacy_docs_dir
+            else:
+                docs_dir = scribe_docs_dir
 
     filename = {
         "architecture": "ARCHITECTURE_GUIDE.md",
@@ -1818,6 +1863,7 @@ def _is_patch_context_error(error_message: str) -> bool:
         code in error_message
         for code in (
             "PATCH_CONTEXT_MISMATCH",
+            "PATCH_CONTEXT_NOT_FOUND",
             "PATCH_DELETE_MISMATCH",
             "PATCH_RANGE_ERROR",
         )
@@ -2318,8 +2364,6 @@ def _default_frontmatter(
     body_text: str,
     date_str: str,
 ) -> Dict[str, Any]:
-    from scribe_mcp.utils.slug import slugify_project_name
-
     project_slug = slugify_project_name(project_name or "project")
     doc_name_slug = doc_name.lower().replace("_", "-")
     title = _extract_title(body_text, doc_name.replace("_", " ").title())
@@ -2331,6 +2375,7 @@ def _default_frontmatter(
     return {
         "id": f"{project_slug}-{doc_name_slug}",
         "title": title,
+        "doc_type": doc_name,
         "doc_name": doc_name,
         "category": category_str,
         "status": "draft",
@@ -2374,6 +2419,11 @@ def _apply_frontmatter_pipeline(
         return updated_body, {"frontmatter_updated": False}, 0
 
     updates: Dict[str, Any] = {}
+    if isinstance(metadata, dict):
+        if metadata.get("doc_type"):
+            updates["doc_type"] = metadata["doc_type"]
+        if metadata.get("doc_name"):
+            updates["doc_name"] = metadata["doc_name"]
     if isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict):
         updates.update(metadata["frontmatter"])
 
