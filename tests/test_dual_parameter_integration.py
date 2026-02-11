@@ -14,12 +14,16 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 # Add the MCP_SPINE directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
 from scribe_mcp import server
+
+pytestmark = pytest.mark.asyncio
 
 
 async def test_append_entry_integration():
@@ -74,7 +78,7 @@ async def test_append_entry_integration():
                 print("      ✅ Legacy parameters call works")
     except Exception as e:
         print(f"      ❌ Legacy parameters test failed: {e}")
-        return False
+        raise
 
     # Test 2: AppendEntryConfig object only
     print("   📋 Test 2: AppendEntryConfig object call")
@@ -108,7 +112,7 @@ async def test_append_entry_integration():
                 print("      ✅ AppendEntryConfig object call works")
     except Exception as e:
         print(f"      ❌ AppendEntryConfig object test failed: {e}")
-        return False
+        raise
 
     # Test 3: Legacy parameters override config object
     print("   📋 Test 3: Legacy parameter precedence")
@@ -144,10 +148,9 @@ async def test_append_entry_integration():
                 print("      ✅ Legacy parameter precedence works")
     except Exception as e:
         print(f"      ❌ Legacy precedence test failed: {e}")
-        return False
+        raise
 
     print("✅ All append_entry integration tests passed!")
-    return True
 
 
 async def main():
@@ -155,7 +158,8 @@ async def main():
     print("🚀 Phase 2 Task 2.4 - AppendEntry Integration Tests")
     print("=" * 65)
 
-    success = await test_append_entry_integration()
+    await test_append_entry_integration()
+    success = True
 
     if success:
         print("\n🎉 append_entry integration tests passed!")

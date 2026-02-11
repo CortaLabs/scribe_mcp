@@ -1,3 +1,19 @@
+---
+id: db_routing_test-architecture
+title: "\U0001F3D7\uFE0F Architecture Guide \u2014 db_routing_test"
+doc_type: architecture
+doc_name: architecture
+category: engineering
+status: draft
+version: '0.1'
+last_updated: '2026-02-11'
+maintained_by: Corta Labs
+created_by: Corta Labs
+owners: []
+related_docs: []
+tags: []
+summary: ''
+---
 
 # 🏗️ Architecture Guide — db_routing_test
 **Author:** Scribe
@@ -10,22 +26,7 @@
 ---
 ## 1. Problem Statement
 <!-- ID: problem_statement -->
-- **Context:** db_routing_test needs a reliable documentation system.
-- **Goals:**
-- Eliminate silent failures
-- Improve template flexibility
-
-- **Non-Goals:**
-- Define UI/UX beyond documentation
-
-- **Success Metrics:**
-- All manage_docs operations verified
-- Templates easy to customize
-
-
-
----
-## 2. Requirements & Constraints
+Test
 <!-- ID: requirements_constraints -->
 - **Functional Requirements:**
 - Atomic document updates

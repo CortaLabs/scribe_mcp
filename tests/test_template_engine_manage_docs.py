@@ -486,10 +486,10 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         # Dry-run research doc to confirm templated content
         research_result = await manage_docs(
             agent="test_agent",
-            action="create_research_doc",
+            action="create",
             doc="architecture",
             doc_name="architecture_findings",
-            metadata={"objective": "Assess coverage"},
+            metadata={"doc_type": "research", "objective": "Assess coverage"},
             dry_run=True,
         )
         assert research_result["ok"]
@@ -499,9 +499,9 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         # Dry-run bug report to confirm templated content
         bug_result = await manage_docs(
             agent="test_agent",
-            action="create_bug_report",
+            action="create",
             doc="architecture",
-            metadata={"category": "backend", "severity": "high"},
+            metadata={"doc_type": "bug", "category": "backend", "severity": "high"},
             dry_run=True,
         )
         assert bug_result["ok"]
@@ -582,9 +582,9 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         }
         agent_result = await manage_docs(
             agent="test_agent",
-            action="create_agent_report_card",
+            action="create",
             doc="architecture",
-            metadata=agent_metadata,
+            metadata={"doc_type": "agent_card", **agent_metadata},
             dry_run=False,
         )
         assert agent_result["ok"]
@@ -655,13 +655,40 @@ def test_toggle_checklist_status_metadata_only_updates_proof() -> None:
     assert "- [ ] Ship feature | proof=commit123" in updated
 
 
-def test_toggle_checklist_status_creates_section_when_missing() -> None:
+def test_toggle_checklist_status_creates_section_when_missing_when_allowed() -> None:
     original = "# Checklist\n"
     updated = _toggle_checklist_status(
         original,
         "phase_1",
-        {"status": "done", "proof": "log#1", "label": "Ship UI"},
+        {
+            "status": "done",
+            "proof": "log#1",
+            "label": "Ship UI",
+            "allow_append": True,
+        },
     )
     marker = SECTION_MARKER.format(section="phase_1")
     assert marker in updated
     assert "- [x] Ship UI | proof=log#1" in updated
+
+
+def test_toggle_checklist_status_missing_section_fails_hard_by_default() -> None:
+    original = "# Checklist\n- [ ] Existing item\n"
+    with pytest.raises(DocumentOperationError):
+        _toggle_checklist_status(
+            original,
+            "phase_1",
+            {"status": "done", "proof": "log#2", "label": "Ship API"},
+        )
+
+
+def test_toggle_checklist_status_updates_inline_section_anchor_without_appending() -> None:
+    original = "# Checklist\n- [ ] Ship docs <!-- ID: p4_documents -->\n- [ ] Ship API <!-- ID: p4_api -->\n"
+    updated = _toggle_checklist_status(
+        original,
+        "p4_documents",
+        {"status": "done", "proof": "commit_abc"},
+    )
+    assert "- [x] Ship docs | proof=commit_abc <!-- ID: p4_documents -->" in updated
+    assert "<!-- ID: p4_documents -->" in updated
+    assert "\n\n<!-- ID: p4_documents -->\n" not in updated

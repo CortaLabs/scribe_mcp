@@ -13,6 +13,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 # Add the MCP_SPINE directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -20,8 +22,10 @@ from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
 from scribe_mcp import server
 
+pytestmark = pytest.mark.asyncio
 
-async def test_dual_parameter_support():
+
+async def test_dual_parameter_support(monkeypatch):
     """Test that both legacy parameters and AppendEntryConfig work correctly."""
 
     # Setup mock environment
@@ -37,8 +41,8 @@ async def test_dual_parameter_support():
             return {"tool": tool_name}
 
     # Mock server state
-    server.state_manager = MockStateManager()
-    server.storage_backend = None
+    monkeypatch.setattr(server, "state_manager", MockStateManager())
+    monkeypatch.setattr(server, "storage_backend", None)
 
     print("🧪 Testing dual parameter support...")
 
@@ -57,7 +61,7 @@ async def test_dual_parameter_support():
         print("      ✅ Legacy parameter conversion works")
     except Exception as e:
         print(f"      ❌ Legacy parameter test failed: {e}")
-        return False
+        raise
 
     # Test 2: Config object only
     print("   📋 Test 2: Config object only")
@@ -73,7 +77,7 @@ async def test_dual_parameter_support():
         print("      ✅ Config object creation works")
     except Exception as e:
         print(f"      ❌ Config object test failed: {e}")
-        return False
+        raise
 
     # Test 3: Legacy parameters override config object
     print("   📋 Test 3: Legacy parameter precedence")
@@ -109,7 +113,7 @@ async def test_dual_parameter_support():
         print("      ✅ Legacy parameter precedence works correctly")
     except Exception as e:
         print(f"      ❌ Legacy precedence test failed: {e}")
-        return False
+        raise
 
     # Test 4: Config dict conversion
     print("   📋 Test 4: Config dict conversion")
@@ -131,7 +135,7 @@ async def test_dual_parameter_support():
         print("      ✅ Config dict conversion works correctly")
     except Exception as e:
         print(f"      ❌ Config dict conversion test failed: {e}")
-        return False
+        raise
 
     # Test 5: Bulk mode detection
     print("   📋 Test 5: Bulk mode detection")
@@ -163,7 +167,7 @@ async def test_dual_parameter_support():
         print("      ✅ Bulk mode detection works correctly")
     except Exception as e:
         print(f"      ❌ Bulk mode detection test failed: {e}")
-        return False
+        raise
 
     # Test 6: Parameter validation
     print("   📋 Test 6: Parameter validation and normalization")
@@ -181,10 +185,9 @@ async def test_dual_parameter_support():
         print("      ✅ Parameter validation and normalization work")
     except Exception as e:
         print(f"      ❌ Parameter validation test failed: {e}")
-        return False
+        raise
 
     print("✅ All dual parameter support tests passed!")
-    return True
 
 
 async def main():
@@ -192,7 +195,8 @@ async def main():
     print("🚀 Phase 2 Task 2.4 - Dual Parameter Support Tests")
     print("=" * 60)
 
-    success = await test_dual_parameter_support()
+    await test_dual_parameter_support()
+    success = True
 
     if success:
         print("\n🎉 Phase 2 Task 2.4 implementation is working correctly!")

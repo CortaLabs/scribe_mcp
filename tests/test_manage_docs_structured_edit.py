@@ -70,6 +70,44 @@ async def test_apply_structured_edit_replace_range(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_replace_range_with_header_content_honors_line_range(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+    architecture_path.write_text(
+        "## Section A\nline a1\nline a2\n\n## Section B\nline b1\n",
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="apply_patch",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        edit={
+            "type": "replace_range",
+            "start_line": 2,
+            "end_line": 2,
+            "content": "## Section B\n",
+        },
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={},
+        dry_run=True,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(change.content_written)
+    body = parsed.body
+    assert "line a1" not in body
+    assert "line a2" in body
+    assert "line b1" in body
+
+
+@pytest.mark.asyncio
 async def test_apply_structured_edit_replace_block(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     architecture_path = Path(project["docs"]["architecture"])

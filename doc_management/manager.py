@@ -36,6 +36,7 @@ FRAGMENT_DIR = (template_root().parent / "fragments").resolve()
 SECTION_MARKER = "<!-- ID: {section} -->"
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _HEADER_LINE_PATTERN = re.compile(r"^(#{1,6})\s+(.*\S.*)$")
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 PATCH_MODE_STRUCTURED = "structured"
 PATCH_MODE_UNIFIED = "unified"
 PATCH_MODE_ALIASES = {"diff": PATCH_MODE_UNIFIED}
@@ -506,7 +507,7 @@ async def apply_doc_change(
         file_size_after = 0
         verification_passed = False
 
-        date_str = utcnow().strftime("%Y-%m-%d")
+        date_str = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         frontmatter_extra: Dict[str, Any] = {}
 
         # === AUTO-TRANSFORM HOOK (opt-in via frontmatter) ===
@@ -535,6 +536,8 @@ async def apply_doc_change(
                 # Non-fatal - log but continue
                 doc_logger.warning(f"Auto-TOC failed for {doc_name}: {e}")
 
+        allow_frontmatter_create = action != "status_update"
+
         try:
             updated_text, frontmatter_extra, frontmatter_line_count = _apply_frontmatter_pipeline(
                 original_parsed,
@@ -544,6 +547,7 @@ async def apply_doc_change(
                 project=project,
                 metadata=metadata,
                 date_str=date_str,
+                allow_create=allow_frontmatter_create,
             )
             after_hash = _hash_text(updated_text)
             frontmatter_only = updated_body == original_body and bool(frontmatter_extra.get("frontmatter_updated"))
@@ -822,7 +826,10 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
         "doc_log": "DOC_LOG.md",
         "security_log": "SECURITY_LOG.md",
         "bug_log": "BUG_LOG.md",
-    }.get(doc_name, f"{doc_name}.md")  # Preserve case for custom doc names
+    }.get(doc_name)
+    if filename is None:
+        # Accept extension-qualified doc references without creating ".md.md" paths.
+        filename = doc_name if str(doc_name).lower().endswith(".md") else f"{doc_name}.md"
 
     resolved_path = (docs_dir / filename).resolve()
 
@@ -1876,15 +1883,20 @@ def _replace_range_text(
     end_line: Optional[int],
     replacement: str,
 ) -> str:
-    """Replace inclusive line range [start_line, end_line] (1-based) or homologous section."""
-    allow_header_fallback = start_line is not None and end_line is not None
-    header_replacement = _replace_section_by_header(
-        original_text, replacement, allow_missing_header_fallback=allow_header_fallback
-    )
-    if header_replacement is not None:
-        return header_replacement
+    """Replace inclusive line range [start_line, end_line] (1-based).
 
+    Safety rule: when line numbers are provided, always honor the explicit range.
+    Header-based section replacement is only attempted when range endpoints are
+    omitted (legacy fallback behavior).
+    """
     if start_line is None or end_line is None:
+        header_replacement = _replace_section_by_header(
+            original_text,
+            replacement,
+            allow_missing_header_fallback=False,
+        )
+        if header_replacement is not None:
+            return header_replacement
         raise DocumentOperationError("replace_range requires start_line and end_line")
 
     if start_line < 1 or end_line < start_line:
@@ -2262,6 +2274,9 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     desired = desired_raw.lower().strip() if isinstance(desired_raw, str) else None
     proof = metadata.get("proof")
     label = metadata.get("label") or metadata.get("item") or metadata.get("text") or metadata.get("title")
+    allow_append = bool(
+        metadata.get("allow_append") or metadata.get("scaffold") or metadata.get("create_if_missing")
+    )
 
     done_states = {"done", "completed", "complete", "true", "yes", "checked", "finished"}
     pending_states = {"pending", "todo", "not done", "open", "incomplete", "undone"}
@@ -2277,24 +2292,34 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
 
     lines = text.splitlines()
     section_marker = SECTION_MARKER.format(section=section) if section else None
+    inline_target_idx: Optional[int] = None
     section_start_idx: Optional[int] = None
     section_end_idx: int = len(lines)
 
     if section_marker:
         for idx, line in enumerate(lines):
-            if line.strip() == section_marker:
+            stripped = line.strip()
+            if stripped == section_marker:
                 section_start_idx = idx
                 break
+            if section_marker in line:
+                inline_target_idx = idx
+                break
+
         if section_start_idx is not None:
             for idx in range(section_start_idx + 1, len(lines)):
                 stripped = lines[idx].strip()
                 if stripped.startswith("<!-- ID:") and stripped != section_marker:
                     section_end_idx = idx
                     break
-        else:
-            # Auto-heal missing anchor: append new section with checklist entry.
+        elif inline_target_idx is None and not allow_append:
+            raise DocumentOperationError(
+                f"CHECKLIST_SECTION_NOT_FOUND: section '{section}' was not found; "
+                "pass metadata.allow_append=true to create it"
+            )
+        elif inline_target_idx is None:
             doc_logger.warning(
-                "Checklist section anchor '%s' missing; creating new block.",
+                "Checklist section anchor '%s' missing; creating new block due allow_append.",
                 section,
                 extra={"section": section, "action": "status_update"},
             )
@@ -2311,10 +2336,19 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     replacement = False
     search_start = (section_start_idx + 1) if section_start_idx is not None else 0
     search_end = section_end_idx
+    candidate_indices: List[int]
+    if inline_target_idx is not None:
+        candidate_indices = [inline_target_idx]
+    else:
+        candidate_indices = list(range(search_start, search_end))
 
-    for idx in range(search_start, search_end):
+    for idx in candidate_indices:
         line = lines[idx]
         if "- [ ]" not in line and "- [x]" not in line:
+            if inline_target_idx is not None:
+                raise DocumentOperationError(
+                    f"CHECKLIST_ITEM_INVALID: section '{section}' does not point to a checklist item"
+                )
             continue
 
         token = resolve_token(line)
@@ -2323,25 +2357,34 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
         else:
             new_line = line.replace("- [ ]", f"- {token}", 1)
 
+        trailing_anchor = ""
+        anchor_match = re.search(r"\s*(<!--\s*ID:\s*[^>]+-->)\s*$", new_line)
+        if anchor_match:
+            trailing_anchor = " " + anchor_match.group(1)
+            new_line = new_line[: anchor_match.start()].rstrip()
+
         parts = new_line.split(" | ")
         prefix = parts[0].rstrip()
         other_tokens = [part for part in parts[1:] if not part.startswith("proof=")]
         if proof:
             other_tokens.append(f"proof={proof}")
         new_line = " | ".join([prefix] + other_tokens) if other_tokens else prefix
-        lines[idx] = new_line
+        lines[idx] = new_line + trailing_anchor
         replacement = True
         break
 
     if not replacement:
         token = resolve_token(None)
+        if section and not allow_append:
+            raise DocumentOperationError(
+                f"CHECKLIST_ITEM_NOT_FOUND: no checklist item found for section '{section}'"
+            )
         entry_label = label or (section.replace("_", " ").title() if section else "Checklist item")
         new_line = f"- {token} {entry_label}"
         if proof:
             new_line += f" | proof={proof}"
         insertion_index = search_end
         lines.insert(insertion_index, new_line)
-        replacement = True
 
     updated_text = "\n".join(lines)
     if text.endswith("\n"):
@@ -2355,6 +2398,48 @@ def _extract_title(text: str, fallback: str) -> str:
         if stripped.startswith("#"):
             return stripped.lstrip("#").strip()
     return fallback
+
+
+def _extract_related_docs_from_body(
+    body_text: str,
+    docs_mapping: Dict[str, Any],
+    current_doc_name: str,
+) -> list[str]:
+    if not body_text or not docs_mapping:
+        return []
+
+    target_lookup: Dict[str, str] = {}
+    for key, value in docs_mapping.items():
+        if not value:
+            continue
+        path_obj = Path(str(value))
+        key_name = str(key).strip()
+        target_lookup[path_obj.name.lower()] = key_name
+        target_lookup[path_obj.stem.lower()] = key_name
+
+    related_docs: list[str] = []
+    seen: set[str] = set()
+    for match in _MARKDOWN_LINK_PATTERN.finditer(body_text):
+        target = (match.group(1) or "").strip()
+        if not target or target.startswith("#"):
+            continue
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", target):
+            continue
+
+        target_path = target.split("#", 1)[0].split("?", 1)[0].strip()
+        if not target_path:
+            continue
+
+        target_name = Path(target_path).name.lower()
+        target_stem = Path(target_path).stem.lower()
+        related_key = target_lookup.get(target_name) or target_lookup.get(target_stem)
+        if not related_key or related_key == current_doc_name or related_key in seen:
+            continue
+
+        seen.add(related_key)
+        related_docs.append(related_key)
+
+    return related_docs
 
 
 def _default_frontmatter(
@@ -2399,6 +2484,7 @@ def _apply_frontmatter_pipeline(
     project: Dict[str, Any],
     metadata: Optional[Dict[str, Any]],
     date_str: str,
+    allow_create: bool = True,
 ) -> tuple[str, Dict[str, Any], int]:
     if metadata and metadata.get("frontmatter_disable") is True:
         line_count = len(parsed.frontmatter_raw.splitlines()) if parsed.has_frontmatter else 0
@@ -2419,6 +2505,15 @@ def _apply_frontmatter_pipeline(
         return updated_body, {"frontmatter_updated": False}, 0
 
     updates: Dict[str, Any] = {}
+    updates["title"] = _extract_title(updated_body, doc_name.replace("_", " ").title())
+
+    auto_related_docs_disabled = (
+        bool(metadata.get("frontmatter_disable_related_docs")) if isinstance(metadata, dict) else False
+    )
+    if not auto_related_docs_disabled:
+        project_docs = project.get("docs") if isinstance(project.get("docs"), dict) else {}
+        updates["related_docs"] = _extract_related_docs_from_body(updated_body, project_docs, doc_name)
+
     if isinstance(metadata, dict):
         if metadata.get("doc_type"):
             updates["doc_type"] = metadata["doc_type"]
@@ -2455,6 +2550,13 @@ def _apply_frontmatter_pipeline(
                 {"frontmatter_updated": False, "frontmatter_created": False},
                 line_count,
             )
+        if not allow_create:
+            return (
+                updated_body,
+                {"frontmatter_updated": False, "frontmatter_created": False},
+                0,
+            )
+
         defaults = _default_frontmatter(doc_name, doc_category, project.get("name", ""), updated_body, date_str)
         defaults.update(updates)
         frontmatter_block = build_frontmatter(defaults)

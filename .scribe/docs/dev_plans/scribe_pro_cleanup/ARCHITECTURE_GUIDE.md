@@ -5,7 +5,7 @@ doc_name: architecture
 category: engineering
 status: draft
 version: '0.1'
-last_updated: '2026-02-06'
+last_updated: '2026-02-11'
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -545,3 +545,5 @@ Claude Desktop config updated to use `scribe-server` entry point.
 | utils/reminder_engine.py | 563 | 19+4 | KEEP |
 
 ---
+Batch
+Batch

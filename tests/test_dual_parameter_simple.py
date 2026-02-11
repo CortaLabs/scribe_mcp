@@ -32,7 +32,7 @@ def test_dual_parameter_simple():
         print("      ✅ Legacy parameter conversion works")
     except Exception as e:
         print(f"      ❌ Legacy conversion test failed: {e}")
-        return False
+        raise
 
     # Test 2: Config object creation
     print("   📋 Test 2: Config object creation")
@@ -48,7 +48,7 @@ def test_dual_parameter_simple():
         print("      ✅ Config object creation works")
     except Exception as e:
         print(f"      ❌ Config creation test failed: {e}")
-        return False
+        raise
 
     # Test 3: Dict conversion and merging
     print("   📋 Test 3: Dict conversion and merging")
@@ -85,7 +85,7 @@ def test_dual_parameter_simple():
         print("      ✅ Dict conversion and merging works")
     except Exception as e:
         print(f"      ❌ Dict merging test failed: {e}")
-        return False
+        raise
 
     # Test 4: Bulk mode detection
     print("   📋 Test 4: Bulk mode detection")
@@ -106,7 +106,7 @@ def test_dual_parameter_simple():
         print("      ✅ Bulk mode detection works")
     except Exception as e:
         print(f"      ❌ Bulk mode test failed: {e}")
-        return False
+        raise
 
     # Test 5: Empty string handling
     print("   📋 Test 5: Empty string handling")
@@ -130,10 +130,9 @@ def test_dual_parameter_simple():
         print("      ✅ Empty string handling works")
     except Exception as e:
         print(f"      ❌ Empty string test failed: {e}")
-        return False
+        raise
 
     print("✅ All simple dual parameter tests passed!")
-    return True
 
 
 def main():
@@ -141,7 +140,8 @@ def main():
     print("🚀 Phase 2 Task 2.4 - Simple Dual Parameter Tests")
     print("=" * 60)
 
-    success = test_dual_parameter_simple()
+    test_dual_parameter_simple()
+    success = True
 
     if success:
         print("\n🎉 Simple dual parameter tests passed!")

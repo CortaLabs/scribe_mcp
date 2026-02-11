@@ -89,6 +89,11 @@ class FormatterDispatcher:
         self._entry = entry_formatter or EntryFormatter(token_warning_threshold)
         self._project = project_formatter or ProjectFormatter(token_warning_threshold)
 
+    @staticmethod
+    def _safe_json_dumps(value: Any, **kwargs: Any) -> str:
+        """Serialize formatter payloads safely for mixed runtime objects."""
+        return json.dumps(value, default=str, **kwargs)
+
     async def finalize_tool_response(
         self,
         data: Dict[str, Any],
@@ -195,7 +200,7 @@ class FormatterDispatcher:
                 pass  # resolution failed entirely, stays None
 
             # Calculate response size for metrics
-            response_size = len(json.dumps(data)) if isinstance(data, dict) else 0
+            response_size = len(self._safe_json_dumps(data)) if isinstance(data, dict) else 0
 
             # Log synchronously (tool_logger is sync function)
             log_tool_call(
@@ -286,7 +291,7 @@ class FormatterDispatcher:
                 readable_content = self._entry.format_readable_append_entry(data)
             else:
                 # Generic readable format for unknown tools
-                readable_content = json.dumps(data, indent=2)
+                readable_content = self._safe_json_dumps(data, indent=2)
 
             # ISSUE #9962 FIX: Return CallToolResult with TextContent ONLY
             # This forces Claude Code to display text cleanly (no escaped \n)
@@ -345,7 +350,7 @@ class FormatterDispatcher:
             elif tool_name == "append_entry":
                 readable_content = self._entry.format_readable_append_entry(data)
             else:
-                readable_content = json.dumps(data, indent=2)
+                readable_content = self._safe_json_dumps(data, indent=2)
 
             # Return BOTH TextContent and structuredContent
             # (For when Issue #9962 is fixed, or for programmatic consumers)

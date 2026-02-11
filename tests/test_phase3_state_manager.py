@@ -6,14 +6,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 # Add parent directory to path so scribe_mcp can be imported
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.state.manager import StateManager
 from scribe_mcp.storage.sqlite import SQLiteStorage
 
+pytestmark = pytest.mark.asyncio
 
-async def test_record_tool_database_integration():
+
+async def test_record_tool_database_integration(monkeypatch):
     """Test that record_tool writes to database and reads with fallback."""
     print("=" * 70)
     print("PHASE 3 STATE MANAGER DATABASE INTEGRATION TEST")
@@ -44,7 +48,7 @@ async def test_record_tool_database_integration():
 
         # Mock the server module to provide storage backend
         import scribe_mcp.server as server_module
-        server_module.storage_backend = storage
+        monkeypatch.setattr(server_module, "storage_backend", storage)
 
         # Create mock router context manager
         class MockExecutionContext:
@@ -56,7 +60,7 @@ async def test_record_tool_database_integration():
             def get_current(self):
                 return MockExecutionContext()
 
-        server_module.router_context_manager = MockRouterContext()
+        monkeypatch.setattr(server_module, "router_context_manager", MockRouterContext())
 
         print("\n2. Mock server context set up")
 
@@ -120,7 +124,7 @@ async def test_record_tool_database_integration():
         state_path.write_text(json.dumps(fallback_data))
 
         # Call with a session that doesn't exist in DB
-        server_module.router_context_manager = type('MockCtx', (), {'get_current': lambda self: None})()
+        monkeypatch.setattr(server_module, "router_context_manager", type('MockCtx', (), {'get_current': lambda self: None})())
         state = await manager.record_tool("fallback_test")
         # Should fall back to state.json data
         print(f"   ✓ Fallback read succeeded")

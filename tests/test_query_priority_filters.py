@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
+import pytest_asyncio
 from scribe_mcp.tools.read_recent import read_recent
 from scribe_mcp.tools.query_entries import query_entries
 from scribe_mcp.tools.append_entry import append_entry
@@ -15,7 +16,7 @@ from scribe_mcp.tools.set_project import set_project
 from scribe_mcp.config.settings import settings
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_project():
     """Create a test project for filtering tests."""
     project_name = f"test_priority_filters"

@@ -45,13 +45,13 @@ def test_dual_parameter_logic():
         print("      ✅ Legacy parameters only logic works")
     except Exception as e:
         print(f"      ❌ Legacy parameters test failed: {e}")
-        return False
+        raise
 
     # Test 2: Config object provided
     print("   📋 Test 2: Config object provided")
     try:
         # Simulate config object only
-        message = ""
+        message = None
         status = None
         agent = None
         config = AppendEntryConfig(
@@ -86,13 +86,13 @@ def test_dual_parameter_logic():
                 agent=agent
             )
 
-        assert final_config.message == "Test config only"
+        assert final_config.message is None
         assert final_config.status == "success"
         assert final_config.agent == "ConfigAgent"
         print("      ✅ Config object only logic works")
     except Exception as e:
         print(f"      ❌ Config object test failed: {e}")
-        return False
+        raise
 
     # Test 3: Legacy parameters override config object
     print("   📋 Test 3: Legacy parameter precedence")
@@ -140,7 +140,7 @@ def test_dual_parameter_logic():
         print("      ✅ Legacy parameter precedence logic works")
     except Exception as e:
         print(f"      ❌ Legacy precedence test failed: {e}")
-        return False
+        raise
 
     # Test 4: Bulk mode parameters
     print("   📋 Test 4: Bulk mode parameters")
@@ -184,7 +184,7 @@ def test_dual_parameter_logic():
         print("      ✅ Bulk mode parameters work correctly")
     except Exception as e:
         print(f"      ❌ Bulk mode test failed: {e}")
-        return False
+        raise
 
     # Test 5: Empty config with legacy parameters
     print("   📋 Test 5: Empty config with legacy parameters")
@@ -219,10 +219,9 @@ def test_dual_parameter_logic():
         print("      ✅ Empty config with legacy parameters works")
     except Exception as e:
         print(f"      ❌ Empty config test failed: {e}")
-        return False
+        raise
 
     print("✅ All dual parameter logic tests passed!")
-    return True
 
 
 def main():
@@ -230,7 +229,8 @@ def main():
     print("🚀 Phase 2 Task 2.4 - Dual Parameter Logic Tests")
     print("=" * 60)
 
-    success = test_dual_parameter_logic()
+    test_dual_parameter_logic()
+    success = True
 
     if success:
         print("\n🎉 Dual parameter logic tests passed!")

@@ -63,7 +63,41 @@ async def test_frontmatter_created_and_updated(tmp_path: Path) -> None:
     assert parsed.has_frontmatter
     assert parsed.frontmatter_data.get("title") == "Title"
     assert parsed.frontmatter_data.get("doc_type") == "architecture"
-    assert parsed.frontmatter_data.get("last_updated")
+    last_updated = str(parsed.frontmatter_data.get("last_updated") or "")
+    assert last_updated
+    assert last_updated.endswith("UTC")
+
+
+@pytest.mark.asyncio
+async def test_status_update_does_not_create_frontmatter_when_missing(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["checklist"])
+    path.write_text(
+        "# Checklist\n\n<!-- ID: phase_0 -->\n- [ ] Ship feature\n",
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="checklist",
+        action="status_update",
+        section="phase_0",
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={"status": "done", "proof": "commit123"},
+        dry_run=False,
+    )
+
+    assert change.success
+    text = path.read_text(encoding="utf-8")
+    parsed = parse_frontmatter(text)
+    assert not parsed.has_frontmatter
+    assert text.startswith("# Checklist")
+    assert "- [x] Ship feature | proof=commit123" in text
 
 
 @pytest.mark.asyncio
@@ -133,6 +167,31 @@ async def test_frontmatter_explicit_updates(tmp_path: Path) -> None:
     assert change.success
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert parsed.frontmatter_data.get("status") == "authoritative"
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_auto_updates_related_docs_from_links(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="# Title\n\nSee [Phase](PHASE_PLAN.md) and [Checklist](CHECKLIST.md).\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={},
+        dry_run=False,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.frontmatter_data.get("related_docs") == ["phase_plan", "checklist"]
 
 
 @pytest.mark.asyncio

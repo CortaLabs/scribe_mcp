@@ -42,7 +42,7 @@ from scribe_mcp.storage.sqlite import SQLiteStorage
 # Test Fixtures and Helpers
 # =============================================================================
 
-class TestBridgePlugin(BridgePlugin):
+class DummyBridgePlugin(BridgePlugin):
     """Simple test bridge implementation."""
 
     def __init__(self, manifest: BridgeManifest):
@@ -199,7 +199,7 @@ class TestPhase1CoreRegistry:
         storage = SQLiteStorage(temp_db_path)
         await storage._initialise()
         registry = BridgeRegistry(storage)
-        bridge_id = await registry.register_bridge(basic_manifest, TestBridgePlugin)
+        bridge_id = await registry.register_bridge(basic_manifest, DummyBridgePlugin)
         assert bridge_id == "test_bridge"
         assert registry.get_manifest(bridge_id) is not None
 
@@ -209,7 +209,7 @@ class TestPhase1CoreRegistry:
         storage = SQLiteStorage(temp_db_path)
         await storage._initialise()
         registry = BridgeRegistry(storage)
-        await registry.register_bridge(basic_manifest, TestBridgePlugin)
+        await registry.register_bridge(basic_manifest, DummyBridgePlugin)
         await registry.activate_bridge("test_bridge")
 
         bridge = registry.get_bridge("test_bridge")
@@ -221,7 +221,7 @@ class TestPhase1CoreRegistry:
         storage = SQLiteStorage(temp_db_path)
         await storage._initialise()
         registry = BridgeRegistry(storage)
-        await registry.register_bridge(basic_manifest, TestBridgePlugin)
+        await registry.register_bridge(basic_manifest, DummyBridgePlugin)
         await registry.activate_bridge("test_bridge")
         await registry.deactivate_bridge("test_bridge")
 
@@ -234,7 +234,7 @@ class TestPhase1CoreRegistry:
         storage = SQLiteStorage(temp_db_path)
         await storage._initialise()
         registry = BridgeRegistry(storage)
-        await registry.register_bridge(basic_manifest, TestBridgePlugin)
+        await registry.register_bridge(basic_manifest, DummyBridgePlugin)
         await registry.unregister_bridge("test_bridge")
 
         assert registry.get_manifest("test_bridge") is None
@@ -245,7 +245,7 @@ class TestPhase1CoreRegistry:
         storage = SQLiteStorage(temp_db_path)
         await storage._initialise()
         registry = BridgeRegistry(storage)
-        await registry.register_bridge(basic_manifest, TestBridgePlugin)
+        await registry.register_bridge(basic_manifest, DummyBridgePlugin)
 
         bridges = await registry.list_bridges()
         assert len(bridges) == 1
@@ -257,7 +257,7 @@ class TestPhase1CoreRegistry:
         storage = SQLiteStorage(temp_db_path)
         await storage._initialise()
         registry = BridgeRegistry(storage)
-        await registry.register_bridge(basic_manifest, TestBridgePlugin)
+        await registry.register_bridge(basic_manifest, DummyBridgePlugin)
         await registry.activate_bridge("test_bridge")
 
         results = await registry.health_check_all()
@@ -329,7 +329,7 @@ class TestPhase2BridgeHooks:
     @pytest.mark.asyncio
     async def test_hook_manager_pre_append(self, full_manifest):
         """Test hook manager pre_append execution."""
-        bridge = TestBridgePlugin(full_manifest)
+        bridge = DummyBridgePlugin(full_manifest)
         bridge.state = BridgeState.ACTIVE
 
         manager = BridgeHookManager()
@@ -344,7 +344,7 @@ class TestPhase2BridgeHooks:
     @pytest.mark.asyncio
     async def test_hook_manager_post_append(self, full_manifest):
         """Test hook manager post_append execution."""
-        bridge = TestBridgePlugin(full_manifest)
+        bridge = DummyBridgePlugin(full_manifest)
         bridge.state = BridgeState.ACTIVE
 
         manager = BridgeHookManager()
@@ -356,7 +356,7 @@ class TestPhase2BridgeHooks:
     @pytest.mark.asyncio
     async def test_hook_manager_pre_rotate(self, full_manifest):
         """Test hook manager pre_rotate execution."""
-        bridge = TestBridgePlugin(full_manifest)
+        bridge = DummyBridgePlugin(full_manifest)
         bridge.state = BridgeState.ACTIVE
 
         manager = BridgeHookManager()
@@ -368,7 +368,7 @@ class TestPhase2BridgeHooks:
     @pytest.mark.asyncio
     async def test_hook_manager_post_rotate(self, full_manifest):
         """Test hook manager post_rotate execution."""
-        bridge = TestBridgePlugin(full_manifest)
+        bridge = DummyBridgePlugin(full_manifest)
         bridge.state = BridgeState.ACTIVE
 
         manager = BridgeHookManager()
@@ -380,7 +380,7 @@ class TestPhase2BridgeHooks:
     @pytest.mark.asyncio
     async def test_hook_manager_unregister(self, full_manifest):
         """Test hook manager unregistration."""
-        bridge = TestBridgePlugin(full_manifest)
+        bridge = DummyBridgePlugin(full_manifest)
         bridge.state = BridgeState.ACTIVE
 
         manager = BridgeHookManager()
@@ -960,7 +960,7 @@ class TestPhase5BridgeHealthMonitor:
         await storage._initialise()
         registry = BridgeRegistry(storage)
 
-        await registry.register_bridge(full_manifest, TestBridgePlugin)
+        await registry.register_bridge(full_manifest, DummyBridgePlugin)
         await registry.activate_bridge(full_manifest.bridge_id)
 
         monitor = BridgeHealthMonitor(registry)
@@ -979,7 +979,7 @@ class TestPhase5BridgeHealthMonitor:
         await storage._initialise()
         registry = BridgeRegistry(storage)
 
-        await registry.register_bridge(full_manifest, TestBridgePlugin)
+        await registry.register_bridge(full_manifest, DummyBridgePlugin)
         await registry.activate_bridge(full_manifest.bridge_id)
 
         monitor = BridgeHealthMonitor(registry)
@@ -998,7 +998,7 @@ class TestPhase5BridgeHealthMonitor:
         await storage._initialise()
         registry = BridgeRegistry(storage)
 
-        await registry.register_bridge(full_manifest, TestBridgePlugin)
+        await registry.register_bridge(full_manifest, DummyBridgePlugin)
         await registry.activate_bridge(full_manifest.bridge_id)
 
         monitor = BridgeHealthMonitor(registry, check_interval=60.0)
@@ -1122,7 +1122,7 @@ class TestPhase5BridgeHealthMonitor:
         await storage._initialise()
         registry = BridgeRegistry(storage)
 
-        await registry.register_bridge(full_manifest, TestBridgePlugin)
+        await registry.register_bridge(full_manifest, DummyBridgePlugin)
         await registry.activate_bridge(full_manifest.bridge_id)
 
         monitor = BridgeHealthMonitor(registry)

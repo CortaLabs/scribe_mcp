@@ -7,10 +7,14 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
+import pytest
+
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from storage.sqlite import SQLiteStorage
+
+pytestmark = pytest.mark.asyncio
 
 
 async def test_schema_creation():
@@ -40,7 +44,7 @@ async def test_schema_creation():
         print(f"\nTable schema:\n{result[0]}")
     else:
         print("❌ tool_calls table NOT found")
-        return False
+        pytest.fail("tool_calls schema behavior validation failed")
 
     # Check indexes exist
     conn = sqlite3.connect(test_db)
@@ -67,7 +71,7 @@ async def test_schema_creation():
     missing = set(expected_indexes) - set(found_indexes)
     if missing:
         print(f"\n❌ Missing indexes: {missing}")
-        return False
+        pytest.fail("tool_calls schema behavior validation failed")
 
     # Check foreign key constraint
     conn = sqlite3.connect(test_db)
@@ -79,9 +83,9 @@ async def test_schema_creation():
         print(f"\n✅ Foreign key constraint verified: session_id → scribe_sessions")
     else:
         print("\n❌ Foreign key constraint NOT found")
-        return False
+        pytest.fail("tool_calls schema behavior validation failed")
 
-    return True
+    return
 
 
 async def test_record_tool_call():
@@ -134,10 +138,10 @@ async def test_record_tool_call():
         print(f"   Project: {row['project_name']}")
         print(f"   Agent: {row['agent_id']}")
         print(f"   Size: {row['response_size_bytes']} bytes")
-        return True
+        return
     else:
         print("❌ Tool call was NOT recorded")
-        return False
+        pytest.fail("tool_calls schema behavior validation failed")
 
 
 async def test_get_session_tool_calls():
@@ -169,10 +173,10 @@ async def test_get_session_tool_calls():
         print(f"\nLast 5 calls (newest first):")
         for call in results[:5]:
             print(f"   - {call['tool_name']} ({call['duration_ms']}ms)")
-        return True
+        return
     else:
         print(f"❌ Expected at least 4 calls, got {len(results) if results else 0}")
-        return False
+        pytest.fail("tool_calls schema behavior validation failed")
 
 
 async def test_get_tool_metrics():
@@ -201,7 +205,7 @@ async def test_get_tool_metrics():
     print(f"\n✅ Tool-specific metrics (list_projects):")
     print(f"   Total calls: {list_metrics['total_calls']}")
 
-    return True
+    return
 
 
 async def test_cascade_delete():
@@ -232,10 +236,10 @@ async def test_cascade_delete():
 
     if len(calls_after) == 0:
         print("✅ CASCADE DELETE working - tool_calls cleaned up with session")
-        return True
+        return
     else:
         print("❌ CASCADE DELETE failed - orphaned tool_calls remain")
-        return False
+        pytest.fail("tool_calls schema behavior validation failed")
 
 
 async def main():

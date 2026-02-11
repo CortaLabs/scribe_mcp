@@ -5,7 +5,7 @@ doc_type: architecture
 category: engineering
 status: draft
 version: '0.1'
-last_updated: '2026-01-08'
+last_updated: '2026-02-11'
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -50,50 +50,7 @@ summary: ''
 ---
 ## 1.1 Problem Statement
 <!-- ID: problem_statement -->
-
-**Context:** The Scribe MCP codebase has grown organically to 51,014 LOC across 204 Python files without systematic code review or architecture documentation. This has resulted in:
-
-- **Ultra-complex tool implementations**: 4 tools exceed 1,900 LOC (append_entry: 2,357, manage_docs: 2,663, query_entries: 2,030, rotate_log: 1,981)
-- **Storage abstraction violations**: `shared/project_registry.py` bypasses the StorageBackend interface with direct `sqlite3.connect()` calls
-- **Incomplete PostgreSQL migration**: 7 tables missing, 40+ columns missing, 3 tools not implemented (delete_project, reminder_history, tool_calls)
-- **Import structure chaos**: 81 files use `sys.path` manipulation with inconsistent patterns
-- **Code duplication**: `_count_log_entries` exists in 2 files, document gathering repeated 3x (~90-100 LOC each)
-- **Parameter overload**: append_entry (21 params), query_entries (25 params) causing cognitive complexity
-- **Token bloat**: list_projects returns 1000+ tokens, set_project returns 400-800 tokens
-- **Documented bugs**: set_project line 459 incorrectly marks empty logs as new (entry_count == 0 logic)
-
-**Impact:**
-- AI agents receive excessive token overhead (30-40% reduction potential)
-- Code maintenance requires deep context across multiple files
-- Storage backend switching is unreliable due to abstraction violations
-- PostgreSQL users face incomplete feature parity
-- No centralized documentation for understanding system behavior
-
-**Goals:**
-1. **100% Wiki Coverage**: Document every tool, storage method, utility function with machine-readable specifications
-2. **Token Reduction**: Achieve 30-40% reduction in tool output through strategic refactoring
-3. **Storage Parity**: Complete PostgreSQL implementation to match SQLite feature set
-4. **Import Standardization**: Eliminate sys.path manipulation, establish consistent patterns
-5. **Bug Elimination**: Fix all documented issues with verified tests
-6. **Architecture Clarity**: Create comprehensive component interaction maps
-7. **Dead Code Removal**: Identify and eliminate unused functions, redundant logic
-
-**Non-Goals:**
-- Complete rewrite of existing systems (maintain backward compatibility)
-- Optimization without measurement (all changes must be data-driven)
-- UI/UX changes (focus is internal architecture and documentation)
-
-**Success Metrics:**
-- 100% of 28 tools documented in wiki with implementation specs
-- Token output reduced by 30-40% on high-frequency tools (list_projects, set_project, read_recent)
-- All 69 functional tests passing with 0 regressions
-- PostgreSQL backend achieves 100% feature parity with SQLite
-- Zero direct database access bypassing StorageBackend interface
-- Wiki navigation achieves <30 seconds to find any component documentation
-
-
----
-## 1.2 Requirements & Constraints
+Test
 <!-- ID: requirements_constraints -->
 
 **Functional Requirements:**

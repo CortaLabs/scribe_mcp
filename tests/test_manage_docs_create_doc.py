@@ -114,9 +114,10 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
 
     try:
         result = await manage_docs(
-            action="create_doc",
+            action="create",
             doc="custom_doc",
             metadata={
+                "doc_type": "custom",
                 "doc_name": "one_off_note",
                 "body": "# Note\nDetails.",
                 "register_doc": True,
@@ -126,6 +127,45 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
         assert result["ok"] is True
         assert "warnings" in result
         assert "Registry update failed" in result["warnings"][0]
+    finally:
+        server_module.state_manager = original_state_manager
+        server_module.storage_backend = original_storage_backend
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    original_state_manager = server_module.state_manager
+    original_storage_backend = server_module.storage_backend
+    server_module.state_manager = state_manager
+    server_module.storage_backend = None
+
+    try:
+        result = await manage_docs(
+            action="create",
+            doc="custom_doc",
+            metadata={
+                "doc_type": "custom",
+                "doc_name": "dry_run_note",
+                "body": "# Dry Run Note\nShould not register.",
+            },
+            dry_run=True,
+        )
+        assert result["ok"] is True
+
+        state = await state_manager.load()
+        stored_project = state.get_project(project["name"])
+        assert stored_project is not None
+        assert "dry_run_note" not in (stored_project.get("docs") or {})
+
+        preview_path = Path(result["path"])
+        assert not preview_path.exists()
+
+        warnings = result.get("warnings") or []
+        assert any("register_doc skipped during dry_run" in warning for warning in warnings)
     finally:
         server_module.state_manager = original_state_manager
         server_module.storage_backend = original_storage_backend
@@ -144,9 +184,10 @@ async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path) -> None
 
     try:
         result = await manage_docs(
-            action="create_doc",
+            action="create",
             doc="custom_doc",
             metadata={
+                "doc_type": "custom",
                 "doc_name": "newline_note",
                 "body": "# Note\nDetails line two.",
             },
@@ -199,3 +240,45 @@ async def test_create_custom_doc_respects_doc_name_parameter(tmp_path: Path) -> 
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert "# Protocol" in parsed.body
     assert "Coordination rules here." in parsed.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action",
+    [
+        "create_doc",
+        "create_research_doc",
+        "create_bug_report",
+        "create_review_report",
+        "create_agent_report_card",
+    ],
+)
+async def test_manage_docs_deprecated_create_aliases_fail_hard(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    original_state_manager = server_module.state_manager
+    original_storage_backend = server_module.storage_backend
+    server_module.state_manager = state_manager
+    server_module.storage_backend = None
+
+    try:
+        result = await manage_docs(
+            action=action,
+            doc="legacy_alias_doc",
+            content="# Legacy Alias\n\nBody content.",
+            metadata={"category": "router"},
+            dry_run=False,
+        )
+        assert result["ok"] is False
+        assert "Invalid manage_docs action" in result.get("error", "")
+        allowed = result.get("allowed_actions") or result.get("extra", {}).get("allowed_actions", [])
+        assert "create" in allowed
+        assert action not in allowed
+    finally:
+        server_module.state_manager = original_state_manager
+        server_module.storage_backend = original_storage_backend

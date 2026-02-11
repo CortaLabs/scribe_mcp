@@ -6,19 +6,53 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from scribe_mcp import server as server_module
+from scribe_mcp.shared.execution_context import AgentIdentity, ExecutionContext
 from scribe_mcp.tools.read_file import read_file
 
+pytestmark = pytest.mark.asyncio
 
-async def test_python_ast():
+
+@pytest.fixture
+def exec_context_token():
+    repo_root = Path(__file__).parent.parent
+    context = ExecutionContext(
+        repo_root=str(repo_root),
+        mode="sentinel",
+        session_id="read-file-enhancements-session",
+        execution_id="read-file-enhancements-exec",
+        agent_identity=AgentIdentity(
+            agent_kind="test",
+            model=None,
+            instance_id="test-agent",
+            sub_id=None,
+            display_name=None,
+        ),
+        intent="read_file_enhancements",
+        timestamp_utc="2026-02-11T00:00:00+00:00",
+        affected_dev_projects=[],
+        sentinel_day="2026-02-11",
+    )
+    token = server_module.router_context_manager.set_current(context)
+    try:
+        yield
+    finally:
+        server_module.router_context_manager.reset(token)
+
+
+async def test_python_ast(exec_context_token):
     """Test Python AST structure extraction."""
     print("\n" + "="*80)
     print("TEST 1: Python AST Structure Extraction")
     print("="*80)
 
     result = await read_file(
+        agent="test_agent",
         path="tools/read_file.py",
         mode="scan_only",
         format="structured"
@@ -52,16 +86,17 @@ async def test_python_ast():
         print(f"  Total Chunks: {nav_hints.get('total_chunks')}")
         print(f"  Suggested Chunk Size: {nav_hints.get('suggested_chunk_size')}")
 
-    return result.get('ok', False)
+    assert result.get('ok', False)
 
 
-async def test_markdown_headings():
+async def test_markdown_headings(exec_context_token):
     """Test Markdown heading extraction."""
     print("\n" + "="*80)
     print("TEST 2: Markdown Heading Extraction")
     print("="*80)
 
     result = await read_file(
+        agent="test_agent",
         path="CLAUDE.md",
         mode="scan_only",
         format="structured"
@@ -82,16 +117,17 @@ async def test_markdown_headings():
             indent = "  " * (heading['level'] - 1)
             print(f"{indent}{'#'*heading['level']} {heading['text']} (line {heading['line']})")
 
-    return result.get('ok', False)
+    assert result.get('ok', False)
 
 
-async def test_skill_detection():
+async def test_skill_detection(exec_context_token):
     """Test SKILL.md special file detection."""
     print("\n" + "="*80)
     print("TEST 3: SKILL.md Special Detection")
     print("="*80)
 
     result = await read_file(
+        agent="test_agent",
         path=".codex/skills/scribe-mcp-usage/SKILL.md",
         mode="scan_only",
         format="structured"
@@ -112,10 +148,11 @@ async def test_skill_detection():
     else:
         print("\n❌ SKILL.md detection FAILED - no special_file metadata!")
 
-    return result.get('ok', False) and bool(special)
+    assert result.get('ok', False)
+    assert bool(special)
 
 
-async def test_regex_search():
+async def test_regex_search(exec_context_token):
     """Test regex search mode (now default)."""
     print("\n" + "="*80)
     print("TEST 4: Regex Search Mode (Default)")
@@ -123,6 +160,7 @@ async def test_regex_search():
 
     # Test complex regex pattern - find all async functions
     result = await read_file(
+        agent="test_agent",
         path="tools/read_file.py",
         mode="search",
         query=r"async\s+def\s+\w+",  # Should match async function definitions
@@ -142,16 +180,17 @@ async def test_regex_search():
             line_text = match['line'].strip()
             print(f"  Line {line_num}: {line_text[:80]}")
 
-    return result.get('ok', False)
+    assert result.get('ok', False)
 
 
-async def test_navigation_hints():
+async def test_navigation_hints(exec_context_token):
     """Test navigation hints in scan mode."""
     print("\n" + "="*80)
     print("TEST 5: Navigation Hints")
     print("="*80)
 
     result = await read_file(
+        agent="test_agent",
         path="server.py",
         mode="scan_only",
         format="structured"
@@ -172,7 +211,7 @@ async def test_navigation_hints():
     else:
         print("\n❌ Navigation hints MISSING!")
 
-    return bool(nav_hints)
+    assert bool(nav_hints)
 
 
 async def main():

@@ -5,7 +5,7 @@ doc_name: phase_plan
 category: engineering
 status: draft
 version: '0.1'
-last_updated: '2026-02-11'
+last_updated: 2026-02-11 07:29:32 UTC
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -347,8 +347,10 @@ summary: ''
 5. SQLiteStorage facade delegates to these functions
 
 **Verification:**
-- [ ] Each module under 500 lines
-- [ ] `pytest tests/test_tools.py` passes (integration tests exercise all CRUD)
+- [x] Each module under 500 lines (`projects.py=251`, `entries.py=451`, `sessions.py=449`)
+- [x] `pytest tests/test_tools.py` passes (revalidated as part of integration and full-suite runs)
+
+**Execution Status (2026-02-11):** Task Package 4.4 completed. Added `storage/sqlite/projects.py`, `storage/sqlite/entries.py`, and `storage/sqlite/sessions.py`, then converted `SQLiteStorage` project/entry/session methods into thin delegates. Validation gates passed after extraction: focused CRUD/session regressions (`27 passed`), integration bundle (`62 passed`), expanded routing/storage set (`47 passed`), and full suite (`1823 passed, 5 skipped, 7 deselected`).
 
 ### Task Package 4.5: Extract Domain Modules (documents, planning, telemetry)
 
@@ -362,9 +364,11 @@ summary: ''
 4. Same function-level extraction pattern as 4.4
 
 **Verification:**
-- [ ] Each module under 400 lines
-- [ ] Old storage/sqlite.py deleted or reduced to import-only facade
-- [ ] `pytest tests/` passes -- FULL suite
+- [x] Each module under 400 lines (`documents.py=60`, `planning.py=308`, `telemetry.py=398`)
+- [x] Old storage/sqlite.py deleted or reduced to import-only facade
+- [x] `pytest tests/` passes -- FULL suite (`1823 passed, 5 skipped, 7 deselected`)
+
+**Execution Status (2026-02-11):** Task Package 4.5 completed. Added `storage/sqlite/documents.py`, `storage/sqlite/planning.py`, and `storage/sqlite/telemetry.py`, then extracted remaining heavy facade method groups out of `storage/sqlite/__init__.py` into `storage/sqlite/domain_facade.py` and moved telemetry helper SQL into `storage/sqlite/telemetry_support.py` to satisfy module size gates while preserving behavior.
 
 ### Task Package 4.6: Cleanup and Final Verification
 
@@ -378,11 +382,13 @@ summary: ''
 4. Verify no file in storage/sqlite/ exceeds 800 lines
 
 **Verification:**
-- [ ] `wc -l storage/sqlite/*.py` -- all under 800
-- [ ] `pytest tests/` -- FULL pass
-- [ ] `from scribe_mcp.storage import create_storage_backend` works
+- [x] `wc -l storage/sqlite/*.py` -- all under 800
+- [x] `pytest tests/` -- FULL pass (`1823 passed, 5 skipped, 7 deselected in 267.55s`)
+- [x] `from scribe_mcp.storage import create_storage_backend` works (`PYTHONPATH=.. python -c "from scribe_mcp.storage import create_storage_backend; print(callable(create_storage_backend))"` => `True`)
 
-**Exit Criteria:** storage/sqlite.py eliminated. 9 focused modules, all under 800 lines. All tests pass.
+**Execution Status (2026-02-11):** Task Package 4.6 completed. `storage/sqlite.py` remains eliminated, `storage/sqlite/__init__.py` is now a 433-line facade/bootstrapping entrypoint, and all package modules are below the 800-line cap.
+
+**Exit Criteria:** storage/sqlite.py eliminated. Modularized storage/sqlite package finalized (13 focused modules), all under 800 lines. All tests pass.
 
 **Rollback:** Git branch per task package. Revert branch if integration tests fail.
 
@@ -411,8 +417,10 @@ summary: ''
 5. validation.py: Extract path safety, action validation logic
 
 **Verification:**
-- [ ] Each module under 300 lines
-- [ ] `pytest tests/test_manage_docs*.py` passes
+- [x] Each module under 300 lines (`healing.py=251`, `validation.py=52`, `utils.py=198`, `preflight.py=86`, `indexing.py=295`)
+- [x] `pytest tests/test_manage_docs*.py tests/test_template_engine_manage_docs.py -q` passes (`69 passed in 4.47s`)
+
+**Execution Status (2026-02-11):** Task Package 5.1 completed. Shared modules were created and wired into `tools/manage_docs.py` via delegated helpers for parameter healing, metadata normalization, preflight index/file safeguards, custom doc path resolution, numeric grade parsing, special metadata construction, vector indexing operations, and special index updater selection. Runtime verification of `status_update` behavior remains intentionally deferred until MCP reboot per active operator direction.
 
 ### Task Package 5.2: Create doc_management/actions/ Modules
 
@@ -429,8 +437,10 @@ summary: ''
 7. batch.py: batch action handler
 
 **Verification:**
-- [ ] Each action module under 500 lines
+- [x] Each action module under 500 lines (`create=80`, `edit=331`, `append=14`, `status=14`, `search=208`, `query=265`, `batch=65`)
 - [ ] Every manage_docs action works: create, replace_section, append, status_update, search, list_sections, batch
+
+**Execution Status (2026-02-11, in progress):** `doc_management/actions/` now contains active handlers for create/query/batch/search/edit plus append/status wrappers. Query-transform actions (`normalize_headers`, `generate_toc`, `validate_crosslinks`) are now routed via `query.py` (`handle_query_transform_actions`) into the shared edit pipeline, so query-domain routing is no longer split between modules. `tools/manage_docs.py` dispatch remains module-first and now uses explicit action routing while preserving backward-compat helper wrappers for test-imported internals (`_chunk_text_for_vector`, `_resolve_semantic_limits`, `_should_skip_doc_index`). Current 5.2 remaining gap is explicit end-to-end runtime verification post-reboot.
 
 ### Task Package 5.3: Slim Down tools/manage_docs.py to Thin Router
 
@@ -445,12 +455,14 @@ summary: ''
 5. All business logic now lives in doc_management/ submodules
 
 **Verification:**
-- [ ] `wc -l tools/manage_docs.py` -- under 300 lines
-- [ ] `wc -l doc_management/actions/*.py doc_management/healing.py doc_management/validation.py` -- all under 800
-- [ ] `pytest tests/test_manage_docs*.py` -- FULL pass
-- [ ] All 7 primary actions + deprecated routes work
+- [x] `wc -l tools/manage_docs.py` -- under 300 lines (`246`)
+- [x] `wc -l` extracted module checks -- all under 800 (`tools/manage_docs.py=246`, `runtime.py=543`, `special_create.py=541`, `special_indexes.py=430`, action max `331`, shared max `295`)
+- [x] `pytest tests/test_manage_docs*.py tests/test_template_engine_manage_docs.py -q` -- FULL pass (`71 passed`) + `pytest tests/test_auto_registration*.py -q` (`12 passed`)
+- [x] All 7 primary actions + deprecated routes work (verified post-reboot in live MCP runtime incl. wildcard search doc='all'/'*')
 
-**Exit Criteria:** tools/manage_docs.py reduced to ~200 lines (thin router). 12 new modules in doc_management/, all under 800 lines. All actions verified working.
+**Execution Status (2026-02-11, in progress):** Completed the final routerization pass by extracting manage_docs runtime orchestration into `doc_management/runtime.py` and slimming `tools/manage_docs.py` to `246` lines (`742 -> 246` in this slice; `2348 -> 246` across the larger pass sequence). `tools/manage_docs.py` now serves as a thin MCP router with preserved compatibility wrappers/imports (`manage_docs`, `_auto_register_document`, `_handle_special_document_creation`, `_chunk_text_for_vector`, `_resolve_semantic_limits`, `_should_skip_doc_index`, `manage_docs_main`) while action execution, healing, context handling, custom-doc resolution, and auto-registration flow run through shared runtime modules. Regression validation passed via `pytest tests/test_manage_docs*.py tests/test_template_engine_manage_docs.py -q` (`71 passed`) and `pytest tests/test_auto_registration*.py -q` (`12 passed`). 5.3 live MCP runtime verification is complete for all 7 primary actions plus wildcard search and fail-hard deprecated alias rejection.
+
+**Exit Criteria:** tools/manage_docs.py reduced to ~200 lines (thin router). 17 extracted/shared modules in doc_management/ for this stream, all under 800 lines. All actions verified working.
 
 ---
 ## Phase 6 -- src/ Layout Migration + Packaging
