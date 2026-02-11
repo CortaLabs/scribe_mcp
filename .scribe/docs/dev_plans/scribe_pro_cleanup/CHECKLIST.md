@@ -5,7 +5,7 @@ doc_name: checklist
 category: engineering
 status: draft
 version: '0.1'
-last_updated: '2026-02-06'
+last_updated: '2026-02-11'
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -111,7 +111,7 @@ summary: ''
 - [ ] Test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p3_bare_tests -->
 
 ### P3.2 Preflight Backup Retention Policy
-- [ ] 3-backup retention limit implemented in manage_docs preflight <!-- ID: p3_retention_impl -->
+- [ ] 3-backup retention limit implemented in centralized preflight backup helper <!-- ID: p3_retention_impl -->
 - [ ] After 5 edits to same file, only 3 .bak files remain <!-- ID: p3_retention_verify -->
 - [ ] Cleanup logged via logger.debug() <!-- ID: p3_retention_logging -->
 - [ ] `pytest tests/test_manage_docs*.py` passes <!-- ID: p3_retention_test -->
@@ -440,4 +440,67 @@ Maps to 9 success criteria from ARCHITECTURE_GUIDE.md Section 1.
 - [x] P1 Dead Pool | proof=db/pool.py deleted (15 lines, 0 imports)
 
 <!-- ID: p1_exit -->
-- [x] P1 Exit | proof=All P1 tasks complete — 506+ files removed, 4 tests relocated, 12 reports relocated
+- [x] P1 Exit | proof=All P1 tasks complete - 506+ files removed, 4 tests relocated, 12 reports relocated
+
+<!-- ID: p2_logging_file -->
+- [x] P2 Logging File | proof=TASK 2.1 created config/logging.py with LOGGING_CONFIG and SCRIBE_LOG_LEVEL support
+
+<!-- ID: p2_logging_call -->
+- [x] P2 Logging Call | proof=TASK 2.1 wired configure_logging() into server startup path before logger usage
+
+<!-- ID: p2_log_level -->
+- [x] P2 Log Level | proof=TASK 2.1 explicitly implemented SCRIBE_LOG_LEVEL env var (default WARNING)
+
+<!-- ID: p2_print_server -->
+- [x] P2 Print Server | proof=TASK 2.2 converted 35 server.py stderr/print calls to logger levels
+
+<!-- ID: p2_print_sqlite -->
+- [x] P2 Print SQLite | proof=TASK 2.2 converted storage/sqlite.py print path to logger.warning
+
+<!-- ID: p2_print_settings -->
+- [x] P2 Print Settings | proof=TASK 2.2 verified config/settings.py had 0 print calls
+
+<!-- ID: p2_logger_setup -->
+- [x] P2 Logger Setup | proof=TASK 2.2/2.3 added module logger setup where missing across converted files
+
+<!-- ID: p2_print_all -->
+- [x] P2 Print All | proof=verification log reports 0 production print() calls across tools/utils/shared/state/bridges/storage/config
+
+<!-- ID: p2_scripts_keep -->
+- [x] P2 Scripts Keep | proof=verification log preserved intentional CLI prints (manage_docs/tool_logger/reminder_monitoring/template_engine)
+
+<!-- ID: p2_tests_batch2 -->
+- [x] P2 Tests Batch2 | proof=post-conversion test run reported 1562 passing and 0 regressions from logging changes
+
+<!-- ID: p2_symlink_read -->
+- [x] P2 Symlink Read | proof=TASK 2.4 applied boundary-before-resolve and symlink target checks in tools/read_file.py
+
+<!-- ID: p2_symlink_edit -->
+- [x] P2 Symlink Edit | proof=TASK 2.4 applied boundary-before-resolve and symlink target checks in tools/edit_file.py
+
+<!-- ID: p2_symlink_search -->
+- [x] P2 Symlink Search | proof=TASK 2.4 applied boundary-before-resolve and symlink target checks in tools/search.py
+
+<!-- ID: p2_dotdot_check -->
+- [x] P2 Dotdot Check | proof=TASK 2.4 added unresolved-path dotdot component escape blocking in all 3 file tools
+
+<!-- ID: p2_symlink_test -->
+- [x] P2 Symlink Test | proof=security tests added and passing for symlink escape blocking in read_file tool tests
+
+<!-- ID: p2_sanitize_fn -->
+- [x] P2 Sanitize Fn | proof=TASK 2.5 added _sanitize_log_field() stripping newline/carriage/null in shared/logging_utils.py
+
+<!-- ID: p2_sanitize_call -->
+- [x] P2 Sanitize Call | proof=TASK 2.5 applied sanitization to compose_log_line fields: agent, project_name, message
+
+<!-- ID: p2_injection_test -->
+- [x] P2 Injection Test | proof=security tests added/passing for newline log injection prevention in compose_log_line
+
+<!-- ID: p2_exit_print -->
+- [x] P2 Exit Print | proof=PHASE 2 verification recorded zero print/stderr in production code paths
+
+<!-- ID: p2_exit_symlink -->
+- [x] P2 Exit Symlink | proof=PHASE 2 security completion logged symlink escape protections as complete and tested
+
+<!-- ID: p2_exit_tests -->
+- [x] P2 Exit Tests | proof=PHASE 2 complete log recorded 0 regressions with full-suite run (1562 passing)

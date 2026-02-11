@@ -5,7 +5,7 @@ doc_name: phase_plan
 category: engineering
 status: draft
 version: '0.1'
-last_updated: '2026-02-06'
+last_updated: '2026-02-11'
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -19,7 +19,7 @@ summary: ''
 **Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
 **Version:** v1.1 (post-review revision)
 **Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Last Updated:** 2026-02-11 00:33 UTC
 
 > Ordered execution plan for the Scribe MCP professional cleanup. 10 phases, 6-7 weeks, covering cleanup through packaging. Each phase has scoped task packages executable by Coder agents.
 
@@ -225,7 +225,7 @@ summary: ''
 ### Task Package 3.1: Bare Except Fix
 
 **Scope:** Replace 14 bare `except:` clauses with specific exception types
-**Files to Modify:** utils/formatters/entry.py, tools/list_projects.py, tools/set_project.py, tools/query_entries.py, tools/manage_docs.py, tools/read_file.py
+**Files to Modify:** utils/formatters/entry.py, tools/list_projects.py, tools/set_project.py, tools/query_entries.py, tools/manage_docs.py, tools/read_file.py, tools/get_project.py, tools/config/append_entry_config.py
 
 **Specifications:**
 1. Replace `except:` with `except Exception as e:` (minimum)
@@ -239,8 +239,8 @@ summary: ''
 
 ### Task Package 3.2: Preflight Backup Retention Policy
 
-**Scope:** Add 3-backup retention limit to manage_docs preflight system
-**Files to Modify:** tools/manage_docs.py (preflight backup section)
+**Scope:** Add 3-backup retention limit to centralized preflight backup system used by doc management.
+**Files to Modify:** utils/files.py (preflight_backup retention enforcement), doc_management/manager.py (call-site compatibility if needed)
 
 **Specifications:**
 1. After creating a new preflight backup, check count of existing backups for same file
