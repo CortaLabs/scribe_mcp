@@ -312,8 +312,10 @@ summary: ''
 4. Each function takes execute_fn as parameter
 
 **Verification:**
-- [ ] `storage/sqlite/schema.py` under 500 lines
-- [ ] Database created from scratch works: fresh DB with all tables
+- [x] `storage/sqlite/schema.py` under 500 lines (`491` lines)
+- [x] Database created from scratch works: fresh DB with all tables
+
+**Execution Status (2026-02-11):** Task Package 4.2 completed. Schema bootstrap was extracted to `storage/sqlite/schema.py`, `_initialise()` now delegates via `create_schema(...)`, and fresh/live schema object counts match (32 tables, 68 indexes, 3 triggers).
 
 ### Task Package 4.3: Extract migrations.py
 
@@ -327,8 +329,10 @@ summary: ''
 4. Create run_all_migrations(execute_fn, fetchone_fn) orchestrator
 
 **Verification:**
-- [ ] Fresh DB: migrations run without error
-- [ ] Existing DB: migrations skip already-completed ones
+- [x] Fresh DB: migrations run without error
+- [x] Existing DB: migrations skip already-completed ones
+
+**Execution Status (2026-02-11):** Task Package 4.3 completed. Tracked migration orchestration was extracted to `storage/sqlite/migrations.py` (`run_all_migrations`, migration state helpers, column/index ensure helpers), and `SQLiteStorage._initialise()` now delegates migration execution through the module while preserving idempotent behavior on existing DBs.
 
 ### Task Package 4.4: Extract Domain Modules (projects, entries, sessions)
 

@@ -23,6 +23,17 @@ from scribe_mcp.utils.search import message_matches
 from scribe_mcp.utils.slug import normalize_project_input
 
 from .internals import SQLiteInternals
+from .migrations import (
+    ensure_column,
+    ensure_column_sync,
+    ensure_index,
+    ensure_index_sync,
+    mark_migration_complete,
+    migration_completed,
+    run_all_migrations,
+    run_migration,
+)
+from .schema import create_schema
 
 # Performance monitoring configuration (Stage 6)
 SLOW_QUERY_THRESHOLD_MS = 5.0  # Log warnings for queries slower than 5ms
@@ -854,630 +865,25 @@ class SQLiteStorage(StorageBackend):
                 return
             await asyncio.to_thread(self._path.parent.mkdir, parents=True, exist_ok=True)
 
-            # Migration tracking table - MUST be created first, before any tracked migrations
-            # This table records which migrations have been completed to skip them on future startups
-            await self._execute("""
-                CREATE TABLE IF NOT EXISTS scribe_migrations (
-                    name TEXT PRIMARY KEY,
-                    completed_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            """, ())
-
-            # Migration: Drop old agent_sessions table if it has legacy schema
-            # (old schema had 'id' column, new schema has 'session_id')
-            await self._migrate_agent_sessions_schema()
-
-            await self._execute_many(
-                [
-                    """
-                    CREATE TABLE IF NOT EXISTS scribe_projects (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT NOT NULL UNIQUE,
-                        repo_root TEXT NOT NULL,
-                        progress_log_path TEXT NOT NULL,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        docs_json TEXT
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS scribe_entries (
-                        id TEXT PRIMARY KEY,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        ts TEXT NOT NULL,
-                        ts_iso TEXT NOT NULL,
-                        emoji TEXT NOT NULL,
-                        agent TEXT,
-                        message TEXT NOT NULL,
-                        meta TEXT,
-                        raw_line TEXT NOT NULL,
-                        sha256 TEXT NOT NULL,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        log_type TEXT DEFAULT 'progress'
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS scribe_metrics (
-                        project_id INTEGER PRIMARY KEY REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        total_entries INTEGER NOT NULL DEFAULT 0,
-                        success_count INTEGER NOT NULL DEFAULT 0,
-                        warn_count INTEGER NOT NULL DEFAULT 0,
-                        error_count INTEGER NOT NULL DEFAULT 0,
-                        last_update TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS agent_sessions (
-                        session_id TEXT PRIMARY KEY,
-                        identity_key TEXT UNIQUE NOT NULL,
-                        agent_name TEXT NOT NULL,
-                        agent_key TEXT NOT NULL,
-                        repo_root TEXT NOT NULL,
-                        mode TEXT NOT NULL,
-                        scope_key TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        expires_at TIMESTAMP
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_agent_sessions_identity ON agent_sessions(identity_key);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_agent_sessions_last_active ON agent_sessions(last_active_at);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_agent_sessions_expires ON agent_sessions(expires_at);
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS agent_projects (
-                        agent_id TEXT PRIMARY KEY,
-                        project_name TEXT,
-                        version INTEGER NOT NULL DEFAULT 0,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_by TEXT,
-                        session_id TEXT,
-                        FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE SET NULL
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_agent_projects_updated_at ON agent_projects(updated_at DESC);
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS agent_project_events (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        agent_id TEXT NOT NULL,
-                        session_id TEXT NOT NULL,
-                        event_type TEXT NOT NULL CHECK (event_type IN ('project_set', 'project_switched', 'session_started', 'session_ended', 'conflict_detected')),
-                        from_project TEXT,
-                        to_project TEXT NOT NULL,
-                        expected_version INTEGER,
-                        actual_version INTEGER,
-                        success BOOLEAN NOT NULL DEFAULT 1,
-                        error_message TEXT,
-                        metadata TEXT,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_agent_project_events_agent_id ON agent_project_events(agent_id);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_agent_project_events_created_at ON agent_project_events(created_at);
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS scribe_sessions (
-                        session_id TEXT PRIMARY KEY,
-                        transport_session_id TEXT,
-                        agent_id TEXT,
-                        repo_root TEXT,
-                        mode TEXT NOT NULL CHECK (mode IN ('sentinel','project')) DEFAULT 'sentinel',
-                        started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        last_active_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_scribe_sessions_agent ON scribe_sessions(agent_id);
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS session_projects (
-                        session_id TEXT PRIMARY KEY,
-                        project_name TEXT,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE SET NULL
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS agent_recent_projects (
-                        agent_id TEXT NOT NULL,
-                        project_name TEXT NOT NULL,
-                        last_access_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY(agent_id, project_name),
-                        FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE CASCADE
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS doc_changes (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        doc_name TEXT NOT NULL,
-                        section TEXT,
-                        action TEXT NOT NULL,
-                        agent TEXT,
-                        metadata TEXT,
-                        sha_before TEXT,
-                        sha_after TEXT,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_doc_changes_project ON doc_changes(project_id, created_at DESC);
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS dev_plans (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        project_name TEXT NOT NULL,
-                        plan_type TEXT NOT NULL CHECK (plan_type IN ('architecture', 'phase_plan', 'checklist', 'progress_log')),
-                        file_path TEXT NOT NULL,
-                        version TEXT NOT NULL DEFAULT '1.0',
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        metadata TEXT,
-                        UNIQUE(project_id, plan_type)
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS phases (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        dev_plan_id INTEGER NOT NULL REFERENCES dev_plans(id) ON DELETE CASCADE,
-                        phase_number INTEGER NOT NULL,
-                        phase_name TEXT NOT NULL,
-                        status TEXT NOT NULL CHECK (status IN ('planned', 'in_progress', 'completed', 'blocked')) DEFAULT 'planned',
-                        start_date TEXT,
-                        end_date TEXT,
-                        deliverables_count INTEGER NOT NULL DEFAULT 0,
-                        deliverables_completed INTEGER NOT NULL DEFAULT 0,
-                        confidence_score REAL NOT NULL DEFAULT 0.0 CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0),
-                        metadata TEXT,
-                        UNIQUE(project_id, phase_number)
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS milestones (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        phase_id INTEGER REFERENCES phases(id) ON DELETE SET NULL,
-                        milestone_name TEXT NOT NULL,
-                        description TEXT,
-                        status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'completed', 'overdue')) DEFAULT 'pending',
-                        target_date TEXT,
-                        completed_date TEXT,
-                        evidence_url TEXT,
-                        metadata TEXT
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS benchmarks (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        benchmark_type TEXT NOT NULL CHECK (benchmark_type IN ('hash_performance', 'throughput', 'latency', 'stress_test', 'integrity', 'concurrency')),
-                        test_name TEXT NOT NULL,
-                        metric_name TEXT NOT NULL,
-                        metric_value REAL NOT NULL,
-                        metric_unit TEXT NOT NULL,
-                        test_parameters TEXT,
-                        environment_info TEXT,
-                        test_timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        requirement_target REAL,
-                        requirement_met BOOLEAN NOT NULL DEFAULT FALSE
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS checklists (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        phase_id INTEGER REFERENCES phases(id) ON DELETE SET NULL,
-                        checklist_item TEXT NOT NULL,
-                        status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked')) DEFAULT 'pending',
-                        acceptance_criteria TEXT NOT NULL,
-                        proof_required BOOLEAN NOT NULL DEFAULT TRUE,
-                        proof_url TEXT,
-                        assignee TEXT,
-                        priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high', 'critical')) DEFAULT 'medium',
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        completed_at TEXT,
-                        metadata TEXT
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS performance_metrics (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        metric_category TEXT NOT NULL CHECK (metric_category IN ('development', 'testing', 'deployment', 'operations')),
-                        metric_name TEXT NOT NULL,
-                        metric_value REAL NOT NULL,
-                        metric_unit TEXT NOT NULL,
-                        baseline_value REAL,
-                        improvement_percentage REAL,
-                        collection_timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        metadata TEXT
-                    );
-                    """,
-                    # Indexes for performance
-                    "CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON scribe_entries(project_id, ts_iso DESC);",
-                    "CREATE INDEX IF NOT EXISTS idx_dev_plans_project_type ON dev_plans(project_id, plan_type);",
-                    "CREATE INDEX IF NOT EXISTS idx_phases_project_status ON phases(project_id, status);",
-                    "CREATE INDEX IF NOT EXISTS idx_milestones_project_status ON milestones(project_id, status);",
-                    "CREATE INDEX IF NOT EXISTS idx_benchmarks_project_type ON benchmarks(project_id, benchmark_type);",
-                    "CREATE INDEX IF NOT EXISTS idx_benchmarks_timestamp ON benchmarks(test_timestamp DESC);",
-                    "CREATE INDEX IF NOT EXISTS idx_checklists_project_status ON checklists(project_id, status);",
-                    "CREATE INDEX IF NOT EXISTS idx_checklists_phase ON checklists(phase_id);",
-                    "CREATE INDEX IF NOT EXISTS idx_metrics_project_category ON performance_metrics(project_id, metric_category);",
-                    "CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON performance_metrics(collection_timestamp DESC);",
-                    # Document Management 2.0 Tables
-                    """
-                    CREATE TABLE IF NOT EXISTS document_sections (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        project_root TEXT,
-                        document_type TEXT,
-                        section_id TEXT,
-                        file_path TEXT,
-                        relative_path TEXT,
-                        content TEXT NOT NULL,
-                        file_hash TEXT NOT NULL,
-                        metadata TEXT,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(project_id, document_type, section_id),
-                        UNIQUE(project_root, file_path)
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS custom_templates (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        template_name TEXT NOT NULL,
-                        template_content TEXT NOT NULL,
-                        variables TEXT,
-                        is_global BOOLEAN NOT NULL DEFAULT FALSE,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(project_id, template_name)
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS document_changes (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        project_root TEXT,
-                        file_path TEXT,
-                        change_type TEXT NOT NULL,
-                        old_content_hash TEXT,
-                        new_content_hash TEXT,
-                        change_summary TEXT,
-                        metadata TEXT,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS sync_status (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        project_root TEXT,
-                        file_path TEXT NOT NULL,
-                        relative_path TEXT,
-                        last_sync_at TEXT,
-                        last_file_hash TEXT,
-                        last_db_hash TEXT,
-                        sync_status TEXT NOT NULL DEFAULT 'synced',
-                        conflict_details TEXT,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(project_id, file_path)
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS agent_report_cards (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                        file_path TEXT NOT NULL,
-                        agent_name TEXT NOT NULL,
-                        stage TEXT,
-                        overall_grade REAL,
-                        performance_level TEXT,
-                        metadata TEXT,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(project_id, file_path)
-                    );
-                    """,
-                    """
-                    CREATE TABLE IF NOT EXISTS reminder_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        session_id TEXT NOT NULL,
-                        reminder_hash TEXT NOT NULL,
-                        project_root TEXT,
-                        agent_id TEXT,
-                        tool_name TEXT,
-                        reminder_key TEXT,
-                        shown_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        operation_status TEXT NOT NULL DEFAULT 'neutral' CHECK (operation_status IN ('success', 'failure', 'neutral')),
-                        context_metadata TEXT,
-                        FOREIGN KEY (session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_reminder_history_session_hash
-                        ON reminder_history(session_id, reminder_hash);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_reminder_history_shown_at
-                        ON reminder_history(shown_at);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_reminder_history_session_tool
-                        ON reminder_history(session_id, tool_name);
-                    """,
-                    # Tool Calls Tracking Table (for direct logging without recursion)
-                    """
-                    CREATE TABLE IF NOT EXISTS tool_calls (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        session_id TEXT NOT NULL,
-                        tool_name TEXT NOT NULL,
-                        timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        duration_ms REAL,
-                        status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'error', 'partial')),
-                        format_requested TEXT,
-                        project_name TEXT,
-                        agent_id TEXT,
-                        error_message TEXT,
-                        response_size_bytes INTEGER,
-                        FOREIGN KEY (session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);
-                    """,
-                    # Document Management 2.0 Indexes
-                    "CREATE INDEX IF NOT EXISTS idx_document_sections_project ON document_sections(project_id);",
-                    "CREATE INDEX IF NOT EXISTS idx_document_sections_updated ON document_sections(updated_at);",
-                    "CREATE INDEX IF NOT EXISTS idx_document_changes_project ON document_changes(project_id);",
-                    "CREATE INDEX IF NOT EXISTS idx_document_changes_created ON document_changes(created_at);",
-                    "CREATE INDEX IF NOT EXISTS idx_sync_status_project ON sync_status(project_id);",
-                    "CREATE INDEX IF NOT EXISTS idx_sync_status_status ON sync_status(sync_status);",
-                    # Full-text search for document content
-                    """
-                    CREATE VIRTUAL TABLE IF NOT EXISTS document_sections_fts
-                    USING fts5(document_type, section_id, content, content=document_sections, content_rowid=id)
-                    """,
-                    """
-                    CREATE TRIGGER IF NOT EXISTS document_sections_fts_insert
-                    AFTER INSERT ON document_sections BEGIN
-                        INSERT INTO document_sections_fts(rowid, document_type, section_id, content)
-                        VALUES (new.id, new.document_type, new.section_id, new.content);
-                    END
-                    """,
-                    """
-                    CREATE TRIGGER IF NOT EXISTS document_sections_fts_delete
-                    AFTER DELETE ON document_sections BEGIN
-                        INSERT INTO document_sections_fts(document_sections_fts, rowid, document_type, section_id, content)
-                        VALUES ('delete', old.id, old.document_type, old.section_id, old.content);
-                    END
-                    """,
-                    """
-                    CREATE TRIGGER IF NOT EXISTS document_sections_fts_update
-                    AFTER UPDATE ON document_sections BEGIN
-                        INSERT INTO document_sections_fts(document_sections_fts, rowid, document_type, section_id, content)
-                        VALUES ('delete', old.id, old.document_type, old.section_id, old.content);
-                        INSERT INTO document_sections_fts(rowid, document_type, section_id, content)
-                        VALUES (new.id, new.document_type, new.section_id, new.content);
-                    END
-                    """,
-                    # Bridge Registry Tables
-                    """
-                    CREATE TABLE IF NOT EXISTS scribe_bridges (
-                        bridge_id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        version TEXT NOT NULL,
-                        manifest_json TEXT NOT NULL,
-                        state TEXT NOT NULL CHECK (state IN ('registered', 'active', 'inactive', 'error', 'unregistered')) DEFAULT 'registered',
-                        health_json TEXT,
-                        registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        last_health_check TEXT,
-                        last_error TEXT
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_bridges_state ON scribe_bridges(state);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at);
-                    """,
-                    # Phase 4: Data Retention Policy - Archive table for audit trail
-                    """
-                    CREATE TABLE IF NOT EXISTS scribe_entries_archive (
-                        id TEXT PRIMARY KEY,
-                        project_id INTEGER,
-                        ts TEXT,
-                        ts_iso TEXT,
-                        emoji TEXT,
-                        agent TEXT,
-                        message TEXT,
-                        meta TEXT,
-                        raw_line TEXT,
-                        sha256 TEXT,
-                        log_type TEXT,
-                        priority TEXT,
-                        category TEXT,
-                        confidence REAL,
-                        archived_at TEXT DEFAULT CURRENT_TIMESTAMP
-                    );
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_archive_project_ts ON scribe_entries_archive(project_id, ts_iso DESC);
-                    """,
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON scribe_entries_archive(archived_at DESC);
-                    """,
-                ]
+            # Base schema creation delegated to storage/sqlite/schema.py
+            await create_schema(
+                self._execute,
+                self._execute_many,
+                self._migrate_agent_sessions_schema,
             )
 
-            # =========================================================================
-            # TRACKED MIGRATIONS - Skip if already completed
-            # These migrations use _run_migration() to check scribe_migrations table
-            # and skip if already run. Keeps IF NOT EXISTS as safety backup.
-            # =========================================================================
-
-            # Migration: scribe_projects extended columns (legacy schema support)
-            if not await self._migration_completed("projects_extended_columns_v1"):
-                logger.debug("Running migration: projects_extended_columns_v1")
-                await self._ensure_column("scribe_projects", "repo_root", "TEXT")
-                await self._ensure_column("scribe_projects", "progress_log_path", "TEXT")
-                await self._ensure_column("scribe_projects", "status", "TEXT")
-                await self._ensure_column("scribe_projects", "phase", "TEXT")
-                await self._ensure_column("scribe_projects", "confidence", "REAL DEFAULT 0.0")
-                await self._ensure_column("scribe_projects", "completed_at", "TIMESTAMP")
-                await self._ensure_column("scribe_projects", "last_activity", "TIMESTAMP")
-                await self._ensure_column("scribe_projects", "description", "TEXT")
-                await self._ensure_column("scribe_projects", "last_entry_at", "TEXT")
-                await self._ensure_column("scribe_projects", "last_access_at", "TEXT")
-                await self._ensure_column("scribe_projects", "last_status_change", "TEXT")
-                await self._ensure_column("scribe_projects", "tags", "TEXT")
-                await self._ensure_column("scribe_projects", "meta", "TEXT")
-                await self._mark_migration_complete("projects_extended_columns_v1")
-            else:
-                logger.debug("Skipping migration: projects_extended_columns_v1 (already completed)")
-
-            # Migration: Bridge ownership columns for Phase 3
-            if not await self._migration_completed("projects_bridge_columns_v1"):
-                logger.debug("Running migration: projects_bridge_columns_v1")
-                await self._ensure_column("scribe_projects", "bridge_id", "TEXT")
-                await self._ensure_column("scribe_projects", "bridge_managed", "INTEGER DEFAULT 0")
-                await self._execute("CREATE INDEX IF NOT EXISTS idx_projects_bridge ON scribe_projects(bridge_id)", ())
-                await self._mark_migration_complete("projects_bridge_columns_v1")
-            else:
-                logger.debug("Skipping migration: projects_bridge_columns_v1 (already completed)")
-
-            # Migration: scribe_entries metadata columns for categorization
-            if not await self._migration_completed("entries_metadata_columns_v1"):
-                logger.debug("Running migration: entries_metadata_columns_v1")
-                await self._ensure_column("scribe_entries", "priority", "TEXT")
-                await self._ensure_column("scribe_entries", "category", "TEXT")
-                await self._ensure_column("scribe_entries", "tags", "TEXT")
-                await self._ensure_column("scribe_entries", "confidence", "REAL DEFAULT 1.0")
-                await self._ensure_column("scribe_entries", "log_type", "TEXT DEFAULT 'progress'")
-                # Note: Run scripts/backfill_log_type.py manually to populate log_type from meta
-                await self._mark_migration_complete("entries_metadata_columns_v1")
-            else:
-                logger.debug("Skipping migration: entries_metadata_columns_v1 (already completed)")
-
-            # Migration: Document sections schema rebuild (complex migration)
-            if not await self._migration_completed("document_sections_schema_v1"):
-                logger.debug("Running migration: document_sections_schema_v1")
-                await self._migrate_document_sections()
-                await self._ensure_column("document_changes", "project_root", "TEXT")
-                await self._ensure_column("document_changes", "file_path", "TEXT")
-                await self._ensure_column("sync_status", "project_root", "TEXT")
-                await self._ensure_column("sync_status", "relative_path", "TEXT")
-                await self._ensure_column("document_sections", "project_root", "TEXT")
-                await self._ensure_column("document_sections", "file_path", "TEXT")
-                await self._ensure_column("document_sections", "relative_path", "TEXT")
-                await self._ensure_index("CREATE UNIQUE INDEX IF NOT EXISTS idx_document_sections_file_path ON document_sections(project_root, file_path);")
-                await self._ensure_index("CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_status_file_path ON sync_status(project_root, file_path);")
-                await self._mark_migration_complete("document_sections_schema_v1")
-            else:
-                logger.debug("Skipping migration: document_sections_schema_v1 (already completed)")
-
-            # Migration: Agent report cards indexes
-            if not await self._migration_completed("agent_report_cards_indexes_v1"):
-                logger.debug("Running migration: agent_report_cards_indexes_v1")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_agent_report_cards_project_agent ON agent_report_cards(project_id, agent_name);")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_agent_report_cards_stage ON agent_report_cards(stage);")
-                await self._mark_migration_complete("agent_report_cards_indexes_v1")
-            else:
-                logger.debug("Skipping migration: agent_report_cards_indexes_v1 (already completed)")
-
-            # Migration: Performance indexes for scribe_entries metadata columns
-            if not await self._migration_completed("entries_metadata_indexes_v1"):
-                logger.debug("Running migration: entries_metadata_indexes_v1")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_priority_ts ON scribe_entries(priority, ts_iso DESC);")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_category_ts ON scribe_entries(category, ts_iso DESC);")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_log_type ON scribe_entries(project_id, log_type, ts_iso DESC);")
-                await self._mark_migration_complete("entries_metadata_indexes_v1")
-            else:
-                logger.debug("Skipping migration: entries_metadata_indexes_v1 (already completed)")
-
-            # Migration: Phase 1 optimization indexes - eliminate full table scans
-            if not await self._migration_completed("phase1_optimization_indexes_v1"):
-                logger.debug("Running migration: phase1_optimization_indexes_v1")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_agent_ts ON scribe_entries(agent, ts_iso DESC);")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_emoji_ts ON scribe_entries(emoji, ts_iso DESC);")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_entries_logtype_ts ON scribe_entries(log_type, ts_iso DESC);")
-                await self._mark_migration_complete("phase1_optimization_indexes_v1")
-            else:
-                logger.debug("Skipping migration: phase1_optimization_indexes_v1 (already completed)")
-
-            # Migration: tool_calls repo_root column for per-project/repo tool logging
-            if not await self._migration_completed("tool_calls_repo_root_v1"):
-                logger.debug("Running migration: tool_calls_repo_root_v1")
-                await self._ensure_column("tool_calls", "repo_root", "TEXT")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);")
-                await self._mark_migration_complete("tool_calls_repo_root_v1")
-            else:
-                logger.debug("Skipping migration: tool_calls_repo_root_v1 (already completed)")
-
-            # Migration: Phase 1 optimization - repo_root lookups on scribe_projects
-            if not await self._migration_completed("projects_repo_index_v1"):
-                logger.debug("Running migration: projects_repo_index_v1")
-                await self._ensure_index("CREATE INDEX IF NOT EXISTS idx_projects_repo ON scribe_projects(repo_root);")
-                await self._mark_migration_complete("projects_repo_index_v1")
-            else:
-                logger.debug("Skipping migration: projects_repo_index_v1 (already completed)")
-
-            # Migration: Phase 3 state.json elimination - session activity tracking columns
-            if not await self._migration_completed("agent_sessions_activity_v1"):
-                logger.debug("Running migration: agent_sessions_activity_v1")
-                await self._ensure_column("agent_sessions", "recent_tools", "TEXT")  # JSON array of recent tool names
-                await self._ensure_column("agent_sessions", "session_started_at", "TEXT")  # ISO timestamp
-                await self._ensure_column("agent_sessions", "last_activity_at", "TEXT")  # ISO timestamp
-                await self._mark_migration_complete("agent_sessions_activity_v1")
-            else:
-                logger.debug("Skipping migration: agent_sessions_activity_v1 (already completed)")
-
-            # Migration: Add docs_json column for manage_docs functionality (BUG-MANAGE-DOCS-001)
-            if not await self._migration_completed("docs_json_column_v1"):
-                logger.debug("Running migration: docs_json_column_v1")
-                await self.migrate_add_docs_json_column()
-                await self._mark_migration_complete("docs_json_column_v1")
-            else:
-                logger.debug("Skipping migration: docs_json_column_v1 (already completed)")
-
-            # Migration: Backfill docs_json from state.json for existing projects
-            # This is a one-time migration, skip if state.json doesn't exist or already done
-            from pathlib import Path
-            state_path = Path(self._path).parent / "state.json"
-            if state_path.exists() and not await self._migration_completed("backfill_docs_json_v1"):
-                logger.debug("Running migration: backfill_docs_json_v1")
-                await self.backfill_docs_json_from_state(state_path)
-                await self._mark_migration_complete("backfill_docs_json_v1")
-            elif await self._migration_completed("backfill_docs_json_v1"):
-                logger.debug("Skipping migration: backfill_docs_json_v1 (already completed)")
+            # Tracked migrations are delegated to storage/sqlite/migrations.py
+            await run_all_migrations(
+                ensure_column_fn=self._ensure_column,
+                ensure_index_fn=self._ensure_index,
+                execute_fn=self._execute,
+                fetchone_fn=self._fetchone,
+                migrate_document_sections_fn=self._migrate_document_sections,
+                migrate_add_docs_json_column_fn=self.migrate_add_docs_json_column,
+                backfill_docs_json_from_state_fn=self.backfill_docs_json_from_state,
+                db_path=self._path,
+                logger=logger,
+            )
 
             self._initialised = True
 
@@ -1560,20 +966,10 @@ class SQLiteStorage(StorageBackend):
             conn.close()
 
     async def _ensure_column(self, table: str, column: str, definition: str) -> None:
-        await asyncio.to_thread(self._ensure_column_sync, table, column, definition)
+        await ensure_column(self._connect, table, column, definition)
 
     def _ensure_column_sync(self, table: str, column: str, definition: str) -> None:
-        conn = self._connect()
-        try:
-            cursor = conn.execute(f"PRAGMA table_info({table});")
-            # PRAGMA table_info returns tuples: (cid, name, type, notnull, dflt_value, pk)
-            # Column name is at index 1
-            existing = {row[1] for row in cursor.fetchall()}
-            if column not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
-                conn.commit()
-        finally:
-            conn.close()
+        ensure_column_sync(self._connect, table, column, definition)
 
     async def _migrate_agent_sessions_schema(self) -> None:
         """Migrate agent_sessions from legacy schema to new stable identity schema."""
@@ -1711,77 +1107,31 @@ class SQLiteStorage(StorageBackend):
             conn.close()
 
     async def _ensure_index(self, statement: str) -> None:
-        await asyncio.to_thread(self._ensure_index_sync, statement)
+        await ensure_index(self._connect, lambda: self._pool, statement)
 
     def _ensure_index_sync(self, statement: str) -> None:
-        # Use pool if available, otherwise fall back to direct connection
-        if self._pool:
-            conn = self._pool.acquire()
-            try:
-                conn.execute(statement)
-                conn.commit()
-            finally:
-                self._pool.release(conn)
-        else:
-            conn = self._connect()
-            try:
-                conn.execute(statement)
-                conn.commit()
-            finally:
-                conn.close()
+        ensure_index_sync(self._connect, lambda: self._pool, statement)
 
     # -------------------------------------------------------------------------
     # Migration Tracking Helpers (Phase 6 Task 6.2)
     # -------------------------------------------------------------------------
     async def _migration_completed(self, name: str) -> bool:
-        """Check if a migration has already been completed.
-
-        Args:
-            name: Unique migration identifier (e.g., 'v2_1_0_project_columns')
-
-        Returns:
-            True if migration was previously completed and recorded
-        """
-        try:
-            row = await self._fetchone(
-                "SELECT 1 FROM scribe_migrations WHERE name = ?",
-                (name,)
-            )
-            return row is not None
-        except Exception:
-            # Table might not exist yet on first run
-            return False
+        """Check if a migration has already been completed."""
+        return await migration_completed(self._fetchone, name)
 
     async def _mark_migration_complete(self, name: str) -> None:
-        """Mark a migration as completed.
-
-        Args:
-            name: Unique migration identifier to record as completed
-        """
-        await self._execute(
-            "INSERT OR IGNORE INTO scribe_migrations (name) VALUES (?)",
-            (name,)
-        )
-        logger.debug(f"Migration '{name}' marked as complete")
+        """Mark a migration as completed."""
+        await mark_migration_complete(self._execute, name, logger)
 
     async def _run_migration(self, name: str, coro) -> bool:
-        """Run a migration if not already completed, with tracking.
-
-        Args:
-            name: Unique migration identifier
-            coro: Coroutine to execute for the migration
-
-        Returns:
-            True if migration was run, False if skipped
-        """
-        if await self._migration_completed(name):
-            logger.debug(f"Skipping migration '{name}' (already completed)")
-            return False
-
-        await coro
-        await self._mark_migration_complete(name)
-        logger.debug(f"Completed migration '{name}'")
-        return True
+        """Run a migration if not already completed, with tracking."""
+        return await run_migration(
+            name=name,
+            migration_coro=coro,
+            execute_fn=self._execute,
+            fetchone_fn=self._fetchone,
+            logger=logger,
+        )
 
     async def _execute(self, query: str, params: tuple[Any, ...]) -> None:
         await self._internals.execute(query, params)

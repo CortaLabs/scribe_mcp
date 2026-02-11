@@ -137,15 +137,15 @@ summary: ''
 - [x] `from scribe_mcp.storage.sqlite import SQLiteStorage` works <!-- ID: p4_import -->
 
 ### P4.2 Extract schema.py
-- [ ] storage/sqlite/schema.py exists with all CREATE TABLE statements <!-- ID: p4_schema_file -->
-- [ ] Schema module under 500 lines: `wc -l storage/sqlite/schema.py` <!-- ID: p4_schema_size -->
-- [ ] Fresh DB creation works from schema functions <!-- ID: p4_schema_fresh -->
+- [x] storage/sqlite/schema.py exists with all CREATE TABLE statements <!-- ID: p4_schema_file -->
+- [x] Schema module under 500 lines: `wc -l storage/sqlite/schema.py` <!-- ID: p4_schema_size -->
+- [x] Fresh DB creation works from schema functions <!-- ID: p4_schema_fresh -->
 
 ### P4.3 Extract migrations.py
-- [ ] storage/sqlite/migrations.py exists <!-- ID: p4_migrations_file -->
-- [ ] run_all_migrations() orchestrator function present <!-- ID: p4_migrations_run -->
-- [ ] Fresh DB: migrations run without error <!-- ID: p4_migrations_fresh -->
-- [ ] Existing DB: migrations skip completed ones <!-- ID: p4_migrations_skip -->
+- [x] storage/sqlite/migrations.py exists <!-- ID: p4_migrations_file -->
+- [x] run_all_migrations() orchestrator function present <!-- ID: p4_migrations_run -->
+- [x] Fresh DB: migrations run without error <!-- ID: p4_migrations_fresh -->
+- [x] Existing DB: migrations skip completed ones <!-- ID: p4_migrations_skip -->
 
 ### P4.4 Domain Modules (projects, entries, sessions)
 - [ ] storage/sqlite/projects.py: upsert, fetch, list, delete, update <!-- ID: p4_projects -->
