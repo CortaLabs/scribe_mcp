@@ -212,14 +212,22 @@ summary: ''
 ## Phase 6: src/ Layout Migration + Packaging
 <!-- ID: phase_5 -->
 
+### P6.0 Shared Runtime Dispatch + CLI Session Parity
+- [ ] Shared runtime dispatcher extracted from server.py and reused by MCP + CLI <!-- ID: p6_runtime_shared -->
+- [x] CLI session persistence implemented under `.scribe/cli/` (transport session, mode, active project, agent, read/edit history) <!-- ID: p6_cli_session_store -->
+- [x] `scribe tools list` shows all MCP tools <!-- ID: p6_cli_tool_list -->
+- [x] CLI session parity validated: `read_file` then `edit_file` succeeds in same session <!-- ID: p6_cli_read_edit_parity -->
+- [x] Sentinel/project mode guard parity validated between MCP and CLI <!-- ID: p6_cli_mode_parity -->
+- [x] Legacy launch `python -m server` remains functional during migration <!-- ID: p6_legacy_boot -->
+
 ### P6.1 config/paths.py + pyproject.toml
-- [ ] config/paths.py exists with all 8 path functions <!-- ID: p6_paths_file -->
-- [ ] All path functions use importlib.resources with __file__ fallback (review fix #2) <!-- ID: p6_importlib -->
-- [ ] Editable install tested: `pip install -e .` works on Python 3.10+ <!-- ID: p6_editable_install -->
+- [x] config/paths.py exists with all 8 path functions <!-- ID: p6_paths_file -->
+- [x] All path functions use importlib.resources with __file__ fallback (review fix #2) <!-- ID: p6_importlib -->
+- [x] Editable install tested: `pip install -e .` works on Python 3.10+ <!-- ID: p6_editable_install -->
 - [ ] Non-editable install tested: `pip install .` works (wheel) <!-- ID: p6_wheel_install -->
-- [ ] Environment variable overrides work (SCRIBE_DATA_DIR, SCRIBE_DB_PATH) <!-- ID: p6_env_vars -->
+- [x] Environment variable overrides work (`SCRIBE_DATA_DIR`, `SCRIBE_DB_PATH`, compatibility alias `SCRIBE_SQLITE_PATH`) <!-- ID: p6_env_vars -->
 - [ ] pyproject.toml exists with metadata, deps, console scripts, find where=src <!-- ID: p6_pyproject -->
-- [ ] `pip install -e . --dry-run` succeeds <!-- ID: p6_pip_dryrun -->
+- [x] `pip install -e . --dry-run` succeeds <!-- ID: p6_pip_dryrun -->
 
 ### P6.2 Move to src/ Layout
 - [ ] src/scribe_mcp/ directory exists with all packages <!-- ID: p6_src_dir -->
@@ -228,24 +236,29 @@ summary: ''
 - [ ] `pip install -e .` succeeds <!-- ID: p6_pip_install -->
 - [ ] `python -c "from scribe_mcp.server import main"` works <!-- ID: p6_import_test -->
 - [ ] `scribe-server --help` works <!-- ID: p6_console_script -->
+- [ ] Compatibility shims keep `python -m server` working during migration <!-- ID: p6_compat_shims -->
 
-### P6.3 Fix __file__ Path Resolutions + Hardcoded DB Paths
-- [ ] Zero __file__ in production: `grep -rn '__file__' src/scribe_mcp/ --include='*.py' | grep -v test | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p6_no_file_refs -->
-- [ ] All 50+ locations use config.paths.* calls <!-- ID: p6_paths_replaced -->
-- [ ] sys.path hacks removed from server.py <!-- ID: p6_no_syspath -->
+### P6.3 Fix __file__ / sys.path Path Hacks + Hardcoded DB Paths
+- [ ] Zero `__file__`/`sys.path` path hacks in production: `grep -rn '__file__\|sys.path.insert\|sys.path.append' src/scribe_mcp/ --include='*.py' | grep -v test | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p6_no_file_refs -->
+- [ ] All production path resolution uses config.paths.* helpers <!-- ID: p6_paths_replaced -->
 - [ ] reminders.py hardcoded DB path fixed (review fix #1): `grep -n '.scribe/data/scribe.db' src/scribe_mcp/reminders.py` returns 0 <!-- ID: p6_reminders_path -->
-- [ ] Zero hardcoded DB paths in production code: `grep -rn '.scribe/data/scribe.db' src/ --include='*.py'` returns 0 <!-- ID: p6_no_hardcoded_db -->
+- [ ] reminder_monitoring.py hardcoded DB path fixed <!-- ID: p6_monitoring_path -->
+- [ ] Zero hardcoded DB paths in production code: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/scribe_mcp/ --include='*.py'` returns 0 <!-- ID: p6_no_hardcoded_db -->
 
-### P6.4 Test Suite Migration
+### P6.4 Test Suite Migration + Installed-Package Flow
 - [ ] conftest.py updated for src/ layout <!-- ID: p6_conftest -->
 - [ ] Zero hardcoded paths: `grep -rn '/home/austin' tests/ | wc -l` returns 0 <!-- ID: p6_no_hardcoded -->
 - [ ] tests/fixtures/ directory with storage.py and projects.py <!-- ID: p6_fixtures -->
 - [ ] `pip install -e ".[dev]" && pytest tests/` all pass <!-- ID: p6_full_tests -->
+- [ ] Test suite has only approved `sys.path` bootstrap points <!-- ID: p6_test_syspath -->
+- [ ] CLI parity tests pass (session context + mode gating) <!-- ID: p6_cli_tests -->
 
 ### P6 Exit Gate
 - [ ] Package installable and console scripts work <!-- ID: p6_exit_pip -->
-- [ ] Zero __file__ in production code <!-- ID: p6_exit_file -->
-- [ ] All tests pass from installed package <!-- ID: p6_exit_tests -->
+- [ ] CLI can invoke every MCP tool <!-- ID: p6_exit_cli -->
+- [ ] CLI/MCP session context parity proven <!-- ID: p6_exit_context -->
+- [ ] Zero production path hacks (`__file__`, `sys.path`) <!-- ID: p6_exit_file -->
+- [ ] All tests pass from installed package flow <!-- ID: p6_exit_tests -->
 
 ---
 ## Phase 7: Database Consolidation + state.json Migration

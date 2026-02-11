@@ -35,3 +35,7 @@
 [2026-02-11T00:00:00+00:00] [exec:read-file-enhancements-exec] [event:read_file] [agent:test-agent] read_file_enhancements
 [2026-02-11T06:23:11.918202+00:00] [exec:e8963b09-0e27-46e2-a059-4ab749bf3416] [event:read_file] [agent:900fe1df-601b-490d-bde5-39761808ad81] tool:read_file
 [2026-02-11T06:23:14.713143+00:00] [exec:fbef1391-0149-4a1d-bfab-7540002e4aa3] [event:read_file] [agent:900fe1df-601b-490d-bde5-39761808ad81] tool:read_file
+[2026-02-11T08:07:55.495366+00:00] [exec:b5746d47-a1a7-4984-bc31-c7e0b1905aa4] [event:read_file] [agent:895d2254-11a6-4573-88ff-463d1007bcc2] tool:read_file
+[2026-02-11T08:08:16.227869+00:00] [exec:e2efae41-d5ee-40ba-95a2-95cb67da1a26] [event:read_file] [agent:132f8c7c-d1f1-4472-b6eb-65ce1f635c1f] tool:read_file
+[2026-02-11T08:17:22.497489+00:00] [exec:23ca1d64-8b30-4e94-b21b-801d6a309783] [event:read_file] [agent:06f33e6d-8519-44ef-9e30-6fac57f34c32] tool:read_file
+[2026-02-11T08:17:29.823616+00:00] [exec:c390a669-994f-4a43-9ec8-b29016f11d7c] [event:scope_violation] [agent:f18cf91d-4070-4a78-b7a8-06de37fa2d7c] tool:read_file

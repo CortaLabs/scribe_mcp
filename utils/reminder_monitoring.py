@@ -26,13 +26,9 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
-from pathlib import Path
 
+from scribe_mcp.config.paths import default_db_path
 from scribe_mcp.storage.sqlite import SQLiteStorage
-
-# Get project root dynamically
-SCRIBE_ROOT = Path(__file__).parent.parent
-
 
 async def validate_db_performance() -> Dict[str, Any]:
     """
@@ -68,7 +64,7 @@ async def validate_db_performance() -> Dict[str, Any]:
 
     try:
         # Initialize storage
-        storage = SQLiteStorage(str(SCRIBE_ROOT / ".scribe" / "data" / "scribe.db"))
+        storage = SQLiteStorage(str(default_db_path()))
         await storage.setup()
 
         # Benchmark record_reminder_shown (100 iterations)
@@ -199,14 +195,13 @@ async def validate_session_isolation() -> Dict[str, Any]:
 
     try:
         from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext
-        from scribe_mcp.config.settings import SCRIBE_ROOT
 
         # Create two different sessions
         session1_id = "test_session_1"
         session2_id = "test_session_2"
 
         # Initialize storage
-        storage = SQLiteStorage(str(SCRIBE_ROOT / ".scribe" / "data" / "scribe.db"))
+        storage = SQLiteStorage(str(default_db_path()))
         await storage.setup()
 
         # Create reminder engine
@@ -351,7 +346,7 @@ async def get_reminder_statistics() -> Dict[str, Any]:
 
     try:
         # Initialize storage
-        storage = SQLiteStorage(str(SCRIBE_ROOT / ".scribe" / "data" / "scribe.db"))
+        storage = SQLiteStorage(str(default_db_path()))
         await storage.setup()
 
         # Total reminders

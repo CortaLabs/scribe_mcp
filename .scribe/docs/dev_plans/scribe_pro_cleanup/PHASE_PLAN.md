@@ -5,7 +5,7 @@ doc_name: phase_plan
 category: engineering
 status: draft
 version: '0.1'
-last_updated: 2026-02-11 07:29:32 UTC
+last_updated: 2026-02-11 07:54:02 UTC
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -468,11 +468,29 @@ summary: ''
 ## Phase 6 -- src/ Layout Migration + Packaging
 <!-- ID: phase_5 -->
 
-**Objective:** Move to src/ layout, create pyproject.toml, fix path resolution, enable pip install.
+**Objective:** Ship Scribe as an installable `src/` package with a production-ready CLI that can execute every MCP tool while preserving MCP-equivalent execution context semantics (mode/session/tool guards).
 
-**CRITICAL REQUIREMENT (user mandate):** Fix the MCP_SPINE pathing hackiness. The server MUST boot cleanly from `scribe_mcp/` repo root — no path gymnastics, no `sys.path.insert` hacks. Clean entry point from repo root via `python -m scribe_mcp` or a console_scripts entry point. All current `sys.path` manipulation and `__file__` resolution hacks must be eliminated.
+**CRITICAL REQUIREMENT (user mandate):** Fix the MCP_SPINE pathing hackiness. The server MUST boot cleanly from `scribe_mcp/` repo root with no `sys.path.insert` hacks. Introduce a clean package entry point while keeping current MCP launch compatibility (`python -m server`) during migration to avoid mandatory config churn.
 
-**Duration:** 4 days | **Risk:** HIGH | **Dependencies:** P3, P4, P5
+**Duration:** 5 days | **Risk:** HIGH | **Dependencies:** P3, P4, P5
+
+### Task Package 6.0: Shared Runtime Dispatch + CLI Session Parity
+
+**Scope:** Extract runtime dispatch/context logic from `server.py` into shared module and reuse from both MCP and CLI.
+**Files to Create/Modify:** server.py, shared/tool_runtime.py (new), shared/execution_context.py, scripts/scribe_cli.py (or src/scribe_mcp/cli.py)
+
+**Specifications:**
+1. Move tool execution pipeline (context resolution, stable session identity, sentinel/project gating, cached project injection) into reusable runtime callable.
+2. MCP server and CLI must invoke tools through the same runtime dispatcher.
+3. Add CLI session profile persistence under `.scribe/cli/` (transport_session_id, mode, active project, agent, read-before-edit state).
+4. CLI must expose `session show|use|reset` plus direct tool invocation (`scribe <tool> --arg ...`) for all registered MCP tools.
+5. Preserve current MCP behavior and keep existing `python -m server` launch path working during transition.
+
+**Verification:**
+- [ ] `python -c "from scribe_mcp.server import app; print(bool(app))"` works after dispatcher extraction
+- [ ] `scribe tools list` shows all MCP tool names
+- [ ] `scribe read_file ...` then `scribe edit_file ...` succeeds in same named CLI session (read-before-edit parity)
+- [ ] Sentinel-only and project-only tool guards match MCP behavior
 
 ### Task Package 6.1: Create config/paths.py + pyproject.toml
 
@@ -480,70 +498,72 @@ summary: ''
 **Files to Create:** config/paths.py, pyproject.toml, src/scribe_mcp/py.typed
 
 **Specifications:**
-1. config/paths.py: package_root(), config_data_dir(), templates_dir(), db_init_sql(), user_data_dir(), default_db_path(), scribe_dir(), repo_root() -- all using importlib.resources and env var overrides
-2. pyproject.toml: Full metadata, dependencies with ~= pinning, optional-dependencies, console scripts, package-data, setuptools find where=["src"]
-3. py.typed marker file for PEP 561
+1. config/paths.py: `package_root()`, `config_data_dir()`, `templates_dir()`, `db_init_sql()`, `user_data_dir()`, `default_db_path()`, `scribe_dir()`, `repo_root()` using `importlib.resources` with safe fallback
+2. `user_data_dir()` must honor `SCRIBE_DATA_DIR`; `default_db_path()` must honor `SCRIBE_DB_PATH` and compatibility alias `SCRIBE_SQLITE_PATH`
+3. pyproject.toml: metadata, dependencies with `~=` pinning, optional dependencies, console scripts, package-data, setuptools find where=["src"]
+4. py.typed marker file for PEP 561
 
 **Verification:**
 - [ ] `python -c "from scribe_mcp.config.paths import package_root; print(package_root())"` works
-- [ ] pyproject.toml validates: `pip install -e . --dry-run` succeeds
+- [ ] `pip install -e . --dry-run` succeeds
+- [ ] `pip install .` (wheel build/install) succeeds
 
 ### Task Package 6.2: Move to src/ Layout
 
-**Scope:** Create src/scribe_mcp/ and move all packages
-**Files to Modify:** ALL Python packages moved to src/scribe_mcp/
+**Scope:** Create `src/scribe_mcp/` and move all runtime packages
+**Files to Modify:** all runtime modules/packages moved under `src/scribe_mcp/`
 
 **Specifications:**
-1. `mkdir -p src/scribe_mcp`
-2. Move all packages: config/, storage/, tools/, state/, shared/, utils/, doc_management/, template_engine/, templates/, bridges/, plugins/, security/, scripts/, db/
-3. Move root modules: server.py, reminders.py, __init__.py
-4. Move config data files to config/data/
-5. Keep tests/ at repo root (outside src/)
-6. Keep CLAUDE.md, AGENTS.md, README.md, pytest.ini at repo root
+1. Create `src/scribe_mcp/` and move packages: config/, storage/, tools/, state/, shared/, utils/, doc_management/, template_engine/, templates/, bridges/, plugins/, security/, scripts/, db/
+2. Move root modules: `server.py`, `reminders.py`, `__init__.py`
+3. Keep tests/ at repo root; keep CLAUDE.md, AGENTS.md, README.md, pytest.ini at repo root
+4. Add compatibility shims so `python -m server` keeps working until MCP configs are migrated
+5. Boot console scripts from installed package path (`scribe-server`, `scribe`)
 
 **Verification:**
 - [ ] `pip install -e .` succeeds
 - [ ] `python -c "from scribe_mcp.server import main"` works
 - [ ] `scribe-server --help` works
+- [ ] Legacy launch `python -m server` still works during transition
 
-### Task Package 6.3: Fix __file__ Path Resolutions + Hardcoded DB Paths
+### Task Package 6.3: Kill Path Hacks + Hardcoded DB Paths
 
-**Scope:** Replace 50+ __file__ patterns with config/paths.py calls. Also fix hardcoded DB paths that will break during src/ migration (CRITICAL: prevents hidden P6/P7 dependency).
-**Files to Modify:** server.py, config/settings.py, template_engine/engine.py, utils/reminder_monitoring.py, utils/tool_logger.py, utils/rotation_state.py, utils/audit.py, template_engine/cli.py, reminders.py, and ~42 more
-
-**Specifications:**
-1. Replace `Path(__file__).resolve().parent.parent` with `config.paths.package_root()`
-2. Replace template path resolution with `config.paths.templates_dir()`
-3. Replace config directory resolution with `config.paths.config_data_dir()`
-4. Remove sys.path hacks from server.py
-5. Update test files to use proper fixtures instead of __file__ paths
-6. **CRITICAL (review fix #1):** Fix reminders.py line 31: replace hardcoded `.scribe/data/scribe.db` with `config.paths.default_db_path()` -- this path breaks when files move to src/ layout, so it MUST be fixed here, not deferred to P7
-
-**Verification:**
-- [ ] `grep -rn '__file__' src/scribe_mcp/ --include='*.py' | grep -v test | grep -v '# noqa'` returns 0
-- [ ] `grep -rn '.scribe/data/scribe.db' src/scribe_mcp/ --include='*.py'` returns 0 (reminders.py fixed)
-- [ ] `pytest tests/` passes -- FULL suite
-
-### Task Package 6.4: Test Suite Migration
-
-**Scope:** Update test imports and fixtures for src/ layout
-**Files to Modify:** tests/conftest.py, all test files with path-dependent imports
+**Scope:** Replace `__file__`/`sys.path` patterns with config.paths and remove hardcoded DB paths before/with src migration
+**Files to Modify:** server.py, config/settings.py, config/display_config.py, template_engine/engine.py, template_engine/cli.py, storage/postgres.py, reminders.py, utils/reminder_monitoring.py, utils/rotation_state.py, utils/audit.py, utils/tool_logger.py, and remaining production callsites
 
 **Specifications:**
-1. Update conftest.py sys.path to point to src/
-2. Fix 121 hardcoded /home/austin paths to use tmp_path or fixtures
-3. Create tests/fixtures/storage.py and tests/fixtures/projects.py
-4. Ensure tests use `pip install -e .` import path
-5. Remove 4 instances of sys.path.insert in test files
+1. Replace `Path(__file__).resolve().parent.parent` patterns with `config.paths.*`
+2. Replace template/config/db-init resolution with `templates_dir()`, `config_data_dir()`, `db_init_sql()`
+3. Remove production `sys.path` hacks
+4. **CRITICAL (review fix #1):** fix `reminders.py` hardcoded `.scribe/data/scribe.db` to `config.paths.default_db_path()`
+5. Remove identical hardcoded path usage in `utils/reminder_monitoring.py`
 
 **Verification:**
-- [ ] `pip install -e ".[dev]"` then `pytest tests/` -- ALL pass
+- [ ] `grep -rn '__file__\|sys.path.insert\|sys.path.append' src/scribe_mcp/ --include='*.py' | grep -v test | grep -v '# noqa'` returns 0
+- [ ] `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/scribe_mcp/ --include='*.py'` returns 0
+- [ ] `pytest tests/` passes (FULL suite)
+
+### Task Package 6.4: Test Suite Migration + Installed-Package Flow
+
+**Scope:** Update tests and fixtures for src layout and installed-package execution
+**Files to Modify:** tests/conftest.py and path-dependent tests
+
+**Specifications:**
+1. Update conftest/import fixtures for src layout and installed package path
+2. Replace hardcoded `/home/austin` usage with tmp_path/fixtures
+3. Add/normalize test fixtures under `tests/fixtures/` (storage.py, projects.py)
+4. Remove `sys.path` manipulation from tests where possible (allow only minimal conftest bootstrap if required)
+5. Add CLI parity tests for session context (`read_file` -> `edit_file`), mode gating, and representative tool execution
+
+**Verification:**
+- [ ] `pip install -e ".[dev]" && pytest tests/` all pass
 - [ ] `grep -rn '/home/austin' tests/` returns 0
-- [ ] No sys.path manipulation in tests (except conftest.py if needed)
+- [ ] `grep -rn 'sys.path.insert\|sys.path.append' tests/ --include='*.py'` returns only approved bootstrap locations
+- [ ] CLI parity tests pass in CI/local
 
-**Exit Criteria:** `pip install -e .` works. All console scripts work. All tests pass. Zero __file__ in production code. Zero hardcoded DB paths in production code.
+**Exit Criteria:** Installable package, working console scripts, CLI can call every MCP tool, session context parity between CLI and MCP runtime, zero production `__file__`/`sys.path` path hacks, zero hardcoded DB paths, full tests passing.
 
-**Rollback:** Single git commit for entire src/ migration. Rollback = `git revert <commit>`. Test = `pip install -e . && pytest`.
+**Rollback:** Keep migration in bounded commits by package. Rollback path: `git revert <commit(s)>`; verification: `pip install -e . && pytest`.
 
 ---
 ## Phase 7 -- Database Consolidation + state.json Migration

@@ -261,6 +261,7 @@ MCP_SPINE/scribe_mcp/
 | 5 | Python logging module (no print/stderr) | config/logging.py with SCRIBE_LOG_LEVEL | print() to stderr corrupts MCP JSON-RPC transport |
 | 6 | Single database with migration script | scripts/migrate_state.py consolidates 4 DBs + state.json | Eliminates data fragmentation |
 | 7 | Parallel sqlite/ and postgres/ subpackages | Same module names, same function signatures | Trivial to verify feature parity with parametrized tests |
+| 8 | Shared runtime dispatcher for MCP + CLI | server and CLI invoke common `shared/tool_runtime.py` path | Guarantees identical mode/session guards and read-before-edit behavior across interfaces |
 
 ---
 ## 4. Detailed Design
@@ -351,9 +352,10 @@ Replace 115+ print/stderr sources with Python logging:
 Replace 50+ `__file__` patterns with centralized module:
 - `package_root()` via importlib.resources.files("scribe_mcp")
 - `config_data_dir()`, `templates_dir()`, `db_init_sql()`
-- `user_data_dir()` via XDG Base Directory
-- `default_db_path()` with SCRIBE_DB_PATH override
-- `repo_root()` with SCRIBE_ROOT override + auto-detect
+- `user_data_dir()` via XDG Base Directory or `SCRIBE_DATA_DIR`
+- `default_db_path()` with `SCRIBE_DB_PATH` override and compatibility alias `SCRIBE_SQLITE_PATH`
+- `repo_root()` with `SCRIBE_ROOT` override + auto-detect
+- `cli_session_dir()` and `cli_session_state_path()` for persistent CLI session context
 
 **importlib.resources Compatibility Strategy (review fix #2):**
 
@@ -457,6 +459,13 @@ Full packaging config with: build-system (setuptools), project metadata, depende
 - Migration caching: In-memory set tracks completed migrations
 - Deferred plugins: Bridge/plugin discovery on first relevant tool call
 - Schema verification: PRAGMA table_list check before CREATE
+
+### 4.12 Unified CLI Execution Path
+
+- `scribe` CLI invokes the same runtime dispatcher used by MCP tool calls (no duplicate execution logic).
+- CLI sessions persist under `.scribe/cli/` and include mode, project binding, agent identity, and read-before-edit state.
+- CLI supports direct tool execution for the full MCP surface (`scribe <tool> --arg ...`).
+- Compatibility is preserved during migration: legacy MCP launch (`python -m server`) remains valid until clients are cut over.
 
 ---
 ## 5. Directory Structure

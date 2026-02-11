@@ -936,6 +936,63 @@ def get_execution_context():
     return getattr(getattr(app, "state", None), "execution_context", None)
 
 
+def list_registered_tools() -> list[str]:
+    """Return sorted tool names currently registered on the MCP server."""
+    registry = getattr(Server, "_scribe_tool_registry", {})
+    return sorted(str(name) for name in registry.keys())
+
+
+def describe_registered_tools() -> dict[str, dict[str, Any]]:
+    """Return tool metadata keyed by tool name for CLI discovery."""
+    registry = getattr(Server, "_scribe_tool_registry", {})
+    defs = getattr(Server, "_scribe_tool_defs", {})
+    description_map: dict[str, dict[str, Any]] = {}
+    for tool_name, func in registry.items():
+        tool_def = defs.get(tool_name)
+        schema = getattr(tool_def, "inputSchema", None) if tool_def else None
+        description = getattr(tool_def, "description", "") if tool_def else ""
+        if not description:
+            description = inspect.getdoc(func) or ""
+        description_map[str(tool_name)] = {
+            "name": str(tool_name),
+            "description": description,
+            "input_schema": schema if isinstance(schema, dict) else {},
+        }
+    return description_map
+
+
+async def invoke_tool(
+    name: str,
+    arguments: Optional[Dict[str, Any]] = None,
+    *,
+    context: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Invoke a registered tool through the same runtime path used by MCP."""
+    if not name:
+        raise ValueError("Tool name is required")
+    payload = dict(arguments or {})
+    await _startup()
+    try:
+        call_handler = globals().get("_call_tool")
+        if callable(call_handler):
+            kwargs: Dict[str, Any] = {}
+            if context is not None:
+                kwargs["context"] = context
+            return await call_handler(name, payload, **kwargs)
+
+        # Fallback path when MCP call hook is unavailable.
+        registry = getattr(Server, "_scribe_tool_registry", {})
+        func = registry.get(name)
+        if not func:
+            raise ValueError(f"Unknown tool '{name}'")
+        result = func(**payload)
+        if inspect.isawaitable(result):
+            return await cast(Awaitable[Any], result)
+        return result
+    finally:
+        await _shutdown()
+
+
 async def _session_cleanup_task(agent_manager):
     """Background task to clean up expired sessions."""
     import asyncio

@@ -1,5 +1,5 @@
 {
-  "current_project": "scribe_pro_cleanup",
+  "current_project": "rom-lab",
   "projects": {
     "scribe_mcp": {
       "name": "scribe_mcp",
@@ -4164,7 +4164,10 @@
           "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
         }
-      }
+      },
+      "version": 1,
+      "updated_by": "Codex",
+      "session_id": "110499b4-8847-44bd-b70d-1a669de17399"
     },
     "PokeAPI": {
       "name": "PokeAPI",
@@ -5283,11 +5286,11 @@
     }
   },
   "recent_projects": [
+    "rom-lab",
     "scribe_pro_cleanup",
     "council_mcp",
     "manage_docs_full_e2e_2026_02_11_r1",
-    "manage_docs_live_validation_2026_02_11_r4",
-    "manage_docs_live_validation_2026_02_11_r3"
+    "manage_docs_live_validation_2026_02_11_r4"
   ],
   "session_projects": {
     "960838fa-d8e2-4d95-892e-804c55251384": {
@@ -5747,22 +5750,91 @@
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
         }
       }
+    },
+    "40bf23ed-5699-45c4-a412-ba87858ac6bc": {
+      "name": "scribe_pro_cleanup",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "29261966-9a2d-4e94-9f40-97dc257e2601": {
+      "name": "rom-lab",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "fe41dd03-88a3-43ed-8b31-584f5cc472c6": {
+      "name": "scribe_pro_cleanup",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+        }
+      },
+      "version": 1,
+      "updated_by": "Codex",
+      "session_id": "110499b4-8847-44bd-b70d-1a669de17399"
     }
   },
   "session_modes": {
-    "960838fa-d8e2-4d95-892e-804c55251384": "project",
-    "09aef768-eaa1-475b-afab-7d999dceee13": "project",
-    "ab6c6c31-3771-4e84-b104-860d96e52c2d": "project",
-    "6bf67a42-4a6d-473b-8bca-0325bfed12df": "project",
-    "8a4e12d2-c6a9-4693-8202-6cb3cad2fbb7": "project",
-    "597f9ae0-3877-4714-b35c-3cdc76082cd6": "project",
-    "ff710fc4-5f81-417a-8e66-6776c20d304e": "project",
-    "775636af-87f9-42f9-aa18-ee3d8e068be4": "project",
-    "39af605d-3bbe-4438-8161-f14b50919819": "project",
-    "3af7f8a5-fec7-4238-9162-bbac3671786d": "project",
-    "e42f1066-24dd-46a5-8d12-a1e4e966392d": "project",
-    "93bcdc21-9182-48a9-8615-30dbadb76646": "project",
-    "ce1c9912-7278-4c48-9005-5306307b9c78": "project"
+    "29261966-9a2d-4e94-9f40-97dc257e2601": "project"
   },
   "recent_tools": [
     {
@@ -5808,7 +5880,7 @@
   ],
   "last_activity_at": "2026-01-24 08:32:14 UTC",
   "session_started_at": "2026-01-24 03:45:39 UTC",
-  "version": 3015,
-  "last_updated_by": "Codex",
-  "operation_timestamp": "2026-02-11 07:29:06 UTC"
+  "version": 3020,
+  "last_updated_by": "nexus",
+  "operation_timestamp": "2026-02-11 08:20:39 UTC"
 }

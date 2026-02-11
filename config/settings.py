@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from scribe_mcp.config.paths import default_db_path, repo_root
+
 try:  # Prefer optional dotenv loading to keep env setup simple outside the repo
     from dotenv import load_dotenv  # type: ignore
 
@@ -91,12 +93,13 @@ class Settings:
         else:
             storage_backend = "postgres" if db_url else "sqlite"
 
-        sqlite_override = os.environ.get("SCRIBE_SQLITE_PATH")
+        sqlite_override = os.environ.get("SCRIBE_DB_PATH") or os.environ.get(
+            "SCRIBE_SQLITE_PATH"
+        )
         if sqlite_override:
             sqlite_path = Path(sqlite_override).expanduser()
         else:
-            # Use new data/ directory location
-            sqlite_path = (project_root / "data" / "scribe_projects.db").resolve()
+            sqlite_path = default_db_path()
 
         allow_network = os.environ.get("SCRIBE_ALLOW_NETWORK", "false").lower() in {
             "1",
@@ -216,8 +219,8 @@ class Settings:
 
 
 def _default_root() -> str:
-    """Infer the repository root from this file's location."""
-    return str(Path(__file__).resolve().parents[1])
+    """Infer repository root without relying on __file__ traversal hacks."""
+    return str(repo_root())
 
 
 def _int_env(name: str, default: int) -> int:
