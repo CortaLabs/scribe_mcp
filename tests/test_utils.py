@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
@@ -76,25 +75,21 @@ async def test_set_project_allows_external_root(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_state_manager_atomic_write_and_backup(tmp_path: Path):
+async def test_state_manager_db_persistence_without_state_file_writes(tmp_path: Path):
     state_file = tmp_path / "state.json"
+    db_file = state_file.with_suffix(".db")
     manager = StateManager(path=state_file)
 
-    # First write to populate state file
     final_state = await manager.set_current_project(
         "proj1",
         {"name": "proj1", "root": ".", "progress_log": "./log"},
     )
     assert final_state.current_project == "proj1"
-    assert state_file.exists()
-
-    # Simulate corruption in main file but intact backup
-    state_file.write_text("{ invalid json", encoding="utf-8")
-    backup = state_file.with_suffix(state_file.suffix + ".tmp")
-    backup.write_text(json.dumps({"current_project": "proj2", "projects": {}, "recent_projects": []}), encoding="utf-8")
+    assert db_file.exists()
+    assert not state_file.exists()
 
     loaded = await manager.load()
-    assert loaded.current_project == "proj2"
+    assert loaded.current_project == "proj1"
 
 
 @pytest.mark.asyncio

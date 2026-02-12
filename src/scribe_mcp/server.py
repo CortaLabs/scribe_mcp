@@ -112,8 +112,8 @@ if not hasattr(app, "state"):
     app.state = SimpleNamespace()
 if not hasattr(app.state, "execution_context"):
     app.state.execution_context = None
-state_manager = StateManager()
 storage_backend = create_storage_backend()
+state_manager = StateManager(storage_backend=storage_backend)
 agent_context_manager = None  # Will be initialized in startup
 agent_identity = None  # Will be initialized in startup
 router_context_manager = RouterContextManager(storage_backend=storage_backend)

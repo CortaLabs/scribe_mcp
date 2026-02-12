@@ -1,20 +1,29 @@
-"""Persistence of lightweight state for the MCP server."""
+"""Database-backed runtime state for the MCP server."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp.config.settings import settings
-from scribe_mcp.utils.time import parse_utc, utcnow
+from scribe_mcp.storage import create_storage_backend
+from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.utils.slug import normalize_project_input
+from scribe_mcp.utils.time import utcnow
 
+from .migration import migrate_legacy_state_file
+
+
+logger = logging.getLogger(__name__)
 
 TOOL_HISTORY_LIMIT = 10
+_GLOBAL_AGENT_ID = "Scribe"
+_PROJECT_CACHE_TTL_SECONDS = 2.0
 
 
 @dataclass
@@ -35,11 +44,9 @@ class State:
     def get_project(self, name: Optional[str]) -> Optional[Dict[str, Any]]:
         if not name:
             return None
-        # Try exact match first
         if name in self.projects:
             return self.projects[name]
 
-        # Try canonical match (flexible lookup for existing projects)
         canonical = normalize_project_input(name)
         if canonical and canonical != name and canonical in self.projects:
             return self.projects[canonical]
@@ -63,8 +70,7 @@ class State:
         recent = list(self.recent_projects)
         if name:
             recent = [name] + [item for item in recent if item != name]
-            limit = settings.recent_projects_limit
-            recent = recent[:limit]
+            recent = recent[: settings.recent_projects_limit]
         return State(
             current_project=name,
             projects=projects,
@@ -77,146 +83,125 @@ class State:
             version=self.version,
             last_updated_by=self.last_updated_by,
             operation_timestamp=self.operation_timestamp,
-            agent_state=self.agent_state,
+            agent_state=dict(self.agent_state),
         )
 
 
 class StateManager:
-    """Load and persist the server's state file."""
+    """DB-backed state manager with one-time legacy file migration."""
 
-    def __init__(self, path: Optional[Path] = None) -> None:
-        self._path = Path(path or settings.default_state_path)
+    def __init__(
+        self,
+        path: Optional[Path] = None,
+        storage_backend: Any = None,
+    ) -> None:
+        self._legacy_state_path = self._resolve_legacy_state_path(path)
+        self._storage_backend = storage_backend or self._build_default_backend(path)
         self._lock = asyncio.Lock()
-        self._temp_suffix = ".tmp"
+        self._backend_ready = False
+        self._legacy_migration_checked = False
+
+        # In-memory compatibility cache for low-risk legacy fields.
+        self._agent_state_cache: Dict[str, Any] = {}
+        self._session_projects_cache: Dict[str, Dict[str, Any]] = {}
+        self._session_modes_cache: Dict[str, str] = {}
+        self._recent_projects_cache: List[str] = []
+        self._activity_cache: Dict[str, Any] = {
+            "recent_tools": [],
+            "last_activity_at": None,
+            "session_started_at": None,
+        }
+        self._projects_cache: Dict[str, Dict[str, Any]] = {}
+        self._projects_cache_at: float = 0.0
 
     async def load(self) -> State:
-        """Read state from disk or return defaults."""
+        """Read state snapshot from database and compatibility caches."""
         async with self._lock:
-            data = await asyncio.to_thread(self._read_json)
-            return State(
-                current_project=data.get("current_project"),
-                projects=data.get("projects", {}),
-                recent_projects=data.get("recent_projects", []),
-                session_projects=data.get("session_projects", {}),
-                session_modes=data.get("session_modes", {}),
-                recent_tools=_normalise_tool_history(data.get("recent_tools", [])),
-                last_activity_at=data.get("last_activity_at"),
-                session_started_at=data.get("session_started_at"),
-                version=data.get("version", 0),
-                last_updated_by=data.get("last_updated_by"),
-                operation_timestamp=data.get("operation_timestamp"),
-                agent_state=data.get("agent_state", {}),
-            )
+            return await self._load_locked()
 
     async def persist(self, state: State) -> None:
-        """Write the full state to disk."""
-        await self._write_state(state)
-
-    async def record_tool(self, tool_name: str) -> State:
-        """Track the most recent tool invocations.
-
-        DATABASE-ONLY MODE (v2.2.0+):
-        - Writes to database only (agent_sessions table)
-        - state.json writes REMOVED (migration complete)
-        - Falls back to state.json for read-only access to old data
-        """
+        """Persist cache-compatible state fields into database-backed storage."""
         async with self._lock:
-            # Load state.json for non-activity fields (current_project, etc.)
-            data = await asyncio.to_thread(self._read_json)
-            now_utc = utcnow()
-            now = now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
-            timestamp_iso = now_utc.isoformat()
+            await self._ensure_backend_ready()
+            await self._run_legacy_migration_once()
 
-            # Write to database (primary storage for session activity)
-            session_id = None
-            try:
-                from scribe_mcp import server as server_module
-                backend = getattr(server_module, 'storage_backend', None)
-                router_ctx = getattr(server_module, 'router_context_manager', None)
+            for project_name, payload in state.projects.items():
+                await self._upsert_project(project_name, payload)
 
-                if backend and router_ctx and hasattr(backend, 'update_session_activity'):
-                    exec_context = router_ctx.get_current()
-                    if exec_context:
-                        # Prefer stable_session_id for agent_sessions table, fallback to session_id
-                        session_id = exec_context.stable_session_id or exec_context.session_id
-
-                        await backend.update_session_activity(
-                            session_id=session_id,
-                            tool_name=tool_name,
-                            timestamp=timestamp_iso
-                        )
-            except Exception as e:
-                # Log but don't fail - fall back to state.json read for this call
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Failed to write session activity to database: {e}")
-
-            # Get session activity (database-first, with state.json fallback)
-            activity = await self._get_session_activity_with_fallback(session_id, data)
-
-            # NO LONGER WRITING TO STATE.JSON - database is source of truth
-            # state.json is now read-only for migration period
-
-            return State(
-                current_project=data.get("current_project"),
-                projects=data.get("projects", {}),
-                recent_projects=data.get("recent_projects", []),
-                session_projects=data.get("session_projects", {}),
-                session_modes=data.get("session_modes", {}),
-                recent_tools=activity.get("recent_tools", []),
-                last_activity_at=activity.get("last_activity_at", now),
-                session_started_at=activity.get("session_started_at", now),
+            await self._set_global_project(
+                project_name=state.current_project,
+                updated_by=state.last_updated_by or _GLOBAL_AGENT_ID,
+                session_id=None,
             )
 
-    async def _get_session_activity_with_fallback(
-        self,
-        session_id: Optional[str],
-        state_json_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Get session activity from database with state.json fallback.
+            for session_id, project_payload in state.session_projects.items():
+                project_name = self._resolve_project_name(project_payload)
+                if not project_name:
+                    continue
+                await self._upsert_project(project_name, project_payload)
+                if hasattr(self._storage_backend, "set_session_project"):
+                    await self._storage_backend.set_session_project(session_id, project_name)
 
-        Migration helper that tries database first, falls back to state.json
-        for old sessions that haven't been migrated yet.
+            for session_id, mode in state.session_modes.items():
+                if mode not in {"project", "sentinel"}:
+                    continue
+                if hasattr(self._storage_backend, "upsert_session"):
+                    await self._storage_backend.upsert_session(session_id=session_id, mode=mode)
+                if hasattr(self._storage_backend, "set_session_mode"):
+                    await self._storage_backend.set_session_mode(session_id, mode)
 
-        Args:
-            session_id: Session ID to look up (may be None if context unavailable)
-            state_json_data: Loaded state.json data for fallback
+            self._agent_state_cache = dict(state.agent_state or {})
+            self._recent_projects_cache = list(state.recent_projects or [])
+            self._session_projects_cache.update(dict(state.session_projects or {}))
+            self._session_modes_cache.update(dict(state.session_modes or {}))
+            self._activity_cache = {
+                "recent_tools": list(state.recent_tools or []),
+                "last_activity_at": state.last_activity_at,
+                "session_started_at": state.session_started_at,
+            }
 
-        Returns:
-            Dict with keys: recent_tools (list), last_activity_at (str), session_started_at (str)
-        """
-        # Try database first (primary source)
-        if session_id:
-            try:
-                from scribe_mcp import server as server_module
-                backend = getattr(server_module, 'storage_backend', None)
+    async def record_tool(self, tool_name: str) -> State:
+        """Track recent tool activity in the session database state."""
+        async with self._lock:
+            await self._ensure_backend_ready()
+            await self._run_legacy_migration_once()
 
-                if backend and hasattr(backend, 'get_session_activity'):
-                    activity = await backend.get_session_activity(session_id)
-                    if activity:
-                        # Convert tool names to the format State expects
-                        # Database stores simple tool names, State uses [{name, ts}] format
-                        tool_names = activity.get("recent_tools", [])
-                        recent_tools = [{"name": name, "ts": "migration"} for name in tool_names]
+            now_utc = utcnow()
+            timestamp_iso = now_utc.isoformat()
+            timestamp_display = now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+            session_id = self._resolve_session_id_from_context()
 
-                        return {
-                            "recent_tools": recent_tools,
-                            "last_activity_at": activity.get("last_activity_at"),
-                            "session_started_at": activity.get("session_started_at"),
-                        }
-            except Exception as e:
-                # Log and fall through to state.json fallback
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.debug(f"Database session activity lookup failed, using state.json fallback: {e}")
+            if session_id and hasattr(self._storage_backend, "update_session_activity"):
+                try:
+                    await self._storage_backend.update_session_activity(
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        timestamp=timestamp_iso,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to persist session activity for '%s': %s", session_id, exc)
 
-        # Fallback to state.json (read-only) for old sessions
-        recent_tools = _normalise_tool_history(state_json_data.get("recent_tools", []))
-        return {
-            "recent_tools": recent_tools,
-            "last_activity_at": state_json_data.get("last_activity_at"),
-            "session_started_at": state_json_data.get("session_started_at"),
-        }
+            activity = await self._resolve_activity(session_id)
+            if not activity.get("recent_tools"):
+                recent_tools = _normalise_tool_history(self._activity_cache.get("recent_tools", []))
+                recent_tools.insert(0, {"name": tool_name, "ts": timestamp_display})
+                activity = {
+                    "recent_tools": recent_tools,
+                    "last_activity_at": timestamp_display,
+                    "session_started_at": self._activity_cache.get("session_started_at") or timestamp_display,
+                }
+
+            self._activity_cache = {
+                "recent_tools": list(activity.get("recent_tools", [])),
+                "last_activity_at": activity.get("last_activity_at") or timestamp_display,
+                "session_started_at": activity.get("session_started_at") or timestamp_display,
+            }
+
+            state = await self._load_locked()
+            state.recent_tools = _normalise_tool_history(self._activity_cache["recent_tools"])
+            state.last_activity_at = self._activity_cache["last_activity_at"]
+            state.session_started_at = self._activity_cache["session_started_at"]
+            return state
 
     async def set_current_project(
         self,
@@ -226,170 +211,398 @@ class StateManager:
         session_id: Optional[str] = None,
         mirror_global: bool = True,
     ) -> State:
-        """Persist the active project name and optional project metadata with atomic versioning."""
+        """Persist active project into DB-backed session/global state."""
         async with self._lock:
-            existing = await asyncio.to_thread(self._read_json)
-            projects = existing.get("projects", {})
-            recent = existing.get("recent_projects", [])
-            session_projects = existing.get("session_projects", {})
-            session_modes = existing.get("session_modes", {})
-            recent_tools = _normalise_tool_history(existing.get("recent_tools", []))
-            last_activity = existing.get("last_activity_at")
-            session_started = existing.get("session_started_at")
+            await self._ensure_backend_ready()
+            await self._run_legacy_migration_once()
 
-            # Version tracking for concurrent operations
-            current_version = existing.get("version", 0)
-            new_version = current_version + 1
+            resolved_name = self._resolve_project_name(project_data) or name
+            resolved_payload = dict(project_data or {})
+            if resolved_name:
+                resolved_payload.setdefault("name", resolved_name)
+                await self._upsert_project(resolved_name, resolved_payload)
 
-            if project_data:
-                projects[name] = project_data  # type: ignore[index]
-                if session_id:
-                    session_projects[str(session_id)] = project_data
-            if name:
-                recent = [name] + [item for item in recent if item != name]
-                recent = recent[: settings.recent_projects_limit]
+                if session_id and hasattr(self._storage_backend, "set_session_project"):
+                    await self._storage_backend.set_session_project(str(session_id), resolved_name)
+                    self._session_projects_cache[str(session_id)] = dict(resolved_payload)
 
-            current_project = name if mirror_global else existing.get("current_project")
-            data = {
-                "current_project": current_project,
-                "projects": projects,
-                "recent_projects": recent,
-                "session_projects": session_projects,
-                "session_modes": session_modes,
-                "recent_tools": recent_tools,
-                "last_activity_at": last_activity,
-                "session_started_at": session_started,
-                "version": new_version,
-                "last_updated_by": agent_id,
-                "operation_timestamp": utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            }
-            # Atomic write with temp file
-            await asyncio.to_thread(self._write_json_atomic, data)
-            return State(
-                current_project=current_project,
-                projects=projects,
-                recent_projects=recent,
-                session_projects=session_projects,
-                session_modes=session_modes,
-                recent_tools=list(recent_tools),
-                last_activity_at=last_activity,
-                session_started_at=session_started,
-                version=new_version,
-                last_updated_by=agent_id,
-                operation_timestamp=data["operation_timestamp"],
-                agent_state=data.get("agent_state", {}),
-            )
+                if agent_id and hasattr(self._storage_backend, "upsert_agent_recent_project"):
+                    await self._storage_backend.upsert_agent_recent_project(agent_id, resolved_name)
+
+                self._remember_recent_project(resolved_name)
+
+            if mirror_global:
+                await self._set_global_project(
+                    project_name=resolved_name,
+                    updated_by=agent_id or _GLOBAL_AGENT_ID,
+                    session_id=session_id,
+                )
+
+            state = await self._load_locked()
+            if session_id and resolved_name:
+                state.session_projects[str(session_id)] = (
+                    state.get_project(resolved_name)
+                    or {"name": resolved_name}
+                )
+            return state
 
     async def set_session_mode(self, session_id: Optional[str], mode: str) -> None:
         if not session_id or mode not in {"sentinel", "project"}:
             return
         async with self._lock:
-            existing = await asyncio.to_thread(self._read_json)
-            session_modes = existing.get("session_modes", {})
-            session_modes[str(session_id)] = mode
-            existing["session_modes"] = session_modes
-            existing["operation_timestamp"] = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-            await asyncio.to_thread(self._write_json_atomic, existing)
+            await self._ensure_backend_ready()
+            await self._run_legacy_migration_once()
 
-    def _read_json(self) -> Dict[str, Any]:
-        target = self._path
-        if not target.exists():
-            return self._read_backup()
-        try:
-            with target.open("r", encoding="utf-8") as handle:
-                return json.load(handle)
-        except (json.JSONDecodeError, OSError):
-            return self._read_backup()
-
-    def _write_json(self, data: Dict[str, Any]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self._path.with_suffix(self._path.suffix + self._temp_suffix)
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2)
-            handle.write("\n")
-        temp_path.replace(self._path)
-
-    def _write_json_atomic(self, data: Dict[str, Any]) -> None:
-        """Enhanced atomic write with version tracking and backup."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Create versioned temp file
-        version = data.get("version", 0)
-        temp_path = self._path.with_suffix(f"{self._path.suffix}.tmp.{version}")
-
-        # Write to temp file first
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())  # Force write to disk
-
-        # Atomic rename
-        temp_path.replace(self._path)
-
-        # Cleanup old temp files
-        self._cleanup_old_temp_files()
-
-    def _cleanup_old_temp_files(self) -> None:
-        """Clean up old versioned temp files."""
-        try:
-            state_dir = self._path.parent
-            pattern = f"{self._path.name}.tmp.*"
-            for temp_file in state_dir.glob(pattern):
-                # Only clean up files older than current version
-                if temp_file.stat().st_mtime < (utcnow().timestamp() - 300):  # 5 minutes old
-                    temp_file.unlink()
-        except Exception:
-            pass  # Don't fail cleanup
-
-    def _read_backup(self) -> Dict[str, Any]:
-        backup = self._path.with_suffix(self._path.suffix + self._temp_suffix)
-        if not backup.exists():
-            return {}
-        try:
-            with backup.open("r", encoding="utf-8") as handle:
-                return json.load(handle)
-        except (json.JSONDecodeError, OSError):
-            return {}
-
-    async def _write_state(self, state: State) -> None:
-        async with self._lock:
-            await asyncio.to_thread(
-                self._write_json,
-                {
-                    "current_project": state.current_project,
-                    "projects": state.projects,
-                    "recent_projects": state.recent_projects,
-                    "session_projects": state.session_projects,
-                    "recent_tools": state.recent_tools,
-                    "last_activity_at": state.last_activity_at,
-                    "session_started_at": state.session_started_at,
-                    "version": state.version,
-                    "last_updated_by": state.last_updated_by,
-                    "operation_timestamp": state.operation_timestamp,
-                    "agent_state": state.agent_state,
-                },
-            )
+            if hasattr(self._storage_backend, "upsert_session"):
+                await self._storage_backend.upsert_session(session_id=session_id, mode=mode)
+            if hasattr(self._storage_backend, "set_session_mode"):
+                await self._storage_backend.set_session_mode(session_id, mode)
+            self._session_modes_cache[str(session_id)] = mode
 
     async def update_project_metadata(self, name: str, updates: Dict[str, Any]) -> State:
         """Merge metadata into a stored project entry."""
         async with self._lock:
-            data = await asyncio.to_thread(self._read_json)
-            projects = data.get("projects", {})
-            project = projects.get(name, {})
-            project.update(updates)
-            projects[name] = project
-            data["projects"] = projects
-            await asyncio.to_thread(self._write_json, data)
-            return State(
-                current_project=data.get("current_project"),
-                projects=projects,
-                recent_projects=data.get("recent_projects", []),
-                session_projects=data.get("session_projects", {}),
-                recent_tools=_normalise_tool_history(data.get("recent_tools", [])),
-                last_activity_at=data.get("last_activity_at"),
-                session_started_at=data.get("session_started_at"),
+            await self._ensure_backend_ready()
+            await self._run_legacy_migration_once()
+
+            current = await self._fetch_project(name) or {"name": name}
+            current.update(updates)
+            await self._upsert_project(name, current)
+            return await self._load_locked()
+
+    async def _load_locked(self) -> State:
+        """Read state snapshot; caller must hold ``self._lock``."""
+        await self._ensure_backend_ready()
+        await self._run_legacy_migration_once()
+
+        projects = await self._load_projects()
+        session_id = self._resolve_session_id_from_context()
+        current_project, session_projects = await self._resolve_current_project(session_id, projects)
+        session_modes = await self._resolve_session_modes(session_id)
+        activity = await self._resolve_activity(session_id)
+        recent_projects = self._build_recent_projects(current_project, projects)
+
+        return State(
+            current_project=current_project,
+            projects=projects,
+            recent_projects=recent_projects,
+            session_projects=session_projects,
+            session_modes=session_modes,
+            recent_tools=_normalise_tool_history(activity.get("recent_tools", [])),
+            last_activity_at=activity.get("last_activity_at"),
+            session_started_at=activity.get("session_started_at"),
+            last_updated_by=self._agent_state_cache.get("last_agent_id"),
+            operation_timestamp=utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            agent_state=dict(self._agent_state_cache),
+        )
+
+    def _resolve_legacy_state_path(self, path: Optional[Path]) -> Optional[Path]:
+        if path is None:
+            return settings.default_state_path
+        candidate = Path(path).expanduser()
+        if candidate.suffix.lower() == ".db":
+            return None
+        return candidate
+
+    def _build_default_backend(self, path: Optional[Path]) -> Any:
+        if path is not None:
+            candidate = Path(path).expanduser()
+            db_path = candidate if candidate.suffix.lower() == ".db" else candidate.with_suffix(".db")
+            return SQLiteStorage(db_path)
+
+        backend = create_storage_backend()
+        if backend is not None:
+            return backend
+        return SQLiteStorage(settings.sqlite_path)
+
+    async def _ensure_backend_ready(self) -> None:
+        if self._backend_ready:
+            return
+        setup_fn = getattr(self._storage_backend, "setup", None)
+        if callable(setup_fn):
+            await setup_fn()
+        self._backend_ready = True
+
+    async def _run_legacy_migration_once(self) -> None:
+        if self._legacy_migration_checked:
+            return
+        self._legacy_migration_checked = True
+
+        if not self._legacy_state_path or not self._legacy_state_path.exists():
+            return
+
+        try:
+            result = await migrate_legacy_state_file(
+                storage_backend=self._storage_backend,
+                state_path=self._legacy_state_path,
+                rename_source=True,
             )
+            if result.migrated:
+                self._projects_cache = {}
+                self._projects_cache_at = 0.0
+                logger.info(
+                    "Migrated legacy state file to DB (%s projects, %s session bindings)",
+                    result.projects_migrated,
+                    result.session_projects_migrated,
+                )
+        except Exception as exc:
+            logger.warning("Legacy state migration failed: %s", exc)
+
+    async def _load_projects(self) -> Dict[str, Dict[str, Any]]:
+        now = time.monotonic()
+        if (
+            self._projects_cache
+            and (now - self._projects_cache_at) < _PROJECT_CACHE_TTL_SECONDS
+        ):
+            projects = {name: dict(payload) for name, payload in self._projects_cache.items()}
+        else:
+            projects = {}
+            if not hasattr(self._storage_backend, "list_projects"):
+                return projects
+
+            try:
+                records = await self._storage_backend.list_projects()
+            except Exception as exc:
+                logger.warning("Failed to load projects from backend: %s", exc)
+                return projects
+
+            for record in records:
+                project_data = self._record_to_project_dict(record)
+                projects[record.name] = project_data
+
+            self._projects_cache = {name: dict(payload) for name, payload in projects.items()}
+            self._projects_cache_at = now
+
+        for name, payload in self._session_projects_cache.items():
+            _ = name
+            project_name = self._resolve_project_name(payload)
+            if project_name and project_name not in projects:
+                projects[project_name] = dict(payload)
+
+        return projects
+
+    async def _resolve_current_project(
+        self,
+        session_id: Optional[str],
+        projects: Dict[str, Dict[str, Any]],
+    ) -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
+        session_projects: Dict[str, Dict[str, Any]] = {}
+        current_project: Optional[str] = None
+
+        if session_id and hasattr(self._storage_backend, "get_session_project"):
+            try:
+                project_name = await self._storage_backend.get_session_project(session_id)
+            except Exception:
+                project_name = None
+
+            if project_name:
+                current_project = project_name
+                session_projects[session_id] = (
+                    projects.get(project_name)
+                    or {"name": project_name}
+                )
+
+        if not current_project and session_id in self._session_projects_cache:
+            cached = self._session_projects_cache[session_id]
+            project_name = self._resolve_project_name(cached)
+            if project_name:
+                current_project = project_name
+                session_projects[session_id] = dict(cached)
+
+        if not current_project and hasattr(self._storage_backend, "get_agent_project"):
+            try:
+                agent_project = await self._storage_backend.get_agent_project(_GLOBAL_AGENT_ID)
+            except Exception:
+                agent_project = None
+            if agent_project:
+                current_project = agent_project.get("project_name")
+
+        return current_project, session_projects
+
+    async def _resolve_session_modes(self, session_id: Optional[str]) -> Dict[str, str]:
+        session_modes = dict(self._session_modes_cache)
+        if not session_id:
+            return session_modes
+
+        if hasattr(self._storage_backend, "get_session_mode"):
+            try:
+                mode = await self._storage_backend.get_session_mode(session_id)
+            except Exception:
+                mode = None
+            if mode in {"project", "sentinel"}:
+                session_modes[session_id] = mode
+
+        return session_modes
+
+    async def _resolve_activity(self, session_id: Optional[str]) -> Dict[str, Any]:
+        if session_id and hasattr(self._storage_backend, "get_session_activity"):
+            try:
+                activity = await self._storage_backend.get_session_activity(session_id)
+            except Exception:
+                activity = None
+            if activity:
+                normalized = {
+                    "recent_tools": _normalise_tool_history(activity.get("recent_tools", [])),
+                    "last_activity_at": activity.get("last_activity_at"),
+                    "session_started_at": activity.get("session_started_at"),
+                }
+                self._activity_cache = dict(normalized)
+                return normalized
+
+        return dict(self._activity_cache)
+
+    def _build_recent_projects(
+        self,
+        current_project: Optional[str],
+        projects: Dict[str, Dict[str, Any]],
+    ) -> List[str]:
+        recent = list(self._recent_projects_cache)
+        if current_project:
+            recent = [current_project] + [name for name in recent if name != current_project]
+        for name in projects:
+            if name not in recent:
+                recent.append(name)
+        return recent[: settings.recent_projects_limit]
+
+    async def _set_global_project(
+        self,
+        project_name: Optional[str],
+        updated_by: str,
+        session_id: Optional[str],
+    ) -> None:
+        if not hasattr(self._storage_backend, "set_agent_project"):
+            return
+
+        stable_session_id = session_id or self._resolve_session_id_from_context() or "__global__"
+        try:
+            await self._storage_backend.set_agent_project(
+                agent_id=_GLOBAL_AGENT_ID,
+                project_name=project_name,
+                expected_version=None,
+                updated_by=updated_by,
+                session_id=stable_session_id,
+            )
+        except Exception as exc:
+            logger.warning("Failed to set global project '%s': %s", project_name, exc)
+
+    async def _upsert_project(self, project_name: str, payload: Dict[str, Any]) -> None:
+        if not project_name or not hasattr(self._storage_backend, "upsert_project"):
+            return
+
+        name = str(project_name)
+        root_value = payload.get("root") or payload.get("repo_root")
+        if root_value:
+            repo_root = str(root_value)
+        else:
+            repo_root = str(settings.project_root)
+
+        progress_log_value = payload.get("progress_log")
+        if progress_log_value:
+            progress_log = str(progress_log_value)
+        else:
+            progress_log = str(
+                settings.project_root
+                / settings.dev_plans_base
+                / name
+                / "PROGRESS_LOG.md"
+            )
+
+        docs_json = None
+        docs = payload.get("docs")
+        if isinstance(docs, dict):
+            docs_json = json.dumps(docs)
+
+        await self._storage_backend.upsert_project(
+            name=name,
+            repo_root=repo_root,
+            progress_log_path=progress_log,
+            docs_json=docs_json,
+        )
+        cache_payload = dict(payload)
+        cache_payload["name"] = name
+        cache_payload["root"] = repo_root
+        cache_payload["progress_log"] = progress_log
+        if "docs_dir" not in cache_payload:
+            cache_payload["docs_dir"] = str(Path(progress_log).expanduser().resolve().parent)
+        self._projects_cache[name] = cache_payload
+        self._projects_cache_at = time.monotonic()
+
+    async def _fetch_project(self, project_name: str) -> Optional[Dict[str, Any]]:
+        if not project_name:
+            return None
+
+        if not hasattr(self._storage_backend, "fetch_project"):
+            return None
+
+        try:
+            record = await self._storage_backend.fetch_project(project_name)
+        except Exception:
+            record = None
+
+        if not record:
+            return None
+        return self._record_to_project_dict(record)
+
+    def _record_to_project_dict(self, record: Any) -> Dict[str, Any]:
+        progress_log_path = getattr(record, "progress_log_path", None)
+        payload: Dict[str, Any] = {
+            "name": getattr(record, "name", None),
+            "root": getattr(record, "repo_root", None),
+            "progress_log": progress_log_path,
+        }
+        if progress_log_path:
+            payload["docs_dir"] = str(Path(progress_log_path).expanduser().resolve().parent)
+
+        docs_json = getattr(record, "docs_json", None)
+        if docs_json:
+            try:
+                docs = json.loads(docs_json)
+            except (TypeError, json.JSONDecodeError):
+                docs = None
+            if isinstance(docs, dict):
+                payload["docs"] = docs
+                docs_progress = docs.get("progress_log")
+                if docs_progress:
+                    payload["docs_dir"] = str(Path(docs_progress).expanduser().resolve().parent)
+
+        return payload
+
+    def _resolve_project_name(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not payload or not isinstance(payload, dict):
+            return None
+        name = payload.get("name")
+        if name is None:
+            return None
+        candidate = str(name).strip()
+        return candidate or None
+
+    def _resolve_session_id_from_context(self) -> Optional[str]:
+        try:
+            from scribe_mcp import server as server_module
+
+            router_ctx = getattr(server_module, "router_context_manager", None)
+            if router_ctx is None:
+                return None
+
+            execution_context = router_ctx.get_current()
+            if not execution_context:
+                return None
+
+            stable = getattr(execution_context, "stable_session_id", None)
+            if stable:
+                return str(stable)
+            session_id = getattr(execution_context, "session_id", None)
+            if session_id:
+                return str(session_id)
+            return None
+        except Exception:
+            return None
+
+    def _remember_recent_project(self, project_name: str) -> None:
+        self._recent_projects_cache = [
+            project_name,
+            *[name for name in self._recent_projects_cache if name != project_name],
+        ][: settings.recent_projects_limit]
 
 
 def _normalise_tool_history(raw: Any) -> List[Dict[str, str]]:

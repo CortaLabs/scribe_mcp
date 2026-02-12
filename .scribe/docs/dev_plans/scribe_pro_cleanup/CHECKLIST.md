@@ -265,26 +265,26 @@ summary: ''
 <!-- ID: phase_6 -->
 
 ### P7.1 State Migration Script
-- [ ] scripts/migrate_state.py exists and runs: `scribe-migrate` <!-- ID: p7_script -->
-- [ ] Reads state.json, inserts via StorageBackend methods <!-- ID: p7_insert_db -->
-- [ ] Renames state.json to state.json.migrated <!-- ID: p7_rename -->
-- [ ] Idempotent: running twice is safe <!-- ID: p7_idempotent -->
+- [x] scripts/migrate_state.py exists and runs: `scribe-migrate` | proof=Added `src/scribe_mcp/scripts/migrate_state.py` + `pyproject.toml:38` entrypoint and verified runnable via `PYTHONPATH=src python -m scribe_mcp.scripts.migrate_state --help`. <!-- ID: p7_script -->
+- [x] Reads state.json, inserts via StorageBackend methods | proof=`src/scribe_mcp/state/migration.py` migrates using storage APIs (`upsert_project`, `set_agent_project`, `set_session_project`, `set_session_mode`, `update_session_activity`) with no direct SQL; validated by `tests/test_state_migration.py` pass. <!-- ID: p7_insert_db -->
+- [x] Renames state.json to state.json.migrated | proof=Live run `PYTHONPATH=src python -m scribe_mcp.scripts.migrate_state --state-path .scribe/state.json` returned `renamed_to=.scribe/state.json.migrated.20260212072154`. <!-- ID: p7_rename -->
+- [x] Idempotent: running twice is safe | proof=Second run returned `No legacy state file found; nothing to migrate.` and exit code `0`; regression covered by `tests/test_state_migration.py::test_migrate_legacy_state_file_is_idempotent_when_source_missing`. <!-- ID: p7_idempotent -->
 
 ### P7.2 StateManager DB Refactor
-- [ ] StateManager.__init__ takes StorageBackend <!-- ID: p7_backend_init -->
-- [ ] Zero JSON file ops: `grep -n 'state.json\|json.load\|json.dump' state/manager.py | wc -l` returns 0 <!-- ID: p7_no_json -->
-- [ ] get/set_active_project read/write agent_sessions table <!-- ID: p7_state_methods -->
-- [ ] Test suite passes <!-- ID: p7_state_tests -->
+- [x] StateManager.__init__ takes StorageBackend | proof=`StateManager.__init__(..., storage_backend=...)` implemented in `src/scribe_mcp/state/manager.py` and server wired with shared backend in `src/scribe_mcp/server.py`. <!-- ID: p7_backend_init -->
+- [x] Zero JSON file ops: `grep -n 'state.json\|json.load\|json.dump' state/manager.py | wc -l` returns 0 | proof=`rg -n \"state\\.json|json\\.load\\(|json\\.dump\\(\" src/scribe_mcp/state/manager.py | wc -l` => `0`. <!-- ID: p7_no_json -->
+- [x] get/set_active_project read/write agent_sessions table | proof=Manager now routes session/project state through backend methods (`set_agent_project`, `set_session_project`, `get_session_project`, `update_session_activity`, `get_session_activity`, `set_session_mode`, `get_session_mode`); see `src/scribe_mcp/state/manager.py` `rg` hits and passing state integration tests. <!-- ID: p7_state_methods -->
+- [x] Test suite passes | proof=Targeted Phase 7 suites passed (`pytest -q tests/test_state_migration.py tests/test_phase3_state_manager.py tests/test_utils.py` => `12 passed`) and full suite pass confirmed (`1868 passed, 5 skipped, 7 deselected`). <!-- ID: p7_state_tests -->
 
 ### P7.3 Fix Hardcoded DB Paths
-- [ ] reminders.py uses config.paths.default_db_path() (ALREADY FIXED in P6.3 -- verify it persists) <!-- ID: p7_reminder_path -->
-- [ ] Zero hardcoded DB paths: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/ --include='*.py' | wc -l` returns 0 <!-- ID: p7_no_hardcoded -->
-- [ ] Legacy DBs backed up; empty DB deleted <!-- ID: p7_legacy_cleanup -->
+- [x] reminders.py uses config.paths.default_db_path() (ALREADY FIXED in P6.3 -- verify it persists) | proof=`src/scribe_mcp/reminders.py:31` sets `db_path = default_db_path()`. <!-- ID: p7_reminder_path -->
+- [x] Zero hardcoded DB paths: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/ --include='*.py' | wc -l` returns 0 | proof=`rg -n \"\\.scribe/data/scribe\\.db|\\.scribe/scribe\\.db\" src/ --glob \"*.py\" | wc -l` => `0`. <!-- ID: p7_no_hardcoded -->
+- [x] Legacy DBs backed up; empty DB deleted | proof=Backed up and removed legacy files `.scribe/scribe.db`, `.scribe/data/scribe.db`, `.scribe/data/scribe_projects.db` to `.scribe/backups/phase7_legacy_db_20260212_072145`; legacy paths now missing. <!-- ID: p7_legacy_cleanup -->
 
 ### P7 Exit Gate
-- [ ] Single DB path across codebase <!-- ID: p7_exit_single -->
-- [ ] state.json eliminated <!-- ID: p7_exit_state -->
-- [ ] All tests pass <!-- ID: p7_exit_tests -->
+- [x] Single DB path across codebase | proof=DB routing centralized through `config.paths.default_db_path()` / `settings.sqlite_path`; hardcoded legacy path scan returned `0` and duplicate legacy DB files removed from `.scribe/`. <!-- ID: p7_exit_single -->
+- [x] state.json eliminated | proof=`.scribe/state.json` is absent after migration; only `.scribe/state.json.migrated*` snapshots remain. <!-- ID: p7_exit_state -->
+- [x] All tests pass | proof=`pytest tests/ -q` => `1868 passed, 5 skipped, 7 deselected in 418.28s`. <!-- ID: p7_exit_tests -->
 
 ---
 ## Phase 8: Postgres Full Implementation
@@ -541,4 +541,3 @@ Maps to 9 success criteria from ARCHITECTURE_GUIDE.md Section 1.
 
 <!-- ID: p3_optimization_tests -->
 - [x] P3 Optimization Tests | proof=post-optimization full-suite verification passed with no runtime regressions
-
