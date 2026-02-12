@@ -4,10 +4,6 @@
 import hashlib
 import os
 import sys
-from pathlib import Path
-
-# Add MCP_SPINE root to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 print("=" * 70)
 print("SESSION IDENTITY INTEGRATION TEST")

@@ -6,11 +6,6 @@ Tests for all 26 parameters, validation logic, normalization, and utility method
 
 import pytest
 from typing import Any, Dict
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.tools.config.query_entries_config import (
     QueryEntriesConfig,

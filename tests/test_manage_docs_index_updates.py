@@ -10,11 +10,7 @@ import tempfile
 from pathlib import Path
 import pytest
 
-# Add parent to path for imports
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from tools.manage_docs import manage_docs, _get_index_updater_for_path
+from scribe_mcp.tools.manage_docs import manage_docs, _get_index_updater_for_path
 
 
 @pytest.mark.asyncio

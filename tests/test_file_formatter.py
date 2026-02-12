@@ -18,10 +18,7 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.response import ResponseFormatter
+from scribe_mcp.utils.response import ResponseFormatter
 
 
 def strip_ansi(text: str) -> str:

@@ -10,12 +10,8 @@ import asyncio
 import tempfile
 from pathlib import Path
 import pytest
-import sys
 import shutil
 import uuid
-
-# Add MCP_SPINE to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.tools import set_project as set_project_module
 from scribe_mcp.tools import append_entry as append_entry_module

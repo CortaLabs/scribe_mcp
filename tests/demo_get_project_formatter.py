@@ -5,12 +5,6 @@ Visual demo of format_project_context() output.
 Shows what the "Where am I?" formatter actually produces.
 """
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 from scribe_mcp.utils.response import ResponseFormatter
 
 
@@ -25,8 +19,8 @@ def demo_full_context():
 
     project = {
         "name": "scribe_tool_output_refinement",
-        "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
+        "root": "/tmp/projects/MCP_SPINE/scribe_mcp",
+        "progress_log": "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
     }
 
     docs_info = {
@@ -97,8 +91,8 @@ def demo_partial_context():
 
     project = {
         "name": "new_project",
-        "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/new_project/PROGRESS_LOG.md"
+        "root": "/tmp/projects/MCP_SPINE/scribe_mcp",
+        "progress_log": "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/new_project/PROGRESS_LOG.md"
     }
 
     docs_info = {
@@ -151,8 +145,8 @@ def demo_empty_context():
 
     project = {
         "name": "brand_new_project",
-        "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/brand_new_project/PROGRESS_LOG.md"
+        "root": "/tmp/projects/MCP_SPINE/scribe_mcp",
+        "progress_log": "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/brand_new_project/PROGRESS_LOG.md"
     }
 
     docs_info = {

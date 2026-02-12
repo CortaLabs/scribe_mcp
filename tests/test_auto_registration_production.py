@@ -5,12 +5,8 @@ This test validates that auto-registration works correctly when used with
 actual production project setup via set_project(), not just with test mocks.
 """
 
-import sys
 import uuid
 from pathlib import Path
-
-# Add scribe_mcp to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 from scribe_mcp.tools.set_project import set_project

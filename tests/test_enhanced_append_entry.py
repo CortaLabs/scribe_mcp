@@ -18,10 +18,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-# Add the MCP_SPINE directory to Python path
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from scribe_mcp.tools.append_entry import (
     _sanitize_message,
     _should_use_bulk_mode,

@@ -6,17 +6,12 @@ Tests all 4-level fallback chain functionality, operation-specific strategies,
 emergency fallback guarantees, and integration with Task 3.1 and 3.3 enhancements.
 """
 
-import sys
-from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch, MagicMock
 
-# Add project root to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.config_manager import BulletproofFallbackManager
-from utils.parameter_validator import BulletproofParameterCorrector
-from utils.error_handler import ExceptionHealer
+from scribe_mcp.utils.config_manager import BulletproofFallbackManager
+from scribe_mcp.utils.parameter_validator import BulletproofParameterCorrector
+from scribe_mcp.utils.error_handler import ExceptionHealer
 
 
 class TestBulletproofFallbackManager(unittest.TestCase):

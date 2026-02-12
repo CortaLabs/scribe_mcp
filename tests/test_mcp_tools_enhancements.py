@@ -11,10 +11,6 @@ from pathlib import Path
 from unittest.mock import patch, AsyncMock
 from datetime import datetime, timezone
 
-# Add MCP_SPINE to Python path for imports
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from scribe_mcp.doc_management.manager import (
     _validate_and_correct_inputs,
     DocumentValidationError,

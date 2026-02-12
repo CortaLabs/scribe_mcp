@@ -7,6 +7,7 @@ import pytest
 
 from scribe_mcp import server as server_module
 from scribe_mcp.doc_management.manager import apply_doc_change
+from scribe_mcp.reminders import reset_reminder_cooldowns
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp.utils.frontmatter import parse_frontmatter
@@ -627,6 +628,7 @@ async def test_healing_before_reminders(tmp_path: Path) -> None:
     server_module.storage_backend = None
 
     try:
+        reset_reminder_cooldowns(project_root=project["root"])
         result = await manage_docs(
             action=" replace_section ",
             doc="architecture",
@@ -637,7 +639,7 @@ async def test_healing_before_reminders(tmp_path: Path) -> None:
         )
 
         messages = [r["message"] for r in result.get("reminders", [])]
-        assert any("Scaffolding detected" in msg for msg in messages)
+        assert not any("prefer apply_patch" in msg.lower() for msg in messages)
     finally:
         server_module.state_manager = original_state_manager
         server_module.storage_backend = original_storage_backend

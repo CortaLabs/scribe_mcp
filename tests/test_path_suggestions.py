@@ -1,15 +1,10 @@
 """Unit tests for utils/path_suggestions.py error enrichment helpers."""
 
-import sys
-from pathlib import Path
 import tempfile
 import os
 
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
-from utils.path_suggestions import (
+from scribe_mcp.utils.path_suggestions import (
     get_fuzzy_file_suggestions,
     get_directory_listing,
     classify_path_error,

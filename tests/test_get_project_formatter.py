@@ -10,14 +10,8 @@ Tests Phase 3 implementation: "Where am I?" context hydration with:
 - Edge cases
 """
 
-import sys
-from pathlib import Path
-
-# Add scribe_mcp to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
-from utils.response import ResponseFormatter
+from scribe_mcp.utils.response import ResponseFormatter
 
 
 class TestFormatProjectContext:
@@ -33,8 +27,8 @@ class TestFormatProjectContext:
         """Sample project data."""
         return {
             "name": "scribe_tool_output_refinement",
-            "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
-            "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
+            "root": "/tmp/projects/MCP_SPINE/scribe_mcp",
+            "progress_log": "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md"
         }
 
     @pytest.fixture

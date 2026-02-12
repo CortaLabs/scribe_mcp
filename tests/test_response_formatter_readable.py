@@ -11,14 +11,9 @@ Tests cover:
 """
 
 import re
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE root to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from utils.response import ResponseFormatter
+from scribe_mcp.utils.response import ResponseFormatter
 
 
 def strip_ansi(text: str) -> str:
@@ -663,7 +658,7 @@ class TestAppendEntryFormatting:
         data = {
             'ok': True,
             'written_line': '[ℹ️] [2026-01-03 02:46:00 UTC] [Agent: ResearchAgent] Investigation complete',
-            'path': '/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/project/PROGRESS_LOG.md',
+            'path': '/tmp/.scribe/docs/dev_plans/project/PROGRESS_LOG.md',
             'meta': {}
         }
 

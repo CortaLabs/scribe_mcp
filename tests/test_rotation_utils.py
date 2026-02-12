@@ -12,9 +12,6 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 import time
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scribe_mcp.utils.integrity import (
     compute_file_hash,

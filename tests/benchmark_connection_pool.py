@@ -11,18 +11,11 @@ Expected improvement: 50-80% latency reduction for typical operations.
 """
 
 import sqlite3
-import sys
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Tuple
-
-# Add MCP_SPINE root to path (same approach as conftest.py)
-# This allows imports like 'scribe_mcp.storage.pool'
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scribe_mcp.storage.pool import SQLiteConnectionPool
 

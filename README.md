@@ -213,8 +213,11 @@ cd scribe_mcp
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install 16 production-ready dependencies
-pip install -r requirements.txt
+# Install Scribe (editable + dev extras)
+python -m pip install -e ".[dev]"
+
+# Optional: verify wheel/non-editable install path too
+python -m pip install .
 ```
 
 ### 2️⃣ Add Scribe MCP Server to Claude Code, Codex
@@ -222,18 +225,20 @@ pip install -r requirements.txt
   ```bash
   codex mcp add scribe \
     --env SCRIBE_STORAGE_BACKEND=sqlite \
-    -- bash -lc 'cd /home/path/to/scribe_mcp && exec python -m server'
+    -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
   ```
 - Claude Code registration example:
   ```bash
   claude mcp add scribe \
     --env SCRIBE_STORAGE_BACKEND=sqlite \
-    -- bash -lc 'cd /home/path/to/scribe_mcp && exec python -m server'
+    -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
   ```
-  For Global MCP
+- Global Claude MCP example:
   ```bash
-    claude mcp add scribe --scope user --env SCRIBE_STORAGE_BACKEND=sqlite -- bash -lc 'cd  /home/path/to/scribe_mcp && exec python -m server'
+  claude mcp add scribe --scope user --env SCRIBE_STORAGE_BACKEND=sqlite -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
   ```
+
+Compatibility note: legacy launch `python -m server` still works during migration.
 
 Once connected from Claude / Codex MCP:
 
@@ -250,16 +255,22 @@ Once connected from Claude / Codex MCP:
 - If required meta is missing, Scribe returns a teaching reminder instead of inventing data.
 
 
-### 3️⃣ (Optional) Manual CLI Logging
+### 3️⃣ (Optional) Manual CLI Tool Calls
 
-For shell workflows or quick one-off logs, you can call the MCP-aligned CLI:
+For shell workflows or CI checks, use the unified CLI runtime:
 
 ```bash
-# From the scribe_mcp directory or MCP_SPINE root
-python -m scribe_mcp.scripts.scribe "🚀 My project is ready!" --status success --emoji 🎉
+# List all registered MCP tools
+python -m scribe_mcp.cli.main tools --json
+
+# Call any tool directly (example: append_entry)
+python -m scribe_mcp.cli.main call append_entry \
+  --agent Codex \
+  --arg message="Scribe CLI call works" \
+  --arg status=success
 ```
 
-Under the hood this uses `set_project` + `append_entry`, so manual usage stays in sync with the registry, SQLite mirror, and reminder system.
+This path uses the same runtime dispatcher as MCP (`invoke_tool`), so mode/session guard behavior stays aligned.
 
 ---
 
@@ -316,10 +327,9 @@ python -m scribe_mcp.scripts.scribe "Starting new feature work" --project fronte
 
 ### MCP Integration
 
-In all examples below, **`REPO_ROOT`** means the directory that contains the
-`scribe_mcp` package (i.e., where `scribe_mcp/server.py` lives). In your
-personal setup this might be `.../MCP_SPINE`, but in the public repo it will
-typically just be the cloned `scribe_mcp` directory.
+In all examples below, **`REPO_ROOT`** means the directory that contains
+`pyproject.toml` for this project (the repo root). The runtime package lives
+under `src/scribe_mcp/`.
 
 **For Claude Desktop (JSON config):**
 ```jsonc
@@ -330,7 +340,7 @@ typically just be the cloned `scribe_mcp` directory.
       "command": "bash",
       "args": [
         "-lc",
-        "cd /absolute/path/to/REPO_ROOT && exec python -m scribe_mcp.server"
+        "cd /absolute/path/to/REPO_ROOT && exec scribe-server"
       ],
       "env": {
         // Optional: override storage backend; SQLite is default
@@ -346,12 +356,12 @@ typically just be the cloned `scribe_mcp` directory.
 # From anywhere; codex will remember this configuration
 codex mcp add scribe \
   --env SCRIBE_STORAGE_BACKEND=sqlite \
-  -- bash -lc 'cd /absolute/path/to/REPO_ROOT && exec python -m scribe_mcp.server'
+  -- bash -lc 'cd /absolute/path/to/REPO_ROOT && exec scribe-server'
 ```
 
 Notes:
 - We intentionally **do not** bake a per-repo root into the MCP config. Scribe is multi-repo: switch repos by calling `set_project(name=..., root=/abs/path/to/repo)` (no MCP re-register needed).
-- The same `bash -lc "cd REPO_ROOT && python -m scribe_mcp.server"` pattern works for any MCP client that expects a stdio server command.
+- The same `bash -lc "cd REPO_ROOT && scribe-server"` pattern works for any MCP client that expects a stdio server command.
 
 ---
 
@@ -363,7 +373,7 @@ You can run Scribe from any codebase (not just `MCP_SPINE`) by pointing it at th
 2. Optional env vars:
    - `SCRIBE_STATE_PATH=/abs/path/to/state.json` **(DEPRECATED in v2.2 - sessions now stored in database)**
    - `SCRIBE_STORAGE_BACKEND=postgres` and `SCRIBE_DB_URL=postgresql://...` if you want Postgres.
-3. Ensure `PYTHONPATH` includes the parent of `scribe_mcp` so imports work when launched from elsewhere.
+3. Prefer launching via installed entry points (`scribe-server`, `scribe`) so no manual `PYTHONPATH` wiring is required.
 
 ---
 
@@ -639,20 +649,23 @@ If you call a project-bound tool without selecting a project, Scribe returns a �
 ## 🏗️ Project Structure
 
 ```
-scribe_mcp/                     # 🏛️ Main Scribe MCP server
-├── 📁 config/
-│   ├── 📁 projects/           # Per-project configurations
-│   └── 📄 mcp_config.json     # Sample MCP configuration
-├── 📁 docs/                   # 📖 Server docs (whitepapers, guides)
-├── 📁 templates/              # 🎨 Jinja2 template system
-│   ├── 📁 documents/          # 13+ specialized templates
-│   ├── 📁 fragments/          # Reusable template pieces
-│   └── 📁 custom/             # Your custom templates
-├── 📁 tools/                  # 🔧 MCP tool implementations
-├── 📁 storage/                # 💾 Multi-backend storage layer
-├── 📁 scripts/                # 💻 CLI utilities
-├── 📁 tests/                  # 🧪 Comprehensive test suite
-└── 📄 server.py               # 🚀 MCP server entrypoint
+scribe_mcp/
+├── pyproject.toml             # Packaging + console scripts (scribe, scribe-server)
+├── src/
+│   └── scribe_mcp/
+│       ├── server.py          # MCP server runtime
+│       ├── __main__.py        # Entry point for scribe-server / scribe-mcp
+│       ├── cli/               # Unified CLI (tools/call/session)
+│       ├── config/            # Path + runtime configuration
+│       ├── tools/             # MCP tool implementations
+│       ├── storage/           # SQLite/Postgres backends
+│       ├── plugins/           # Vector indexer and plugin registry
+│       ├── template_engine/   # Jinja document template engine
+│       ├── doc_management/    # manage_docs action pipeline
+│       └── templates/         # Built-in templates (documents/fragments)
+├── tests/                     # Repo-root test suite (installed-package flow)
+├── docs/                      # Curated project docs
+└── README.md
 ```
 
 **Per-repo output location (dev plans + logs)**
@@ -761,23 +774,45 @@ ls -la /abs/path/to/your/repo
 ls -la /abs/path/to/your/repo/.scribe || true
 ```
 
-**🐍 Python Path Issues**
+**🐍 Python Path / Packaging Issues**
 ```bash
-# Ensure you're running from the correct directory
-# Run from MCP_SPINE parent directory, not inside scribe_mcp/
-pwd  # Should show .../MCP_SPINE/
+# Verify package import and resolved src-root path
+python -c "import scribe_mcp; from scribe_mcp.config.paths import package_root; print(package_root())"
 
-# Test import path
-python -c "import sys; sys.path.insert(0, '.'); from scribe_mcp.config.settings import settings; print('✅ Imports working')"
+# Verify console-script entry points
+scribe --help
+scribe-server --help
 ```
+
+**🤖 BertModel / torchvision mismatch warning**
+
+If startup logs show `Could not import module 'BertModel'`, your torch and
+torchvision builds are likely mismatched (common CUDA tag mismatch).
+
+```bash
+python - <<'PY'
+import torch
+print('torch:', torch.__version__)
+try:
+    import torchvision
+    print('torchvision:', torchvision.__version__)
+except Exception as exc:
+    print('torchvision import failed:', exc)
+PY
+```
+
+Scribe now guards this case by disabling broken torchvision integration for
+transformers so text embeddings can still initialize. For a full env-level fix,
+install matching torch/torchvision builds (same CUDA tag), or remove torchvision
+if your workload is text-only.
 
 **⚡ Server Not Starting**
 ```bash
-# Check required dependencies
-pip install -r requirements.txt
+# Ensure package + dev deps are installed
+python -m pip install -e ".[dev]"
 
-# Verify server startup with timeout
-timeout 5 python -m scribe_mcp.server || echo "✅ Server starts correctly"
+# Verify server startup
+python -m server --help
 ```
 
 ### Getting Help

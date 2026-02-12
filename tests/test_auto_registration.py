@@ -11,12 +11,8 @@ import asyncio
 import json
 import pytest
 import sqlite3
-import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.tools.manage_docs import _auto_register_document, manage_docs

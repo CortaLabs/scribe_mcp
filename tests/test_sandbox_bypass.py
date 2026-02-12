@@ -2,12 +2,8 @@
 """Negative tests for sandbox bypass attempts."""
 
 import os
-import sys
 import tempfile
 from pathlib import Path
-
-# Add current directory to Python path (run from MCP_SPINE root!)
-sys.path.insert(0, '.')
 
 from scribe_mcp.security.sandbox import safe_file_operation, SecurityError
 from scribe_mcp.config.repo_config import RepoConfig

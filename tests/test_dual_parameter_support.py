@@ -9,14 +9,10 @@ This test validates the Phase 2 Task 2.4 implementation:
 
 import asyncio
 import json
-import sys
 import tempfile
 from pathlib import Path
 
 import pytest
-
-# Add the MCP_SPINE directory to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig

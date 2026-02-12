@@ -15,13 +15,8 @@ These tests MUST pass before and after extraction to ensure no regression.
 """
 
 import re
-import sys
 import json
-from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
-
-# Add MCP_SPINE root to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 
@@ -39,7 +34,7 @@ def strip_ansi(text: str) -> str:
 @pytest.fixture
 def formatter():
     """Create a ResponseFormatter instance for testing."""
-    from utils.response import ResponseFormatter
+    from scribe_mcp.utils.response import ResponseFormatter
     return ResponseFormatter()
 
 

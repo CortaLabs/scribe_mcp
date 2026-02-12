@@ -8,7 +8,7 @@ Tests all the new intelligent parameter correction methods added in Task 3.1.
 import pytest
 import json
 from datetime import datetime
-from utils.parameter_validator import BulletproofParameterCorrector
+from scribe_mcp.utils.parameter_validator import BulletproofParameterCorrector
 
 
 class TestBulletproofParameterCorrectorEnhancements:

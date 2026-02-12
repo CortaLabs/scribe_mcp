@@ -5,12 +5,6 @@ Unit tests for log_enums module.
 Tests LogPriority and LogCategory enums and their helper functions.
 """
 
-import sys
-from pathlib import Path
-
-# Add parent directory to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
 from scribe_mcp.shared.log_enums import (
     LogPriority,

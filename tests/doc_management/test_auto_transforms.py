@@ -2,7 +2,7 @@
 
 import pytest
 from pathlib import Path
-from doc_management.manager import apply_doc_change
+from scribe_mcp.doc_management.manager import apply_doc_change
 
 
 @pytest.mark.asyncio

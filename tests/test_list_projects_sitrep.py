@@ -6,13 +6,9 @@ Tests state detection integration, pagination, summary statistics,
 and removal of hardcoded modified:False bug.
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from pathlib import Path
 
 from scribe_mcp.tools.list_projects import (
     list_projects,

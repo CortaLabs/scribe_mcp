@@ -5,12 +5,6 @@ Tests for SPEC-FORMAT-002 fixes:
 - get_project verbose parameter
 """
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
 import asyncio
 from scribe_mcp.tools.rotate_log import rotate_log, _format_readable

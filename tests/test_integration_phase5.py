@@ -9,16 +9,12 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
 import pytest
-
-# Ensure scribe_mcp is importable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from scribe_mcp.tools.search import (
     Match,

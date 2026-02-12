@@ -6,7 +6,7 @@ to the original ResponseFormatter methods.
 """
 
 import pytest
-from utils.formatters.ui import UIFormatter, format_header, add_tip
+from scribe_mcp.utils.formatters.ui import UIFormatter, format_header, add_tip
 
 
 class TestUIFormatterLineNumbers:

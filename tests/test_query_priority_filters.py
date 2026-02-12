@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """Tests for priority/category/confidence filters in read_recent and query_entries."""
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 import pytest
 import pytest_asyncio
 from scribe_mcp.tools.read_recent import read_recent

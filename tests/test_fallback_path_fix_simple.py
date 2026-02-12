@@ -9,12 +9,6 @@ Bug Fixed: doc_management/manager.py line 729
 This test verifies the fix by checking that new projects use the correct .scribe structure.
 """
 
-import sys
-from pathlib import Path
-
-# Add path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
 import uuid
 from scribe_mcp.tools.set_project import set_project

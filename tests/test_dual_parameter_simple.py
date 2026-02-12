@@ -4,12 +4,6 @@
 This test validates the core dual parameter functionality.
 """
 
-import sys
-from pathlib import Path
-
-# Add the MCP_SPINE directory to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
 
 

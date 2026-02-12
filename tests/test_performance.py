@@ -14,7 +14,6 @@ Note: Performance tests are skipped by default. Run with: pytest -m performance
 import pytest
 import asyncio
 import os
-import sys
 import time
 import tempfile
 import shutil
@@ -24,10 +23,6 @@ from pathlib import Path
 from typing import Dict, List, Any
 import statistics
 import uuid
-
-# Add project root to Python path for scribe_mcp imports
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from scribe_mcp.tools import (
     rotate_log, append_entry, set_project, get_project

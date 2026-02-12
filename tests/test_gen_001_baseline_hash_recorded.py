@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
 """Test SPEC-GEN-001: Verify generate_doc_templates records baseline hashes in ProjectRegistry."""
 
-import sys
 from pathlib import Path
 import sqlite3
 import pytest
 import asyncio
-
-# Add MCP_SPINE root to Python path
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scribe_mcp.tools.generate_doc_templates import generate_doc_templates
 from scribe_mcp.shared.project_registry import ProjectRegistry

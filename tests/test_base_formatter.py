@@ -13,17 +13,13 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.formatters.base import (
+from scribe_mcp.utils.formatters.base import (
     BaseFormatter,
     get_use_ansi_colors,
     create_pagination_info,
     format_compact_json,
 )
-from utils.estimator import PaginationInfo
+from scribe_mcp.utils.estimator import PaginationInfo
 
 
 class TestGetUseAnsiColors:
@@ -392,26 +388,26 @@ class TestBaseFormatterInheritance:
 
     def test_ui_formatter_inherits_base(self):
         """Test that UIFormatter inherits from BaseFormatter."""
-        from utils.formatters.ui import UIFormatter
+        from scribe_mcp.utils.formatters.ui import UIFormatter
         assert issubclass(UIFormatter, BaseFormatter)
 
     def test_ui_formatter_has_ansi_constants(self):
         """Test that UIFormatter has ANSI constants via inheritance."""
-        from utils.formatters.ui import UIFormatter
+        from scribe_mcp.utils.formatters.ui import UIFormatter
         uf = UIFormatter()
         assert hasattr(uf, 'ANSI_CYAN')
         assert uf.ANSI_CYAN == BaseFormatter.ANSI_CYAN
 
     def test_ui_formatter_has_estimate_tokens(self):
         """Test that UIFormatter has estimate_tokens via inheritance."""
-        from utils.formatters.ui import UIFormatter
+        from scribe_mcp.utils.formatters.ui import UIFormatter
         uf = UIFormatter()
         result = uf.estimate_tokens("test")
         assert isinstance(result, int)
 
     def test_ui_formatter_has_format_relative_time(self):
         """Test that UIFormatter has format_relative_time via inheritance."""
-        from utils.formatters.ui import UIFormatter
+        from scribe_mcp.utils.formatters.ui import UIFormatter
         uf = UIFormatter()
         ts = datetime.utcnow().isoformat() + 'Z'
         result = uf.format_relative_time(ts)
@@ -423,35 +419,35 @@ class TestBackwardCompatibility:
 
     def test_response_module_imports(self):
         """Test that response module imports work correctly."""
-        from utils.response import create_pagination_info, format_compact_json
+        from scribe_mcp.utils.response import create_pagination_info, format_compact_json
         # Just verify they're callable
         assert callable(create_pagination_info)
         assert callable(format_compact_json)
 
     def test_response_create_pagination_info(self):
         """Test create_pagination_info from response module."""
-        from utils.response import create_pagination_info
+        from scribe_mcp.utils.response import create_pagination_info
         result = create_pagination_info(1, 10, 100)
         assert result.page == 1
         assert result.total_count == 100
 
     def test_response_format_compact_json(self):
         """Test format_compact_json from response module."""
-        from utils.response import format_compact_json
+        from scribe_mcp.utils.response import format_compact_json
         data = {"status": "ok"}
         result = format_compact_json(data)
         assert '"s":"ok"' in result
 
     def test_response_formatter_has_base(self):
         """Test that ResponseFormatter has _base attribute."""
-        from utils.response import ResponseFormatter
+        from scribe_mcp.utils.response import ResponseFormatter
         rf = ResponseFormatter()
         assert hasattr(rf, '_base')
         assert isinstance(rf._base, BaseFormatter)
 
     def test_response_formatter_format_relative_time_delegation(self):
         """Test that ResponseFormatter delegates _format_relative_time."""
-        from utils.response import ResponseFormatter
+        from scribe_mcp.utils.response import ResponseFormatter
         rf = ResponseFormatter()
         ts = (datetime.utcnow() - timedelta(hours=2)).isoformat() + 'Z'
         result = rf._format_relative_time(ts)

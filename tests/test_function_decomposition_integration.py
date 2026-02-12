@@ -9,20 +9,15 @@ from typing import Dict, Any
 
 import pytest
 
-# Add the project root to the path
-import sys
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-from tools.append_entry import append_entry
-from tools.query_entries import query_entries
-from tools.rotate_log import rotate_log
-from tools.config.append_entry_config import AppendEntryConfig
-from tools.config.query_entries_config import QueryEntriesConfig
-from tools.config.rotate_log_config import RotateLogConfig
-from utils.parameter_validator import BulletproofParameterCorrector
-from utils.error_handler import ExceptionHealer
-from utils.config_manager import BulletproofFallbackManager
+from scribe_mcp.tools.append_entry import append_entry
+from scribe_mcp.tools.query_entries import query_entries
+from scribe_mcp.tools.rotate_log import rotate_log
+from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
+from scribe_mcp.tools.config.query_entries_config import QueryEntriesConfig
+from scribe_mcp.tools.config.rotate_log_config import RotateLogConfig
+from scribe_mcp.utils.parameter_validator import BulletproofParameterCorrector
+from scribe_mcp.utils.error_handler import ExceptionHealer
+from scribe_mcp.utils.config_manager import BulletproofFallbackManager
 
 
 class TestFunctionDecompositionIntegration:

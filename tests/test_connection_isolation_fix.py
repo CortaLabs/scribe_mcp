@@ -15,10 +15,6 @@ import json
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.tools.set_project import set_project
@@ -66,7 +62,7 @@ async def test_no_isolated_sqlite3_connect_in_logging_utils():
     """Verify that shared/logging_utils.py doesn't use isolated sqlite3.connect()."""
 
     # Read the logging_utils.py file
-    logging_utils_path = Path(__file__).parent.parent / "shared" / "logging_utils.py"
+    logging_utils_path = Path(__file__).parent.parent / "src" / "scribe_mcp" / "shared" / "logging_utils.py"
     content = logging_utils_path.read_text()
 
     # Check for the fix: backend._fetchone() should be present

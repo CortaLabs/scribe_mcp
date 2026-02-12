@@ -17,16 +17,12 @@ import asyncio
 import time
 import json
 from pathlib import Path
-from typing import Dict, Any
-
-# Test imports
-import sys
 from pathlib import Path as P
-sys.path.insert(0, str(P(__file__).parent.parent))
+from typing import Dict, Any
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext
-from utils.reminder_monitoring import validate_db_performance, validate_session_isolation
+from scribe_mcp.utils.reminder_monitoring import validate_db_performance, validate_session_isolation
 
 # Get project root dynamically
 SCRIBE_ROOT = P(__file__).parent.parent

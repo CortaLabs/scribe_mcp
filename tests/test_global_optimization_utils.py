@@ -5,15 +5,10 @@ Test suite for SPEC-TOKEN-003 global optimization utilities.
 Tests abbreviate_path, format_compact_json, format_header, and add_tip functions.
 """
 
-import sys
-from pathlib import Path
 import json
 
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.path_utils import abbreviate_path
-from utils.response import format_compact_json, format_header, add_tip
+from scribe_mcp.utils.path_utils import abbreviate_path
+from scribe_mcp.utils.response import format_compact_json, format_header, add_tip
 
 
 class TestAbbreviatePath:
@@ -21,38 +16,38 @@ class TestAbbreviatePath:
 
     def test_verbosity_0_returns_filename_only(self):
         """Verbosity 0 should return only the filename."""
-        path = "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
+        path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
         result = abbreviate_path(path, verbosity=0)
         assert result == "PROGRESS_LOG.md"
 
     def test_verbosity_2_returns_full_path(self):
         """Verbosity 2 should return the full absolute path unchanged."""
-        path = "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
+        path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
         result = abbreviate_path(path, verbosity=2)
         assert result == path
 
     def test_verbosity_1_with_scribe_directory(self):
         """Verbosity 1 should abbreviate from .scribe directory."""
-        path = "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
+        path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
         result = abbreviate_path(path, verbosity=1)
         assert result == ".scribe/docs/project/PROGRESS_LOG.md"
 
     def test_verbosity_1_with_scribe_mcp_directory(self):
         """Verbosity 1 should abbreviate from scribe_mcp directory."""
-        path = "/home/austin/projects/MCP_SPINE/scribe_mcp/tools/append_entry.py"
+        path = "/tmp/projects/MCP_SPINE/scribe_mcp/tools/append_entry.py"
         result = abbreviate_path(path, verbosity=1)
         assert result == "tools/append_entry.py"
 
     def test_verbosity_1_with_mcp_spine_directory(self):
         """Verbosity 1 should abbreviate from MCP_SPINE directory."""
-        path = "/home/austin/projects/MCP_SPINE/other_mcp/file.py"
+        path = "/tmp/projects/MCP_SPINE/other_mcp/file.py"
         result = abbreviate_path(path, verbosity=1)
         assert result == "other_mcp/file.py"
 
     def test_verbosity_1_with_context_root(self):
         """Verbosity 1 with explicit context_root should make path relative to it."""
-        path = "/home/austin/projects/myproject/src/main.py"
-        context = "/home/austin/projects/myproject"
+        path = "/tmp/projects/myproject/src/main.py"
+        context = "/tmp/projects/myproject"
         result = abbreviate_path(path, context_root=context, verbosity=1)
         assert result == "src/main.py"
 
@@ -218,7 +213,7 @@ class TestIntegration:
 
     def test_path_abbreviation_in_json_output(self):
         """Test using abbreviated paths in JSON output."""
-        path = "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/file.md"
+        path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/file.md"
         abbreviated = abbreviate_path(path, verbosity=1)
 
         data = {
@@ -247,7 +242,7 @@ class TestIntegration:
         # Simulate a tool output with all optimizations
 
         # 1. Abbreviated paths
-        path = "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
+        path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
         short_path = abbreviate_path(path, verbosity=1)
 
         # 2. Compact JSON

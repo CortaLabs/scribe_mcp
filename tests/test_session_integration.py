@@ -5,12 +5,6 @@ Tests session_id propagation through execution context to ReminderContext
 and validates graceful fallback when session_id is unavailable.
 """
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
 from unittest.mock import MagicMock
 from scribe_mcp.reminders import _build_legacy_context

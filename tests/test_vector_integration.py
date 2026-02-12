@@ -61,7 +61,7 @@ class TestVectorIntegration:
 
             # Copy the actual plugin file
             import shutil
-            current_plugin = Path(__file__).parent.parent / "plugins" / "vector_indexer.py"
+            current_plugin = Path(__file__).parent.parent / "src" / "scribe_mcp" / "plugins" / "vector_indexer.py"
             shutil.copy(current_plugin, repo_path / "plugins" / "vector_indexer.py")
 
             yield repo_path
@@ -222,7 +222,7 @@ class TestVectorIntegration:
 
                     # Copy plugin file
                     import shutil
-                    current_plugin = Path(__file__).parent.parent / "plugins" / "vector_indexer.py"
+                    current_plugin = Path(__file__).parent.parent / "src" / "scribe_mcp" / "plugins" / "vector_indexer.py"
                     shutil.copy(current_plugin, repo / "plugins" / "vector_indexer.py")
 
                 # Initialize vector indexer for repo1

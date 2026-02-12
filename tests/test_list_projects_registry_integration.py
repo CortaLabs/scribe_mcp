@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
 """Lightweight integration test for list_projects registry enrichment."""
 
-import sys
-from pathlib import Path
-
 import pytest
-
-
-# Add MCP_SPINE root to Python path
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scribe_mcp.tools.list_projects import list_projects  # noqa: E402
 

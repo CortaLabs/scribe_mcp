@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
 """Tests for read_recent EntryLimitManager integration."""
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
-from tools.read_recent import read_recent
+from scribe_mcp.tools.read_recent import read_recent
 
 
 @pytest.mark.asyncio

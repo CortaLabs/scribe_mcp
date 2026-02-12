@@ -9,11 +9,6 @@ import sqlite3
 import threading
 import time
 import pytest
-from pathlib import Path
-import sys
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.storage.pool import SQLiteConnectionPool
 

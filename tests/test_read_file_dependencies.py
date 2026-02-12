@@ -5,15 +5,13 @@ Test suite for read_file dependency analysis (Phase 1: Import extraction)
 Tests _extract_imports() function and integration with read_file tool.
 """
 
-import sys
+import ast
 from pathlib import Path
 
-# Add MCP_SPINE to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-import ast
 import pytest
-from tools.read_file import _extract_imports
+from scribe_mcp.tools.read_file import _extract_imports
+
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 class TestExtractImports:
@@ -257,16 +255,16 @@ class TestReadFileIntegration:
     @pytest.mark.asyncio
     async def test_read_file_with_dependencies_structured(self):
         """Test read_file returns dependencies in structured mode."""
-        from tools.read_file import read_file
-        import server as server_module
-        from shared.execution_context import ExecutionContext, AgentIdentity
+        from scribe_mcp.tools.read_file import read_file
+        from scribe_mcp import server as server_module
+        from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
 
         # Set up execution context for read_file
         context = ExecutionContext(
             execution_id="test_exec_001",
             session_id="test_session_001",
-            repo_root="/home/austin/projects/MCP_SPINE/scribe_mcp",
+            repo_root=REPO_ROOT,
             mode="interactive",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             affected_dev_projects=[],
@@ -286,7 +284,7 @@ class TestReadFileIntegration:
             # Test with tools/append_entry.py (known to have imports)
             result = await read_file(
                 agent="test_agent",
-                path="tools/append_entry.py",
+                path="src/scribe_mcp/tools/append_entry.py",
                 mode="scan_only",
                 include_dependencies=True,
                 format="structured"
@@ -319,16 +317,16 @@ class TestReadFileIntegration:
     @pytest.mark.asyncio
     async def test_read_file_with_dependencies_readable(self):
         """Test read_file displays dependencies in readable mode."""
-        from tools.read_file import read_file
-        import server as server_module
-        from shared.execution_context import ExecutionContext, AgentIdentity
+        from scribe_mcp.tools.read_file import read_file
+        from scribe_mcp import server as server_module
+        from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
 
         # Set up execution context
         context = ExecutionContext(
             execution_id="test_exec_002",
             session_id="test_session_002",
-            repo_root="/home/austin/projects/MCP_SPINE/scribe_mcp",
+            repo_root=REPO_ROOT,
             mode="interactive",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             affected_dev_projects=[],
@@ -348,7 +346,7 @@ class TestReadFileIntegration:
             # Test with tools/read_file.py itself (meta!)
             result = await read_file(
                 agent="test_agent",
-                path="tools/read_file.py",
+                path="src/scribe_mcp/tools/read_file.py",
                 mode="scan_only",
                 include_dependencies=True,
                 format="readable"
@@ -377,15 +375,15 @@ class TestReadFileIntegration:
     @pytest.mark.asyncio
     async def test_read_file_without_dependencies_no_overhead(self):
         """Test that include_dependencies=False doesn't add dependencies to response."""
-        from tools.read_file import read_file
-        import server as server_module
-        from shared.execution_context import ExecutionContext, AgentIdentity
+        from scribe_mcp.tools.read_file import read_file
+        from scribe_mcp import server as server_module
+        from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
 
         context = ExecutionContext(
             execution_id="test_exec_003",
             session_id="test_session_003",
-            repo_root="/home/austin/projects/MCP_SPINE/scribe_mcp",
+            repo_root=REPO_ROOT,
             mode="interactive",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             affected_dev_projects=[],
@@ -405,7 +403,7 @@ class TestReadFileIntegration:
             # Test with include_dependencies=False (default)
             result = await read_file(
                 agent="test_agent",
-                path="tools/append_entry.py",
+                path="src/scribe_mcp/tools/append_entry.py",
                 mode="scan_only",
                 include_dependencies=False,
                 format="structured"
@@ -421,15 +419,15 @@ class TestReadFileIntegration:
     async def test_read_file_performance_impact(self):
         """Test that dependency analysis doesn't significantly impact performance."""
         import time
-        from tools.read_file import read_file
-        import server as server_module
-        from shared.execution_context import ExecutionContext, AgentIdentity
+        from scribe_mcp.tools.read_file import read_file
+        from scribe_mcp import server as server_module
+        from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
 
         context = ExecutionContext(
             execution_id="test_exec_004",
             session_id="test_session_004",
-            repo_root="/home/austin/projects/MCP_SPINE/scribe_mcp",
+            repo_root=REPO_ROOT,
             mode="interactive",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             affected_dev_projects=[],
@@ -447,7 +445,7 @@ class TestReadFileIntegration:
 
         try:
             # Test file: tools/read_file.py (large file with many imports)
-            test_path = "tools/read_file.py"
+            test_path = "src/scribe_mcp/tools/read_file.py"
 
             # Baseline: without dependencies
             start_baseline = time.time()
@@ -492,7 +490,7 @@ class TestWorkspaceRootDetection:
 
     def test_finds_git_marker(self, tmp_path):
         """Test workspace root detection via .git directory."""
-        from tools.read_file import _find_workspace_root
+        from scribe_mcp.tools.read_file import _find_workspace_root
 
         # Create structure: workspace/.git/, workspace/subdir/file.py
         workspace = tmp_path / "workspace"
@@ -509,7 +507,7 @@ class TestWorkspaceRootDetection:
 
     def test_finds_pyproject_toml(self, tmp_path):
         """Test workspace root detection via pyproject.toml."""
-        from tools.read_file import _find_workspace_root
+        from scribe_mcp.tools.read_file import _find_workspace_root
 
         # Create structure: workspace/pyproject.toml, workspace/src/file.py
         workspace = tmp_path / "workspace"
@@ -525,7 +523,7 @@ class TestWorkspaceRootDetection:
 
     def test_caching(self, tmp_path):
         """Test that workspace root results are cached."""
-        from tools.read_file import _find_workspace_root
+        from scribe_mcp.tools.read_file import _find_workspace_root
 
         # Clear cache if it exists
         if hasattr(_find_workspace_root, '_cache'):
@@ -550,7 +548,7 @@ class TestWorkspaceRootDetection:
 
     def test_no_workspace_root(self, tmp_path):
         """Test handling when no workspace root is found."""
-        from tools.read_file import _find_workspace_root
+        from scribe_mcp.tools.read_file import _find_workspace_root
 
         # File with no markers in parent directories
         test_file = tmp_path / "isolated" / "test.py"
@@ -566,7 +564,7 @@ class TestImportResolution:
 
     def test_stdlib_detection(self):
         """Test detection of standard library imports."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
         from pathlib import Path
 
         current_file = Path("/tmp/test.py")
@@ -581,7 +579,7 @@ class TestImportResolution:
 
     def test_stdlib_submodule_detection(self):
         """Test stdlib detection for submodules (os.path, etc.)."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
         from pathlib import Path
 
         current_file = Path("/tmp/test.py")
@@ -593,7 +591,7 @@ class TestImportResolution:
 
     def test_third_party_detection(self):
         """Test detection of third-party packages."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
         from pathlib import Path
 
         current_file = Path("/tmp/test.py")
@@ -606,7 +604,7 @@ class TestImportResolution:
 
     def test_local_absolute_import_resolution(self, tmp_path):
         """Test resolution of local absolute imports."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
 
         # Create workspace: workspace/mypackage/module.py
         workspace = tmp_path / "workspace"
@@ -626,7 +624,7 @@ class TestImportResolution:
 
     def test_local_absolute_import_package(self, tmp_path):
         """Test resolution of local package imports (__init__.py)."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
 
         # Create workspace: workspace/mypackage/__init__.py
         workspace = tmp_path / "workspace"
@@ -645,7 +643,7 @@ class TestImportResolution:
 
     def test_relative_import_level1(self, tmp_path):
         """Test resolution of relative imports (from . import x)."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
 
         # Create: workspace/package/module.py, workspace/package/other.py
         workspace = tmp_path / "workspace"
@@ -665,7 +663,7 @@ class TestImportResolution:
 
     def test_relative_import_level2(self, tmp_path):
         """Test resolution of relative imports (from .. import x)."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
 
         # Create: workspace/package/subpkg/module.py, workspace/package/other.py
         workspace = tmp_path / "workspace"
@@ -686,7 +684,7 @@ class TestImportResolution:
 
     def test_missing_local_import(self, tmp_path):
         """Test handling of absolute imports that don't exist in workspace."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
 
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -701,7 +699,7 @@ class TestImportResolution:
 
     def test_missing_relative_import(self, tmp_path):
         """Test handling of relative imports that don't exist."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
 
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -718,7 +716,7 @@ class TestImportResolution:
 
     def test_unresolved_without_workspace(self):
         """Test that imports are unresolved when workspace_root is None."""
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
         from pathlib import Path
 
         current_file = Path("/tmp/test.py")
@@ -737,7 +735,7 @@ class TestImportResolution:
         Regression test for Phase 3 bug where scribe_mcp.storage.base was resolved to
         scribe_mcp/scribe_mcp/storage/base.py instead of storage/base.py.
         """
-        from tools.read_file import _resolve_import_path
+        from scribe_mcp.tools.read_file import _resolve_import_path
 
         # Create workspace named "scribe_mcp" with storage/base.py
         workspace = tmp_path / "scribe_mcp"
@@ -768,7 +766,7 @@ class TestIntegrationResolution:
 
     def test_extract_imports_with_resolution(self, tmp_path):
         """Test that _extract_imports() includes resolution metadata."""
-        from tools.read_file import _extract_imports
+        from scribe_mcp.tools.read_file import _extract_imports
         import ast
 
         # Create workspace
@@ -798,7 +796,7 @@ from pathlib import Path
 
     def test_extract_imports_backward_compatible(self):
         """Test that _extract_imports() works without resolution (Phase 1 mode)."""
-        from tools.read_file import _extract_imports
+        from scribe_mcp.tools.read_file import _extract_imports
         import ast
 
         code = "import os\nimport sys"
@@ -820,9 +818,9 @@ class TestResolutionPerformance:
     async def test_resolution_overhead(self, tmp_path):
         """Test that resolution adds < 20% overhead."""
         import time
-        from tools.read_file import read_file
-        import server as server_module
-        from shared.execution_context import ExecutionContext, AgentIdentity
+        from scribe_mcp.tools.read_file import read_file
+        from scribe_mcp import server as server_module
+        from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
 
         # Create test file with imports
@@ -840,7 +838,7 @@ from typing import Dict, List, Optional
         context = ExecutionContext(
             execution_id="test_exec_perf",
             session_id="test_session_perf",
-            repo_root="/home/austin/projects/MCP_SPINE/scribe_mcp",
+            repo_root=REPO_ROOT,
             mode="interactive",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             affected_dev_projects=[],
@@ -881,7 +879,7 @@ from typing import Dict, List, Optional
             # Verify dependencies were extracted with resolution (using real file)
             result = await read_file(
                 agent="test_agent",
-                path="tools/read_file.py",
+                path="src/scribe_mcp/tools/read_file.py",
                 mode="scan_only",
                 include_dependencies=True,
                 format="structured"
@@ -910,7 +908,7 @@ class TestRepositoryScanning:
 
     def test_scan_repository_basic(self, tmp_path):
         """Test basic repository scanning with simple Python files"""
-        from tools.read_file import _scan_repository_imports
+        from scribe_mcp.tools.read_file import _scan_repository_imports
 
         # Create test repository structure
         (tmp_path / "module_a.py").write_text("import os\nimport sys")
@@ -935,7 +933,7 @@ class TestRepositoryScanning:
 
     def test_scan_excludes_common_dirs(self, tmp_path):
         """Test that scanner excludes .git, __pycache__, .venv, etc."""
-        from tools.read_file import _scan_repository_imports
+        from scribe_mcp.tools.read_file import _scan_repository_imports
 
         # Create files in excluded directories
         (tmp_path / ".git").mkdir()
@@ -957,7 +955,7 @@ class TestRepositoryScanning:
 
     def test_scan_handles_syntax_errors(self, tmp_path):
         """Test that scanner skips files with syntax errors gracefully"""
-        from tools.read_file import _scan_repository_imports
+        from scribe_mcp.tools.read_file import _scan_repository_imports
 
         # Create valid file
         (tmp_path / "valid.py").write_text("import os")
@@ -974,7 +972,7 @@ class TestRepositoryScanning:
 
     def test_scan_respects_max_files(self, tmp_path):
         """Test that scanner stops at max_files limit"""
-        from tools.read_file import _scan_repository_imports
+        from scribe_mcp.tools.read_file import _scan_repository_imports
 
         # Create many files
         for i in range(20):
@@ -992,7 +990,7 @@ class TestReverseIndexBuilder:
 
     def test_build_reverse_index_basic(self, tmp_path):
         """Test basic reverse index building"""
-        from tools.read_file import _build_reverse_index
+        from scribe_mcp.tools.read_file import _build_reverse_index
 
         # Create simple forward index
         # module_a imports module_b
@@ -1019,7 +1017,7 @@ class TestReverseIndexBuilder:
 
     def test_reverse_index_deduplication(self, tmp_path):
         """Test that reverse index deduplicates importers"""
-        from tools.read_file import _build_reverse_index
+        from scribe_mcp.tools.read_file import _build_reverse_index
 
         # Forward index with duplicate imports
         forward_index = {
@@ -1037,7 +1035,7 @@ class TestReverseIndexBuilder:
 
     def test_reverse_index_handles_missing_files(self, tmp_path):
         """Test that reverse index skips imports that can't be resolved"""
-        from tools.read_file import _build_reverse_index
+        from scribe_mcp.tools.read_file import _build_reverse_index
 
         # Forward index with missing import
         forward_index = {
@@ -1058,7 +1056,7 @@ class TestImpactRadiusCalculator:
 
     def test_calculate_impact_low(self):
         """Test impact calculation for low impact (0-4 importers)"""
-        from tools.read_file import _calculate_impact_radius
+        from scribe_mcp.tools.read_file import _calculate_impact_radius
 
         reverse_index = {
             "target.py": ["importer1.py", "importer2.py"]
@@ -1073,7 +1071,7 @@ class TestImpactRadiusCalculator:
 
     def test_calculate_impact_medium(self):
         """Test impact calculation for medium impact (5-15 importers)"""
-        from tools.read_file import _calculate_impact_radius
+        from scribe_mcp.tools.read_file import _calculate_impact_radius
 
         importers = [f"importer{i}.py" for i in range(10)]
         reverse_index = {
@@ -1089,7 +1087,7 @@ class TestImpactRadiusCalculator:
 
     def test_calculate_impact_high(self):
         """Test impact calculation for high impact (16+ importers)"""
-        from tools.read_file import _calculate_impact_radius
+        from scribe_mcp.tools.read_file import _calculate_impact_radius
 
         importers = [f"importer{i}.py" for i in range(25)]
         reverse_index = {
@@ -1105,7 +1103,7 @@ class TestImpactRadiusCalculator:
 
     def test_calculate_impact_zero_importers(self):
         """Test impact calculation for file with no importers"""
-        from tools.read_file import _calculate_impact_radius
+        from scribe_mcp.tools.read_file import _calculate_impact_radius
 
         reverse_index = {}  # File not in index
 
@@ -1123,11 +1121,7 @@ class TestImpactIntegration:
     @pytest.mark.asyncio
     async def test_read_file_with_impact(self):
         """Test read_file with include_impact=True"""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools import read_file as read_file_module
+        from scribe_mcp.tools import read_file as read_file_module
         from scribe_mcp import server as server_module
         from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
@@ -1155,7 +1149,7 @@ class TestImpactIntegration:
             # Test on a file that's likely to have importers (storage/sqlite/__init__.py)
             result = await read_file_module.read_file(
                 agent="test_agent",
-                path="storage/sqlite/__init__.py",
+                path="src/scribe_mcp/storage/sqlite/__init__.py",
                 mode="scan_only",
                 include_dependencies=True,
                 include_impact=True,
@@ -1184,11 +1178,7 @@ class TestImpactIntegration:
     @pytest.mark.asyncio
     async def test_include_impact_requires_dependencies(self):
         """Test that include_impact=True requires include_dependencies=True"""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools import read_file as read_file_module
+        from scribe_mcp.tools import read_file as read_file_module
         from scribe_mcp import server as server_module
         from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
@@ -1236,12 +1226,10 @@ class TestImpactPerformance:
     @pytest.mark.asyncio
     async def test_repository_scan_performance(self):
         """Test that repository scan completes in <5 seconds for scribe_mcp"""
-        import sys
         from pathlib import Path
         import time
-        sys.path.insert(0, str(Path(__file__).parent.parent))
 
-        from tools.read_file import _scan_repository_imports
+        from scribe_mcp.tools.read_file import _scan_repository_imports
 
         repo_root = Path(__file__).parent.parent
 
@@ -1266,11 +1254,7 @@ class TestBoundaryRuleLoading:
 
     def test_load_boundary_rules_valid(self, tmp_path):
         """Test loading valid boundary rules."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _load_boundary_rules
+        from scribe_mcp.tools.read_file import _load_boundary_rules
 
         # Create test config
         config_dir = tmp_path / ".scribe" / "config"
@@ -1298,22 +1282,14 @@ rules:
 
     def test_load_boundary_rules_missing_file(self, tmp_path):
         """Test loading when config file doesn't exist."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _load_boundary_rules
+        from scribe_mcp.tools.read_file import _load_boundary_rules
 
         rules = _load_boundary_rules(tmp_path)
         assert rules is None
 
     def test_load_boundary_rules_disabled(self, tmp_path):
         """Test loading when rules are disabled."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _load_boundary_rules
+        from scribe_mcp.tools.read_file import _load_boundary_rules
 
         config_dir = tmp_path / ".scribe" / "config"
         config_dir.mkdir(parents=True)
@@ -1336,11 +1312,7 @@ rules:
 
     def test_load_boundary_rules_invalid_yaml(self, tmp_path):
         """Test loading invalid YAML."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _load_boundary_rules
+        from scribe_mcp.tools.read_file import _load_boundary_rules
 
         config_dir = tmp_path / ".scribe" / "config"
         config_dir.mkdir(parents=True)
@@ -1357,11 +1329,7 @@ class TestBoundaryRuleValidation:
 
     def test_validate_valid_rules(self):
         """Test validation of valid rules."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _validate_boundary_rules
+        from scribe_mcp.tools.read_file import _validate_boundary_rules
 
         rules = {
             "version": 1.0,
@@ -1383,11 +1351,7 @@ class TestBoundaryRuleValidation:
 
     def test_validate_missing_fields(self):
         """Test validation with missing required fields."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _validate_boundary_rules
+        from scribe_mcp.tools.read_file import _validate_boundary_rules
 
         # Missing 'enabled'
         rules = {"version": 1.0, "rules": []}
@@ -1395,11 +1359,7 @@ class TestBoundaryRuleValidation:
 
     def test_validate_invalid_severity(self):
         """Test validation with invalid severity."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _validate_boundary_rules
+        from scribe_mcp.tools.read_file import _validate_boundary_rules
 
         rules = {
             "version": 1.0,
@@ -1425,11 +1385,7 @@ class TestPatternMatching:
 
     def test_match_simple_pattern(self, tmp_path):
         """Test simple glob pattern matching."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _match_rule_pattern
+        from scribe_mcp.tools.read_file import _match_rule_pattern
 
         # Match Python file in tests
         assert _match_rule_pattern("tests/test_file.py", "tests/*.py", tmp_path) is True
@@ -1437,11 +1393,7 @@ class TestPatternMatching:
 
     def test_match_recursive_pattern(self, tmp_path):
         """Test recursive ** glob patterns."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _match_rule_pattern
+        from scribe_mcp.tools.read_file import _match_rule_pattern
 
         # Recursive pattern should match nested files
         assert _match_rule_pattern("tools/nested/deep/file.py", "tools/**/*.py", tmp_path) is True
@@ -1450,11 +1402,7 @@ class TestPatternMatching:
 
     def test_match_absolute_paths(self, tmp_path):
         """Test matching with absolute paths."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _match_rule_pattern
+        from scribe_mcp.tools.read_file import _match_rule_pattern
 
         test_file = tmp_path / "tests" / "test.py"
         assert _match_rule_pattern(str(test_file), "tests/**", tmp_path) is True
@@ -1465,11 +1413,7 @@ class TestBoundaryViolationChecker:
 
     def test_check_violations_no_match(self, tmp_path):
         """Test no violations when file doesn't match source pattern."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _check_boundary_violations
+        from scribe_mcp.tools.read_file import _check_boundary_violations
 
         rules = {
             "rules": [
@@ -1493,11 +1437,7 @@ class TestBoundaryViolationChecker:
 
     def test_check_violations_forbidden_import(self, tmp_path):
         """Test violation detected for forbidden import."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _check_boundary_violations
+        from scribe_mcp.tools.read_file import _check_boundary_violations
 
         rules = {
             "rules": [
@@ -1525,11 +1465,7 @@ class TestBoundaryViolationChecker:
 
     def test_check_violations_allowed_exception(self, tmp_path):
         """Test allowed exceptions are respected."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _check_boundary_violations
+        from scribe_mcp.tools.read_file import _check_boundary_violations
 
         rules = {
             "rules": [
@@ -1555,11 +1491,7 @@ class TestBoundaryViolationChecker:
 
     def test_check_violations_multiple_rules(self, tmp_path):
         """Test multiple violations from different rules."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
-        from tools.read_file import _check_boundary_violations
+        from scribe_mcp.tools.read_file import _check_boundary_violations
 
         rules = {
             "rules": [
@@ -1601,12 +1533,8 @@ class TestBoundaryIntegration:
     @pytest.mark.asyncio
     async def test_read_file_with_violations(self, tmp_path):
         """Test read_file integration with boundary violations."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
         from scribe_mcp.shared.execution_context import ExecutionContext
-        from tools.read_file import read_file
+        from scribe_mcp.tools.read_file import read_file
 
         # Create test file with forbidden import
         test_file = tmp_path / "tests" / "test.py"
@@ -1675,12 +1603,8 @@ rules:
     @pytest.mark.asyncio
     async def test_read_file_no_violations(self, tmp_path):
         """Test read_file with no boundary violations."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-
         from scribe_mcp.shared.execution_context import ExecutionContext
-        from tools.read_file import read_file
+        from scribe_mcp.tools.read_file import read_file
 
         # Create test file with allowed import
         test_file = tmp_path / "tools" / "file.py"
@@ -1747,12 +1671,10 @@ class TestBoundaryPerformance:
 
     def test_boundary_checking_overhead(self, tmp_path):
         """Test that boundary checking adds <20ms overhead."""
-        import sys
         from pathlib import Path
         import time
-        sys.path.insert(0, str(Path(__file__).parent.parent))
 
-        from tools.read_file import _load_boundary_rules, _check_boundary_violations
+        from scribe_mcp.tools.read_file import _load_boundary_rules, _check_boundary_violations
 
         # Create rules
         config_dir = tmp_path / ".scribe" / "config"

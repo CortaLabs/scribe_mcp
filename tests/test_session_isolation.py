@@ -14,7 +14,6 @@ Required for: scribe_sentinel_concurrency_v1
 import asyncio
 import hashlib
 import os
-import sys
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
@@ -24,9 +23,6 @@ from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# Add scribe_mcp to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 

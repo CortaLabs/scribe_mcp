@@ -4,14 +4,8 @@ Tests the path_suggestions integration with read_file and search error responses
 without requiring full async execution context setup.
 """
 
-import sys
-from pathlib import Path
-
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
-from utils.path_suggestions import (
+from scribe_mcp.utils.path_suggestions import (
     classify_path_error,
     get_fuzzy_file_suggestions,
     get_directory_listing,

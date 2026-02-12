@@ -6,14 +6,9 @@ Tests the 4-level fallback chain integration and demonstrates
 zero-failure operation guarantee for all MCP tools.
 """
 
-import sys
-from pathlib import Path
 import unittest
 
-# Add project root to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.config_manager import BulletproofFallbackManager
+from scribe_mcp.utils.config_manager import BulletproofFallbackManager
 
 
 class TestBulletproofFallbackIntegration(unittest.TestCase):

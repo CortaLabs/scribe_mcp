@@ -3,16 +3,12 @@
 
 import asyncio
 import sqlite3
-import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from storage.sqlite import SQLiteStorage
+from scribe_mcp.storage.sqlite import SQLiteStorage
 
 pytestmark = pytest.mark.asyncio
 

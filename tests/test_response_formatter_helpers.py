@@ -8,16 +8,12 @@ Tests the three Phase 1 helper methods:
 - _detect_custom_content
 """
 
-import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 import tempfile
 import os
 
-# Add scribe_mcp to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.response import ResponseFormatter
+from scribe_mcp.utils.response import ResponseFormatter
 
 
 class TestFormatRelativeTime:

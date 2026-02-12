@@ -29,7 +29,7 @@ def test_template_engine_renders_builtin_and_custom_templates(tmp_path: Path) ->
     repo_root = Path(__file__).resolve().parents[1]
     engine = Jinja2TemplateEngine(project_root=repo_root, project_name="Template QA")
 
-    documents_dir = repo_root / "templates" / "documents"
+    documents_dir = repo_root / "src" / "scribe_mcp" / "templates" / "documents"
     templates_rendered = 0
     metadata = {
         "author": "QA Bot",

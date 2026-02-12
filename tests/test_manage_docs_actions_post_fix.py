@@ -12,15 +12,11 @@ Run this test AFTER restarting the server.
 """
 
 import asyncio
-import sys
 import uuid
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
-
-# Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp.tools.set_project import set_project

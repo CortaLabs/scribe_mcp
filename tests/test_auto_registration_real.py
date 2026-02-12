@@ -6,13 +6,9 @@ These tests use DB-backed project records as the source of truth and avoid
 state.json mutation, matching the Phase 3 storage direction.
 """
 
-import sys
 import json
 import uuid
 from pathlib import Path
-
-# Add MCP_SPINE to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 from scribe_mcp import server as server_module

@@ -11,15 +11,12 @@ Tests comprehensive status reporting including:
 - JSON format with pagination
 """
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Dict, Any, List
+from pathlib import Path
 
 from scribe_mcp.tools.get_project import (
     get_project,

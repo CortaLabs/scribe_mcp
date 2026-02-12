@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """Integration tests for get_project context hydration."""
 
-import sys
 from pathlib import Path
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 import tempfile

@@ -4,15 +4,7 @@
 import sqlite3
 from pathlib import Path
 
-import sys
-
 import pytest
-
-
-# Add MCP_SPINE root to Python path
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scribe_mcp.shared.project_registry import ProjectRegistry  # noqa: E402
 

@@ -2,12 +2,7 @@
 """Test script to verify MCP schema generation from function signatures."""
 
 import inspect
-import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-
-# Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def _build_schema_from_signature(func) -> Dict[str, Any]:

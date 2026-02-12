@@ -5,10 +5,6 @@ Uses tiktoken cl100k_base encoding to measure before/after.
 """
 
 import sys
-from pathlib import Path
-
-# Add MCP_SPINE root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     import tiktoken
@@ -32,7 +28,7 @@ def test_token_counts():
     data = {
         'ok': True,
         'written_line': '[ℹ️] [2026-01-05 14:34:25 UTC] [Agent: PhaseTestAgent] [Project: scribe_systematic_audit_1_phase5_tool_output] Test message for append_entry readable mode - Phase 5 tool output recording | phase=5; test_mode=readable; unicode_test=日本語🎯; priority=low; log_type=progress; content_type=log',
-        'path': '/home/austin/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output/PROGRESS_LOG.md',
+        'path': '/tmp/.scribe/docs/dev_plans/scribe_systematic_audit_1_phase5_tool_output/PROGRESS_LOG.md',
         'meta': {'phase': 5, 'test_mode': 'readable', 'unicode_test': '日本語🎯'}
     }
 
@@ -91,7 +87,7 @@ def test_token_counts():
     data_simple = {
         'ok': True,
         'written_line': '[ℹ️] [2026-01-07 23:10:45 UTC] [Agent: CoderAgent] [Project: test_project] Simple test message | priority=low; log_type=progress; content_type=log',
-        'path': '/home/austin/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
+        'path': '/tmp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
         'meta': {}
     }
 

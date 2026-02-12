@@ -21,15 +21,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, Mock
 from typing import Any, Dict
 
-# Add parent to path for imports
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from bridges.manifest import BridgeManifest, BridgeState, HookConfig, LogTypeConfig, BridgeProjectConfig
-from bridges.registry import BridgeRegistry
-from bridges.plugin import BridgePlugin
-from bridges.policy import BridgePolicyPlugin
-from bridges.examples.hello_world_plugin import HelloWorldBridgePlugin, create_plugin
+from scribe_mcp.bridges.manifest import BridgeManifest, BridgeState, HookConfig, LogTypeConfig, BridgeProjectConfig
+from scribe_mcp.bridges.registry import BridgeRegistry
+from scribe_mcp.bridges.plugin import BridgePlugin
+from scribe_mcp.bridges.policy import BridgePolicyPlugin
+from scribe_mcp.bridges.examples.hello_world_plugin import HelloWorldBridgePlugin, create_plugin
 
 
 class TestBridgeManifest:

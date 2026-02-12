@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """Test migration of priority, category, tags, and confidence columns to scribe_entries table."""
 
-import sys
 from pathlib import Path
-
-# Add MCP_SPINE to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import asyncio
 import json

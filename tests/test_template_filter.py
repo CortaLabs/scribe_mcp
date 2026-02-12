@@ -1,9 +1,6 @@
 """Tests for template entry filter in utils/logs.py"""
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.logs import _is_template_entry
+from scribe_mcp.utils.logs import _is_template_entry
 
 
 class TestTemplateEntryFilter:

@@ -26,10 +26,6 @@ except ImportError:
     np = None
     SentenceTransformer = None
 
-# Add parent directories to path for imports
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from scribe_mcp.plugins.registry import initialize_plugins, get_plugin_registry
 from scribe_mcp.plugins.vector_indexer import VectorIndexer
 from scribe_mcp.config.repo_config import RepoConfig
@@ -111,7 +107,7 @@ class TestVectorIntegrationWorkflow:
 
             # Copy the actual plugin file
             import shutil
-            current_plugin = Path(__file__).parent.parent / "plugins" / "vector_indexer.py"
+            current_plugin = Path(__file__).parent.parent / "src" / "scribe_mcp" / "plugins" / "vector_indexer.py"
             shutil.copy(current_plugin, repo_path / "plugins" / "vector_indexer.py")
 
             yield repo_path

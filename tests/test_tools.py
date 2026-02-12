@@ -10,10 +10,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-import sys
-
-# Add the MCP_SPINE directory to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp import server
 from scribe_mcp.config.settings import settings

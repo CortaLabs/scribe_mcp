@@ -8,10 +8,7 @@ from pathlib import Path
 import pytest
 
 # Import internals directly for unit testing
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from tools.search import (
+from scribe_mcp.tools.search import (
     Match,
     FileResult,
     TraversalStats,

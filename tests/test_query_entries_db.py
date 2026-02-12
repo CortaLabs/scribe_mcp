@@ -4,10 +4,6 @@ Integration tests for query_entries database routing.
 Tests verify that query_entries correctly routes to the storage backend
 instead of using flat-file parsing when the backend is available.
 """
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch, Mock

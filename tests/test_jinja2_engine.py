@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """Test script for Jinja2 template engine implementation."""
 
-import sys
 from pathlib import Path
-
-# Add MCP_SPINE root to Python path
-sys.path.insert(0, str(Path(__file__).parent))
 
 from scribe_mcp.template_engine import Jinja2TemplateEngine, TemplateEngineError
 
@@ -18,7 +14,7 @@ def test_template_engine():
     print("\n1. Testing custom template rendering...")
     try:
         engine = Jinja2TemplateEngine(
-            project_root=Path("/home/austin/projects/MCP_SPINE/scribe_mcp"),
+            project_root=Path("/tmp/projects/MCP_SPINE/scribe_mcp"),
             project_name="scribe_test_project",
             security_mode="sandbox"
         )

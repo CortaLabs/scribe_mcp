@@ -6,12 +6,6 @@ Tests the new priority, category, tags, and confidence parameters added
 as part of scribe_tool_output_refinement project.
 """
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
 import json
 from scribe_mcp.tools.append_entry import append_entry

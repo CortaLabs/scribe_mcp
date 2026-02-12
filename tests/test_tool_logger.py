@@ -7,12 +7,8 @@ of append_entry or response.py, preventing infinite recursion.
 """
 
 import json
-import sys
-from pathlib import Path
 from unittest.mock import patch, mock_open
-
-# Add MCP_SPINE to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from pathlib import Path
 
 import pytest
 from scribe_mcp.utils.tool_logger import (
@@ -44,7 +40,7 @@ class TestRecursionPrevention:
         from pathlib import Path
 
         # Get path to MCP_SPINE root
-        mcp_spine_root = str(Path(__file__).parent.parent.parent)
+        mcp_spine_root = str(Path(__file__).parent.parent)
 
         # CRITICAL TEST: Verify log_tool_call() can execute without recursion
         # The real test is: can we CALL log_tool_call() without triggering

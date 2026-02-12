@@ -5,14 +5,8 @@ Demo script showing SPEC-TOKEN-003 utilities in action.
 Demonstrates all 4 global optimization patterns with before/after comparisons.
 """
 
-import sys
-from pathlib import Path
-
-# Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils.path_utils import abbreviate_path
-from utils.response import format_compact_json, format_header, add_tip
+from scribe_mcp.utils.path_utils import abbreviate_path
+from scribe_mcp.utils.response import format_compact_json, format_header, add_tip
 import json
 
 
@@ -22,7 +16,7 @@ def demo_pattern_1_path_abbreviation():
     print("PATTERN 1: ABSOLUTE PATH REDUCTION")
     print("=" * 70)
 
-    path = "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/project/PROGRESS_LOG.md"
+    path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/project/PROGRESS_LOG.md"
 
     print(f"\nOriginal path ({len(path)} chars):")
     print(f"  {path}")
@@ -135,7 +129,7 @@ def demo_complete_optimization():
     print("=" * 70)
 
     # Simulated tool output
-    path = "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md"
+    path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/my_project/PROGRESS_LOG.md"
     data = {
         "projects": [
             {

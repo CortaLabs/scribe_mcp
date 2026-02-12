@@ -6,7 +6,7 @@ Post-rotation projects should show UNCHANGED/MODIFIED, not false NEW status.
 """
 
 import pytest
-from shared.project_utils import detect_project_state, _extract_modified_docs
+from scribe_mcp.shared.project_utils import detect_project_state, _extract_modified_docs
 
 
 class TestDetectProjectState:

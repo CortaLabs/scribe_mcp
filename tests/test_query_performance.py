@@ -10,12 +10,7 @@ Project: query_enhancement_suite
 Author: CoderAgent-PerfTests
 """
 
-import sys
 import time
-from pathlib import Path
-
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 from scribe_mcp.tools.query_entries import query_entries

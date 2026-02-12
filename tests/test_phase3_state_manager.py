@@ -2,14 +2,10 @@
 """Inline functional test for Phase 3 Tasks 3.3-3.4: StateManager database integration."""
 
 import asyncio
-import sys
 import tempfile
 from pathlib import Path
 
 import pytest
-
-# Add parent directory to path so scribe_mcp can be imported
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.state.manager import StateManager
 from scribe_mcp.storage.sqlite import SQLiteStorage

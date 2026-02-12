@@ -12,11 +12,6 @@ from unittest.mock import Mock
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-# Add the parent directory to path for imports
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from scribe_mcp.utils.error_handler import ErrorHandler
 from scribe_mcp.shared.logging_utils import ProjectResolutionError
 from scribe_mcp.shared.project_registry import ProjectRegistry

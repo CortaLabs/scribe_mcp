@@ -3,13 +3,9 @@
 
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 import pytest
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp import server as server_module
 from scribe_mcp.shared.execution_context import AgentIdentity, ExecutionContext
@@ -53,7 +49,7 @@ async def test_python_ast(exec_context_token):
 
     result = await read_file(
         agent="test_agent",
-        path="tools/read_file.py",
+        path="src/scribe_mcp/tools/read_file.py",
         mode="scan_only",
         format="structured"
     )
@@ -161,7 +157,7 @@ async def test_regex_search(exec_context_token):
     # Test complex regex pattern - find all async functions
     result = await read_file(
         agent="test_agent",
-        path="tools/read_file.py",
+        path="src/scribe_mcp/tools/read_file.py",
         mode="search",
         query=r"async\s+def\s+\w+",  # Should match async function definitions
         format="structured"
@@ -191,7 +187,7 @@ async def test_navigation_hints(exec_context_token):
 
     result = await read_file(
         agent="test_agent",
-        path="server.py",
+        path="src/scribe_mcp/server.py",
         mode="scan_only",
         format="structured"
     )

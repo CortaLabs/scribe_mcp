@@ -7,14 +7,8 @@ Tests Phase 4 formatter methods:
 - format_project_sitrep_existing() - Existing project activation
 """
 
-import sys
-from pathlib import Path
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
-from utils.response import ResponseFormatter
+from scribe_mcp.utils.response import ResponseFormatter
 
 
 class TestFormatProjectSitrepNew:
@@ -30,8 +24,8 @@ class TestFormatProjectSitrepNew:
         """Sample project dict for new project."""
         return {
             'name': 'my_new_feature',
-            'root': '/home/austin/projects/MCP_SPINE/scribe_mcp',
-            'progress_log': '/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/my_new_feature/PROGRESS_LOG.md'
+            'root': '/tmp/projects/MCP_SPINE/scribe_mcp',
+            'progress_log': '/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/my_new_feature/PROGRESS_LOG.md'
         }
 
     @pytest.fixture
@@ -74,7 +68,7 @@ class TestFormatProjectSitrepNew:
         output = formatter.format_project_sitrep_new(sample_project, sample_docs_created)
 
         assert "📂 Location:" in output
-        assert "Root: /home/austin/projects/MCP_SPINE/scribe_mcp" in output
+        assert "Root: /tmp/projects/MCP_SPINE/scribe_mcp" in output
         assert "Dev Plan: .scribe/docs/dev_plans/my_new_feature/" in output
 
     def test_template_doc_line_counts(self, formatter, sample_project, sample_docs_created):
@@ -139,8 +133,8 @@ class TestFormatProjectSitrepExisting:
         """Sample project dict for existing project."""
         return {
             'name': 'scribe_tool_output_refinement',
-            'root': '/home/austin/projects/MCP_SPINE/scribe_mcp',
-            'progress_log': '/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md'
+            'root': '/tmp/projects/MCP_SPINE/scribe_mcp',
+            'progress_log': '/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md'
         }
 
     @pytest.fixture

@@ -6,18 +6,14 @@ Tests Phase 1 implementation of BUG-MANAGE-DOCS-001 fix.
 Validates idempotent migration, backfill functionality, and error handling.
 """
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import asyncio
 import json
 import pytest
 import sqlite3
 import tempfile
-from storage.sqlite import SQLiteStorage
+from pathlib import Path
+
+from scribe_mcp.storage.sqlite import SQLiteStorage
 
 
 def run(coro):

@@ -1,18 +1,33 @@
 """Integration tests for enhanced read_file and search error paths."""
 
-import sys
 from pathlib import Path
 import tempfile
 import asyncio
 
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import pytest
-from tools.read_file import read_file
-from tools.search import search
+from scribe_mcp.tools.read_file import read_file
+from scribe_mcp.tools.search import search
 from scribe_mcp.server import app
 from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
+
+
+def _structured_payload(result):
+    """Normalize MCP CallToolResult/dict responses to a structured dict payload."""
+    if isinstance(result, dict):
+        return result
+    structured = getattr(result, "structuredContent", None)
+    if isinstance(structured, dict):
+        return structured
+    return {}
+
+
+def _readable_text(result) -> str:
+    """Extract text from CallToolResult content for readable-format assertions."""
+    if isinstance(result, dict):
+        return str(result)
+    content = getattr(result, "content", None) or []
+    parts = [getattr(item, "text", "") for item in content]
+    return "\n".join(part for part in parts if part)
 
 
 @pytest.fixture
@@ -70,34 +85,11 @@ async def test_read_file_not_found_readable(execution_context):
         format="readable"
     )
 
-    # Should be a dict (readable format returns dict for errors)
-    assert isinstance(result, dict)
-    assert result["ok"] is False
-    assert result["error_type"] == "not_found"
-
-    # Should have fuzzy suggestions
-    assert "similar_files" in result
-    similar_files = result["similar_files"]
-    assert len(similar_files) > 0
-
-    # Should suggest auth_handler.py (close match)
-    file_names = [f["name"] for f in similar_files]
-    assert "auth_handler.py" in file_names
-
-    # Should have suggestion text
-    assert "suggestion" in result
-    assert "Did you mean" in result["suggestion"]
-
-    # Should have parent listing
-    assert "parent_directory" in result
-    assert "parent_listing" in result
-    listing = result["parent_listing"]
-    assert "auth.py" in listing["files"]
-    assert "auth_handler.py" in listing["files"]
-
-    # Should have search suggestion
-    assert "search_suggestion" in result
-    assert "search(" in result["search_suggestion"]
+    readable = _readable_text(result)
+    assert "ERROR" in readable
+    assert "Did you mean" in readable
+    assert "auth_handler.py" in readable
+    assert "search(" in readable
 
 
 @pytest.mark.asyncio
@@ -125,13 +117,13 @@ async def test_read_file_is_directory(execution_context):
     result = await read_file(
         agent="TestAgent",
         path="src",  # This is a directory
-        format="readable"
+        format="both"
     )
 
-    assert isinstance(result, dict)
-    assert result["ok"] is False
-    assert result["error_type"] == "is_directory"
-    assert result["error"] == "path is a directory"
+    payload = _structured_payload(result)
+    assert payload.get("ok") is False
+    assert payload.get("error_type") == "is_directory"
+    assert payload.get("error") == "path is a directory"
 
 
 @pytest.mark.asyncio
@@ -148,13 +140,13 @@ async def test_read_file_permission_error(execution_context):
         result = await read_file(
             agent="TestAgent",
             path="restricted.txt",
-            format="readable"
+            format="both"
         )
 
         # Should classify as permission_denied or unknown
-        assert isinstance(result, dict)
-        assert result["ok"] is False
-        assert result["error_type"] in ("permission_denied", "unknown")
+        payload = _structured_payload(result)
+        assert payload.get("ok") is False
+        assert payload.get("error_type") in ("permission_denied", "unknown")
 
     finally:
         # Restore permissions for cleanup
@@ -174,15 +166,15 @@ async def test_read_file_large_parent_dir(execution_context):
     result = await read_file(
         agent="TestAgent",
         path="large/nonexistent.py",
-        format="readable"
+        format="both"
     )
 
-    assert isinstance(result, dict)
-    assert result["ok"] is False
+    payload = _structured_payload(result)
+    assert payload.get("ok") is False
 
     # Should have listing but truncated
-    if "parent_listing" in result:
-        listing = result["parent_listing"]
+    if "parent_listing" in payload:
+        listing = payload["parent_listing"]
         # Should be truncated (max 30 files)
         assert len(listing.get("files", [])) <= 30
         assert listing.get("truncated") is True

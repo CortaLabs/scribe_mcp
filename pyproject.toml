@@ -4,31 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "0.1.0"
+version = "2.2"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Scribe MCP Contributors" }]
 dependencies = [
-  "asyncpg>=0.29",
-  "jinja2>=3.1.0",
-  "mcp>=0.1.0",
-  "numpy>=1.20.0",
-  "portalocker>=2.0",
-  "psutil>=7.1",
-  "pyyaml>=6.0",
-  "rich>=13.7",
-  "sentence-transformers>=2.0.0",
-  "tiktoken>=0.5.0",
-  "watchdog>=3.0.0",
+  "asyncpg~=0.29",
+  "jinja2~=3.1",
+  "mcp==1.26.0",
+  "numpy~=1.20",
+  "portalocker~=2.0",
+  "psutil~=7.1",
+  "pyyaml~=6.0",
+  "rich~=13.7",
+  "sentence-transformers~=2.0",
+  "tiktoken~=0.5",
+  "watchdog~=3.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=7.4",
-  "pytest-asyncio>=0.23",
-  "faiss-cpu>=1.7.0",
+  "pytest~=7.4",
+  "pytest-asyncio~=0.23",
+  "faiss-cpu~=1.7",
 ]
 
 [project.scripts]
@@ -38,55 +38,13 @@ scribe-server = "scribe_mcp.__main__:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = [
-  "scribe_mcp",
-  "scribe_mcp.bridges",
-  "scribe_mcp.bridges.examples",
-  "scribe_mcp.cli",
-  "scribe_mcp.config",
-  "scribe_mcp.db",
-  "scribe_mcp.doc_management",
-  "scribe_mcp.doc_management.actions",
-  "scribe_mcp.plugins",
-  "scribe_mcp.scripts",
-  "scribe_mcp.security",
-  "scribe_mcp.shared",
-  "scribe_mcp.state",
-  "scribe_mcp.storage",
-  "scribe_mcp.storage.sqlite",
-  "scribe_mcp.template_engine",
-  "scribe_mcp.templates",
-  "scribe_mcp.tools",
-  "scribe_mcp.tools.base",
-  "scribe_mcp.utils",
-  "scribe_mcp.utils.formatters",
-]
 
-[tool.setuptools.package-dir]
-scribe_mcp = "."
-"scribe_mcp.bridges" = "bridges"
-"scribe_mcp.bridges.examples" = "bridges/examples"
-"scribe_mcp.cli" = "cli"
-"scribe_mcp.config" = "config"
-"scribe_mcp.db" = "db"
-"scribe_mcp.doc_management" = "doc_management"
-"scribe_mcp.doc_management.actions" = "doc_management/actions"
-"scribe_mcp.plugins" = "plugins"
-"scribe_mcp.scripts" = "scripts"
-"scribe_mcp.security" = "security"
-"scribe_mcp.shared" = "shared"
-"scribe_mcp.state" = "state"
-"scribe_mcp.storage" = "storage"
-"scribe_mcp.storage.sqlite" = "storage/sqlite"
-"scribe_mcp.template_engine" = "template_engine"
-"scribe_mcp.templates" = "templates"
-"scribe_mcp.tools" = "tools"
-"scribe_mcp.tools.base" = "tools/base"
-"scribe_mcp.utils" = "utils"
-"scribe_mcp.utils.formatters" = "utils/formatters"
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["scribe_mcp*"]
 
 [tool.setuptools.package-data]
-scribe_mcp = [
+"scribe_mcp" = [
   "py.typed",
   "config/*.json",
   "config/*.yaml",
@@ -96,4 +54,3 @@ scribe_mcp = [
   "templates/*",
   "templates/**/*",
 ]
-

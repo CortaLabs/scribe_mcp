@@ -5,11 +5,7 @@ Tests all 16 MCP tools across 3 modes (readable, structured, compact)
 Records outputs to main audit wiki for Teams B/C analysis
 """
 
-import sys
 from pathlib import Path
-
-# Add MCP_SPINE to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Tool testing will be done via MCP calls, this is just infrastructure
 TOOLS_TO_TEST = [
@@ -32,7 +28,7 @@ TOOLS_TO_TEST = [
 ]
 
 MODES = ["readable", "structured", "compact"]
-OUTPUT_BASE = Path("/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs")
+OUTPUT_BASE = Path(".scribe/docs/dev_plans/scribe_systematic_audit_1/wiki/tool_outputs")
 
 def setup_directories():
     """Create output directories for all tools"""

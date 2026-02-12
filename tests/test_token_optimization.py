@@ -4,12 +4,6 @@ Test SPEC-TOKEN-002 append_entry token optimization.
 Tests the new format without requiring full MCP server restart.
 """
 
-import sys
-from pathlib import Path
-
-# Add MCP_SPINE root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from scribe_mcp.utils.response import ResponseFormatter
 
 def test_append_entry_optimization():
@@ -21,7 +15,7 @@ def test_append_entry_optimization():
     data_simple = {
         'ok': True,
         'written_line': '[ℹ️] [2026-01-07 23:10:45 UTC] [Agent: CoderAgent] [Project: test_project] Simple test message | priority=low; log_type=progress; content_type=log',
-        'path': '/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
+        'path': '/tmp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
         'meta': {}
     }
 
@@ -29,7 +23,7 @@ def test_append_entry_optimization():
     data_with_meta = {
         'ok': True,
         'written_line': '[✅] [2026-01-07 23:10:45 UTC] [Agent: CoderAgent-TOKEN002] [Project: test_project] Implemented feature X successfully | spec=SPEC-TOKEN-002; phase=implementation; confidence=0.95; priority=low; log_type=progress; content_type=log',
-        'path': '/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
+        'path': '/tmp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
         'meta': {'spec': 'SPEC-TOKEN-002', 'phase': 'implementation', 'confidence': 0.95}
     }
 
@@ -37,7 +31,7 @@ def test_append_entry_optimization():
     data_with_reasoning = {
         'ok': True,
         'written_line': '[ℹ️] [2026-01-07 14:34:25 UTC] [Agent: ResearchAgent] [Project: research_project] Investigation complete | phase=research; priority=low; log_type=progress; content_type=log',
-        'path': '/home/austin/.scribe/docs/dev_plans/research_project/PROGRESS_LOG.md',
+        'path': '/tmp/.scribe/docs/dev_plans/research_project/PROGRESS_LOG.md',
         'meta': {
             'reasoning': {
                 'why': 'Need to understand append_entry structure',
@@ -51,7 +45,7 @@ def test_append_entry_optimization():
     data_with_unicode = {
         'ok': True,
         'written_line': '[ℹ️] [2026-01-07 23:10:45 UTC] [Agent: TestAgent] [Project: test_project] Unicode test message | unicode_test=日本語🎯; test_type=unicode; priority=low; log_type=progress; content_type=log',
-        'path': '/home/austin/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
+        'path': '/tmp/.scribe/docs/dev_plans/test_project/PROGRESS_LOG.md',
         'meta': {'unicode_test': '日本語🎯', 'test_type': 'unicode'}
     }
 

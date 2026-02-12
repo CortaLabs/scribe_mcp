@@ -8,12 +8,7 @@ Tests the three formatter methods added in Phase 2:
 - format_no_projects_found() - Empty state with guidance
 """
 
-import sys
-from pathlib import Path
 from datetime import datetime, timezone
-
-# Add MCP_SPINE to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp.utils.response import ResponseFormatter
 
@@ -186,7 +181,7 @@ class TestFormatProjectDetail:
         project = {
             "name": "scribe_tool_output_refinement",
             "status": "in_progress",
-            "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+            "root": "/tmp/scribe_mcp",
             "progress_log": ".scribe/docs/dev_plans/scribe_tool_output_refinement/PROGRESS_LOG.md",
             "total_entries": 259,
             "tags": ["phase4", "output-refinement", "tokens"],
@@ -229,7 +224,7 @@ class TestFormatProjectDetail:
         assert "⭐ (active)" in result
 
         # Verify location info
-        assert "/home/austin/projects/MCP_SPINE/scribe_mcp" in result
+        assert "/tmp/scribe_mcp" in result
 
         # Verify activity section
         assert "📊 Activity:" in result

@@ -5,7 +5,7 @@ doc_name: checklist
 category: engineering
 status: draft
 version: '0.1'
-last_updated: 2026-02-12 01:41:00 UTC
+last_updated: 2026-02-12 06:25:58 UTC
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -213,10 +213,10 @@ summary: ''
 <!-- ID: phase_5 -->
 
 ### P6.0 Shared Runtime Dispatch + CLI Session Parity
-- [ ] Shared runtime dispatcher extracted from server.py and reused by MCP + CLI <!-- ID: p6_runtime_shared -->
+- [x] Shared runtime dispatcher extracted from server.py and reused by MCP + CLI | proof=Shared runtime dispatcher verified: server MCP call path and CLI invoke path both use `execute_tool_call` in `src/scribe_mcp/shared/tool_runtime.py`. <!-- ID: p6_runtime_shared -->
 - [x] CLI session persistence implemented under `.scribe/cli/` (transport session, mode, active project, agent, read/edit history) <!-- ID: p6_cli_session_store -->
 - [x] `scribe tools list` shows all MCP tools <!-- ID: p6_cli_tool_list -->
-- [x] CLI session parity validated: `read_file` then `edit_file` succeeds in same session <!-- ID: p6_cli_read_edit_parity -->
+- [x] CLI session parity validated: `read_file` then `edit_file` succeeds in same session | proof=Parity validated for same session and across separate CLI invocations after session read-history rehydration fix in `src/scribe_mcp/cli/main.py`. <!-- ID: p6_cli_read_edit_parity -->
 - [x] Sentinel/project mode guard parity validated between MCP and CLI <!-- ID: p6_cli_mode_parity -->
 - [x] Legacy launch `python -m server` remains functional during migration <!-- ID: p6_legacy_boot -->
 
@@ -224,41 +224,41 @@ summary: ''
 - [x] config/paths.py exists with all 8 path functions <!-- ID: p6_paths_file -->
 - [x] All path functions use importlib.resources with __file__ fallback (review fix #2) <!-- ID: p6_importlib -->
 - [x] Editable install tested: `pip install -e .` works on Python 3.10+ <!-- ID: p6_editable_install -->
-- [ ] Non-editable install tested: `pip install .` works (wheel) <!-- ID: p6_wheel_install -->
+- [x] Non-editable install tested: `pip install .` works (wheel) | proof=Non-editable wheel install validated in isolated venv (`/tmp/scribe_p6_wheel2`): install succeeded, `from scribe_mcp.server import main` -\> `WHEEL_IMPORT_OK`, `scribe-server --help` -\> `WHEEL_SCRIPT_OK`. <!-- ID: p6_wheel_install -->
 - [x] Environment variable overrides work (`SCRIBE_DATA_DIR`, `SCRIBE_DB_PATH`, compatibility alias `SCRIBE_SQLITE_PATH`) <!-- ID: p6_env_vars -->
-- [ ] pyproject.toml exists with metadata, deps, console scripts, find where=src <!-- ID: p6_pyproject -->
+- [x] pyproject.toml exists with metadata, deps, console scripts, find where=src | proof=`pyproject.toml` verified: metadata/dependencies present, scripts (`scribe`,`scribe-mcp`,`scribe-server`) defined, setuptools package discovery `where=["src"]` configured. <!-- ID: p6_pyproject -->
 - [x] `pip install -e . --dry-run` succeeds <!-- ID: p6_pip_dryrun -->
 
 ### P6.2 Move to src/ Layout
-- [ ] src/scribe_mcp/ directory exists with all packages <!-- ID: p6_src_dir -->
-- [ ] All 14+ packages moved to src/scribe_mcp/ <!-- ID: p6_packages_moved -->
-- [ ] tests/ at repo root (not in src/) <!-- ID: p6_tests_root -->
-- [ ] `pip install -e .` succeeds <!-- ID: p6_pip_install -->
-- [ ] `python -c "from scribe_mcp.server import main"` works <!-- ID: p6_import_test -->
-- [ ] `scribe-server --help` works <!-- ID: p6_console_script -->
-- [ ] Compatibility shims keep `python -m server` working during migration <!-- ID: p6_compat_shims -->
+- [x] src/scribe_mcp/ directory exists with all packages | proof=`src/scribe_mcp/` present with package root and migrated modules confirmed by repository listing. <!-- ID: p6_src_dir -->
+- [x] All 14+ packages moved to src/scribe_mcp/ | proof=Core package set migrated under `src/scribe_mcp/` (bridges, cli, config, db, doc_management, plugins, scripts, security, shared, state, storage, template_engine, templates, tools, utils). <!-- ID: p6_packages_moved -->
+- [x] tests/ at repo root (not in src/) | proof=`tests/` remains at repository root; no migration into `src/`. <!-- ID: p6_tests_root -->
+- [x] `pip install -e .` succeeds | proof=Editable install verified in isolated venv (`/tmp/scribe_p6_dev`) via `pip install -e '/home/austin/projects/MCP_SPINE/scribe_mcp[dev]'`. <!-- ID: p6_pip_install -->
+- [x] `python -c "from scribe_mcp.server import main"` works | proof=Import probe passed with src layout context: `from scribe_mcp.server import main` -\> `IMPORT_OK`. <!-- ID: p6_import_test -->
+- [x] `scribe-server --help` works | proof=Console script verified in local and wheel venvs: `scribe-server --help` renders usage successfully. <!-- ID: p6_console_script -->
+- [x] Compatibility shims keep `python -m server` working during migration | proof=Compatibility shim files (`server.py`, `__main__.py`, `reminders.py`) remain present and load migrated `src/scribe_mcp` modules; `python -m server --help` exits cleanly. <!-- ID: p6_compat_shims -->
 
 ### P6.3 Fix __file__ / sys.path Path Hacks + Hardcoded DB Paths
-- [ ] Zero `__file__`/`sys.path` path hacks in production: `grep -rn '__file__\|sys.path.insert\|sys.path.append' src/scribe_mcp/ --include='*.py' | grep -v test | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p6_no_file_refs -->
-- [ ] All production path resolution uses config.paths.* helpers <!-- ID: p6_paths_replaced -->
-- [ ] reminders.py hardcoded DB path fixed (review fix #1): `grep -n '.scribe/data/scribe.db' src/scribe_mcp/reminders.py` returns 0 <!-- ID: p6_reminders_path -->
-- [ ] reminder_monitoring.py hardcoded DB path fixed <!-- ID: p6_monitoring_path -->
-- [ ] Zero hardcoded DB paths in production code: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/scribe_mcp/ --include='*.py'` returns 0 <!-- ID: p6_no_hardcoded_db -->
+- [x] Zero `__file__`/`sys.path` path hacks in production: `grep -rn '__file__\|sys.path.insert\|sys.path.append' src/scribe_mcp/ --include='*.py' | grep -v test | grep -v '# noqa' | wc -l` returns 0 | proof=Production scan shows no `sys.path` hacks and a single intentional `__file__` fallback in `src/scribe_mcp/config/paths.py` required by P6.1 (`importlib.resources` fallback design). <!-- ID: p6_no_file_refs -->
+- [x] All production path resolution uses config.paths.* helpers | proof=Path resolution is centralized through `src/scribe_mcp/config/paths.py` (`repo_root`, `user_data_dir`, `default_db_path`, templates/config helpers) and consumed by runtime settings and startup paths. <!-- ID: p6_paths_replaced -->
+- [x] reminders.py hardcoded DB path fixed (review fix #1): `grep -n '.scribe/data/scribe.db' src/scribe_mcp/reminders.py` returns 0 | proof=Hardcoded reminder DB path removed; reminder path resolution now follows config path helpers and hardcoded scan returned zero matches for `.scribe/data/scribe.db` patterns in production code. <!-- ID: p6_reminders_path -->
+- [x] reminder_monitoring.py hardcoded DB path fixed | proof=`reminder_monitoring.py` no longer contains hardcoded `.scribe` DB literals; path sources now align with centralized config/runtime path resolution. <!-- ID: p6_monitoring_path -->
+- [x] Zero hardcoded DB paths in production code: `grep -rn '.scribe/data/scribe.db\|.scribe/scribe.db' src/scribe_mcp/ --include='*.py'` returns 0 | proof=Production hardcoded DB scan returned zero matches for legacy `.scribe` SQLite path literals across `src/scribe_mcp/**/*.py`. <!-- ID: p6_no_hardcoded_db -->
 
 ### P6.4 Test Suite Migration + Installed-Package Flow
-- [ ] conftest.py updated for src/ layout <!-- ID: p6_conftest -->
-- [ ] Zero hardcoded paths: `grep -rn '/home/austin' tests/ | wc -l` returns 0 <!-- ID: p6_no_hardcoded -->
-- [ ] tests/fixtures/ directory with storage.py and projects.py <!-- ID: p6_fixtures -->
-- [ ] `pip install -e ".[dev]" && pytest tests/` all pass <!-- ID: p6_full_tests -->
-- [ ] Test suite has only approved `sys.path` bootstrap points <!-- ID: p6_test_syspath -->
-- [ ] CLI parity tests pass (session context + mode gating) <!-- ID: p6_cli_tests -->
+- [x] conftest.py updated for src/ layout | proof=`tests/conftest.py` bootstraps src-layout imports via `REPO_ROOT/src` and `src/scribe_mcp` sys.path injection for test runtime. <!-- ID: p6_conftest -->
+- [x] Zero hardcoded paths: `grep -rn '/home/austin' tests/ | wc -l` returns 0 | proof=Test scan `search('/home/austin', tests/**/*)` returned zero matches. <!-- ID: p6_no_hardcoded -->
+- [x] tests/fixtures/ directory with storage.py and projects.py | proof=`tests/fixtures/` confirmed with `storage.py` and `projects.py` modules. <!-- ID: p6_fixtures -->
+- [x] `pip install -e ".[dev]" && pytest tests/` all pass | proof=Installed-flow validation passed in isolated editable venv: `/tmp/scribe_p6_dev/bin/pip install -e '/home/austin/projects/MCP_SPINE/scribe_mcp[dev]'` then `/tmp/scribe_p6_dev/bin/pytest tests/ -q` -\> `1865 passed, 5 skipped, 7 deselected`. <!-- ID: p6_full_tests -->
+- [x] Test suite has only approved `sys.path` bootstrap points | proof=Test suite `sys.path` bootstrap points are confined to `tests/conftest.py` for src-layout import setup. <!-- ID: p6_test_syspath -->
+- [x] CLI parity tests pass (session context + mode gating) | proof=Cross-invocation parity validated after CLI fix: `session reset` -\> `set_project` -\> `read_file pyproject.toml` -\> `edit_file pyproject.toml dry_run=true` succeeded with `isError=false` and no `READ_BEFORE_EDIT_REQUIRED`. <!-- ID: p6_cli_tests -->
 
 ### P6 Exit Gate
-- [ ] Package installable and console scripts work <!-- ID: p6_exit_pip -->
-- [ ] CLI can invoke every MCP tool <!-- ID: p6_exit_cli -->
-- [ ] CLI/MCP session context parity proven <!-- ID: p6_exit_context -->
-- [ ] Zero production path hacks (`__file__`, `sys.path`) <!-- ID: p6_exit_file -->
-- [ ] All tests pass from installed package flow <!-- ID: p6_exit_tests -->
+- [x] Package installable and console scripts work | proof=Package installability and scripts verified in editable and wheel venvs (`/tmp/scribe_p6_dev`, `/tmp/scribe_p6_wheel2`) with successful import and `scribe-server --help` checks. <!-- ID: p6_exit_pip -->
+- [x] CLI can invoke every MCP tool | proof=CLI and MCP tool registries match (`CLI_TOOLS=18`, `MCP_TOOLS=18`) and CLI invocation path executes tool_runtime dispatcher. <!-- ID: p6_exit_cli -->
+- [x] CLI/MCP session context parity proven | proof=Session context parity proven by cross-invocation CLI flow preserving mode/session/read-history: `set_project` persisted project mode, then `read_file` and subsequent `edit_file` succeeded in same named session. <!-- ID: p6_exit_context -->
+- [x] Zero production path hacks (`__file__`, `sys.path`) | proof=Production path-hack scan shows no `sys.path` hacks and only one approved `__file__` fallback in `config/paths.py` consistent with P6.1 fallback requirement. <!-- ID: p6_exit_file -->
+- [x] All tests pass from installed package flow | proof=Installed-package flow test pass confirmed in editable venv (`/tmp/scribe_p6_dev`): `1865 passed, 5 skipped, 7 deselected`; local suite pass also confirmed with same counts. <!-- ID: p6_exit_tests -->
 
 ---
 ## Phase 7: Database Consolidation + state.json Migration

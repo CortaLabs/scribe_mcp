@@ -18,10 +18,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
-# Add parent directory to path for imports
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext, ReminderInstance
 from scribe_mcp import reminders
 

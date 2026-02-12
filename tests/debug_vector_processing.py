@@ -7,10 +7,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-# Add parent directories to path for imports
-import sys
 import os
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Set SCRIBE_ROOT for proper imports
 os.environ['SCRIBE_ROOT'] = str(Path(__file__).parent.parent.parent)

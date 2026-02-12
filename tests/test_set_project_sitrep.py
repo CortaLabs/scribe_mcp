@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """Integration tests for set_project SITREP formatters."""
 
-import sys
-from pathlib import Path
 import tempfile
 import shutil
 import pytest
 import uuid
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from pathlib import Path
 
 from scribe_mcp.tools import set_project as set_project_module
 from scribe_mcp.tools.set_project import _count_log_entries, _gather_project_inventory

@@ -2,13 +2,9 @@
 """Quick test to verify query_entries DB routing works."""
 
 import asyncio
-import sys
 from pathlib import Path
 
 import pytest
-
-# Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scribe_mcp import server as server_module
 from scribe_mcp.storage.sqlite import SQLiteStorage
@@ -43,7 +39,7 @@ async def test_db_routing(monkeypatch):
     result = await set_project(
         agent="TestAgent",
         name="db_routing_test",
-        root="/home/austin/projects/MCP_SPINE/scribe_mcp"
+        root=str(Path.cwd())
     )
     result_data = _as_dict(result)
     print(f"   ✓ Project created: {result_data.get('project', {}).get('name', 'unknown')}")

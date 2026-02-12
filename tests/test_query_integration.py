@@ -15,10 +15,6 @@ import pytest
 import sqlite3
 from pathlib import Path
 
-# Add project root to path
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -50,7 +46,7 @@ class TestQueryIncludesDocsJson:
     def test_query_string_includes_docs_json(self):
         """Verify the SQL query includes docs_json in SELECT."""
         # Read the actual code from shared/logging_utils.py
-        code_path = Path(__file__).parent.parent / "shared" / "logging_utils.py"
+        code_path = Path(__file__).parent.parent / "src" / "scribe_mcp" / "shared" / "logging_utils.py"
         code_content = code_path.read_text()
 
         # Verify the query includes docs_json
@@ -265,19 +261,27 @@ class TestCallerAnalysis:
     """Document analysis of all callers of resolve_logging_context."""
 
     def test_manage_docs_expects_docs_field(self):
-        """Verify manage_docs.py accesses project.get('docs')."""
-        # Read manage_docs.py
-        manage_docs_path = Path(__file__).parent.parent / "tools" / "manage_docs.py"
-        if manage_docs_path.exists():
-            content = manage_docs_path.read_text()
-            # Verify it uses project.get("docs")
-            assert 'project.get("docs")' in content or 'project["docs"]' in content, \
-                "manage_docs should access docs field"
+        """Verify manage_docs routing still reaches project docs handling logic."""
+        repo_root = Path(__file__).parent.parent
+        manage_docs_path = repo_root / "src" / "scribe_mcp" / "tools" / "manage_docs.py"
+        runtime_path = repo_root / "src" / "scribe_mcp" / "doc_management" / "runtime.py"
+
+        if manage_docs_path.exists() and runtime_path.exists():
+            manage_docs_content = manage_docs_path.read_text()
+            runtime_content = runtime_path.read_text()
+
+            # manage_docs is now a thin router and must delegate to runtime handler.
+            assert "handle_manage_docs_request(" in manage_docs_content, \
+                "manage_docs should delegate to runtime handler"
+
+            # runtime module owns project docs field access.
+            assert 'project.get("docs")' in runtime_content or 'project["docs"]' in runtime_content, \
+                "runtime manage_docs flow should access docs field"
 
     def test_set_project_uses_progress_log_field(self):
         """Verify set_project.py uses basic project fields."""
         # Read set_project.py
-        set_project_path = Path(__file__).parent.parent / "tools" / "set_project.py"
+        set_project_path = Path(__file__).parent.parent / "src" / "scribe_mcp" / "tools" / "set_project.py"
         if set_project_path.exists():
             content = set_project_path.read_text()
             # Verify it uses .get() for safe access
