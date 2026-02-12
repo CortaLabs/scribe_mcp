@@ -170,6 +170,41 @@ async def test_frontmatter_explicit_updates(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_replace_range_content_frontmatter_updates_document_frontmatter(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content=(
+            "---\n"
+            "title: \"Retitled\"\n"
+            "status: active\n"
+            "---\n"
+            "# Retitled\n\n"
+            "Body updated from payload\n"
+        ),
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={"frontmatter": {"status": "override"}},
+        dry_run=False,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.frontmatter_data.get("title") == "Retitled"
+    assert parsed.frontmatter_data.get("status") == "override"
+    assert parsed.body.startswith("# Retitled")
+    assert "Body updated from payload" in parsed.body
+
+
+@pytest.mark.asyncio
 async def test_frontmatter_auto_updates_related_docs_from_links(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])

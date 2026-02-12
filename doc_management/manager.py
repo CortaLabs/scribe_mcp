@@ -36,6 +36,8 @@ FRAGMENT_DIR = (template_root().parent / "fragments").resolve()
 SECTION_MARKER = "<!-- ID: {section} -->"
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _HEADER_LINE_PATTERN = re.compile(r"^(#{1,6})\s+(.*\S.*)$")
+_SETEXT_UNDERLINE_PATTERN = re.compile(r"^(?:={3,}|-{3,})$")
+_ATX_WITHOUT_SPACE_PATTERN = re.compile(r"^(#{1,6})([^#\s].*)$")
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 PATCH_MODE_STRUCTURED = "structured"
 PATCH_MODE_UNIFIED = "unified"
@@ -408,11 +410,33 @@ async def apply_doc_change(
                     resolved_start = int(resolved_start)
                 if resolved_end is not None:
                     resolved_end = int(resolved_end)
+
+                replacement_text = str(content or "")
+                if replacement_text.startswith("---"):
+                    try:
+                        replacement_parsed = parse_frontmatter(replacement_text)
+                    except ValueError:
+                        replacement_parsed = None
+                    if replacement_parsed and replacement_parsed.has_frontmatter:
+                        replacement_text = replacement_parsed.body
+                        metadata_dict = metadata if isinstance(metadata, dict) else {}
+                        existing_frontmatter = metadata_dict.get("frontmatter")
+                        if existing_frontmatter is None:
+                            existing_frontmatter = {}
+                        if not isinstance(existing_frontmatter, dict):
+                            raise DocumentOperationError(
+                                "FRONTMATTER_METADATA_INVALID: metadata.frontmatter must be an object"
+                            )
+                        merged_frontmatter = dict(replacement_parsed.frontmatter_data)
+                        merged_frontmatter.update(existing_frontmatter)
+                        metadata_dict["frontmatter"] = merged_frontmatter
+                        metadata = metadata_dict
+
                 updated_body = _replace_range_text(
                     original_body,
                     resolved_start,
                     resolved_end,
-                    content or "",
+                    replacement_text,
                 )
             elif action == "replace_text":
                 if not isinstance(metadata, dict):
@@ -1117,17 +1141,35 @@ def _replace_text_with_scope(
                 raise DocumentOperationError(
                     f"SECTION_ANCHOR_AMBIGUOUS: '{section_id}' appears multiple times"
                 )
-            start = idx + len(marker)
-            if start < len(text) and text[start] == "\r":
-                start += 1
-            if start < len(text) and text[start] == "\n":
-                start += 1
-            next_marker = text.find("<!-- ID:", start)
-            if next_marker == -1:
-                next_marker = len(text)
-            prefix = text[:start]
-            target_text = text[start:next_marker]
-            suffix = text[next_marker:]
+
+            line_start = text.rfind("\n", 0, idx) + 1
+            line_end = text.find("\n", idx)
+            if line_end == -1:
+                line_end = len(text)
+            marker_is_block = text[line_start:line_end].strip() == marker
+
+            if marker_is_block:
+                start = idx + len(marker)
+                if start < len(text) and text[start] == "\r":
+                    start += 1
+                if start < len(text) and text[start] == "\n":
+                    start += 1
+                next_marker_match = re.search(
+                    r"(?m)^[ \t]*<!--\s*ID:\s*[^>]+-->\s*$",
+                    text[start:],
+                )
+                if next_marker_match:
+                    next_marker = start + next_marker_match.start()
+                else:
+                    next_marker = len(text)
+                prefix = text[:start]
+                target_text = text[start:next_marker]
+                suffix = text[next_marker:]
+            else:
+                target_end = line_end + 1 if line_end < len(text) else len(text)
+                prefix = text[:line_start]
+                target_text = text[line_start:target_end]
+                suffix = text[target_end:]
 
     if match_mode == "regex":
         updated, hits = _replace_text_regex(
@@ -2063,14 +2105,12 @@ def _replace_block_text(original_text: str, anchor: str, replacement: str) -> st
 
 
 def _normalize_headers_text(original_text: str) -> str:
-    """Normalize markdown header numbering, skipping fenced code blocks."""
-    import re
-
+    """Normalize numbering for explicit ATX headers only, skipping fenced code blocks."""
     lines = original_text.splitlines()
     counters = [0] * 6
     in_fence = False
     output: list[str] = []
-    index = 0
+    violations: list[Dict[str, Any]] = []
 
     def _next_prefix(level: int) -> str:
         for idx in range(level - 1):
@@ -2081,45 +2121,78 @@ def _normalize_headers_text(original_text: str) -> str:
             counters[idx] = 0
         return ".".join(str(value) for value in counters[:level])
 
-    while index < len(lines):
-        line = lines[index]
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+
+        if _ATX_WITHOUT_SPACE_PATTERN.match(line):
+            violations.append(
+                {
+                    "line_number": index + 1,
+                    "reason": "atx_missing_space",
+                    "line": line.rstrip(),
+                }
+            )
+
+        if index + 1 < len(lines) and line.strip():
+            underline = lines[index + 1].strip()
+            if _SETEXT_UNDERLINE_PATTERN.match(underline) and not _HEADER_LINE_PATTERN.match(line):
+                violations.append(
+                    {
+                        "line_number": index + 1,
+                        "reason": "setext_pair",
+                        "line": line.rstrip(),
+                        "underline_line": index + 2,
+                        "underline": underline,
+                    }
+                )
+
+    if violations:
+        preview = ", ".join(
+            f"line {entry['line_number']} ({entry['reason']})" for entry in violations[:3]
+        )
+        doc_logger.warning(
+            "normalize_headers aborted: non-ATX content would be promoted to headers",
+            extra={
+                "violation_count": len(violations),
+                "violation_preview": preview,
+            },
+        )
+        raise DocumentOperationError(
+            "NORMALIZE_HEADERS_GUARDRAIL: non-ATX content would be promoted to headers; "
+            "convert candidates to explicit '# ' headers first",
+            extra={
+                "guardrail": "non_atx_promotion",
+                "violations": violations[:25],
+            },
+        )
+
+    in_fence = False
+    for line in lines:
         stripped = line.lstrip()
         if stripped.startswith("```") or stripped.startswith("~~~"):
             in_fence = not in_fence
             output.append(line)
-            index += 1
             continue
         if in_fence:
             output.append(line)
-            index += 1
             continue
 
-        if line.strip() and index + 1 < len(lines):
-            underline = lines[index + 1].strip()
-            if re.match(r"^={3,}$", underline) or re.match(r"^-{3,}$", underline):
-                level = 1 if underline.startswith("=") else 2
-                title = line.strip()
-                title = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", title)
-                if title:
-                    prefix = _next_prefix(level)
-                    output.append(f"{'#' * level} {prefix} {title}")
-                    index += 2
-                    continue
-
-        match = re.match(r"^(#{1,6})(\s*)(.*)$", line)
+        match = _HEADER_LINE_PATTERN.match(line)
         if match:
-            hashes, _, title = match.groups()
-            title = title.strip()
-            title = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", title)
+            hashes, title = match.groups()
+            title = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", title.strip())
             if title:
                 level = len(hashes)
                 prefix = _next_prefix(level)
                 output.append(f"{hashes} {prefix} {title}")
-                index += 1
                 continue
 
         output.append(line)
-        index += 1
 
     normalized = "\n".join(output)
     if original_text.endswith("\n"):

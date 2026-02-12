@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from datetime import date, datetime
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
@@ -221,6 +222,23 @@ def _scan_file(path: Path) -> Dict[str, Any]:
     }
 
 
+def _json_safe_frontmatter(value: Any) -> Any:
+    """Normalize YAML-loaded frontmatter values for JSON serialization."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe_frontmatter(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_frontmatter(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe_frontmatter(item) for item in value]
+    if isinstance(value, set):
+        return sorted(_json_safe_frontmatter(item) for item in value)
+    return value
+
+
 def _read_frontmatter_header(path: Path, encoding: str) -> Dict[str, Any]:
     try:
         with path.open("rb") as handle:
@@ -262,7 +280,7 @@ def _read_frontmatter_header(path: Path, encoding: str) -> Dict[str, Any]:
             raw_text = raw_bytes.decode(encoding, errors="replace")
             try:
                 parsed = parse_frontmatter(raw_text)
-                data = parsed.frontmatter_data
+                data = _json_safe_frontmatter(parsed.frontmatter_data)
                 error = None
             except ValueError as exc:
                 data = {}

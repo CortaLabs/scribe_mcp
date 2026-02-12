@@ -222,7 +222,7 @@ async def test_normalize_headers_idempotent_and_skip_fences(tmp_path: Path) -> N
     project = await _setup_project(tmp_path)
     architecture_path = Path(project["docs"]["architecture"])
     architecture_path.write_text(
-        "# Title\n##Title\nTitle Setext\n====\nSub Setext\n----\n```\n## 3. Code Block\n```\n### Third\n",
+        "# Title\n## Subtitle\n```\n## 3. Code Block\n```\n### Third\n",
         encoding="utf-8",
     )
 
@@ -244,13 +244,9 @@ async def test_normalize_headers_idempotent_and_skip_fences(tmp_path: Path) -> N
     assert first.success
     parsed_first = parse_frontmatter(architecture_path.read_text(encoding="utf-8"))
     assert "# 1 Title" in parsed_first.body
-    assert "## 1.1 Title" in parsed_first.body
-    assert "# 2 Title Setext" in parsed_first.body
-    assert "## 2.1 Sub Setext" in parsed_first.body
-    assert "### 2.1.1 Third" in parsed_first.body
+    assert "## 1.1 Subtitle" in parsed_first.body
+    assert "### 1.1.1 Third" in parsed_first.body
     assert "## 3. Code Block" in parsed_first.body
-    assert "====" not in parsed_first.body
-    assert "----" not in parsed_first.body
 
     second = await apply_doc_change(
         project,
@@ -269,6 +265,45 @@ async def test_normalize_headers_idempotent_and_skip_fences(tmp_path: Path) -> N
     )
     assert second.success
     assert second.diff_preview == ""
+
+
+@pytest.mark.asyncio
+async def test_normalize_headers_guardrail_rejects_non_atx_promotions(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+    original = (
+        "- Keep this section updated before each implementation phase.\n"
+        "---\n"
+        "No optimization patches until functional parity is complete.\n"
+        "---\n"
+        "- [ ] Stakeholder sign-off recorded in PROGRESS_LOG.md\n"
+        "---\n"
+        "# Valid Header\n"
+    )
+    architecture_path.write_text(original, encoding="utf-8")
+
+    result = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="normalize_headers",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        edit=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={},
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert "NORMALIZE_HEADERS_GUARDRAIL" in (result.error_message or "")
+    assert result.extra.get("guardrail") == "non_atx_promotion"
+    violations = result.extra.get("violations") or []
+    assert violations
+    assert architecture_path.read_text(encoding="utf-8") == original
 
 
 @pytest.mark.asyncio

@@ -496,6 +496,20 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         assert "## Executive Summary" in research_result["content"]
         assert "## Research Scope" in research_result["content"]
 
+        # Explicit body/snippet payload should bypass template rendering.
+        explicit_body = "# Body Override\n\nEvidence payload"
+        research_body_result = await manage_docs(
+            agent="test_agent",
+            action="create",
+            doc="architecture",
+            doc_name="body_override_findings",
+            metadata={"doc_type": "research", "body": explicit_body},
+            dry_run=True,
+        )
+        assert research_body_result["ok"]
+        assert research_body_result["content"] == explicit_body + "\n"
+        assert "## Executive Summary" not in research_body_result["content"]
+
         # Dry-run bug report to confirm templated content
         bug_result = await manage_docs(
             agent="test_agent",
@@ -507,6 +521,39 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         assert bug_result["ok"]
         assert "## Bug Overview" in bug_result["content"]
         assert "## Resolution Plan" in bug_result["content"]
+
+        # Existing special docs should require explicit overwrite to replace content.
+        first_write = await manage_docs(
+            agent="test_agent",
+            action="create",
+            doc="architecture",
+            doc_name="overwrite_guard_findings",
+            metadata={"doc_type": "research", "body": "# First Pass"},
+            dry_run=False,
+        )
+        assert first_write["ok"]
+
+        second_write = await manage_docs(
+            agent="test_agent",
+            action="create",
+            doc="architecture",
+            doc_name="overwrite_guard_findings",
+            metadata={"doc_type": "research", "body": "# Second Pass"},
+            dry_run=False,
+        )
+        assert second_write["ok"] is False
+        assert "CREATE_DOC_EXISTS" in second_write.get("error", "")
+
+        overwrite_write = await manage_docs(
+            agent="test_agent",
+            action="create",
+            doc="architecture",
+            doc_name="overwrite_guard_findings",
+            metadata={"doc_type": "research", "body": "# Second Pass", "overwrite": True},
+            dry_run=False,
+        )
+        assert overwrite_write["ok"]
+        assert Path(overwrite_write["path"]).read_text(encoding="utf-8") == "# Second Pass\n"
 
         # Metadata JSON arrays should normalize without failing
         array_meta_result = await manage_docs(

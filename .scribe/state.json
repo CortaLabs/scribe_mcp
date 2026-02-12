@@ -1,5 +1,5 @@
 {
-  "current_project": "rom-lab",
+  "current_project": "knowledge_mcp_v2",
   "projects": {
     "scribe_mcp": {
       "name": "scribe_mcp",
@@ -4164,10 +4164,7 @@
           "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
           "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
         }
-      },
-      "version": 1,
-      "updated_by": "Codex",
-      "session_id": "110499b4-8847-44bd-b70d-1a669de17399"
+      }
     },
     "PokeAPI": {
       "name": "PokeAPI",
@@ -5264,33 +5261,87 @@
       "name": "manage_docs_full_e2e_2026_02_11_r1",
       "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
       "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1",
       "docs": {
         "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
         "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
         "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
-        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md",
-        "_hashes": {
-          "baseline_hashes": {
-            "architecture": "2fcce6b8",
-            "phase_plan": "95852be2",
-            "checklist": "40dedd4c"
-          },
-          "current_hashes": {
-            "architecture": "2fcce6b8",
-            "phase_plan": "95852be2",
-            "checklist": "40dedd4c"
-          }
-        },
-        "MANAGE_DOCS_E2E_SANDBOX": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/MANAGE_DOCS_E2E_SANDBOX.md"
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "rom_lab_movement_overhaul_2026_02_11": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "knowledge_mcp_v2": {
+      "name": "knowledge_mcp_v2",
+      "root": "/home/austin/projects/MCP_SPINE/knowledge_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "thoth"
+      },
+      "author": "thoth",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PROGRESS_LOG.md"
+        }
       }
     }
   },
   "recent_projects": [
-    "rom-lab",
-    "scribe_pro_cleanup",
+    "knowledge_mcp_v2",
     "council_mcp",
-    "manage_docs_full_e2e_2026_02_11_r1",
-    "manage_docs_live_validation_2026_02_11_r4"
+    "scribe_pro_cleanup",
+    "rom_lab_movement_overhaul_2026_02_11",
+    "manage_docs_full_e2e_2026_02_11_r1"
   ],
   "session_projects": {
     "960838fa-d8e2-4d95-892e-804c55251384": {
@@ -5831,10 +5882,442 @@
       "version": 1,
       "updated_by": "Codex",
       "session_id": "110499b4-8847-44bd-b70d-1a669de17399"
+    },
+    "51e0bd8d-2bca-4c8f-bef1-cbe2f1ebe9db": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "15d321d8-da54-4196-bdd8-0243ff4f1911": {
+      "name": "manage_docs_full_e2e_2026_02_11_r1",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "5d76d657-12dc-4504-a073-c97eecc3bb21": {
+      "name": "manage_docs_full_e2e_2026_02_11_r1",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "15e39db4-f68a-4e0c-a027-2a91e539ceb9": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "655a1e22-6197-4f05-b7a9-4ab5b483d46e": {
+      "name": "knowledge_mcp_v2",
+      "root": "/home/austin/projects/MCP_SPINE/knowledge_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "thoth"
+      },
+      "author": "thoth",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/knowledge_mcp_v2/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "56a4dbbf-3f55-4660-9147-ef5b68ac1e2c": {
+      "name": "manage_docs_full_e2e_2026_02_11_r1",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/manage_docs_full_e2e_2026_02_11_r1/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "4e727e57-3ecc-445d-99f4-3a64485a74bc": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "e9f75aa8-9e11-4690-984b-3a70f689f5db": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "fba5d189-bd15-4b20-9538-e0d9afe5b14c": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "631a65f0-73e7-4d41-9e73-0feacf3da6de": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "4baf7fa3-3c79-402d-94ab-59705cee263f": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "cd15c20f-8161-42e2-8b65-21e1f7543747": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "327dfdf3-85c9-4e43-8df2-54ed848d01eb": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "efab14cb-17b0-462c-a0f2-53426b73ac6d": {
+      "name": "rom_lab_movement_overhaul_2026_02_11",
+      "root": "/home/austin/projects/pokemon/rom_lab",
+      "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11",
+      "docs": {
+        "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "nexus"
+      },
+      "author": "nexus",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/pokemon/rom_lab/.scribe/docs/dev_plans/rom_lab_movement_overhaul_2026_02_11/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "a6947c63-e245-44c7-9cdd-a7e965eccda5": {
+      "name": "scribe_pro_cleanup",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_pro_cleanup/PROGRESS_LOG.md"
+        }
+      }
+    },
+    "173ecdf5-299a-4bcf-8b42-a3ae3ecc20f9": {
+      "name": "council_mcp",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "codex"
+      },
+      "author": "codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_mcp/PROGRESS_LOG.md"
+        }
+      }
     }
   },
   "session_modes": {
-    "29261966-9a2d-4e94-9f40-97dc257e2601": "project"
+    "29261966-9a2d-4e94-9f40-97dc257e2601": "project",
+    "51e0bd8d-2bca-4c8f-bef1-cbe2f1ebe9db": "project",
+    "15d321d8-da54-4196-bdd8-0243ff4f1911": "project",
+    "5d76d657-12dc-4504-a073-c97eecc3bb21": "project",
+    "15e39db4-f68a-4e0c-a027-2a91e539ceb9": "project",
+    "655a1e22-6197-4f05-b7a9-4ab5b483d46e": "project",
+    "56a4dbbf-3f55-4660-9147-ef5b68ac1e2c": "project",
+    "4e727e57-3ecc-445d-99f4-3a64485a74bc": "project",
+    "e9f75aa8-9e11-4690-984b-3a70f689f5db": "project",
+    "fba5d189-bd15-4b20-9538-e0d9afe5b14c": "project",
+    "631a65f0-73e7-4d41-9e73-0feacf3da6de": "project",
+    "4baf7fa3-3c79-402d-94ab-59705cee263f": "project",
+    "cd15c20f-8161-42e2-8b65-21e1f7543747": "project",
+    "327dfdf3-85c9-4e43-8df2-54ed848d01eb": "project",
+    "efab14cb-17b0-462c-a0f2-53426b73ac6d": "project",
+    "a6947c63-e245-44c7-9cdd-a7e965eccda5": "project",
+    "173ecdf5-299a-4bcf-8b42-a3ae3ecc20f9": "project"
   },
   "recent_tools": [
     {
@@ -5880,7 +6363,7 @@
   ],
   "last_activity_at": "2026-01-24 08:32:14 UTC",
   "session_started_at": "2026-01-24 03:45:39 UTC",
-  "version": 3020,
-  "last_updated_by": "nexus",
-  "operation_timestamp": "2026-02-11 08:20:39 UTC"
+  "version": 3053,
+  "last_updated_by": "thoth",
+  "operation_timestamp": "2026-02-12 01:46:08 UTC"
 }

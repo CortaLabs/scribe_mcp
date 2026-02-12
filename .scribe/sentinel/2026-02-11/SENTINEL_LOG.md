@@ -39,3 +39,9 @@
 [2026-02-11T08:08:16.227869+00:00] [exec:e2efae41-d5ee-40ba-95a2-95cb67da1a26] [event:read_file] [agent:132f8c7c-d1f1-4472-b6eb-65ce1f635c1f] tool:read_file
 [2026-02-11T08:17:22.497489+00:00] [exec:23ca1d64-8b30-4e94-b21b-801d6a309783] [event:read_file] [agent:06f33e6d-8519-44ef-9e30-6fac57f34c32] tool:read_file
 [2026-02-11T08:17:29.823616+00:00] [exec:c390a669-994f-4a43-9ec8-b29016f11d7c] [event:scope_violation] [agent:f18cf91d-4070-4a78-b7a8-06de37fa2d7c] tool:read_file
+[2026-02-11T09:39:28.566037+00:00] [exec:984c9ac1-4832-4346-a8a1-d881ad4b828e] [event:read_file] [agent:60b88bfa-d3af-4a79-8286-8cb15e3ced28] tool:read_file
+[2026-02-11T00:00:00+00:00] [exec:read-file-enhancements-exec] [event:read_file] [agent:test-agent] read_file_enhancements
+[2026-02-11T00:00:00+00:00] [exec:read-file-enhancements-exec] [event:read_file] [agent:test-agent] read_file_enhancements
+[2026-02-11T00:00:00+00:00] [exec:read-file-enhancements-exec] [event:read_file] [agent:test-agent] read_file_enhancements
+[2026-02-11T00:00:00+00:00] [exec:read-file-enhancements-exec] [event:read_file] [agent:test-agent] read_file_enhancements
+[2026-02-11T00:00:00+00:00] [exec:read-file-enhancements-exec] [event:read_file] [agent:test-agent] read_file_enhancements

@@ -25,7 +25,40 @@ def _hash_text(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _resolve_inline_special_content(
+    content: Optional[str],
+    metadata: Dict[str, Any],
+) -> Optional[str]:
+    """Return explicit inline content for special create paths when provided."""
+    inline_content: str = ""
 
+    if isinstance(content, str) and content:
+        inline_content = content
+    else:
+        raw_body = metadata.get("body") or metadata.get("snippet")
+        if isinstance(raw_body, str):
+            inline_content = raw_body
+        elif isinstance(metadata.get("sections"), list):
+            blocks = []
+            for section in metadata["sections"]:
+                if not isinstance(section, dict):
+                    continue
+                title = str(section.get("title") or "").strip()
+                text = str(section.get("content") or "").strip()
+                if not title and not text:
+                    continue
+                if title:
+                    blocks.append(f"## {title}")
+                if text:
+                    blocks.append(text)
+                blocks.append("")
+            inline_content = "\n".join(blocks).rstrip()
+
+    if not inline_content:
+        return None
+    if not inline_content.endswith("\n"):
+        inline_content += "\n"
+    return inline_content
 
 
 async def _get_or_create_storage_project(backend: Any, project: Dict[str, Any]) -> Any:
@@ -301,7 +334,7 @@ async def handle_special_document_creation(
 
     prepared_metadata = _build_special_metadata(project, metadata, agent_id, extra_metadata)
 
-    rendered_content = content
+    rendered_content = _resolve_inline_special_content(content, metadata)
     if not rendered_content:
         try:
             if action == "create_review_report":
@@ -345,6 +378,15 @@ async def handle_special_document_creation(
         return helper.apply_context_payload(
             helper.error_response(
                 f"Generated document path {target_path} is outside project root",
+            ),
+            context,
+        )
+
+    overwrite = bool(metadata.get("overwrite")) if isinstance(metadata, dict) else False
+    if target_path.exists() and not overwrite:
+        return helper.apply_context_payload(
+            helper.error_response(
+                "CREATE_DOC_EXISTS: target path already exists (use metadata.overwrite to replace)",
             ),
             context,
         )

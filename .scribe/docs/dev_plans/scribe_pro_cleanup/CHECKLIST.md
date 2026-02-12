@@ -5,7 +5,7 @@ doc_name: checklist
 category: engineering
 status: draft
 version: '0.1'
-last_updated: 2026-02-11 07:29:18 UTC
+last_updated: 2026-02-12 01:41:00 UTC
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -19,7 +19,7 @@ summary: ''
 **Revised by:** ArchitectAgent-FinalPolish (Opus 4.6)
 **Version:** v1.1 (post-review revision)
 **Status:** Approved (all 5 blocking fixes + 6 recommendations incorporated)
-**Last Updated:** 2026-02-06 09:14 UTC
+**Last Updated:** 2026-02-12 01:41 UTC
 
 > Granular phase-by-phase verification checklist with pass/fail criteria, verification commands, and proof requirements. Each item maps to a task package in PHASE_PLAN.md.
 
@@ -36,69 +36,69 @@ summary: ''
 <!-- ID: phase_0 -->
 
 ### P1.1 Root Directory Junk Deletion
-- [ ] Broken pip artifacts deleted: `ls =0.1.0 =1.7.0 =1.20.0 =2.0.0 2>/dev/null` returns nothing <!-- ID: p1_pip_artifacts -->
-- [ ] Broken file artifacts deleted: `ls None None.journal None.lock None.journal.lock 2>/dev/null` returns nothing <!-- ID: p1_none_artifacts -->
-- [ ] Temp state files deleted: `ls tmp_state*.json 2>/dev/null` returns nothing <!-- ID: p1_temp_state -->
-- [ ] Backup files deleted: `ls *.bak old_agents.md 2>/dev/null` returns nothing <!-- ID: p1_backups -->
-- [ ] Debug script deleted: `ls debug_append_entry.py 2>/dev/null` returns nothing <!-- ID: p1_debug -->
-- [ ] Code dump deleted: `ls scribe_mcp_fullcode.txt 2>/dev/null` returns nothing <!-- ID: p1_codedump -->
-- [ ] Lock artifacts deleted: `ls TOKEN_OPTIMIZATION_LOG.md.journal .lock .journal.lock 2>/dev/null` returns nothing <!-- ID: p1_locks -->
-- [ ] Misplaced test files moved to tests/: `ls test_*.py` in root returns nothing <!-- ID: p1_test_files -->
-- [ ] Implementation reports moved to docs/: all IMPLEMENTATION_REPORT and BUG_FIX_REPORT files in docs/ <!-- ID: p1_reports -->
+- [x] Broken pip artifacts deleted: `ls =0.1.0 =1.7.0 =1.20.0 =2.0.0 2>/dev/null` returns nothing <!-- ID: p1_pip_artifacts -->
+- [x] Broken file artifacts deleted: `ls None None.journal None.lock None.journal.lock 2>/dev/null` returns nothing <!-- ID: p1_none_artifacts -->
+- [x] Temp state files deleted: `ls tmp_state*.json 2>/dev/null` returns nothing <!-- ID: p1_temp_state -->
+- [x] Backup files deleted: `ls *.bak old_agents.md 2>/dev/null` returns nothing <!-- ID: p1_backups -->
+- [x] Debug script deleted: `ls debug_append_entry.py 2>/dev/null` returns nothing <!-- ID: p1_debug -->
+- [x] Code dump deleted: `ls scribe_mcp_fullcode.txt 2>/dev/null` returns nothing <!-- ID: p1_codedump -->
+- [x] Lock artifacts deleted: `ls TOKEN_OPTIMIZATION_LOG.md.journal .lock .journal.lock 2>/dev/null` returns nothing <!-- ID: p1_locks -->
+- [x] Misplaced test files moved to tests/: `ls test_*.py` in root returns nothing <!-- ID: p1_test_files -->
+- [x] Implementation reports moved to docs/: all IMPLEMENTATION_REPORT and BUG_FIX_REPORT files in docs/ <!-- ID: p1_reports -->
 
 ### P1.2 Preflight Backup and Test Data Cleanup
-- [ ] Preflight backups deleted: `find . -name '*.preflight-*.bak' | wc -l` returns 0 <!-- ID: p1_preflight -->
-- [ ] tmp_tests/ deleted: `test -d tmp_tests && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_tmp_tests -->
-- [ ] Zone.Identifier files deleted: `find . -name '*Zone.Identifier' | wc -l` returns 0 <!-- ID: p1_zone_id -->
-- [ ] Patterns added to .gitignore: `grep 'preflight' .gitignore` returns match <!-- ID: p1_gitignore -->
-- [ ] Git tracking cleaned: `git status` shows no untracked files matching cleanup patterns <!-- ID: p1_git_clean -->
+- [x] Preflight backups deleted: `find . -name '*.preflight-*.bak' | wc -l` returns 0 <!-- ID: p1_preflight -->
+- [x] tmp_tests/ deleted: `test -d tmp_tests && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_tmp_tests -->
+- [x] Zone.Identifier files deleted: `find . -name '*Zone.Identifier' | wc -l` returns 0 <!-- ID: p1_zone_id -->
+- [x] Patterns added to .gitignore: `grep 'preflight' .gitignore` returns match <!-- ID: p1_gitignore -->
+- [x] Git tracking cleaned: `git status` shows no untracked files matching cleanup patterns <!-- ID: p1_git_clean -->
 
 ### P1.3 Dead Code File Deletion
-- [ ] db/ops.py deleted: `test -f db/ops.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_dead_ops -->
-- [ ] db/pool.py deleted: `test -f db/pool.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_dead_pool -->
-- [ ] db/init.sql preserved: `test -f db/init.sql && echo EXISTS || echo GONE` returns EXISTS <!-- ID: p1_keep_init -->
-- [ ] storage/pool.py preserved (active): `test -f storage/pool.py && echo EXISTS || echo GONE` returns EXISTS <!-- ID: p1_keep_storage_pool -->
-- [ ] Baseline test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p1_tests -->
+- [x] db/ops.py deleted: `test -f db/ops.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_dead_ops -->
+- [x] db/pool.py deleted: `test -f db/pool.py && echo EXISTS || echo GONE` returns GONE <!-- ID: p1_dead_pool -->
+- [x] db/init.sql preserved: `test -f db/init.sql && echo EXISTS || echo GONE` returns EXISTS <!-- ID: p1_keep_init -->
+- [x] storage/pool.py preserved (active): `test -f storage/pool.py && echo EXISTS || echo GONE` returns EXISTS <!-- ID: p1_keep_storage_pool -->
+- [x] Baseline test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p1_tests -->
 
 ### P1 Exit Gate
-- [ ] Zero junk files in root: `find . -maxdepth 1 -name '*.bak' -o -name 'None*' -o -name 'tmp_state*' -o -name 'debug_*' -o -name 'test_*.py' | wc -l` returns 0 <!-- ID: p1_exit -->
+- [x] Zero junk files in root: `find . -maxdepth 1 -name '*.bak' -o -name 'None*' -o -name 'tmp_state*' -o -name 'debug_*' -o -name 'test_*.py' | wc -l` returns 0 <!-- ID: p1_exit -->
 
 ---
 ## Phase 2: Centralized Logging + Security Fixes
 <!-- ID: phase_1 -->
 
 ### P2.1 Logging Infrastructure
-- [ ] config/logging.py exists with LOGGING_CONFIG: `test -f config/logging.py && echo EXISTS` <!-- ID: p2_logging_file -->
-- [ ] configure_logging() callable: `python -c "from scribe_mcp.config.logging import configure_logging; configure_logging()"` succeeds <!-- ID: p2_logging_call -->
-- [ ] SCRIBE_LOG_LEVEL respected: setting to ERROR suppresses WARNING messages <!-- ID: p2_log_level -->
+- [x] config/logging.py exists with LOGGING_CONFIG: `test -f config/logging.py && echo EXISTS` <!-- ID: p2_logging_file -->
+- [x] configure_logging() callable: `python -c "from scribe_mcp.config.logging import configure_logging; configure_logging()"` succeeds <!-- ID: p2_logging_call -->
+- [x] SCRIBE_LOG_LEVEL respected: setting to ERROR suppresses WARNING messages <!-- ID: p2_log_level -->
 
 ### P2.2 Print/Stderr Batch 1 (Critical Path)
-- [ ] server.py clean: `grep -c 'print(' server.py` returns 0 <!-- ID: p2_print_server -->
-- [ ] storage/sqlite.py clean: `grep -c 'print(' storage/sqlite.py` returns 0 <!-- ID: p2_print_sqlite -->
-- [ ] config/settings.py clean: `grep -c 'print(' config/settings.py` returns 0 <!-- ID: p2_print_settings -->
-- [ ] Each file has `import logging; logger = logging.getLogger(__name__)` <!-- ID: p2_logger_setup -->
+- [x] server.py clean: `grep -c 'print(' server.py` returns 0 <!-- ID: p2_print_server -->
+- [x] storage/sqlite.py clean: `grep -c 'print(' storage/sqlite.py` returns 0 <!-- ID: p2_print_sqlite -->
+- [x] config/settings.py clean: `grep -c 'print(' config/settings.py` returns 0 <!-- ID: p2_print_settings -->
+- [x] Each file has `import logging; logger = logging.getLogger(__name__)` <!-- ID: p2_logger_setup -->
 
 ### P2.3 Print/Stderr Batch 2 (Tools and Utils)
-- [ ] All production code clean: `grep -rn 'print(' --include='*.py' tools/ utils/ shared/ state/ bridges/ storage/ config/ | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p2_print_all -->
-- [ ] scripts/ print() calls preserved (intentional CLI output) <!-- ID: p2_scripts_keep -->
-- [ ] Test suite passes after conversion: `pytest tests/ --tb=short` exit code 0 <!-- ID: p2_tests_batch2 -->
+- [x] All production code clean: `grep -rn 'print(' --include='*.py' tools/ utils/ shared/ state/ bridges/ storage/ config/ | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p2_print_all -->
+- [x] scripts/ print() calls preserved (intentional CLI output) <!-- ID: p2_scripts_keep -->
+- [x] Test suite passes after conversion: `pytest tests/ --tb=short` exit code 0 <!-- ID: p2_tests_batch2 -->
 
 ### P2.4 Security: Symlink Path Traversal Fix
-- [ ] read_file.py: boundary check BEFORE Path.resolve() (code review lines 1754-1760) <!-- ID: p2_symlink_read -->
-- [ ] edit_file.py: boundary check BEFORE Path.resolve() (code review lines 215-221) <!-- ID: p2_symlink_edit -->
-- [ ] search.py: boundary check BEFORE Path.resolve() (code review lines 651-659) <!-- ID: p2_symlink_search -->
-- [ ] Dotdot component check on unresolved path <!-- ID: p2_dotdot_check -->
-- [ ] Symlink escape test exists and passes: `pytest tests/test_read_file*.py -k symlink` <!-- ID: p2_symlink_test -->
+- [x] read_file.py: boundary check BEFORE Path.resolve() (code review lines 1754-1760) <!-- ID: p2_symlink_read -->
+- [x] edit_file.py: boundary check BEFORE Path.resolve() (code review lines 215-221) <!-- ID: p2_symlink_edit -->
+- [x] search.py: boundary check BEFORE Path.resolve() (code review lines 651-659) <!-- ID: p2_symlink_search -->
+- [x] Dotdot component check on unresolved path <!-- ID: p2_dotdot_check -->
+- [x] Symlink escape test exists and passes: `pytest tests/test_read_file*.py -k symlink` <!-- ID: p2_symlink_test -->
 
 ### P2.5 Security: Log Injection Sanitization
-- [ ] _sanitize_log_field() exists in shared/logging_utils.py: strips newline, carriage return, null <!-- ID: p2_sanitize_fn -->
-- [ ] compose_log_line() calls _sanitize_log_field on agent, project_name, message <!-- ID: p2_sanitize_call -->
-- [ ] Injection test passes: injected newline produces single log line <!-- ID: p2_injection_test -->
+- [x] _sanitize_log_field() exists in shared/logging_utils.py: strips newline, carriage return, null <!-- ID: p2_sanitize_fn -->
+- [x] compose_log_line() calls _sanitize_log_field on agent, project_name, message <!-- ID: p2_sanitize_call -->
+- [x] Injection test passes: injected newline produces single log line <!-- ID: p2_injection_test -->
 
 ### P2 Exit Gate
-- [ ] Zero print/stderr in production: `grep -rn 'print(' --include='*.py' tools/ utils/ shared/ state/ bridges/ storage/ config/ server.py | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p2_exit_print -->
-- [ ] Symlink escape blocked (tested) <!-- ID: p2_exit_symlink -->
-- [ ] Full test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p2_exit_tests -->
+- [x] Zero print/stderr in production: `grep -rn 'print(' --include='*.py' tools/ utils/ shared/ state/ bridges/ storage/ config/ server.py | grep -v '# noqa' | wc -l` returns 0 <!-- ID: p2_exit_print -->
+- [x] Symlink escape blocked (tested) <!-- ID: p2_exit_symlink -->
+- [x] Full test suite passes: `pytest tests/ --tb=short` exit code 0 <!-- ID: p2_exit_tests -->
 
 ---
 ## Phase 3: Dead Code Removal + Error Handling

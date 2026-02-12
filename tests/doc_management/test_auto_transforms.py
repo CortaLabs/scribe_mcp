@@ -23,7 +23,7 @@ async def test_auto_normalize_headers_enabled(tmp_path):
 auto_normalize_headers: true
 ---
 
-#Bad Header Without Space
+# Bad Header Without Space
 ## Another  Bad   Header
 
 Content here.
@@ -174,9 +174,9 @@ auto_normalize_headers: true
 auto_generate_toc: true
 ---
 
-#Bad Header
+# Bad Header
 
-##Another Bad Header
+## Another Bad Header
 
 Content here.
 """
@@ -225,7 +225,7 @@ async def test_auto_transforms_skip_normalize_action(tmp_path):
 auto_normalize_headers: true
 ---
 
-#Bad Header
+# Bad Header
 
 Content here.
 """

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from scribe_mcp import server as server_module
@@ -114,6 +116,41 @@ async def test_read_file_allows_normal_relative_paths(tmp_path):
             format="structured",
         )
         assert result["ok"] is True
+    finally:
+        server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_read_file_frontmatter_datetime_values_are_json_safe(tmp_path):
+    token = _install_execution_context(tmp_path)
+    try:
+        target = tmp_path / "dated_frontmatter.md"
+        target.write_text(
+            "---\n"
+            "updated_utc: 2026-02-11 10:04:00+00:00\n"
+            "release_date: 2026-02-11\n"
+            "nested:\n"
+            "  emitted_at: 2026-02-11 10:05:00+00:00\n"
+            "---\n"
+            "# Heading\n",
+            encoding="utf-8",
+        )
+
+        result = await read_file(
+            agent="test_agent",
+            path=str(target),
+            mode="scan_only",
+            format="structured",
+        )
+
+        assert result["ok"] is True
+        frontmatter = result.get("frontmatter", {})
+        assert isinstance(frontmatter.get("updated_utc"), str)
+        assert isinstance(frontmatter.get("release_date"), str)
+        assert isinstance(frontmatter.get("nested", {}).get("emitted_at"), str)
+
+        # Regression guard: response payload must remain JSON serializable.
+        json.dumps(result)
     finally:
         server_module.router_context_manager.reset(token)
 

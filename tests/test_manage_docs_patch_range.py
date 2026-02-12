@@ -171,6 +171,85 @@ async def test_replace_text_literal_scoped_section(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_replace_text_literal_scoped_inline_anchor_targets_anchor_line(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    checklist_path = Path(project["docs"]["checklist"])
+    checklist_path.write_text(
+        "# Checklist\n"
+        "- [ ] Ship docs <!-- ID: p4_documents -->\n"
+        "- [ ] Ship API <!-- ID: p4_api -->\n",
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="checklist",
+        action="replace_text",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={
+            "find": "Ship docs",
+            "replace": "Ship docs (done)",
+            "replace_all": False,
+            "match_mode": "literal",
+            "scope": "section:p4_documents",
+        },
+        dry_run=False,
+    )
+
+    assert change.success
+    updated = checklist_path.read_text(encoding="utf-8")
+    assert "Ship docs (done) <!-- ID: p4_documents -->" in updated
+    assert "Ship API <!-- ID: p4_api -->" in updated
+
+
+@pytest.mark.asyncio
+async def test_replace_text_scoped_block_ignores_inline_anchor_markers(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    checklist_path = Path(project["docs"]["checklist"])
+    checklist_path.write_text(
+        "# Checklist\n"
+        "<!-- ID: phase_0 -->\n"
+        "- [ ] Ship docs <!-- ID: p4_documents -->\n"
+        "- [ ] Ship API\n"
+        "<!-- ID: phase_1 -->\n"
+        "- [ ] Later\n",
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="checklist",
+        action="replace_text",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={
+            "find": "Ship API",
+            "replace": "Ship API (done)",
+            "replace_all": False,
+            "match_mode": "literal",
+            "scope": "section:phase_0",
+        },
+        dry_run=False,
+    )
+
+    assert change.success
+    updated = checklist_path.read_text(encoding="utf-8")
+    assert "Ship API (done)" in updated
+    assert "- [ ] Later" in updated
+
+
+@pytest.mark.asyncio
 async def test_apply_patch_patch_mode_conflict(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
 
