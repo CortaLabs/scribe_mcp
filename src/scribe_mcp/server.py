@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import inspect
 import os
+from time import perf_counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -154,6 +155,26 @@ _SENTINEL_ALLOWED_TOOLS = _SENTINEL_ONLY_TOOLS | {
 }
 
 
+def _float_env(name: str, default: float, minimum: float = 0.0) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, value)
+
+
+_STARTUP_CLEANUP_DELAY_SECONDS = _float_env("SCRIBE_STARTUP_CLEANUP_DELAY_SECONDS", 60.0, 0.0)
+_STARTUP_LEGACY_MIGRATION_DELAY_SECONDS = _float_env(
+    "SCRIBE_STARTUP_LEGACY_MIGRATION_DELAY_SECONDS",
+    20.0,
+    0.0,
+)
+_STARTUP_PLUGIN_INIT_DELAY_SECONDS = _float_env("SCRIBE_STARTUP_PLUGIN_INIT_DELAY_SECONDS", 25.0, 0.0)
+
+
 def _resolve_bridge_tool(tool_name: str) -> Optional[Callable[..., Awaitable[Any]]]:
     if ":" not in tool_name or not BRIDGES_AVAILABLE:
         return None
@@ -169,6 +190,18 @@ def _resolve_bridge_tool(tool_name: str) -> Optional[Callable[..., Awaitable[Any
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _run_after_delay(
+    delay_seconds: float,
+    coroutine_factory: Callable[[], Awaitable[None]],
+    *,
+    label: str,
+) -> None:
+    if delay_seconds > 0:
+        logger.info("Delaying %s startup task by %.1fs", label, delay_seconds)
+        await asyncio.sleep(delay_seconds)
+    await coroutine_factory()
 
 
 def get_background_service_status() -> dict[str, dict[str, Any]]:
@@ -416,11 +449,13 @@ if _MCP_AVAILABLE:
 
         @app.list_tools()
         async def _list_tools() -> list[mcp_types.Tool]:
+            tools.ensure_all_tools_loaded()
             defs = getattr(Server, "_scribe_tool_defs", {})
             return list(defs.values())
 
         @app.call_tool()
         async def _call_tool(name: str, arguments: Dict[str, Any], **kwargs: Any) -> Any:
+            tools.ensure_tool_loaded(name)
             registry = getattr(Server, "_scribe_tool_registry", {})
             return await execute_tool_call(
                 name=name,
@@ -705,19 +740,33 @@ async def _startup() -> None:
     if _startup_complete:
         return
     _startup_complete = True
+    startup_started = perf_counter()
 
     if storage_backend:
+        storage_setup_started = perf_counter()
         await storage_backend.setup()
+        logger.info(
+            "Startup phase storage.setup completed in %.1fms",
+            (perf_counter() - storage_setup_started) * 1000.0,
+        )
         # Cleanup can contend on shared SQLite writers, so keep startup non-blocking.
         schedule_background_task(
-            _cleanup_old_entries_background(),
+            _run_after_delay(
+                _STARTUP_CLEANUP_DELAY_SECONDS,
+                _cleanup_old_entries_background,
+                label="entry cleanup",
+            ),
             service_name="entry_cleanup",
             description="Retention cleanup for old entries",
         )
 
     # Plugin/bootstrap tasks are background services by design.
     schedule_background_task(
-        _init_plugins_background(),
+        _run_after_delay(
+            _STARTUP_PLUGIN_INIT_DELAY_SECONDS,
+            _init_plugins_background,
+            label="plugin initialization",
+        ),
         service_name="plugin_init",
         description="Plugin subsystem initialization",
     )
@@ -735,7 +784,11 @@ async def _startup() -> None:
         logger.info("AgentIdentity system initialized for automatic agent detection")
 
         schedule_background_task(
-            _migrate_legacy_state_background(),
+            _run_after_delay(
+                _STARTUP_LEGACY_MIGRATION_DELAY_SECONDS,
+                _migrate_legacy_state_background,
+                label="legacy state migration",
+            ),
             service_name="legacy_state_migration",
             description="One-time legacy state migration",
         )
@@ -756,6 +809,12 @@ async def _startup() -> None:
         _replay_journals_background(),
         service_name="journal_replay",
         description="Replay uncommitted journal entries",
+    )
+    total_startup_ms = (perf_counter() - startup_started) * 1000.0
+    logger.info(
+        "Startup initialization completed in %.1fms (deferred services=%d)",
+        total_startup_ms,
+        len(background_tasks),
     )
     # Protocol signal — Council MCP and other process managers pattern-match
     # stderr for "Server ready" to know the subprocess is ready for MCP
@@ -808,6 +867,7 @@ def get_execution_context():
 
 def list_registered_tools() -> list[str]:
     """Return sorted tool names currently registered on the MCP server."""
+    tools.ensure_all_tools_loaded()
     registry = getattr(Server, "_scribe_tool_registry", {})
     return sorted(str(name) for name in registry.keys())
 
@@ -848,6 +908,7 @@ async def invoke_tool(
 
     await _startup()
     try:
+        tools.ensure_tool_loaded(name)
         registry = getattr(Server, "_scribe_tool_registry", {})
         return await execute_tool_call(
             name=name,

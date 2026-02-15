@@ -37,6 +37,9 @@ class AgentContextManager:
         self._lease_lock = asyncio.Lock()
         self._session_ttl_minutes = 15  # 15 minute session leases
 
+    def _is_postgres_storage(self) -> bool:
+        return self.storage.__class__.__module__.startswith("scribe_mcp.storage.postgres")
+
     async def start_session(
         self,
         agent_id: str,
@@ -123,13 +126,28 @@ class AgentContextManager:
 
         # Set in database (source of truth)
         try:
-            result = await self.storage.set_agent_project(
+            result_raw = await self.storage.set_agent_project(
                 agent_id=agent_id,
                 project_name=project_name,
                 expected_version=expected_version,
                 updated_by=agent_id,
                 session_id=session_id
             )
+            if isinstance(result_raw, dict):
+                result = dict(result_raw)
+            else:
+                logger.warning(
+                    "storage.set_agent_project returned non-dict result (%s) for agent '%s'; using fallback payload.",
+                    type(result_raw).__name__,
+                    agent_id,
+                )
+                result = {}
+
+            result.setdefault("agent_id", agent_id)
+            result.setdefault("project_name", project_name)
+            result.setdefault("version", 1)
+            result.setdefault("updated_by", agent_id)
+            result.setdefault("session_id", session_id)
 
             # Log successful project change
             event_type = "project_switched" if previous_project and previous_project != project_name else "project_set"
@@ -140,7 +158,7 @@ class AgentContextManager:
                 from_project=previous_project,
                 to_project=project_name,
                 expected_version=expected_version,
-                actual_version=result["version"] if hasattr(result, "__getitem__") else result.get("version"),
+                actual_version=result.get("version"),
                 success=True,
                 metadata={"updated_by": agent_id}
             )
@@ -351,27 +369,56 @@ class AgentContextManager:
                 "success": success,
                 "error_message": error_message,
                 "metadata": json.dumps(metadata or {}),
-                "created_at": utcnow().isoformat(),
+                "created_at": utcnow(),
             }
 
             # Store in database if available
             try:
-                # Use the storage backend's execute method if available
-                if hasattr(self.storage, '_execute'):
-                    query = """
-                        INSERT INTO agent_project_events (
-                            agent_id, session_id, event_type, from_project, to_project,
-                            expected_version, actual_version, success, error_message, metadata, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                    await self.storage._execute(
-                        query,
-                        (
-                            agent_id, session_id, event_type, from_project, to_project,
-                            expected_version, actual_version, success, error_message,
-                            event_data["metadata"], event_data["created_at"]
+                if hasattr(self.storage, "_execute"):
+                    if self._is_postgres_storage():
+                        query = """
+                            INSERT INTO agent_project_events (
+                                agent_id, session_id, event_type, from_project, to_project,
+                                expected_version, actual_version, success, error_message, metadata, created_at
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+                        """
+                        await self.storage._execute(
+                            query,
+                            agent_id,
+                            session_id,
+                            event_type,
+                            from_project,
+                            to_project,
+                            expected_version,
+                            actual_version,
+                            success,
+                            error_message,
+                            event_data["metadata"],
+                            event_data["created_at"],
                         )
-                    )
+                    else:
+                        query = """
+                            INSERT INTO agent_project_events (
+                                agent_id, session_id, event_type, from_project, to_project,
+                                expected_version, actual_version, success, error_message, metadata, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """
+                        await self.storage._execute(
+                            query,
+                            (
+                                agent_id,
+                                session_id,
+                                event_type,
+                                from_project,
+                                to_project,
+                                expected_version,
+                                actual_version,
+                                success,
+                                error_message,
+                                event_data["metadata"],
+                                event_data["created_at"],
+                            ),
+                        )
             except Exception as db_error:
                 # Database audit logging failed, but don't fail the operation
                 logger.warning("Database audit logging failed: %s", db_error)
@@ -399,29 +446,51 @@ class AgentContextManager:
         """
         try:
             where_clauses = []
-            params = []
 
-            if agent_id:
-                where_clauses.append("agent_id = ?")
-                params.append(agent_id)
+            if self._is_postgres_storage() and hasattr(self.storage, "_fetch"):
+                params: list[Any] = []
 
-            if event_type:
-                where_clauses.append("event_type = ?")
-                params.append(event_type)
+                if agent_id:
+                    where_clauses.append(f"agent_id = ${len(params) + 1}")
+                    params.append(agent_id)
 
-            where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+                if event_type:
+                    where_clauses.append(f"event_type = ${len(params) + 1}")
+                    params.append(event_type)
 
-            query = f"""
-                SELECT id, agent_id, session_id, event_type, from_project, to_project,
-                       expected_version, actual_version, success, error_message, metadata, created_at
-                FROM agent_project_events
-                {where_sql}
-                ORDER BY created_at DESC
-                LIMIT ?
-            """
-            params.append(limit)
+                where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+                params.append(limit)
+                query = f"""
+                    SELECT id, agent_id, session_id, event_type, from_project, to_project,
+                           expected_version, actual_version, success, error_message, metadata, created_at
+                    FROM agent_project_events
+                    {where_sql}
+                    ORDER BY created_at DESC
+                    LIMIT ${len(params)}
+                """
+                rows = await self.storage._fetch(query, *params)
+            else:
+                params = []
+                if agent_id:
+                    where_clauses.append("agent_id = ?")
+                    params.append(agent_id)
 
-            rows = await self.storage._fetchall(query, tuple(params))
+                if event_type:
+                    where_clauses.append("event_type = ?")
+                    params.append(event_type)
+
+                where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+                query = f"""
+                    SELECT id, agent_id, session_id, event_type, from_project, to_project,
+                           expected_version, actual_version, success, error_message, metadata, created_at
+                    FROM agent_project_events
+                    {where_sql}
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """
+                params.append(limit)
+                rows = await self.storage._fetchall(query, tuple(params))
+
             return [dict(row) for row in rows]
 
         except Exception as e:

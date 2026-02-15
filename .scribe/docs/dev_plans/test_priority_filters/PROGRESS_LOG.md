@@ -222,3 +222,299 @@
 [ℹ️] [2026-02-11 04:28:30 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
 [ℹ️] [2026-02-11 04:28:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
 [ℹ️] [2026-02-11 04:28:31 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:17 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:17 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:17 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 02:41:17 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:31 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:33 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:00:33 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:47 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:47 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:47 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:47 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:47 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:47 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:47 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:48 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:49 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:49 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:49 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:49 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:06:49 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:31 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:32 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:33 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:23:33 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:10 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:10 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:10 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:11 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:12 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:12 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:12 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:12 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:12 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:12 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 03:34:12 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:00 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:00 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:00 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:00 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:00 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:01 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:02 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:02 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:02 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:02 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:02 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:02 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:11:02 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:25 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:27 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:27 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 05:51:27 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:07 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:10:09 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:14 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:14 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:14 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:14 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:14 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:15 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:16 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:17 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:17 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:18:17 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:26 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:27 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:27 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:27 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:27 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:27 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:28 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:28 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:28 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:28 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:28 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:28 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:29 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:29 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:29 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:29 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:29 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:30 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 06:52:30 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:20 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:22 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:22 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:22 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:23 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:24 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:24 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:25 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:25 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:26 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:27 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:28 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:28 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:29 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:29 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:30 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:30 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:00:30 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:51 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:51 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:51 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:51 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:51 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:51 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:52 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:53 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:53 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:53 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:53 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:53 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:53 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:53 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:54 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:08:54 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical bug discovered | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:07 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority task | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium priority work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug found in authentication | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:07 UTC] [Agent: test_agent] [Project: test_priority_filters] Security vulnerability detected | priority=medium; category=security; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Implementation completed | priority=medium; category=implementation; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Low confidence entry | priority=medium; confidence=0.3; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium confidence entry | priority=medium; confidence=0.7; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] High confidence entry | priority=medium; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:08 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium task | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical database issue | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority cleanup | priority=low; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Test results passing | priority=medium; category=test; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Bug fix committed | priority=medium; category=bug; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical security bug | priority=critical; category=security; confidence=0.95; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:09 UTC] [Agent: test_agent] [Project: test_priority_filters] Low priority note | priority=low; category=documentation; confidence=0.5; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:10 UTC] [Agent: test_agent] [Project: test_priority_filters] Medium work | priority=medium; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:10 UTC] [Agent: test_agent] [Project: test_priority_filters] Critical alert | priority=critical; log_type=progress; content_type=log
+[ℹ️] [2026-02-12 07:17:10 UTC] [Agent: test_agent] [Project: test_priority_filters] High priority | priority=high; log_type=progress; content_type=log

@@ -1,0 +1,135 @@
+{
+  "current_project": null,
+  "projects": {
+    "council_hierarchy_next_research_2026_02_12": {
+      "name": "council_hierarchy_next_research_2026_02_12",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "blueprint"
+      },
+      "author": "blueprint",
+      "description": "Research and architecture planning for council hierarchy expansion, command center UX, federation, template distribution, and strict scribe workflow enforcement",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+        }
+      },
+      "version": 1,
+      "updated_by": "blueprint",
+      "session_id": "3047d6d2-7ed4-466f-b222-a90812b08747"
+    }
+  },
+  "recent_projects": [
+    "council_hierarchy_next_research_2026_02_12"
+  ],
+  "session_projects": {
+    "d1a3b3dc-27ec-47b8-bda9-89f0d0a6c03f": {
+      "name": "council_hierarchy_next_research_2026_02_12",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "blueprint"
+      },
+      "author": "blueprint",
+      "description": "Research and architecture planning for council hierarchy expansion, command center UX, federation, template distribution, and strict scribe workflow enforcement",
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+        }
+      },
+      "version": 1,
+      "updated_by": "blueprint",
+      "session_id": "3047d6d2-7ed4-466f-b222-a90812b08747"
+    }
+  },
+  "recent_tools": [],
+  "last_activity_at": null,
+  "session_started_at": null,
+  "version": 1,
+  "last_updated_by": "blueprint",
+  "operation_timestamp": "2026-02-12 09:15:49 UTC",
+  "agent_state": {
+    "last_agent_id": "agent-20260212-091551-15c1a41d",
+    "last_seen": "2026-02-12T09:21:06.438740+00:00",
+    "agent_metadata": {
+      "created_at": "2026-02-12T09:21:06.437368+00:00",
+      "id_type": "auto-generated"
+    },
+    "activity_log": [
+      {
+        "agent_id": "agent-20260212-091551-15c1a41d",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:17:30.112900+00:00",
+        "metadata": {
+          "message_length": 45,
+          "status": "info",
+          "bulk_mode": false
+        }
+      },
+      {
+        "agent_id": "agent-20260212-091551-15c1a41d",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:18:32.266014+00:00",
+        "metadata": {
+          "message_length": 45,
+          "status": "info",
+          "bulk_mode": false
+        }
+      },
+      {
+        "agent_id": "agent-20260212-091551-15c1a41d",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:20:19.231596+00:00",
+        "metadata": {
+          "message_length": 45,
+          "status": "info",
+          "bulk_mode": false
+        }
+      },
+      {
+        "agent_id": "agent-20260212-091551-15c1a41d",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:21:00.865475+00:00",
+        "metadata": {
+          "message_length": 191,
+          "status": "success",
+          "bulk_mode": false
+        }
+      },
+      {
+        "agent_id": "agent-20260212-091551-15c1a41d",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:21:06.438721+00:00",
+        "metadata": {
+          "message_length": 137,
+          "status": "info",
+          "bulk_mode": false
+        }
+      }
+    ],
+    "last_activity": "append_entry"
+  }
+}

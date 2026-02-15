@@ -1,0 +1,196 @@
+{
+  "version": "1.0.0",
+  "conditions": {
+    "new_project_setup": {
+      "triggers": ["no_log_entries", "tool=set_project"],
+      "reminder_key": "teaching.new_project_welcome",
+      "priority": "high"
+    },
+    "new_project_workflow": {
+      "triggers": ["no_log_entries", "tool=set_project"],
+      "reminder_key": "teaching.scribe_workflow_tip",
+      "priority": "high"
+    },
+    "new_project_metadata": {
+      "triggers": ["no_log_entries", "tool=set_project"],
+      "reminder_key": "teaching.metadata_tip",
+      "priority": "medium"
+    },
+    "new_project_docs": {
+      "triggers": ["no_log_entries", "tool=set_project"],
+      "reminder_key": "teaching.documentation_tip",
+      "priority": "medium"
+    },
+    "no_logs_yet": {
+      "triggers": ["no_log_entries"],
+      "reminder_key": "logging.no_logs_yet",
+      "priority": "high"
+    },
+    "logging_stale": {
+      "triggers": ["minutes_since_log > 30"],
+      "reminder_key": "logging.logging_stale_warning",
+      "priority": "medium",
+      "escalation": {
+        "threshold": 120,
+        "reminder_key": "logging.logging_stale_urgent"
+      }
+    },
+    "missing_docs": {
+      "triggers": ["docs_missing"],
+      "reminder_key": "documentation.missing_docs",
+      "priority": "high",
+      "variable_mapping": {
+        "missing_docs": "missing_doc_names"
+      }
+    },
+    "architecture_incomplete": {
+      "triggers": ["architecture_incomplete", "log_entries > 5"],
+      "reminder_key": "documentation.architecture_incomplete",
+      "priority": "medium"
+    },
+    "dev_without_docs": {
+      "triggers": ["architecture_incomplete", "log_entries > 10"],
+      "reminder_key": "workflow.dev_without_docs",
+      "priority": "high"
+    },
+    "phase_plan_incomplete": {
+      "triggers": ["phase_plan_incomplete", "architecture_complete"],
+      "reminder_key": "documentation.phase_plan_incomplete",
+      "priority": "medium"
+    },
+    "checklist_incomplete": {
+      "triggers": ["checklist_incomplete", "phase_plan_complete"],
+      "reminder_key": "documentation.checklist_incomplete",
+      "priority": "low"
+    },
+    "docs_changed": {
+      "triggers": ["docs_changed"],
+      "reminder_key": "documentation.docs_changed",
+      "priority": "low",
+      "variable_mapping": {
+        "changed_docs": "changed_doc_names"
+      }
+    },
+    "doc_stale": {
+      "triggers": ["doc_stale_days > 7"],
+      "reminder_key": "documentation.doc_stale",
+      "priority": "low",
+      "variable_mapping": {
+        "doc_name": "stale_doc_name",
+        "days": "doc_stale_days"
+      }
+    },
+    "project_context": {
+      "triggers": ["always"],
+      "reminder_key": "context.project_context",
+      "priority": "low",
+      "variable_mapping": {
+        "project_name": "project_name",
+        "phase_info": "current_phase_formatted",
+        "phase_suffix": "current_phase_suffix",
+        "total_entries": "log_entry_count",
+        "last_log": "last_log_formatted",
+        "session_info": "session_age_formatted"
+      }
+    }
+  },
+  "teaching_rules": {
+    "manage_docs_replace_section_scaffold": {
+      "triggers": ["tool=manage_docs", "action=replace_section", "scaffold=true"],
+      "reminder_key": "teaching.manage_docs_scaffold_mode",
+      "cooldown_minutes": 30
+    },
+    "manage_docs_replace_section_preference": {
+      "triggers": ["tool=manage_docs", "action=replace_section", "scaffold=false"],
+      "reminder_key": "teaching.manage_docs_precision_preferred",
+      "cooldown_minutes": 30
+    },
+    "manage_docs_normalize_headers": {
+      "triggers": ["tool=manage_docs", "action=normalize_headers"],
+      "reminder_key": "teaching.manage_docs_normalize_headers",
+      "cooldown_minutes": 30
+    },
+    "manage_docs_generate_toc": {
+      "triggers": ["tool=manage_docs", "action=generate_toc"],
+      "reminder_key": "teaching.manage_docs_generate_toc",
+      "cooldown_minutes": 30
+    },
+    "manage_docs_create_doc": {
+      "triggers": ["tool=manage_docs", "action=create_doc"],
+      "reminder_key": "teaching.manage_docs_create_doc",
+      "cooldown_minutes": 30
+    },
+    "manage_docs_validate_crosslinks": {
+      "triggers": ["tool=manage_docs", "action=validate_crosslinks"],
+      "reminder_key": "teaching.manage_docs_validate_crosslinks",
+      "cooldown_minutes": 30
+    },
+    "list_projects_compact": {
+      "triggers": ["tool=list_projects", "not_compact=true", "total_items > 3"],
+      "reminder_key": "teaching.how_to_use",
+      "cooldown_minutes": 30
+    },
+    "list_projects_pagination": {
+      "triggers": ["tool=list_projects", "has_pagination=false", "total_items > 5"],
+      "reminder_key": "teaching.pagination_tip",
+      "cooldown_minutes": 45
+    },
+    "list_projects_filter": {
+      "triggers": ["tool=list_projects", "no_filter=true", "total_items > 3"],
+      "reminder_key": "teaching.filter_tip",
+      "cooldown_minutes": 60
+    },
+    "set_project_needed": {
+      "triggers": ["no_project=true"],
+      "reminder_key": "teaching.set_project_tip",
+      "cooldown_minutes": 15
+    },
+    "append_entry_metadata": {
+      "triggers": ["tool=append_entry", "no_meta=true"],
+      "reminder_key": "teaching.meta_logging_tip",
+      "cooldown_minutes": 20
+    }
+  },
+  "variable_sources": {
+    "minutes_since_log": "context.minutes_since_log",
+    "log_entries": "context.total_entries",
+    "missing_doc_names": "docs.missing_names",
+    "changed_doc_names": "docs.changed_names",
+    "architecture_complete": "docs.status.architecture == 'complete'",
+    "architecture_incomplete": "docs.status.architecture != 'complete'",
+    "phase_plan_complete": "docs.status.phase_plan == 'complete'",
+    "phase_plan_incomplete": "docs.status.phase_plan != 'complete'",
+    "checklist_complete": "docs.status.checklist == 'complete'",
+    "checklist_incomplete": "docs.status.checklist != 'complete'",
+    "no_log_entries": "context.total_entries == 0",
+    "docs_missing": "any(docs.status[name] == 'missing' for name in docs.required)",
+    "docs_changed": "len(docs.changed_names) > 0",
+    "doc_stale_days": "docs.max_stale_days",
+    "stale_doc_name": "docs.most_stale_name",
+    "tool": "context.tool_name",
+    "project_name": "context.project_name",
+    "current_phase": "context.current_phase",
+    "current_phase_formatted": "context.current_phase_formatted",
+    "current_phase_suffix": "context.current_phase_suffix",
+    "log_entry_count": "context.total_entries",
+    "last_log_formatted": "context.last_log_formatted",
+    "session_age_formatted": "context.session_age_formatted"
+  },
+  "escalation_rules": {
+    "logging_frequency": {
+      "check_interval_minutes": 60,
+      "escalation_thresholds": [
+        {"minutes": 30, "level": "warning"},
+        {"minutes": 120, "level": "urgent"},
+        {"minutes": 240, "level": "critical"}
+      ]
+    },
+    "doc_urgency": {
+      "check_interval_minutes": 120,
+      "escalation_thresholds": [
+        {"entries_without_docs": 5, "level": "warning"},
+        {"entries_without_docs": 15, "level": "urgent"}
+      ]
+    }
+  }
+}

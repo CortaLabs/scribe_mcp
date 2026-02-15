@@ -534,3 +534,4 @@
 [ℹ️] [2026-02-11 03:27:53 UTC] [Agent: test_agent] [Project: scribe_mcp] Medium work | priority=medium; log_type=progress; content_type=log
 [ℹ️] [2026-02-11 03:27:53 UTC] [Agent: test_agent] [Project: scribe_mcp] Critical alert | priority=critical; log_type=progress; content_type=log
 [ℹ️] [2026-02-11 03:27:53 UTC] [Agent: test_agent] [Project: scribe_mcp] High priority | priority=high; log_type=progress; content_type=log
+[ℹ️] [2026-02-13 03:07:56 UTC] [Agent: Codex] [Project: scribe_mcp] smoke | priority=low; log_type=progress; content_type=log

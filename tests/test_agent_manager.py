@@ -4,7 +4,6 @@
 import asyncio
 import tempfile
 from pathlib import Path
-
 import pytest
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
@@ -143,6 +142,104 @@ async def test_session_cleanup():
         await storage.close()
 
     print("✅ Session cleanup tests completed successfully!")
+
+
+@pytest.mark.asyncio
+async def test_set_current_project_tolerates_none_storage_result(monkeypatch):
+    """set_current_project should not crash if storage returns a non-dict payload."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        db_path = temp_path / "test.db"
+        state_path = temp_path / "state.json"
+
+        storage = SQLiteStorage(db_path)
+        await storage.setup()
+        state_manager = StateManager(state_path)
+        manager = AgentContextManager(storage, state_manager)
+
+        session_id = await manager.start_session("AgentA")
+
+        async def _return_none(**_kwargs):
+            return None
+
+        monkeypatch.setattr(storage, "set_agent_project", _return_none)
+
+        result = await manager.set_current_project("AgentA", "RecoveredProject", session_id)
+        assert isinstance(result, dict)
+        assert result.get("project_name") == "RecoveredProject"
+        assert result.get("session_id") == session_id
+        assert result.get("updated_by") == "AgentA"
+
+        await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_log_agent_event_uses_postgres_parameter_style(tmp_path):
+    class _FakePostgresStorage:
+        __module__ = "scribe_mcp.storage.postgres.fake"
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+        async def _execute(self, query: str, *params: object) -> str:
+            self.calls.append((query, params))
+            return "INSERT 0 1"
+
+    state_path = tmp_path / "state.json"
+    manager = AgentContextManager(_FakePostgresStorage(), StateManager(state_path))
+
+    await manager.log_agent_event(
+        agent_id="agent-1",
+        session_id="sess-1",
+        event_type="project_set",
+        to_project="demo",
+        metadata={"source": "test"},
+    )
+
+    query, params = manager.storage.calls[0]
+    assert "$1" in query
+    assert "?" not in query
+    assert len(params) == 11
+
+
+@pytest.mark.asyncio
+async def test_get_agent_events_uses_postgres_fetch_api(tmp_path):
+    class _FakePostgresStorage:
+        __module__ = "scribe_mcp.storage.postgres.fake"
+
+        def __init__(self) -> None:
+            self.last_query = ""
+            self.last_params: tuple[object, ...] = ()
+
+        async def _fetch(self, query: str, *params: object):
+            self.last_query = query
+            self.last_params = params
+            return [
+                {
+                    "id": 1,
+                    "agent_id": "agent-1",
+                    "session_id": "sess-1",
+                    "event_type": "project_set",
+                    "from_project": None,
+                    "to_project": "demo",
+                    "expected_version": None,
+                    "actual_version": 1,
+                    "success": True,
+                    "error_message": None,
+                    "metadata": "{}",
+                    "created_at": "2026-02-15T00:00:00+00:00",
+                }
+            ]
+
+    state_path = tmp_path / "state.json"
+    storage = _FakePostgresStorage()
+    manager = AgentContextManager(storage, StateManager(state_path))
+
+    rows = await manager.get_agent_events(agent_id="agent-1", event_type="project_set", limit=5)
+
+    assert rows and rows[0]["agent_id"] == "agent-1"
+    assert "LIMIT $3" in storage.last_query
+    assert storage.last_params == ("agent-1", "project_set", 5)
 
 
 async def main():

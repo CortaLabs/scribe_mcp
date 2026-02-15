@@ -87,6 +87,11 @@ def db_init_sql() -> Path:
     return package_root() / "db" / "init.sql"
 
 
+def postgres_migrations_dir() -> Path:
+    """Path to numbered Postgres migration SQL files."""
+    return package_root() / "db" / "postgres_migrations"
+
+
 def user_data_dir() -> Path:
     """Resolve writable data directory (override -> repo -> XDG)."""
     override = _env_path("SCRIBE_DATA_DIR")
@@ -134,6 +139,7 @@ __all__ = [
     "cli_session_state_path",
     "config_data_dir",
     "db_init_sql",
+    "postgres_migrations_dir",
     "default_db_path",
     "package_root",
     "repo_root",

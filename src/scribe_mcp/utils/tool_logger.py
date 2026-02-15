@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 # Safe imports - these do NOT import append_entry or response
 # CRITICAL: Import settings only (no other utils imports to avoid response.py)
 from scribe_mcp.config.settings import settings
+_TOOL_LOG_FSYNC = os.environ.get("SCRIBE_TOOL_LOG_FSYNC", "").lower() in {"1", "true", "yes", "on"}
 
 
 # Minimal JSONL append function (inlined to avoid importing utils.files)
@@ -46,7 +47,8 @@ def _append_jsonl_line(path: Path, line: str) -> None:
         if not line.endswith('\n'):
             f.write('\n')
         f.flush()
-        os.fsync(f.fileno())
+        if _TOOL_LOG_FSYNC:
+            os.fsync(f.fileno())
 
 
 def get_tool_log_path(

@@ -2,6 +2,8 @@
 
 This document provides comprehensive usage instructions for all available Scribe MCP tools, including required parameters, optional parameters, and practical examples.
 
+Current MCP tool inventory: **21 tools** (includes `query_reminders`, `configure_reminders`, and `reset_reminders`).
+
 ## Update v2.1.1
 
 - `apply_patch` now supports **structured mode** with compiler-generated unified diffs.
@@ -758,6 +760,74 @@ await read_recent(agent="Codex", n=5, filter={"agent": "DebugBot", "status": "su
     "has_prev": false
   }
 }
+```
+
+### `query_reminders`
+**Purpose**: View reminder history plus active reminder signals for a project.
+
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
+**Optional Parameters:**
+- `project` (string): Explicit project override
+- `category` (string): Filter by reminder category (for example: `context`, `logging`)
+- `limit` (int, default: 20): Max history rows to return
+- `format` (string): `readable`, `structured`, or `compact`
+
+**Example Usage:**
+```python
+await query_reminders(agent="Codex", project="phase_9_project", format="structured")
+await query_reminders(agent="Codex", category="context", limit=10, format="structured")
+```
+
+### `configure_reminders`
+**Purpose**: Update project reminder behavior in active state metadata.
+
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
+**Optional Parameters:**
+- `project` (string): Explicit project override
+- `enabled` (bool): Enable/disable reminder emission
+- `cooldown_minutes` (int): Cooldown window for reminder repeats
+- `categories` (list|string): Allowed categories
+- `tone` (string): Reminder tone override (for example: `neutral`, `strict`)
+- `format` (string): `readable`, `structured`, or `compact`
+
+**Example Usage:**
+```python
+await configure_reminders(
+    agent="Codex",
+    project="phase_9_project",
+    enabled=False,
+    cooldown_minutes=10,
+    categories=["logging", "context"],
+    tone="strict",
+    format="structured",
+)
+```
+
+### `reset_reminders`
+**Purpose**: Reset reminder cooldowns and/or reminder history.
+
+**Required Parameters:**
+- `agent` (string): Agent identifier for session tracking
+
+**Optional Parameters:**
+- `project` (string): Explicit project override
+- `reset_cooldowns` (bool, default: True): Clear cooldown tracking
+- `reset_history` (bool, default: False): Clear stored reminder history
+- `format` (string): `readable`, `structured`, or `compact`
+
+**Example Usage:**
+```python
+await reset_reminders(
+    agent="Codex",
+    project="phase_9_project",
+    reset_cooldowns=True,
+    reset_history=True,
+    format="structured",
+)
 ```
 
 ### `query_entries`
@@ -1894,6 +1964,9 @@ Common errors and solutions:
 | `list_projects` | Browse projects | None | No |
 | `append_entry` | **PRIMARY** logging | `message` or `items` | Yes |
 | `read_recent` | Recent entries | None | Yes |
+| `query_reminders` | Reminder history + active signals | None | Yes |
+| `configure_reminders` | Update reminder settings | None | Yes |
+| `reset_reminders` | Reset cooldown/history state | None | Yes |
 | `query_entries` | Search logs | None | Yes |
 | `manage_docs` | Documentation | `action`, `doc_name` | Yes |
 | `generate_doc_templates` | Create templates | `project_name` | No |

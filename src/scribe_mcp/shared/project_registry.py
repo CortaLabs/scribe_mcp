@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -9,6 +10,26 @@ import sqlite3
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.storage.models import ProjectRecord
+
+
+def _float_env(name: str, default: float, minimum: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        return default
+
+
+def _int_env(name: str, default: int, minimum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
 
 
 @dataclass
@@ -46,7 +67,21 @@ class ProjectRegistry:
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self._db_path = Path(db_path or settings.sqlite_path).expanduser()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._timeout_seconds = _float_env("SCRIBE_REGISTRY_DB_TIMEOUT_SECONDS", 1.5, 0.1)
+        self._busy_timeout_ms = _int_env("SCRIBE_REGISTRY_DB_BUSY_TIMEOUT_MS", 500, 10)
         self._ensure_schema()
+
+    def _connect(self, *, row_factory: bool = False) -> sqlite3.Connection:
+        conn = sqlite3.connect(
+            self._db_path,
+            timeout=self._timeout_seconds,
+            check_same_thread=False,
+        )
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms};")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        return conn
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,7 +109,7 @@ class ProjectRegistry:
             meta_str = json.dumps(meta, separators=(",", ":"), sort_keys=True)
 
         now = self._now_iso()
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE scribe_projects
@@ -91,7 +126,7 @@ class ProjectRegistry:
     def touch_access(self, project_name: str) -> None:
         """Update last_access_at when a project is (re)selected."""
         now = self._now_iso()
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "UPDATE scribe_projects SET last_access_at = ? WHERE name = ?",
                 (now, project_name),
@@ -108,7 +143,7 @@ class ProjectRegistry:
         """
         now = self._now_iso()
         normalized_log_type = (log_type or "progress").lower()
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE scribe_projects SET last_entry_at = ? WHERE name = ?",
@@ -242,7 +277,7 @@ class ProjectRegistry:
     ) -> None:
         """Set lifecycle status and bump last_status_change."""
         now = self._now_iso()
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE scribe_projects
@@ -268,8 +303,7 @@ class ProjectRegistry:
         more frequent progress log traffic.
         """
         now = self._now_iso()
-        with sqlite3.connect(self._db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with self._connect(row_factory=True) as conn:
             row = conn.execute(
                 "SELECT meta FROM scribe_projects WHERE name = ?",
                 (project_name,),
@@ -349,8 +383,7 @@ class ProjectRegistry:
 
     def get_project(self, project_name: str) -> Optional[ProjectInfo]:
         """Fetch registry view for a single project."""
-        with sqlite3.connect(self._db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with self._connect(row_factory=True) as conn:
             row = conn.execute(
                 """
                 SELECT
@@ -446,8 +479,7 @@ class ProjectRegistry:
         """
         params.append(limit)
 
-        with sqlite3.connect(self._db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with self._connect(row_factory=True) as conn:
             rows = conn.execute(query, params).fetchall()
 
         return [self._row_to_project_info(r) for r in rows]
@@ -501,8 +533,7 @@ class ProjectRegistry:
             LIMIT 1
         """
 
-        with sqlite3.connect(self._db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with self._connect(row_factory=True) as conn:
             row = conn.execute(query, params).fetchone()
 
         if not row:
@@ -519,7 +550,7 @@ class ProjectRegistry:
         We only add columns that are safe no-ops on existing installs.
         Older fields like status/phase/last_activity are preserved.
         """
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             # Create a minimal table if it does not exist. This avoids first-run
             # failures when running Scribe against a fresh repo before the main

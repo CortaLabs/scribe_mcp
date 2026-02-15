@@ -1,0 +1,125 @@
+{
+  "current_project": null,
+  "projects": {
+    "council_hierarchy_next_research_2026_02_12": {
+      "name": "council_hierarchy_next_research_2026_02_12",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "codex"
+      },
+      "author": "codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+        }
+      },
+      "version": 19,
+      "updated_by": "codex",
+      "session_id": "d0994860-3678-42a9-8434-2ce6d74f9be0"
+    }
+  },
+  "recent_projects": [
+    "council_hierarchy_next_research_2026_02_12"
+  ],
+  "session_projects": {
+    "d1a3b3dc-27ec-47b8-bda9-89f0d0a6c03f": {
+      "name": "council_hierarchy_next_research_2026_02_12",
+      "root": "/home/austin/projects/MCP_SPINE/council_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+      },
+      "defaults": {
+        "agent": "codex"
+      },
+      "author": "codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/council_mcp/.scribe/docs/dev_plans/council_hierarchy_next_research_2026_02_12/PROGRESS_LOG.md"
+        }
+      },
+      "version": 19,
+      "updated_by": "codex",
+      "session_id": "d0994860-3678-42a9-8434-2ce6d74f9be0"
+    }
+  },
+  "recent_tools": [],
+  "last_activity_at": null,
+  "session_started_at": null,
+  "version": 2,
+  "last_updated_by": "codex",
+  "operation_timestamp": "2026-02-12 09:04:17 UTC",
+  "agent_state": {
+    "last_agent_id": "agent-20260212-090420-48febfe3",
+    "last_seen": "2026-02-12T09:14:54.711268+00:00",
+    "agent_metadata": {
+      "created_at": "2026-02-12T09:14:54.710526+00:00",
+      "id_type": "auto-generated"
+    },
+    "activity_log": [
+      {
+        "agent_id": "agent-20260212-090420-48febfe3",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:04:20.751028+00:00",
+        "metadata": {
+          "message_length": 145,
+          "status": "info",
+          "bulk_mode": false
+        }
+      },
+      {
+        "agent_id": "agent-20260212-090420-48febfe3",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:12:12.759186+00:00",
+        "metadata": {
+          "message_length": 48,
+          "status": "info",
+          "bulk_mode": false
+        }
+      },
+      {
+        "agent_id": "agent-20260212-090420-48febfe3",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:13:24.426325+00:00",
+        "metadata": {
+          "message_length": 48,
+          "status": "info",
+          "bulk_mode": false
+        }
+      },
+      {
+        "agent_id": "agent-20260212-090420-48febfe3",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T09:14:54.711262+00:00",
+        "metadata": {
+          "message_length": 46,
+          "status": "info",
+          "bulk_mode": false
+        }
+      }
+    ],
+    "last_activity": "append_entry"
+  }
+}

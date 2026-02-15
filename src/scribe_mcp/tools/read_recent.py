@@ -10,7 +10,6 @@ from scribe_mcp.server import app
 from scribe_mcp.tools.constants import STATUS_EMOJI
 from scribe_mcp.utils.files import read_tail
 from scribe_mcp.utils.response import create_pagination_info, ResponseFormatter
-from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.estimator import ParameterTypeEstimator
 from scribe_mcp.utils.config_manager import TokenBudgetManager
@@ -249,8 +248,9 @@ async def read_recent(
             }
         return base_response
 
-    # Normalize project parameter before context resolution
-    project = normalize_project_input(project)
+    # Preserve explicit project spelling; context resolver handles alias matching.
+    if isinstance(project, str):
+        project = project.strip() or None
 
     try:
         context = await _READ_RECENT_HELPER.prepare_context(

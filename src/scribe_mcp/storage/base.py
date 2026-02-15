@@ -379,6 +379,26 @@ class StorageBackend(ABC):
     async def delete_bridge(self, bridge_id: str) -> None:
         """Delete bridge record."""
 
+    async def get_reminder_history(
+        self,
+        *,
+        project_root: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Return reminder history rows (optional backend support)."""
+        return []
+
+    async def clear_reminder_history(
+        self,
+        *,
+        project_root: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> int:
+        """Clear reminder history rows and return deleted count (optional backend support)."""
+        return 0
+
     # Data retention policy methods (Phase 4)
     @abstractmethod
     async def cleanup_old_entries(

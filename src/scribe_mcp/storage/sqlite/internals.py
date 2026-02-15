@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import sqlite3
 import threading
@@ -13,10 +14,35 @@ from typing import Any, Awaitable, Callable, List, Optional, TypeVar
 
 from scribe_mcp.storage.pool import SQLiteConnectionPool
 
-SQLITE_TIMEOUT_SECONDS = 30
-SQLITE_BUSY_TIMEOUT_MS = 5000
-SQLITE_LOCK_RETRIES = 7
-SQLITE_LOCK_RETRY_BASE_SECONDS = 0.05
+def _float_env(name: str, default: float, minimum: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        return default
+
+
+def _int_env(name: str, default: int, minimum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+# Interactive defaults: prioritize responsiveness under contention while still retrying.
+SQLITE_TIMEOUT_SECONDS = _float_env("SCRIBE_SQLITE_TIMEOUT_SECONDS", 5.0, 0.1)
+SQLITE_BUSY_TIMEOUT_MS = _int_env("SCRIBE_SQLITE_BUSY_TIMEOUT_MS", 1000, 10)
+SQLITE_LOCK_RETRIES = _int_env("SCRIBE_SQLITE_LOCK_RETRIES", 4, 0)
+SQLITE_LOCK_RETRY_BASE_SECONDS = _float_env("SCRIBE_SQLITE_LOCK_RETRY_BASE_SECONDS", 0.02, 0.001)
+SQLITE_LOCK_RETRY_MAX_SECONDS = _float_env("SCRIBE_SQLITE_LOCK_RETRY_MAX_SECONDS", 0.25, SQLITE_LOCK_RETRY_BASE_SECONDS)
+SQLITE_JOURNAL_MODE = os.environ.get("SCRIBE_SQLITE_JOURNAL_MODE", "WAL")
+SQLITE_SYNCHRONOUS = os.environ.get("SCRIBE_SQLITE_SYNCHRONOUS", "NORMAL")
+SQLITE_TEMP_STORE = os.environ.get("SCRIBE_SQLITE_TEMP_STORE", "MEMORY")
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -205,7 +231,10 @@ class SQLiteInternals:
             except sqlite3.OperationalError as exc:
                 if not self._is_locked_error(exc) or attempt >= SQLITE_LOCK_RETRIES:
                     raise
-                delay = SQLITE_LOCK_RETRY_BASE_SECONDS * (2**attempt)
+                delay = min(
+                    SQLITE_LOCK_RETRY_MAX_SECONDS,
+                    SQLITE_LOCK_RETRY_BASE_SECONDS * (2**attempt),
+                )
                 logger.warning(
                     "SQLite lock contention on %s query (retry %d/%d in %.3fs): %s",
                     "write" if is_write else "read",
@@ -256,4 +285,8 @@ class SQLiteInternals:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
+        # Enable WAL and moderate sync level for better concurrent read/write behavior.
+        conn.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE};")
+        conn.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS};")
+        conn.execute(f"PRAGMA temp_store = {SQLITE_TEMP_STORE};")
         return conn

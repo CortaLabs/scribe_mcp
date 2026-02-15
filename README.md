@@ -319,11 +319,39 @@ python -m scribe_mcp.scripts.scribe "Starting new feature work" --project fronte
 
 **🐘 PostgreSQL (Enterprise)**
 - Ideal for large teams and production deployments
-- Set environment variables before starting:
+- One-command interactive bootstrap (no env exports required):
   ```bash
-  export SCRIBE_STORAGE_BACKEND=postgres
-  export SCRIBE_DB_URL=postgresql://user:pass@host:port/database
+  scribe bootstrap
   ```
+- The interactive flow now explains setup-only vs runtime values:
+  - `Scribe admin database`: usually `postgres`, used for admin/setup connections.
+  - `Scribe app database`: where Scribe stores runtime data.
+- Bootstrap writes `.env` keys automatically (`SCRIBE_STORAGE_BACKEND`, `SCRIBE_DB_URL`, schema/role fields).
+- For CI or scripting (non-interactive), pass flags directly:
+  ```bash
+  scribe bootstrap --no-interactive --superuser-password '<superuser-password>' --app-db scribe --schema scribe
+  ```
+
+### Postgres Env Vars (Runtime + MCP)
+
+When running Scribe in Postgres mode (including via MCP), set these environment variables in the server process:
+
+- `SCRIBE_STORAGE_BACKEND=postgres`
+- `SCRIBE_DB_URL=postgresql://<app_user>:<app_password>@<host>:<port>/<app_db>`
+- `SCRIBE_POSTGRES_SCHEMA=scribe` (default schema namespace)
+- `SCRIBE_DB_SCHEMA=...` (supported alias for schema; `SCRIBE_POSTGRES_SCHEMA` takes precedence)
+
+Optional pool/network tuning (recommended for remote DBs):
+
+- `SCRIBE_POSTGRES_POOL_MIN_SIZE=2`
+- `SCRIBE_POSTGRES_POOL_MAX_SIZE=20`
+- `SCRIBE_POSTGRES_CONNECT_TIMEOUT_SECONDS=10`
+- `SCRIBE_POSTGRES_COMMAND_TIMEOUT_SECONDS=30`
+- `SCRIBE_POSTGRES_CONNECT_RETRIES=3`
+- `SCRIBE_POSTGRES_CONNECT_RETRY_BACKOFF_SECONDS=1.0`
+- `SCRIBE_POSTGRES_MAX_INACTIVE_SECONDS=300`
+
+These can be generated automatically by `scribe bootstrap` into your `.env`, then passed through your MCP client configuration.
 
 ### MCP Integration
 
@@ -343,8 +371,11 @@ under `src/scribe_mcp/`.
         "cd /absolute/path/to/REPO_ROOT && exec scribe-server"
       ],
       "env": {
-        // Optional: override storage backend; SQLite is default
-        "SCRIBE_STORAGE_BACKEND": "sqlite"
+        // SQLite (default): "sqlite"
+        // Postgres: set backend + db url (+ optional schema)
+        "SCRIBE_STORAGE_BACKEND": "postgres",
+        "SCRIBE_DB_URL": "postgresql://scribe_app:<password>@127.0.0.1:5432/scribe",
+        "SCRIBE_POSTGRES_SCHEMA": "scribe"
       }
     }
   }
@@ -353,9 +384,16 @@ under `src/scribe_mcp/`.
 
 **For Codex / Claude Code CLI:**
 ```bash
-# From anywhere; codex will remember this configuration
+# SQLite mode (default)
 codex mcp add scribe \
   --env SCRIBE_STORAGE_BACKEND=sqlite \
+  -- bash -lc 'cd /absolute/path/to/REPO_ROOT && exec scribe-server'
+
+# Postgres mode
+codex mcp add scribe \
+  --env SCRIBE_STORAGE_BACKEND=postgres \
+  --env SCRIBE_DB_URL='postgresql://scribe_app:<password>@127.0.0.1:5432/scribe' \
+  --env SCRIBE_POSTGRES_SCHEMA=scribe \
   -- bash -lc 'cd /absolute/path/to/REPO_ROOT && exec scribe-server'
 ```
 

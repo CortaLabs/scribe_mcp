@@ -127,6 +127,95 @@ async def check_reminder_cooldown(
     return result
 
 
+async def get_reminder_history(
+    *,
+    initialise_fn: AsyncInitialise,
+    fetchall_fn: AsyncFetchAll,
+    project_root: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    await initialise_fn()
+
+    filters: List[str] = []
+    params: List[Any] = []
+    if project_root:
+        filters.append("project_root = ?")
+        params.append(project_root)
+    if agent_id:
+        filters.append("agent_id = ?")
+        params.append(agent_id)
+    if category:
+        filters.append("reminder_key LIKE ?")
+        params.append(f"{category}.%")
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+    normalized_limit = max(1, min(int(limit), 200))
+    params.append(normalized_limit)
+
+    rows = await fetchall_fn(
+        f"""
+        SELECT id, session_id, reminder_hash, project_root, agent_id, tool_name,
+               reminder_key, shown_at, operation_status, context_metadata
+        FROM reminder_history
+        WHERE {where_clause}
+        ORDER BY shown_at DESC
+        LIMIT ?;
+        """,
+        tuple(params),
+    )
+
+    history: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        raw_context = item.get("context_metadata")
+        if isinstance(raw_context, str) and raw_context:
+            try:
+                item["context_metadata"] = json.loads(raw_context)
+            except json.JSONDecodeError:
+                pass
+        history.append(item)
+    return history
+
+
+async def clear_reminder_history(
+    *,
+    initialise_fn: AsyncInitialise,
+    write_lock: Any,
+    connect_fn: ConnectFn,
+    project_root: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> int:
+    await initialise_fn()
+
+    clauses: List[str] = []
+    params: List[Any] = []
+    if project_root:
+        clauses.append("project_root = ?")
+        params.append(project_root)
+    if agent_id:
+        clauses.append("agent_id = ?")
+        params.append(agent_id)
+    where_clause = " AND ".join(clauses) if clauses else "1=1"
+
+    async with write_lock:
+        def _clear_sync() -> int:
+            conn = connect_fn()
+            try:
+                cursor = conn.execute(
+                    f"DELETE FROM reminder_history WHERE {where_clause};",
+                    tuple(params),
+                )
+                deleted = int(cursor.rowcount or 0)
+                conn.commit()
+                return deleted
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_clear_sync)
+
+
 async def cleanup_reminder_history(
     *,
     initialise_fn: AsyncInitialise,

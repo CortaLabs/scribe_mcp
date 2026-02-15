@@ -10,7 +10,7 @@ import threading
 import time
 import pytest
 
-from scribe_mcp.storage.pool import SQLiteConnectionPool
+from scribe_mcp.storage.pool import SQLiteConnectionPool, SQLITE_BUSY_TIMEOUT_MS
 
 
 class TestConnectionPoolBasic:
@@ -106,7 +106,7 @@ class TestConnectionPoolBasic:
         # Verify busy_timeout
         cursor = conn.execute("PRAGMA busy_timeout;")
         result = cursor.fetchone()
-        assert result[0] == 5000  # SQLITE_BUSY_TIMEOUT_MS
+        assert result[0] == SQLITE_BUSY_TIMEOUT_MS
 
         pool.release(conn)
         pool.close_all()

@@ -7,7 +7,7 @@ Provides diagnostic and validation functions for DB-backed reminder tracking:
 - Reminder statistics and health checks
 
 Usage:
-    from utils.reminder_monitoring import validate_db_performance, validate_session_isolation
+    from scribe_mcp.utils.reminder_monitoring import validate_db_performance, validate_session_isolation
 
     # Check performance
     results = await validate_db_performance()

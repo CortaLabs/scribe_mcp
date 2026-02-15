@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
-import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Mapping, MutableMapping, Optional, Set, cast
@@ -315,43 +314,27 @@ async def execute_tool_call(
         except Exception:
             pass
 
-    debug_log = Path("/tmp/scribe_session_debug.log")
-    with open(debug_log, "a", encoding="utf-8") as handle:
-        handle.write(f"\n=== {datetime.now(timezone.utc).isoformat()} ===\n")
-        handle.write(f"Tool: {name}\n")
-        handle.write(f"context_payload: {context_payload}\n")
-
     identity_hash, identity_parts = _derive_session_identity_preview(context_payload, call_arguments)
-    with open(debug_log, "a", encoding="utf-8") as handle:
-        handle.write(f"identity_hash: {identity_hash}\n")
-        handle.write(f"identity_parts: {identity_parts}\n")
+    stable_session_id = context_payload.get("stable_session_id")
 
-    stable_session_id = None
-    with open(debug_log, "a", encoding="utf-8") as handle:
-        handle.write(f"backend: {storage_backend}\n")
-        handle.write(
-            f"has method: {hasattr(storage_backend, 'get_or_create_agent_session') if storage_backend else False}\n"
+    if not stable_session_id and hasattr(router_context_manager, "get_cached_agent_session_id"):
+        stable_session_id = await router_context_manager.get_cached_agent_session_id(identity_hash)
+
+    if (
+        not stable_session_id
+        and storage_backend
+        and hasattr(storage_backend, "get_or_create_agent_session")
+    ):
+        stable_session_id = await storage_backend.get_or_create_agent_session(
+            identity_key=identity_hash,
+            agent_name=identity_parts["agent_key"],
+            agent_key=identity_parts["agent_key"],
+            repo_root=identity_parts["repo_root"],
+            mode=identity_parts["mode"],
+            scope_key=identity_parts["scope_key"],
         )
-
-    if storage_backend and hasattr(storage_backend, "get_or_create_agent_session"):
-        with open(debug_log, "a", encoding="utf-8") as handle:
-            handle.write("Calling get_or_create_agent_session...\n")
-        try:
-            stable_session_id = await storage_backend.get_or_create_agent_session(
-                identity_key=identity_hash,
-                agent_name=identity_parts["agent_key"],
-                agent_key=identity_parts["agent_key"],
-                repo_root=identity_parts["repo_root"],
-                mode=identity_parts["mode"],
-                scope_key=identity_parts["scope_key"],
-            )
-            with open(debug_log, "a", encoding="utf-8") as handle:
-                handle.write(f"stable_session_id: {stable_session_id}\n")
-        except Exception as exc:
-            with open(debug_log, "a", encoding="utf-8") as handle:
-                handle.write(f"ERROR: {exc}\n")
-                handle.write(f"Traceback:\n{traceback.format_exc()}\n")
-            raise
+        if stable_session_id and hasattr(router_context_manager, "cache_agent_session_id"):
+            await router_context_manager.cache_agent_session_id(identity_hash, stable_session_id)
 
     if stable_session_id:
         context_payload["stable_session_id"] = stable_session_id

@@ -1,0 +1,57 @@
+{
+  "global_log": {
+    "path": "docs/GLOBAL_PROGRESS_LOG.md",
+    "archive_path": "docs/archived_global_logs",
+    "rotation_threshold_entries": 500,
+    "rotation_threshold_days": 90,
+    "auto_events": {
+      "project_created": {
+        "enabled": true,
+        "emoji": "🚀",
+        "template": "Project '{project_name}' created | status=started; phase=setup; confidence={confidence}"
+      },
+      "project_phase_change": {
+        "enabled": true,
+        "emoji": "📋",
+        "template": "Project '{project_name}' {old_phase} → {new_phase} | status={new_phase}; project={project_name}"
+      },
+      "project_completed": {
+        "enabled": true,
+        "emoji": "✅",
+        "template": "Project '{project_name}' completed | status=completed; total_duration={duration}; confidence={confidence}"
+      },
+      "research_completed": {
+        "enabled": true,
+        "emoji": "🔍",
+        "template": "Research completed for '{project_name}' | project={project_name}; milestone=research_complete; docs={research_docs_count}"
+      },
+      "architecture_approved": {
+        "enabled": true,
+        "emoji": "🏗️",
+        "template": "Architecture approved for '{project_name}' | project={project_name}; milestone=architecture_approved; reviewer={review_agent}"
+      },
+      "implementation_completed": {
+        "enabled": true,
+        "emoji": "💻",
+        "template": "Implementation completed for '{project_name}' | project={project_name}; milestone=implementation_complete; reviewer={review_agent}"
+      }
+    },
+    "manual_milestones": {
+      "types": [
+        "technical_breakthrough",
+        "architecture_decision",
+        "security_audit",
+        "performance_optimization",
+        "feature_completion",
+        "bug_resolution",
+        "process_improvement"
+      ]
+    },
+    "metadata_requirements": {
+      "project_created": ["project_name", "status", "phase", "confidence"],
+      "project_phase_change": ["project_name", "old_phase", "new_phase"],
+      "project_completed": ["project_name", "duration", "confidence"],
+      "manual_milestone": ["milestone", "project", "confidence"]
+    }
+  }
+}

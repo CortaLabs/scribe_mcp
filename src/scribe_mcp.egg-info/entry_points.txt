@@ -1,0 +1,8 @@
+[console_scripts]
+scribe = scribe_mcp.cli.main:main
+scribe-backup-postgres = scribe_mcp.scripts.postgres_backup:main
+scribe-bootstrap-postgres = scribe_mcp.scripts.bootstrap_postgres:main
+scribe-mcp = scribe_mcp.__main__:main
+scribe-migrate = scribe_mcp.scripts.migrate_state:main
+scribe-migrate-postgres = scribe_mcp.scripts.migrate_sqlite_to_postgres:main
+scribe-server = scribe_mcp.__main__:main

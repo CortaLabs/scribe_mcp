@@ -412,25 +412,11 @@ async def apply_doc_change(
                     resolved_end = int(resolved_end)
 
                 replacement_text = str(content or "")
-                if replacement_text.startswith("---"):
-                    try:
-                        replacement_parsed = parse_frontmatter(replacement_text)
-                    except ValueError:
-                        replacement_parsed = None
-                    if replacement_parsed and replacement_parsed.has_frontmatter:
-                        replacement_text = replacement_parsed.body
-                        metadata_dict = metadata if isinstance(metadata, dict) else {}
-                        existing_frontmatter = metadata_dict.get("frontmatter")
-                        if existing_frontmatter is None:
-                            existing_frontmatter = {}
-                        if not isinstance(existing_frontmatter, dict):
-                            raise DocumentOperationError(
-                                "FRONTMATTER_METADATA_INVALID: metadata.frontmatter must be an object"
-                            )
-                        merged_frontmatter = dict(replacement_parsed.frontmatter_data)
-                        merged_frontmatter.update(existing_frontmatter)
-                        metadata_dict["frontmatter"] = merged_frontmatter
-                        metadata = metadata_dict
+                # NOTE: replacement content is a body fragment, NOT a standalone document.
+                # Never parse it as frontmatter — a leading "---" is a Markdown horizontal
+                # rule, not a YAML frontmatter delimiter.  False-positive frontmatter
+                # detection here was silently stripping replacement content between "---"
+                # lines, causing data loss.
 
                 updated_body = _replace_range_text(
                     original_body,
@@ -719,7 +705,7 @@ async def apply_doc_change(
             file_path=Path(""),
             duration_ms=duration_ms,
             file_size_before=file_size_before,
-            file_size_after=0,
+            file_size_after=file_size_before,
             success=False,
             error_message=str(e),
             metadata={"error_type": type(e).__name__}
@@ -745,7 +731,7 @@ async def apply_doc_change(
             error_message=str(e),
             verification_passed=False,
             file_size_before=file_size_before,
-            file_size_after=0,
+            file_size_after=file_size_before,
         )
     except Exception as e:
         # Catch any unexpected errors
@@ -759,7 +745,7 @@ async def apply_doc_change(
             file_path=Path(""),
             duration_ms=duration_ms,
             file_size_before=file_size_before,
-            file_size_after=0,
+            file_size_after=file_size_before,
             success=False,
             error_message=f"Unexpected error: {e}",
             metadata={"error_type": type(e).__name__, "unexpected": True}
@@ -779,7 +765,7 @@ async def apply_doc_change(
             error_message=f"Unexpected error: {e}",
             verification_passed=False,
             file_size_before=file_size_before,
-            file_size_after=0,
+            file_size_after=file_size_before,
         )
 
 
@@ -1042,12 +1028,15 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
     # (header + marker + body) instead of just the body content.
     content_stripped = content.lstrip()
     marker_pos = content_stripped.find(marker)
-    # Only process if marker appears near the beginning (within ~200 chars for a header)
-    if 0 <= marker_pos <= 200:
+    # Only process if marker appears near the beginning (within ~500 chars for a header)
+    if 0 <= marker_pos <= 500:
         prefix_before_marker = content_stripped[:marker_pos]
         prefix_clean = prefix_before_marker.strip()
-        # Check if prefix is empty or looks like a markdown header
-        if not prefix_clean or re.match(r'^#+\s+[^\n]*$', prefix_clean):
+        # Check if prefix is empty or consists only of markdown headers and blank lines
+        if not prefix_clean or all(
+            re.match(r'^#+\s', line) or not line.strip()
+            for line in prefix_clean.splitlines()
+        ):
             # Strip everything up to and including the marker
             after_marker = content_stripped[marker_pos + len(marker):]
             content = after_marker.lstrip('\n\r')
@@ -1092,9 +1081,22 @@ def _replace_text_literal(
     *,
     replace_all: bool,
 ) -> tuple[str, int]:
-    if replace_all:
-        return text.replace(find_text, replace_text), text.count(find_text)
-    return text.replace(find_text, replace_text, 1), (1 if find_text in text else 0)
+    # Exact match — fast path
+    if find_text in text:
+        if replace_all:
+            return text.replace(find_text, replace_text), text.count(find_text)
+        return text.replace(find_text, replace_text, 1), 1
+
+    # Fallback: normalize \r\n → \n and retry (handles cross-platform newline mismatch)
+    norm_text = text.replace("\r\n", "\n")
+    norm_find = find_text.replace("\r\n", "\n")
+    if norm_find in norm_text:
+        if replace_all:
+            return norm_text.replace(norm_find, replace_text), norm_text.count(norm_find)
+        return norm_text.replace(norm_find, replace_text, 1), 1
+
+    # No match after normalization
+    return text, 0
 
 
 def _replace_text_regex(
@@ -1954,7 +1956,13 @@ def _replace_range_text(
     if repl and not repl.endswith("\n"):
         repl += "\n"
     new_lines = lines[: start_line - 1] + ([repl] if repl else []) + lines[end_line:]
-    return "".join(new_lines)
+    result = "".join(new_lines)
+    if not result.strip():
+        raise DocumentOperationError(
+            f"REPLACE_RANGE_WOULD_EMPTY_DOC: operation would erase all document content "
+            f"(range {start_line}-{end_line} covers {end_line - start_line + 1} of {len(lines)} lines)"
+        )
+    return result
 
 
 def _replace_section_by_header(

@@ -1,0 +1,65 @@
+# Scribe Configuration Template
+# Place this file as .scribe/config/scribe.yaml in your repository root
+
+# Repository identification
+repo_slug: my-project  # Auto-detected from directory name if not specified
+
+# Documentation structure
+dev_plans_dir: docs/dev_plans  # Where project docs will be stored
+progress_log_name: PROGRESS_LOG.md  # Name of the main progress log file
+
+# Template configuration
+templates_pack: default  # Use built-in templates
+# custom_templates_dir: .scribe/templates  # Override with custom templates
+
+# Permissions and constraints
+permissions:
+  allow_rotate: true      # Allow log rotation
+  allow_append: true      # Allow log append
+  allow_read: true        # Allow log read
+  allow_generate_docs: true  # Allow auto-document generation
+  allow_bulk_entries: true   # Allow bulk log entries
+  require_project: true      # Require explicit project selection
+
+# Plugin configuration
+plugins_dir: .scribe/plugins  # Directory for repo-specific plugins
+plugin_config:
+  # Plugin-specific configuration goes here
+vector_index_docs: false  # Enable semantic indexing for manage_docs content
+vector_index_logs: false  # Enable semantic indexing for log entries
+vector_search_doc_k: 5    # Default doc results when semantic search runs without k
+vector_search_log_k: 3    # Default log results when semantic search runs without k
+
+# Default values for this repository
+default_emoji: "📋"  # Default emoji for log entries
+default_agent: "Agent"  # Default agent name
+
+# Reminder configuration
+reminder_config:
+  tone: "friendly"  # friendly, formal, or strict
+  log_warning_minutes: 15  # Warn if no logs in X minutes
+  log_urgent_minutes: 30   # Mark urgent if no logs in X minutes
+  doc_stale_hours: 24      # Warn if docs haven't been updated in X hours
+  severity_weights:
+    warning: 7
+    urgent: 10
+
+# Hook configuration (optional)
+hooks:
+  pre_append: null     # .scribe/hooks/pre_append.py
+  post_append: null    # .scribe/hooks/post_append.py
+  pre_rotate: null     # .scribe/hooks/pre_rotate.py
+  post_rotate: null    # .scribe/hooks/post_rotate.py
+
+# MCP server configuration
+mcp_server_name: "scribe.mcp"
+storage_backend: "sqlite"  # sqlite or postgres
+# db_path: .scribe/scribe.db  # Custom SQLite path (relative to repo root)
+doc_snapshots: false  # Enable preflight backups for doc edits
+
+# Output formatting (Phase 1.5 - Issue #9962 fix)
+use_ansi_colors: false  # Enable ANSI colors in tool output for Claude Code
+
+# For PostgreSQL backend
+# storage_backend: "postgres"
+# db_url: "postgresql://user:password@localhost/scribe"

@@ -1884,7 +1884,7 @@ async def read_file(
         }, requested_mode)
 
     if not target.exists() or not target.is_file():
-        from utils.path_suggestions import (
+        from scribe_mcp.utils.path_suggestions import (
             classify_path_error,
             get_fuzzy_file_suggestions,
             get_directory_listing,

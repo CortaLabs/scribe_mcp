@@ -693,7 +693,7 @@ async def search(
                 return {"ok": False, "error": "symlink target escapes repository boundary", "path": path}
 
     if not search_root.exists():
-        from utils.path_suggestions import (
+        from scribe_mcp.utils.path_suggestions import (
             get_fuzzy_file_suggestions,
             get_directory_listing,
         )

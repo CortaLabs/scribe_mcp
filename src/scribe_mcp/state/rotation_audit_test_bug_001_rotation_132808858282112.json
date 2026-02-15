@@ -1,0 +1,23 @@
+{
+  "project_name": "test_bug_001_rotation_132808858282112",
+  "created_timestamp": "2026-01-08T01:22:19.047291 UTC",
+  "rotations": [
+    {
+      "rotation_uuid": "5318c96d-b937-4051-9e64-bf527de5c172",
+      "rotation_timestamp_utc": "2026-01-08 01:22:19 UTC",
+      "sequence_number": 1,
+      "archived_file_path": "/tmp/tmphdl023_s/.scribe/docs/dev_plans/test_bug_001_rotation_132808858282112/PROGRESS_LOG.md.archive.md",
+      "archived_file_name": "PROGRESS_LOG.md.archive.md",
+      "entry_count": 33,
+      "file_hash": "91589f79164df7e3c2f1a5cf53eb6f49bb087bbb02fd2ce2ee053256d56103ba",
+      "file_size": 1144,
+      "created_timestamp": "2026-01-07T20:22:19.040399",
+      "modified_timestamp": "2026-01-07T20:22:19.000399",
+      "log_type": "progress",
+      "stored_timestamp": "2026-01-08T01:22:19.047295 UTC"
+    }
+  ],
+  "total_rotations": 1,
+  "last_updated": "2026-01-08T01:22:19.047295 UTC",
+  "version": "1.0"
+}

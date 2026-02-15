@@ -36,6 +36,11 @@ scribe = "scribe_mcp.cli.main:main"
 scribe-mcp = "scribe_mcp.__main__:main"
 scribe-server = "scribe_mcp.__main__:main"
 scribe-migrate = "scribe_mcp.scripts.migrate_state:main"
+scribe-migrate-postgres = "scribe_mcp.scripts.migrate_sqlite_to_postgres:main"
+scribe-backup-postgres = "scribe_mcp.scripts.postgres_backup:main"
+scribe-bootstrap-postgres = "scribe_mcp.scripts.bootstrap_postgres:main"
+scribe-metrics-postgres = "scribe_mcp.scripts.postgres_metrics:main"
+scribe-soak-postgres = "scribe_mcp.scripts.postgres_soak_test:main"
 
 [tool.setuptools]
 include-package-data = true
@@ -51,6 +56,7 @@ include = ["scribe_mcp*"]
   "config/*.yaml",
   "config/*.yml",
   "db/*.sql",
+  "db/postgres_migrations/*.sql",
   "plugins/*.json",
   "templates/*",
   "templates/**/*",

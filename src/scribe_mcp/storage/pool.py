@@ -37,6 +37,7 @@ Connection Validation:
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 from collections import deque
@@ -44,9 +45,32 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Optional
 
-# Connection configuration constants (must match sqlite.py)
-SQLITE_TIMEOUT_SECONDS = 30
-SQLITE_BUSY_TIMEOUT_MS = 5000
+def _float_env(name: str, default: float, minimum: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        return default
+
+
+def _int_env(name: str, default: int, minimum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+# Keep defaults aligned with sqlite internals for predictable behavior.
+SQLITE_TIMEOUT_SECONDS = _float_env("SCRIBE_SQLITE_TIMEOUT_SECONDS", 5.0, 0.1)
+SQLITE_BUSY_TIMEOUT_MS = _int_env("SCRIBE_SQLITE_BUSY_TIMEOUT_MS", 1000, 10)
+SQLITE_JOURNAL_MODE = os.environ.get("SCRIBE_SQLITE_JOURNAL_MODE", "WAL")
+SQLITE_SYNCHRONOUS = os.environ.get("SCRIBE_SQLITE_SYNCHRONOUS", "NORMAL")
+SQLITE_TEMP_STORE = os.environ.get("SCRIBE_SQLITE_TEMP_STORE", "MEMORY")
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +176,9 @@ class SQLiteConnectionPool:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms};")
+        conn.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE};")
+        conn.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS};")
+        conn.execute(f"PRAGMA temp_store = {SQLITE_TEMP_STORE};")
 
         logger.debug("Created new connection for pool")
         return conn

@@ -1,0 +1,79 @@
+{
+  "version": "1.0.0",
+  "language": "en-US",
+  "fallback_language": "en-US",
+  "reminder_paths": {
+    "templates": "reminders",
+    "rules": "reminder_rules.json"
+  },
+  "behavior": {
+    "max_reminders_per_call": 3,
+    "max_teaching_reminders_per_session": 5,
+    "reminder_cooldown_minutes": 15,
+    "session_cooldown_minutes": 2,
+    "teaching_cooldown_minutes": 10,
+    "compact_mode_threshold": 3,
+    "urgent_always_show": true,
+    "teaching_enabled": true,
+    "context_enabled": true,
+    "deduplication_enabled": true,
+    "progressive_teaching": false,
+    "show_new_project_tutorial": true,
+    "show_logging_tips": true
+  },
+  "selection": {
+    "priority_order": [
+      "urgent_logging",
+      "missing_docs",
+      "dev_without_docs",
+      "urgent",
+      "warning",
+      "info_logging",
+      "info_docs",
+      "info_workflow",
+      "teaching",
+      "context"
+    ],
+    "tool_specific_limits": {
+      "append_entry": {"max_total": 1, "categories": ["teaching", "context"]},
+      "list_projects": {"max_total": 2, "categories": ["teaching", "urgent", "context"]},
+      "query_entries": {"max_total": 1, "categories": ["teaching", "context"]},
+      "read_recent": {"max_total": 1, "categories": ["teaching", "context"]},
+      "set_project": {"max_total": 3, "categories": ["all"]},
+      "generate_doc_templates": {"max_total": 2, "categories": ["teaching", "context"]},
+      "get_project": {"max_total": 1, "categories": ["teaching", "context"]},
+      "manage_docs": {"max_total": 2, "categories": ["teaching", "context"]},
+      "rotate_log": {"max_total": 1, "categories": ["teaching", "context"]}
+    },
+    "category_weights": {
+      "urgent": 1000,
+      "missing_docs": 900,
+      "dev_without_docs": 850,
+      "warning": 700,
+      "info_logging": 600,
+      "info_docs": 500,
+      "info_workflow": 400,
+      "teaching": 300,
+      "context": 200,
+      "info": 100
+    },
+    "suppression_rules": {
+      "append_entry": ["logging", "missing_docs"],
+      "generate_doc_templates": ["missing_docs", "architecture_incomplete"],
+      "manage_docs": ["missing_docs"]
+    }
+  },
+  "formatting": {
+    "use_short_templates": true,
+    "max_context_length": 80,
+    "truncate_lists": true,
+    "pluralize_time_units": true,
+    "capitalize_first": true
+  },
+  "tracking": {
+    "remember_shown_reminders": true,
+    "remember_session_teaching": true,
+    "max_reminder_history": 50,
+    "cleanup_after_hours": 24
+  }
+}

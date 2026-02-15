@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -26,6 +28,24 @@ class AgentIdentity:
 
     def __init__(self, state_manager):
         self.state_manager = state_manager
+        self._cached_agent_id: Optional[str] = None
+        self._last_persisted_agent_id: Optional[str] = None
+        self._last_persisted_at: float = 0.0
+        self._persist_interval_seconds = max(
+            5.0,
+            float(os.getenv("SCRIBE_AGENT_ID_PERSIST_INTERVAL_SECONDS", "300")),
+        )
+        self._activity_lock = asyncio.Lock()
+        self._pending_activities: list[Dict[str, Any]] = []
+        self._last_activity_persist_at: float = 0.0
+        self._activity_persist_interval_seconds = max(
+            5.0,
+            float(os.getenv("SCRIBE_AGENT_ACTIVITY_PERSIST_INTERVAL_SECONDS", "60")),
+        )
+        self._activity_buffer_limit = max(
+            20,
+            int(os.getenv("SCRIBE_AGENT_ACTIVITY_BUFFER_LIMIT", "100")),
+        )
 
     async def get_or_create_agent_id(self, context: Optional[Dict[str, Any]] = None) -> str:
         """
@@ -37,18 +57,30 @@ class AgentIdentity:
         Returns:
             Agent ID string
         """
-        # Try to get agent ID from various sources
-        agent_id = (
-            self._get_agent_id_from_mcp_context(context) or
-            self._get_agent_id_from_environment() or
-            await self._get_agent_id_from_persistent_state() or
-            self._create_new_agent_id()
-        )
+        # Resolve identity with fast paths first (context/env/cache), then state fallback.
+        agent_id = self._get_agent_id_from_mcp_context(context) or self._get_agent_id_from_environment()
+        if not agent_id:
+            agent_id = self._cached_agent_id
+        if not agent_id:
+            agent_id = await self._get_agent_id_from_persistent_state()
+        if not agent_id:
+            agent_id = self._create_new_agent_id()
 
-        # Store the agent ID for future use
-        await self._store_agent_id(agent_id)
+        self._cached_agent_id = agent_id
+
+        # Persist only when identity changes or at a coarse heartbeat interval.
+        if self._should_persist(agent_id):
+            await self._store_agent_id(agent_id)
 
         return agent_id
+
+    def _should_persist(self, agent_id: str) -> bool:
+        now = time.monotonic()
+        if self._last_persisted_agent_id != agent_id:
+            return True
+        if (now - self._last_persisted_at) >= self._persist_interval_seconds:
+            return True
+        return False
 
     def _get_agent_id_from_mcp_context(self, context: Optional[Dict[str, Any]]) -> Optional[str]:
         """Extract agent ID from MCP request context."""
@@ -129,9 +161,12 @@ class AgentIdentity:
             })
 
             await self.state_manager.persist(state)
+            self._last_persisted_agent_id = agent_id
+            self._last_persisted_at = time.monotonic()
         except Exception:
             # Don't fail if we can't store the agent ID
-            pass
+            self._last_persisted_agent_id = agent_id
+            self._last_persisted_at = time.monotonic()
 
     async def resume_agent_session(
         self,
@@ -206,36 +241,46 @@ class AgentIdentity:
             metadata: Additional activity metadata
         """
         try:
-            state = await self.state_manager.load()
-            if not hasattr(state, "agent_state"):
-                state.agent_state = {}
-
             activity = {
                 "agent_id": agent_id,
                 "activity_type": activity_type,
                 "timestamp": utcnow().isoformat(),
-                "metadata": metadata or {}
+                "metadata": metadata or {},
             }
 
-            # Add to activity log
-            if "activity_log" not in state.agent_state:
-                state.agent_state["activity_log"] = []
+            async with self._activity_lock:
+                self._pending_activities.append(activity)
+                if len(self._pending_activities) > self._activity_buffer_limit:
+                    self._pending_activities = self._pending_activities[-self._activity_buffer_limit :]
 
-            state.agent_state["activity_log"].append(activity)
+                now = time.monotonic()
+                if (now - self._last_activity_persist_at) < self._activity_persist_interval_seconds:
+                    return
 
-            # Keep only recent activities (last 100)
-            if len(state.agent_state["activity_log"]) > 100:
-                state.agent_state["activity_log"] = state.agent_state["activity_log"][-100:]
+                pending = list(self._pending_activities)
+                self._pending_activities.clear()
+                self._last_activity_persist_at = now
 
-            # Update last seen info
+            state = await self.state_manager.load()
+            if not hasattr(state, "agent_state"):
+                state.agent_state = {}
+
+            existing = state.agent_state.get("activity_log") or []
+            if not isinstance(existing, list):
+                existing = []
+            existing.extend(pending)
+            if len(existing) > 100:
+                existing = existing[-100:]
+
+            latest = pending[-1] if pending else activity
+            state.agent_state["activity_log"] = existing
             state.agent_state.update({
-                "last_agent_id": agent_id,
-                "last_seen": utcnow().isoformat(),
-                "last_activity": activity_type
+                "last_agent_id": latest["agent_id"],
+                "last_seen": latest["timestamp"],
+                "last_activity": latest["activity_type"],
             })
 
             await self.state_manager.persist(state)
-
         except Exception:
             # Don't fail if we can't update activity
             pass

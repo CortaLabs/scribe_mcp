@@ -212,6 +212,32 @@ def test_append_entry_accepts_sequence_metadata(isolated_state, project_root):
     assert "sequence_meta" in log_content
 
 
+def test_append_entry_surfaces_db_mirror_failures(monkeypatch, isolated_state, project_root):
+    root = project_root
+    run(set_project.set_project(agent="test_agent", name="db-mirror-status-test", root=str(root), format="structured"))
+
+    storage = server.storage_backend
+
+    async def _failing_insert_entry(*args, **kwargs):
+        raise RuntimeError("forced mirror failure")
+
+    monkeypatch.setattr(storage, "insert_entry", _failing_insert_entry)
+
+    result = run(
+        append_entry.append_entry(
+            agent="test_agent",
+            message="Mirror failure visibility test",
+            status="info",
+            format="structured",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["db_mirror"]["enabled"] is True
+    assert result["db_mirror"]["status"] == "error"
+    assert "forced mirror failure" in str(result["db_mirror"]["error"])
+
+
 def test_append_entry_items_list_string_meta(isolated_state, project_root):
     root = project_root
     run(set_project.set_project(agent="test_agent", name="meta-items-list", root=str(root), format="structured"))

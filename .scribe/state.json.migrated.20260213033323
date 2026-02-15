@@ -1,0 +1,125 @@
+{
+  "current_project": null,
+  "projects": {
+    "sitepkg_runtime_test": {
+      "name": "sitepkg_runtime_test",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "317ad5a5",
+            "phase_plan": "238f4472",
+            "checklist": "149d0314"
+          },
+          "current_hashes": {
+            "architecture": "317ad5a5",
+            "phase_plan": "238f4472",
+            "checklist": "149d0314"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "317ad5a5",
+              "phase_plan": "238f4472",
+              "checklist": "149d0314"
+            },
+            "current_hashes": {
+              "architecture": "317ad5a5",
+              "phase_plan": "238f4472",
+              "checklist": "149d0314"
+            }
+          }
+        }
+      },
+      "version": 36,
+      "updated_by": "Codex",
+      "session_id": "e945078b-8d9b-4f1f-8142-99fc8ad5717d"
+    }
+  },
+  "recent_projects": [
+    "sitepkg_runtime_test"
+  ],
+  "session_projects": {
+    "c5b822f4-2736-4982-8289-d0db96d8a323": {
+      "name": "sitepkg_runtime_test",
+      "root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PROGRESS_LOG.md",
+      "docs_dir": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test",
+      "docs": {
+        "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/ARCHITECTURE_GUIDE.md",
+        "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PHASE_PLAN.md",
+        "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/CHECKLIST.md",
+        "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PROGRESS_LOG.md",
+        "_hashes": {
+          "baseline_hashes": {
+            "architecture": "317ad5a5",
+            "phase_plan": "238f4472",
+            "checklist": "149d0314"
+          },
+          "current_hashes": {
+            "architecture": "317ad5a5",
+            "phase_plan": "238f4472",
+            "checklist": "149d0314"
+          }
+        }
+      },
+      "defaults": {
+        "agent": "Codex"
+      },
+      "author": "Codex",
+      "description": null,
+      "tags": [],
+      "meta": {
+        "docs": {
+          "architecture": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/ARCHITECTURE_GUIDE.md",
+          "phase_plan": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PHASE_PLAN.md",
+          "checklist": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/CHECKLIST.md",
+          "progress_log": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/sitepkg_runtime_test/PROGRESS_LOG.md",
+          "_hashes": {
+            "baseline_hashes": {
+              "architecture": "317ad5a5",
+              "phase_plan": "238f4472",
+              "checklist": "149d0314"
+            },
+            "current_hashes": {
+              "architecture": "317ad5a5",
+              "phase_plan": "238f4472",
+              "checklist": "149d0314"
+            }
+          }
+        }
+      },
+      "version": 36,
+      "updated_by": "Codex",
+      "session_id": "e945078b-8d9b-4f1f-8142-99fc8ad5717d"
+    }
+  },
+  "session_modes": {
+    "c5b822f4-2736-4982-8289-d0db96d8a323": "project"
+  },
+  "recent_tools": [],
+  "last_activity_at": null,
+  "session_started_at": null,
+  "version": 1,
+  "last_updated_by": "Codex",
+  "operation_timestamp": "2026-02-13 03:11:59 UTC"
+}

@@ -240,6 +240,73 @@ class ReminderEngine:
             self.history.reminder_hashes.pop(key, None)
         return len(keys)
 
+    async def get_reminder_history(
+        self,
+        *,
+        project_root: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Return reminder history from storage when available."""
+        normalized_limit = max(1, min(int(limit), 200))
+
+        if self.storage and hasattr(self.storage, "get_reminder_history"):
+            try:
+                history = await self.storage.get_reminder_history(
+                    project_root=project_root,
+                    agent_id=agent_id,
+                    category=category,
+                    limit=normalized_limit,
+                )
+                if isinstance(history, list) and history:
+                    return history
+            except Exception:
+                # Fall back to in-memory snapshots when storage is unavailable.
+                pass
+
+        # In-memory fallback is hash-only and cannot represent full metadata.
+        items: List[Dict[str, Any]] = []
+        for reminder_hash, shown_at in sorted(
+            self.history.reminder_hashes.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:normalized_limit]:
+            items.append(
+                {
+                    "reminder_hash": reminder_hash,
+                    "shown_at": shown_at.isoformat(),
+                    "source": "memory",
+                }
+            )
+        return items
+
+    async def reset_history(
+        self,
+        *,
+        project_root: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> int:
+        """Clear reminder history rows, preferring backend storage."""
+        deleted_db = 0
+        if self.storage and hasattr(self.storage, "clear_reminder_history"):
+            try:
+                deleted_db = int(
+                    await self.storage.clear_reminder_history(
+                        project_root=project_root,
+                        agent_id=agent_id,
+                    )
+                )
+            except Exception:
+                pass
+
+        cleared_memory = len(self.history.reminder_hashes)
+        self.history.reminder_hashes.clear()
+        self.history.teaching_sessions.clear()
+        if deleted_db > 0:
+            return deleted_db
+        return cleared_memory
+
     def _get_reminder_hash(self, reminder_key: str, variables: Dict[str, Any]) -> str:
         """Generate hash for reminder deduplication.
 

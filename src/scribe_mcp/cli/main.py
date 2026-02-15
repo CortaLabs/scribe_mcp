@@ -18,7 +18,7 @@ from scribe_mcp.cli.session_store import (
 from scribe_mcp.config.paths import cli_session_state_path
 
 
-_KNOWN_COMMANDS = {"call", "session", "tools"}
+_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap"}
 
 
 def _discover_repo_root(start: Path) -> Path:
@@ -125,6 +125,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit machine-readable JSON.",
+    )
+
+    bootstrap_parser = subparsers.add_parser(
+        "bootstrap",
+        help="Guided Postgres setup for Scribe MCP.",
+        description=(
+            "Run the interactive Corta Labs / Scribe MCP Postgres bootstrap.\n"
+            "Creates/updates roles, app database, schema grants, and .env runtime keys."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  scribe bootstrap\n"
+            "  scribe bootstrap --dry-run\n"
+            "  scribe bootstrap --no-interactive --superuser-password '<password>'\n"
+        ),
+    )
+    bootstrap_parser.add_argument(
+        "bootstrap_args",
+        nargs=argparse.REMAINDER,
+        help="Optional passthrough args for bootstrap-postgres.",
     )
 
     call_parser = subparsers.add_parser("call", help="Invoke a tool by name", allow_abbrev=False)
@@ -429,6 +450,15 @@ def _run_session_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_bootstrap_command(args: argparse.Namespace) -> int:
+    from scribe_mcp.scripts.bootstrap_postgres import main as bootstrap_main
+
+    bootstrap_args = list(args.bootstrap_args)
+    if bootstrap_args and bootstrap_args[0] == "--":
+        bootstrap_args = bootstrap_args[1:]
+    return int(bootstrap_main(bootstrap_args))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     normalized_argv = _normalize_argv(argv or sys.argv[1:])
     parser = _build_parser()
@@ -448,6 +478,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         repo_root = _discover_repo_root(args.repo_root)
         _prepare_environment(repo_root)
         return asyncio.run(_run_tools_command(args))
+
+    if args.command == "bootstrap":
+        return _run_bootstrap_command(args)
 
     return asyncio.run(_run_call_command(args, passthrough_options))
 

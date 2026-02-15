@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp.utils.time import format_utc, utcnow
-from scribe_mcp.utils.slug import normalize_project_input
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -99,8 +98,8 @@ def _validate_search_parameters(
     with bulletproof parameter validation and healing.
     """
     try:
-        # Normalize project name input to handle any format (hyphens, underscores, mixed case)
-        normalized_project = normalize_project_input(project) if project else project
+        # Preserve explicit project spelling; resolver handles alias normalization.
+        normalized_project = project.strip() if isinstance(project, str) else project
 
         # Apply Phase 1 BulletproofParameterCorrector for initial parameter healing
         healed_params = {}

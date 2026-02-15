@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -395,9 +396,56 @@ async def get_or_create_agent_session(
 ) -> str:
     await initialise_fn()
     async with write_lock:
-        new_session_id = str(uuid.uuid4())
         expires_at = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
 
+        # Fast path: session already exists for this identity key.
+        existing = await fetchone_fn(
+            "SELECT session_id FROM agent_sessions WHERE identity_key = ?",
+            (identity_key,),
+        )
+        if existing and existing["session_id"]:
+            await execute_fn(
+                """
+                UPDATE agent_sessions
+                SET last_active_at = CURRENT_TIMESTAMP,
+                    expires_at = ?
+                WHERE identity_key = ?
+                """,
+                (expires_at, identity_key),
+            )
+            return existing["session_id"]
+
+        # Preferred path: single-statement upsert with RETURNING guarantees read-after-write.
+        try:
+            upsert_row = await fetchone_fn(
+                """
+                INSERT INTO agent_sessions
+                (session_id, identity_key, agent_name, agent_key, repo_root, mode, scope_key, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(identity_key) DO UPDATE SET
+                    last_active_at = CURRENT_TIMESTAMP,
+                    expires_at = excluded.expires_at
+                RETURNING session_id;
+                """,
+                (
+                    str(uuid.uuid4()),
+                    identity_key,
+                    agent_name,
+                    agent_key,
+                    repo_root,
+                    mode,
+                    scope_key,
+                    expires_at,
+                ),
+            )
+            if upsert_row and upsert_row["session_id"]:
+                return upsert_row["session_id"]
+        except sqlite3.OperationalError:
+            # Older SQLite runtimes may not support RETURNING. Fall back below.
+            pass
+
+        # Compatibility fallback: insert/update/select triplet.
+        new_session_id = str(uuid.uuid4())
         await execute_fn(
             """
             INSERT OR IGNORE INTO agent_sessions
@@ -421,9 +469,29 @@ async def get_or_create_agent_session(
             "SELECT session_id FROM agent_sessions WHERE identity_key = ?",
             (identity_key,),
         )
-        if not row:
-            raise RuntimeError(f"Failed to retrieve session for identity_key: {identity_key}")
-        return row["session_id"]
+        if row and row["session_id"]:
+            return row["session_id"]
+
+        # Last-resort recovery: identity row missing, so pick most recent session
+        # with same agent/repo/scope tuple. This keeps tool calls alive even when
+        # identity-key rows were pruned or partially migrated.
+        recovery = await fetchone_fn(
+            """
+            SELECT session_id
+            FROM agent_sessions
+            WHERE agent_key = ? AND repo_root = ? AND mode = ? AND scope_key = ?
+            ORDER BY last_active_at DESC
+            LIMIT 1
+            """,
+            (agent_key, repo_root, mode, scope_key),
+        )
+        if recovery and recovery["session_id"]:
+            return recovery["session_id"]
+
+        raise RuntimeError(
+            f"Failed to retrieve session for identity_key: {identity_key} "
+            f"(agent_key={agent_key}, mode={mode}, scope_key={scope_key})"
+        )
 
 
 async def cleanup_expired_sessions(

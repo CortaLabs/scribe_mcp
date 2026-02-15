@@ -5,7 +5,7 @@ doc_name: phase_plan
 category: engineering
 status: draft
 version: '0.1'
-last_updated: 2026-02-11 07:54:02 UTC
+last_updated: 2026-02-15 05:34:39 UTC
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -631,6 +631,47 @@ summary: ''
 ## Phase 8 -- Postgres Full Implementation
 <!-- ID: phase_7 -->
 
+### Phase 8 Closure (2026-02-15)
+
+**Completed in this pass:**
+- Converted Postgres backend to true package layout at `src/scribe_mcp/storage/postgres/` and removed monolith module.
+- Added package modules: `internals.py`, `schema.py`, `migrations.py`, `documents.py`, and wired them into `PostgresStorage`.
+- Added dual-backend conformance test suite (`tests/test_storage_backend_conformance.py`) with live Postgres validation via `SCRIBE_TEST_POSTGRES_URL`.
+- Verified migration helper idempotence (`_run_migration`, `migrate_add_docs_json_column`, `backfill_docs_json_from_state`) and pg_trgm search behavior against live Postgres.
+
+**Validation evidence:**
+- `python -m compileall -q src/scribe_mcp/storage/postgres`
+- `SCRIBE_TEST_POSTGRES_URL=<postgres_dsn> pytest tests/test_storage_backend_conformance.py -q` -> `8 passed, 3 skipped`
+- `SCRIBE_TEST_POSTGRES_URL=<postgres_dsn> pytest tests/test_db_routing.py tests/test_get_project_integration.py tests/test_query_entries_explicit_project_resolution.py tests/test_database_migration.py tests/test_execution_context.py tests/test_storage_backend_conformance.py -q` -> `47 passed, 3 skipped`
+
+**Phase 8 result:** Exit gate achieved and checklist closed.
+
+### Phase 8 Status Update (2026-02-15, pass 2)
+
+**Additional completions in this pass:**
+- Added remaining cross-backend compatibility methods in `PostgresStorage`: `fetch_project_sync`, `migrate_add_docs_json_column`, `backfill_docs_json_from_state`.
+- Implemented previously open checklist API gaps: `fetch_agent_session`, `archive_entries`, and document-section APIs (`upsert_document_section`, `get_document_section`, `search_document_sections`, `record_document_change`).
+- Verified parity at class surface level: SQLite vs Postgres public methods now report `missing_in_postgres=[]`.
+- Re-ran targeted regression tests after edits (`test_db_routing`, `test_get_project_integration`, `test_query_entries_explicit_project_resolution`, `test_database_migration`) with all passing.
+
+**Still open before Phase 8 exit:**
+- Stand up/run live Postgres dual-backend conformance tests (including FTS equivalence assertions).
+- Complete modular split to `storage/postgres/` package (`internals.py`, `schema.py`, `migrations.py`, domain modules) if we are enforcing structural checklist items literally.
+- Validate migration behavior on fresh and pre-existing Postgres databases with tracked proofs.
+
+### Phase 8 Status Update (2026-02-15)
+
+**Completed in this sprint:**
+- Replaced broken `storage/postgres.py` `db.ops` shell with direct asyncpg queries for core project/entry/session/runtime paths.
+- Expanded `db/init.sql` to include missing session/document/telemetry/archive/migration tables and critical indexes.
+- Added runtime-required methods used by tool/runtime/state manager (`upsert_session`, `set/get_session_mode`, `set/get_session_project`, reminder/tool-call/bridge hooks).
+- Implemented core parity methods (`upsert_project`, `fetch_project`, `list_projects_by_repo`, `update_project_docs`, `insert_entry`, `fetch_recent_entries`, `query_entries`, `count_entries`, `count_query_entries`, benchmark/planning writers).
+
+**Remaining for Phase 8 exit gate:**
+- Finish explicit missing API parity items (`archive_entries`, `fetch_agent_session`, document section CRUD/search parity methods, migration helper parity).
+- Build/verify dual-backend conformance tests against live Postgres.
+- Validate pg_trgm search behavior contract and threshold behavior against SQLite FTS expectations.
+
 **Objective:** Complete asyncpg implementation with all 31 StorageBackend methods.
 
 **Duration:** 5 days | **Risk:** MEDIUM | **Dependencies:** P4, P7
@@ -700,6 +741,7 @@ summary: ''
 **Objective:** Expose existing reminder engine to users via 3 MCP tools.
 
 **Duration:** 2 days | **Risk:** LOW | **Dependencies:** P7
+**Status (2026-02-15):** COMPLETE
 
 ### Task Package 9.1: Create Reminder MCP Tools
 
@@ -714,10 +756,10 @@ summary: ''
 5. Register tools in server.py tool registry
 
 **Verification:**
-- [ ] `list_tools` response includes query_reminders, configure_reminders, reset_reminders
-- [ ] query_reminders returns reminder data
-- [ ] reset_reminders resets cooldown counts
-- [ ] New tests in tests/test_reminder_tools.py
+- [x] `list_tools` response includes query_reminders, configure_reminders, reset_reminders
+- [x] query_reminders returns reminder data
+- [x] reset_reminders resets cooldown counts
+- [x] New tests in tests/test_reminder_tools.py
 
 ### Task Package 9.2: Documentation Update
 
@@ -730,103 +772,209 @@ summary: ''
 3. Update tool count references (18 to 21 tools)
 
 **Verification:**
-- [ ] CLAUDE.md lists all 3 reminder tools
-- [ ] Scribe_Usage.md has usage examples
+- [x] CLAUDE.md lists all 3 reminder tools
+- [x] Scribe_Usage.md has usage examples
 
 **Exit Criteria:** 3 reminder MCP tools operational and documented.
 
 ---
-## Phase 10 -- Startup Optimization + Test Cleanup + Auth/Transport Scaffold
+## Phase 10 -- Postgres Migration Hardening + Runtime Readiness
 <!-- ID: phase_9 -->
 
-**Objective:** Optimize startup performance, clean up test infrastructure, create auth/transport interfaces.
+**Objective:** Complete production Postgres migration for distributed deployment and finish runtime hardening.
 
-**Duration:** 3 days | **Risk:** LOW | **Dependencies:** P6
+**Duration:** 5-7 days | **Risk:** MEDIUM | **Dependencies:** P8, P9
 
-### Task Package 10.1: Lazy Tool Loading
+### Track A -- Postgres Migration (Critical Path)
 
-**Scope:** Convert tools/__init__.py to lazy import pattern
-**Files to Modify:** tools/__init__.py
+### Task Package 10.A1: Real Database Setup (Schema-Isolated)
 
-**Specifications:**
-1. Replace eager imports with _TOOL_MODULES dict mapping tool names to module paths
-2. Implement __getattr__ for deferred import
-3. Tool schemas registered upfront (lightweight metadata)
-4. Actual module import on first tool call
-
-**Verification:**
-- [ ] Server starts faster (measure with time.time() instrumentation)
-- [ ] All tools still work on first call
-- [ ] `pytest tests/` passes
-
-### Task Package 10.2: Deferred Startup Operations
-
-**Scope:** Move non-critical operations out of startup path
-**Files to Modify:** server.py, storage/sqlite/__init__.py
+**Scope:** Finalize production-ready Postgres schema bootstrap for shared-instance operation.
+**Files to Modify:** `src/scribe_mcp/storage/postgres/internals.py`, `src/scribe_mcp/storage/postgres/schema.py`, `src/scribe_mcp/db/init.sql`, `src/scribe_mcp/config/settings.py`
 
 **Specifications:**
-1. Move cleanup_old_entries() from _startup() to hourly background task
-2. Cache migration completion in memory set (avoid per-migration PRAGMA)
-3. Defer bridge/plugin discovery to first relevant tool call
-4. Add startup timing instrumentation
+## Phase 10 -- Postgres Migration Hardening + Runtime Readiness
+<!-- ID: phase_10 -->
 
-**Verification:**
-- [ ] Startup time < 2 seconds (instrumented benchmark)
-- [ ] Cleanup still runs (verify after 1 hour or manual trigger)
+**Objective:** Complete production Postgres migration for distributed deployment and finish runtime hardening.
 
-### Task Package 10.3: Test Suite Cleanup
+**Duration:** 5-7 days | **Risk:** MEDIUM | **Dependencies:** P8, P9
 
-**Scope:** Fix fixture cleanup, add shared fixtures, improve isolation
-**Files to Create:** tests/fixtures/__init__.py, tests/fixtures/storage.py, tests/fixtures/projects.py
+### Track A -- Postgres Migration (Critical Path)
 
-**Specifications:**
-1. Create shared storage fixture with proper teardown
-2. Create project creation fixture
-3. Ensure all fixtures use tmp_path (no manual temp directories)
-4. Add autouse fixture for test DB cleanup
-5. Fix hardcoded paths in remaining test files
+### Task Package 10.A1: Real Database Setup (Schema-Isolated)
 
-**Verification:**
-- [ ] `find . -name 'tmp_tests' -type d` returns 0 after test run
-- [ ] No /home/austin paths in tests
-
-### Task Package 10.4: Auth + Transport Scaffold
-
-**Scope:** Create interface definitions for future auth and transport
-**Files to Create:** auth/__init__.py, auth/base.py, auth/api_key.py, auth/jwt_auth.py, transport/__init__.py, transport/base.py, transport/http_sse.py, transport/websocket.py
+**Scope:** Finalize production-ready Postgres schema bootstrap for shared-instance operation.
+**Files to Modify:** `src/scribe_mcp/storage/postgres/internals.py`, `src/scribe_mcp/storage/postgres/schema.py`, `src/scribe_mcp/db/init.sql`, `src/scribe_mcp/config/settings.py`
 
 **Specifications:**
-1. auth/base.py: AuthProvider ABC with authenticate(), authorize(), revoke()
-2. auth/api_key.py: ApiKeyAuth stub (raises NotImplementedError)
-3. auth/jwt_auth.py: JWTAuth stub (raises NotImplementedError)
-4. transport/base.py: TransportProvider ABC with start(), stop(), send_message()
-5. transport/http_sse.py: HttpSseTransport stub
-6. transport/websocket.py: WebSocketTransport stub
-7. All stubs have docstrings explaining intended behavior
+1. Use dedicated schema (`scribe`) instead of `public` for all Scribe tables.
+2. Ensure `db/init.sql` creates full SQLite parity table set.
+3. Ensure indexes cover high-frequency query paths (timestamps/FKs + JSONB GIN).
+4. Ensure required extensions are handled (`pg_trgm` required, `pgvector` optional/non-fatal).
 
 **Verification:**
-- [ ] `from scribe_mcp.auth.base import AuthProvider` works
-- [ ] `from scribe_mcp.transport.base import TransportProvider` works
-- [ ] All stubs raise NotImplementedError
+- [ ] Dedicated schema created and selected via connection search_path
+- [ ] All expected Scribe tables present in `scribe.*`
+- [ ] JSONB GIN indexes visible in `pg_indexes`
 
-**Exit Criteria:** Startup under 2s. Test suite clean. Auth/transport interfaces defined.
+### Task Package 10.A2: SQLite -> Postgres Data Migration Tooling
+
+**Scope:** Implement repeatable migration tooling for all Scribe tables.
+**Files to Create:** `src/scribe_mcp/scripts/migrate_sqlite_to_postgres.py`
+**Files to Modify:** `pyproject.toml`
+
+**Specifications:**
+1. Provide CLI for copy/migrate from SQLite to Postgres (`replace` mode supported).
+2. Migrate full table set including high-volume `scribe_entries`.
+3. Add built-in row-count integrity verification per table.
+4. Preserve timestamps and JSON/metadata fidelity.
+
+**Verification:**
+- [ ] Migration CLI runs end-to-end on local dataset
+- [ ] Source/target row counts match for migrated tables
+- [ ] Re-run is safe and deterministic in replace mode
+
+### Task Package 10.A3: High-Volume Readiness
+
+**Scope:** Prepare for million-row `scribe_entries` growth.
+**Files to Modify:** `src/scribe_mcp/db/init.sql`, Postgres migration SQL files
+**Files to Create:** Postgres numbered migration SQLs under `src/scribe_mcp/db/postgres_migrations/`
+
+**Specifications:**
+1. Add/verify indexes for `read_recent`, `query_entries`, and metadata filters.
+2. Document partitioning strategy (monthly range partitioning plan for `scribe_entries`).
+3. Validate archival/retention flow for Postgres (`cleanup_old_entries`, archive table path).
+
+**Verification:**
+- [ ] Query latency remains acceptable on representative migrated dataset
+- [ ] Archive path verified with Postgres backend enabled
+- [ ] Partitioning plan documented with implementation-ready steps
+
+### Task Package 10.A4: Remote Pool Tuning + Retry Behavior
+
+**Scope:** Tune asyncpg pool defaults for remote latency and transient network faults.
+**Files to Modify:** `src/scribe_mcp/storage/postgres/internals.py`, `src/scribe_mcp/config/settings.py`, `.env.example`
+
+**Specifications:**
+1. Defaults target remote deployment (`min_size=2`, `max_size=20`).
+2. Add configurable connection timeout and retry/backoff.
+3. Keep settings env-driven for VPS deployment overrides.
+
+**Verification:**
+- [ ] Pool settings configurable via env vars
+- [ ] Startup/connect retry behavior validated against transient failure simulation
+
+### Task Package 10.A5: Backup + Restore Procedure
+
+**Scope:** Document schema-scoped backup/restore workflow.
+**Files to Create:** `docs/guides/postgres_backup_restore.md`
+
+**Specifications:**
+1. `pg_dump` runbook for schema-only backup in shared Postgres instance.
+2. Retention policy: 7 daily + 4 weekly.
+3. Restore verification checklist and rollback notes.
+
+**Verification:**
+- [ ] Backup commands documented and runnable
+- [ ] Restore dry run documented with verification steps
+
+### Task Package 10.A6: Conformance + Soak Validation
+
+**Scope:** Validate Postgres-primary mode under representative load.
+**Files to Modify:** `tests/test_storage_backend_conformance.py` (as needed), test docs/checklists
+
+**Specifications:**
+1. Re-run backend conformance against real Postgres with migrated data.
+2. Validate dual-write behavior (file + Postgres) still intact.
+3. Record soak-test plan (48h target) and acceptance metrics.
+
+**Verification:**
+- [ ] Conformance suite green with `SCRIBE_TEST_POSTGRES_URL`
+- [ ] Dual-write spot checks pass
+- [ ] Soak plan and monitoring checklist documented
+
+### Track B -- Runtime Hardening (Adjusted Existing Phase 10)
+
+### Task Package 10.B1: Lazy Tool Loading
+
+**Scope:** Convert tool module bootstrapping to deferred import pattern.
+**Files to Modify:** `src/scribe_mcp/tools/__init__.py`, `src/scribe_mcp/server.py`
+
+**Specifications:**
+1. Introduce `_TOOL_MODULES` registry and `__getattr__`-based deferred import.
+2. Ensure unknown tool calls trigger on-demand module load before dispatch.
+3. Preserve tool-list and first-call behavior parity.
+
+**Verification:**
+- [ ] Startup import path is lighter than eager-import baseline
+- [ ] All tools callable on first request
+
+### Task Package 10.B2: Deferred Startup + Timing
+
+**Scope:** Keep startup path minimal and observable.
+**Files to Modify:** `src/scribe_mcp/server.py`, storage init paths as needed
+
+**Specifications:**
+1. Keep cleanup/migration/bootstrap tasks in delayed background path.
+2. Cache migration state where repeated DB checks are unnecessary.
+3. Add startup timing instrumentation and expose in logs.
+
+**Verification:**
+- [ ] Startup target < 2 seconds in baseline environment
+- [ ] Deferred tasks still execute reliably post-start
+
+### Task Package 10.B3: Test Suite Cleanup
+
+**Scope:** Standardize fixtures and DB cleanup behavior.
+**Files to Modify/Create:** `tests/fixtures/__init__.py`, `tests/fixtures/storage.py`, `tests/fixtures/projects.py`, related tests
+
+**Specifications:**
+1. Shared fixtures for storage/project setup with explicit teardown.
+2. Consistent tmp-path usage (no ad-hoc temp dirs).
+3. Autouse cleanup for DB artifacts where needed.
+
+**Verification:**
+- [ ] No stray `tmp_tests` directories post-run
+- [ ] No hardcoded local absolute paths in tests
+
+### Task Package 10.B4: Auth + Transport Contracts (Upgraded)
+
+**Scope:** Define production-ready interface contracts for remote deployment paths.
+**Files to Create:** `src/scribe_mcp/auth/__init__.py`, `src/scribe_mcp/auth/base.py`, `src/scribe_mcp/auth/api_key.py`, `src/scribe_mcp/auth/jwt_auth.py`, `src/scribe_mcp/transport/__init__.py`, `src/scribe_mcp/transport/base.py`, `src/scribe_mcp/transport/http_sse.py`, `src/scribe_mcp/transport/websocket.py`
+
+**Specifications:**
+1. `AuthProvider` contract must support authenticate/authorize/revoke semantics used by remote callers.
+2. `TransportProvider` contract must support start/stop/send and error/lifecycle expectations.
+3. Stubs remain `NotImplementedError` where implementation is deferred, but signatures/docs must be deployment-ready.
+
+**Verification:**
+- [ ] Auth/transport base contracts import and type-check
+- [ ] Stubs raise `NotImplementedError` with clear action messages
+
+**Exit Criteria:**
+- Track A migration and production-readiness items completed with evidence.
+- Track B runtime hardening complete.
+- Postgres-primary mode is operational with documented backup/restore + soak path.
 
 ---
+## Milestone Tracking
+<!-- ID: milestone_tracking -->
 ## Milestone Tracking
 <!-- ID: milestone_tracking -->
 
 | Milestone | Target | Owner | Status | Evidence |
 |-----------|--------|-------|--------|----------|
-| Repository Clean (P1) | Week 1 | Coder | Planned | Git diff shows deletions |
-| Logging + Security (P2) | Week 1-2 | Coder | Planned | Zero print in production |
-| Dead Code Clean (P3) | Week 2 | Coder | Planned | Zero bare except + optimization.py deleted |
-| Storage Decomposed (P4) | Week 2-3 | Coder | Planned | 9 modules, all < 800 lines |
-| Docs Decomposed (P5) | Week 2-3 (PARALLEL with P4) | Coder | Planned | 12 modules in doc_management/, tool < 300 lines |
-| Packaged + src/ (P6) | Week 4 | Coder | Planned | pip install works, reminders.py path fixed |
-| DB Consolidated (P7) | Week 4-5 | Coder | Planned | Single DB, no state.json |
-| Postgres Complete (P8) | Week 5 | Coder | Planned | 31/31 methods, pg_trgm FTS contract verified |
-| Reminders Live (P9) | Week 5-6 | Coder | Planned | 3 tools in list_tools |
-| Optimized + Scaffold (P10) | Week 6 | Coder | Planned | Startup < 2s |
+| Repository Clean (P1) | Week 1 | Codex | Complete | Checklist P1 exit gate marked complete |
+| Logging + Security (P2) | Week 1-2 | Codex | Complete | Checklist P2 exit gate marked complete |
+| Dead Code Clean (P3) | Week 2 | Codex | Complete | Checklist P3 exit gate marked complete |
+| Storage Decomposed (P4) | Week 2-3 | Codex | Complete | Checklist P4 exit gate marked complete |
+| Docs Decomposed (P5) | Week 2-3 | Codex | Complete | Checklist P5 exit gate marked complete |
+| Packaged + src/ (P6) | Week 4 | Codex | Complete | Checklist P6 exit gate marked complete |
+| DB Consolidated (P7) | Week 4-5 | Codex | Complete | Checklist P7 exit gate marked complete |
+| Postgres Complete (P8) | Week 5 | Codex | Complete | Live Postgres conformance tests passed |
+| Reminders Live (P9) | Week 5-6 | Codex | Complete | Reminder tools implemented + tests passing |
+| Optimized + Scaffold (P10) | Week 6 | Codex | Planned | Pending Phase 10 execution |
 
 ---
 ## Retro Notes and Adjustments

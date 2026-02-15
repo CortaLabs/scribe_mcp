@@ -635,7 +635,14 @@ async def _process_single_entry(
         # Mirror entry into database-backed storage when available, without
         # impacting the primary file append path.
         backend = server_module.storage_backend
+        db_mirror: Dict[str, Any] = {
+            "enabled": bool(backend),
+            "backend": type(backend).__name__ if backend else None,
+            "status": "disabled",
+            "error": None,
+        }
         if backend:
+            db_mirror["status"] = "pending"
             try:
                 timeout = settings.storage_timeout_seconds
                 # Ensure project row exists
@@ -665,9 +672,12 @@ async def _process_single_entry(
                         sha256=sha_value,
                         log_type=entry_log_type,
                     )
-            except Exception:
+                db_mirror["status"] = "ok"
+            except Exception as db_exc:
                 # Database mirror failures should never block logging.
-                pass
+                db_mirror["status"] = "error"
+                db_mirror["error"] = str(db_exc)
+                logger.warning("append_entry database mirror failed: %s", db_exc)
 
         # Queue entry for vector indexing (non-blocking).
         try:
@@ -714,6 +724,7 @@ async def _process_single_entry(
             "project_name": project["name"],  # For concurrent session clarity
             "recent_projects": list(recent),
             "reminders": list(getattr(context, "reminders", []) or []) + tee_reminders,
+            "db_mirror": db_mirror,
         }
 
         if timestamp_warning:

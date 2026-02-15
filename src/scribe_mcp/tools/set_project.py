@@ -24,7 +24,6 @@ from scribe_mcp.tools.base.parameter_normalizer import normalize_dict_param, nor
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.project_registry import ProjectRegistry
-from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.shared.project_utils import detect_project_state
 
 
@@ -35,7 +34,7 @@ class _SetProjectHelper(LoggingToolMixin):
 
 _SET_PROJECT_HELPER = _SetProjectHelper()
 _PROJECT_REGISTRY = ProjectRegistry()
-_PROJECT_REGISTRY = ProjectRegistry()
+_SESSION_DEBUG_ENABLED = os.environ.get("SCRIBE_SESSION_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 
 
 async def _count_log_entries(progress_log_path: Path) -> int:
@@ -440,24 +439,13 @@ async def set_project(
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("dev_plans upsert failed in set_project: %s", exc)
 
-        # Best-effort Project Registry touch for this project (SQLite-first).
-        try:
-            _PROJECT_REGISTRY.ensure_project(
-                project_record,
-                description=description,
-                tags=tags,
-                meta={"source": "set_project"},
-            )
-            _PROJECT_REGISTRY.touch_access(project_record.name)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("ProjectRegistry ensure/touch_access failed in set_project: %s", exc)
-
     # Use AgentContextManager for agent-scoped project context
     agent_manager = server_module.get_agent_context_manager()
     session_id: Optional[str] = None
     mirror_global = True
     context_session_id: Optional[str] = None
     stable_session_id: Optional[str] = None
+    context = None
     try:
         context = server_module.get_execution_context()
         if context:
@@ -486,12 +474,21 @@ async def set_project(
                 session_id=session_id,
                 expected_version=expected_version
             )
+            if not isinstance(result, dict):
+                logger.warning(
+                    "AgentContextManager.set_current_project returned non-dict result (%s); using safe defaults.",
+                    type(result).__name__,
+                )
+                result = {}
 
             # Update project_data with version info from database
             project_data["version"] = result.get("version", 1)
             project_data["updated_by"] = result.get("updated_by", agent_id)
             project_data["session_id"] = result.get("session_id", session_id)
-            mirror_global = False
+            # Preserve legacy/global behavior when no execution context is bound.
+            # Session-scoped calls (with stable or transport session IDs) should
+            # stay isolated; context-free calls should still update global state.
+            mirror_global = not (stable_session_id or context_session_id)
 
         except Exception as e:
             # Fallback to legacy behavior if agent context fails
@@ -507,6 +504,9 @@ async def set_project(
         session_id=context_session_id or session_id,
         mirror_global=mirror_global,
     )
+    if state is None:
+        logger.warning("StateManager.set_current_project returned None; reloading state snapshot.")
+        state = await server_module.state_manager.load()
     await server_module.state_manager.set_session_mode(
         context_session_id or session_id,
         "project",
@@ -524,16 +524,14 @@ async def set_project(
                     stable_session_id or session_key,
                     name
                 )
-                # Debug: Log the session binding
-                from datetime import datetime, timezone
-                debug_log = Path("/tmp/scribe_session_debug.log")
-                with open(debug_log, "a") as f:
-                    f.write(f"\n=== set_project session binding ===\n")
-                    f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
-                    f.write(f"session_key: {session_key}\n")
-                    f.write(f"project_name: {name}\n")
-                    f.write(f"stable_session_id: {stable_session_id}\n")
-                    f.write(f"context_session_id: {context_session_id}\n")
+                if _SESSION_DEBUG_ENABLED:
+                    logger.debug(
+                        "set_project session binding | session_key=%s project=%s stable_session_id=%s context_session_id=%s",
+                        session_key,
+                        name,
+                        stable_session_id,
+                        context_session_id,
+                    )
             if hasattr(backend, "set_session_mode"):
                 # NO SILENT ERRORS - mode must be set correctly
                 await backend.set_session_mode(session_key, "project")

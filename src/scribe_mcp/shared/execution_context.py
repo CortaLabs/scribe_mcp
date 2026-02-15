@@ -59,6 +59,7 @@ class RouterContextManager:
         self._transport_sessions: Dict[str, str] = {}  # Keep as performance cache
         self._session_projects: Dict[str, str] = {}  # session_id -> project_name cache
         self._files_read_in_session: Dict[str, Set[str]] = defaultdict(set)  # session_id -> set of file paths
+        self._stable_agent_sessions: Dict[str, str] = {}  # identity_key -> stable agent session_id cache
         self._process_instance_id = str(uuid.uuid4())
         self._storage_backend = storage_backend  # NEW: Injected dependency
 
@@ -139,6 +140,20 @@ class RouterContextManager:
             return None
         async with self._lock:
             return self._session_projects.get(session_id)
+
+    async def get_cached_agent_session_id(self, identity_key: str) -> Optional[str]:
+        """Return cached stable agent session id for a runtime identity key."""
+        if not identity_key:
+            return None
+        async with self._lock:
+            return self._stable_agent_sessions.get(identity_key)
+
+    async def cache_agent_session_id(self, identity_key: str, session_id: str) -> None:
+        """Cache stable agent session id to avoid repeated DB lookups per tool call."""
+        if not identity_key or not session_id:
+            return
+        async with self._lock:
+            self._stable_agent_sessions[identity_key] = session_id
 
     async def record_file_read(self, session_id: str, file_path: str) -> None:
         """Record that a file was read in this session. Called by read_file."""

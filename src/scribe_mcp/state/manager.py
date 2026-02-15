@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,9 +22,20 @@ from .migration import migrate_legacy_state_file
 
 logger = logging.getLogger(__name__)
 
+
+def _float_env(name: str, default: float, minimum: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        return default
+
+
 TOOL_HISTORY_LIMIT = 10
 _GLOBAL_AGENT_ID = "Scribe"
-_PROJECT_CACHE_TTL_SECONDS = 2.0
+_PROJECT_CACHE_TTL_SECONDS = _float_env("SCRIBE_PROJECT_CACHE_TTL_SECONDS", 30.0, 1.0)
 
 
 @dataclass
@@ -361,7 +373,27 @@ class StateManager:
                 return projects
 
             try:
-                records = await self._storage_backend.list_projects()
+                repo_root_filter: Optional[str] = None
+                try:
+                    from scribe_mcp import server as server_module
+
+                    if hasattr(server_module, "get_execution_context"):
+                        exec_context = server_module.get_execution_context()
+                        if exec_context and getattr(exec_context, "repo_root", None):
+                            repo_root_filter = str(
+                                Path(str(exec_context.repo_root)).expanduser().resolve()
+                            )
+                except Exception:
+                    repo_root_filter = None
+
+                if repo_root_filter and hasattr(self._storage_backend, "list_projects_by_repo"):
+                    records = await self._storage_backend.list_projects_by_repo(repo_root_filter)
+                    # Compatibility fallback: if the scoped list is empty, retain legacy
+                    # global visibility so tools can still resolve recent projects.
+                    if not records and hasattr(self._storage_backend, "list_projects"):
+                        records = await self._storage_backend.list_projects()
+                else:
+                    records = await self._storage_backend.list_projects()
             except Exception as exc:
                 logger.warning("Failed to load projects from backend: %s", exc)
                 return projects

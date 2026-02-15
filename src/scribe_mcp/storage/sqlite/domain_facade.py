@@ -376,6 +376,37 @@ class SQLiteDomainFacadeMixin:
             cooldown_minutes=cooldown_minutes,
         )
 
+    async def get_reminder_history(
+        self,
+        *,
+        project_root: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        return await telemetry_ops.get_reminder_history(
+            initialise_fn=self._initialise,
+            fetchall_fn=self._fetchall,
+            project_root=project_root,
+            agent_id=agent_id,
+            category=category,
+            limit=limit,
+        )
+
+    async def clear_reminder_history(
+        self,
+        *,
+        project_root: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> int:
+        return await telemetry_ops.clear_reminder_history(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            connect_fn=self._connect,
+            project_root=project_root,
+            agent_id=agent_id,
+        )
+
     async def cleanup_reminder_history(self, cutoff_hours: int = 168) -> int:
         return await telemetry_ops.cleanup_reminder_history(
             initialise_fn=self._initialise,

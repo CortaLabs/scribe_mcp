@@ -1,0 +1,53 @@
+{
+  "name": "vector_indexer",
+  "version": "1.0.0",
+  "description": "Automatic vector indexing for Scribe log entries enabling semantic search",
+  "author": "VectorIndexAgent",
+  "min_scribe_version": "1.0.0",
+  "max_scribe_version": null,
+  "required_permissions": [
+    "file_read",
+    "file_write",
+    "database_access"
+  ],
+  "file_hash": null,
+  "signature": null,
+  "dependencies": {
+    "required": [
+      "faiss-cpu>=1.7.0",
+      "sentence-transformers>=2.0.0",
+      "numpy>=1.20.0"
+    ],
+    "optional": [
+      "faiss-gpu>=1.7.0"
+    ]
+  },
+  "configuration": {
+    "environment_variables": [
+      "SCRIBE_VECTOR_ENABLED",
+      "SCRIBE_VECTOR_BACKEND",
+      "SCRIBE_VECTOR_DIMENSION",
+      "SCRIBE_VECTOR_MODEL",
+      "SCRIBE_VECTOR_GPU",
+      "SCRIBE_VECTOR_QUEUE_MAX",
+      "SCRIBE_VECTOR_BATCH_SIZE"
+    ],
+    "default_settings": {
+      "enabled": true,
+      "backend": "faiss",
+      "dimension": 384,
+      "model": "all-MiniLM-L6-v2",
+      "gpu": false,
+      "queue_max": 1024,
+      "batch_size": 32
+    }
+  },
+  "capabilities": {
+    "semantic_search": true,
+    "background_processing": true,
+    "repository_isolation": true,
+    "deterministic_ids": true,
+    "atomic_updates": true,
+    "graceful_degradation": true
+  }
+}

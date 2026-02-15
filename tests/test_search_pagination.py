@@ -311,3 +311,23 @@ async def test_pagination_empty_results(test_repo):
 
     finally:
         server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_missing_search_path_returns_structured_not_found(test_repo):
+    """Missing path should return a structured not_found error, not raise import errors."""
+    token = _install_execution_context(str(test_repo))
+    try:
+        result = await search(
+            agent="test_agent",
+            pattern=".",
+            path="src/council_mcp/agents/templates",
+            format="structured",
+        )
+
+        assert result["ok"] is False
+        assert result["error"] == "search path does not exist"
+        assert result["error_type"] == "not_found"
+
+    finally:
+        server_module.router_context_manager.reset(token)

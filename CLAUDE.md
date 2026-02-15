@@ -631,6 +631,8 @@ When checking on completed subagents, NEVER open TaskOutput or read raw task out
 
 ## 🔧 Essential Tools Quick Reference
 
+Current MCP tool inventory: **21 tools** (including reminder tools added in Phase 9).
+
 ### Project Management
 - `set_project(agent, name, root)` - Initialize/select project (auto-bootstraps docs)
   - **Project names auto-normalize:** `"my-project"` → `"my_project"` (hyphens, underscores, spaces all work)
@@ -640,6 +642,11 @@ When checking on completed subagents, NEVER open TaskOutput or read raw task out
 ### Logging (PRIMARY TOOL)
 - `append_entry(agent, message, status, meta)` - Single entry mode
 - `append_entry(agent, items=[{...}, {...}])` - Bulk entry mode
+
+### Reminder Operations
+- `query_reminders(agent, project?, category?, limit, format)` - Query reminder history + active reminders
+- `configure_reminders(agent, project?, enabled?, cooldown_minutes?, categories?, tone?, format)` - Update reminder settings
+- `reset_reminders(agent, project?, reset_cooldowns, reset_history?, format)` - Reset cooldowns/history
 
 ### Documentation
 - `manage_docs(agent, action, doc, ...)` - Atomic doc updates (see playbook above)

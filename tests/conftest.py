@@ -1,8 +1,12 @@
+import atexit
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 pytest_plugins = ("fixtures.storage", "fixtures.projects")
 
@@ -44,3 +48,25 @@ _default_state = {
 }
 _state_path.write_text(json.dumps(_default_state, indent=2) + "\n", encoding="utf-8")
 os.environ.setdefault("SCRIBE_STATE_PATH", str(_state_path))
+
+
+def _cleanup_state_dir() -> None:
+    shutil.rmtree(_state_dir, ignore_errors=True)
+
+
+atexit.register(_cleanup_state_dir)
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_test_artifacts() -> None:
+    """Prevent cross-test pollution from temp artifact directories/db files."""
+    yield
+    for candidate in (
+        REPO_ROOT / "tmp_tests",
+        REPO_ROOT / "tests" / "tmp_tests",
+    ):
+        shutil.rmtree(candidate, ignore_errors=True)
+
+    sqlite_default = REPO_ROOT / "scribe_projects.db"
+    if sqlite_default.exists():
+        sqlite_default.unlink()

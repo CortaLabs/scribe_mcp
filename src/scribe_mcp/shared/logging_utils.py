@@ -7,6 +7,8 @@ response-building logic that previously lived in multiple tool modules.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +24,25 @@ META_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
 # query behavior from earlier direct-SQL implementations.
 LEGACY_PROJECT_SELECT_SQL = "SELECT name, repo_root, progress_log_path, docs_json FROM scribe_projects"
 LEGACY_DOCS_JSON_PARSE_ANCHOR = 'json.loads(row["docs_json"])'
+_SESSION_DEBUG_ENABLED = os.environ.get("SCRIBE_SESSION_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+_SESSION_DEBUG_LOG_PATH = Path(
+    os.environ.get("SCRIBE_SESSION_DEBUG_LOG", "/tmp/scribe_session_debug.log")
+)
+logger = logging.getLogger(__name__)
+
+
+def _session_debug_trace(title: str, lines: Sequence[str]) -> None:
+    """Optional file-backed session tracing; disabled by default in production."""
+    if not _SESSION_DEBUG_ENABLED:
+        return
+    logger.debug("%s | %s", title, " | ".join(lines))
+    try:
+        with open(_SESSION_DEBUG_LOG_PATH, "a", encoding="utf-8") as handle:
+            handle.write(f"\n=== {title} ===\n")
+            for line in lines:
+                handle.write(f"{line}\n")
+    except OSError:
+        logger.debug("Session debug trace write failed for '%s'", title)
 
 
 @dataclass(slots=True)
@@ -99,15 +120,16 @@ async def resolve_logging_context(
                 session_key = getattr(exec_context, "stable_session_id", None) or getattr(exec_context, "session_id", None)
                 if session_key:
                     project_name = await backend.get_session_project(session_key)
-                    # Debug logging
-                    from pathlib import Path
                     from datetime import datetime, timezone
-                    debug_log = Path("/tmp/scribe_session_debug.log")
-                    with open(debug_log, "a") as f:
-                        f.write(f"\n=== get_session_project query ===\n")
-                        f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
-                        f.write(f"session_key: {session_key}\n")
-                        f.write(f"project_name from DB: {project_name}\n")
+
+                    _session_debug_trace(
+                        "get_session_project query",
+                        [
+                            f"timestamp: {datetime.now(timezone.utc).isoformat()}",
+                            f"session_key: {session_key}",
+                            f"project_name from DB: {project_name}",
+                        ],
+                    )
                     if project_name:
                         # Try database registry first (projects may not have JSON config files)
                         # CRITICAL FIX (Bug Fix #3): Resolve via StorageBackend APIs (not ad-hoc sqlite connections)
@@ -132,22 +154,24 @@ async def resolve_logging_context(
                                     except (json.JSONDecodeError, TypeError):
                                         pass
 
-                                with open(debug_log, "a") as f:
-                                    f.write(
-                                        f"session_project from storage backend: {session_project.get('name')}\n"
-                                    )
+                                _session_debug_trace(
+                                    "get_session_project resolved",
+                                    [f"session_project from storage backend: {session_project.get('name')}"],
+                                )
                             else:
                                 # Fallback to JSON config files for legacy projects
                                 from scribe_mcp.tools.project_utils import load_project_config
 
                                 session_project = load_project_config(project_name, allow_fallback=False)
-                                with open(debug_log, "a") as f:
-                                    f.write(
-                                        f"session_project from config: {session_project.get('name') if session_project else None}\n"
-                                    )
+                                _session_debug_trace(
+                                    "get_session_project resolved",
+                                    [f"session_project from config: {session_project.get('name') if session_project else None}"],
+                                )
                         except Exception as e:
-                            with open(debug_log, "a") as f:
-                                f.write(f"ERROR resolving session project: {e}\n")
+                            _session_debug_trace(
+                                "get_session_project error",
+                                [f"ERROR resolving session project: {e}"],
+                            )
                             # Fallback to JSON config on error
                             from scribe_mcp.tools.project_utils import load_project_config
                             session_project = load_project_config(project_name, allow_fallback=False)
@@ -156,15 +180,15 @@ async def resolve_logging_context(
                 # Prefer stable_session_id for deterministic project resolution
                 session_key_fallback = getattr(exec_context, "stable_session_id", None) or getattr(exec_context, "session_id", None)
                 session_project = state.get_session_project(session_key_fallback)
-                # Debug logging
-                from pathlib import Path
                 from datetime import datetime, timezone
-                debug_log = Path("/tmp/scribe_session_debug.log")
-                with open(debug_log, "a") as f:
-                    f.write(f"\n=== get_session_project FALLBACK ===\n")
-                    f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
-                    f.write(f"session_key_fallback: {session_key_fallback}\n")
-                    f.write(f"session_project from state: {session_project.get('name') if session_project else None}\n")
+                _session_debug_trace(
+                    "get_session_project FALLBACK",
+                    [
+                        f"timestamp: {datetime.now(timezone.utc).isoformat()}",
+                        f"session_key_fallback: {session_key_fallback}",
+                        f"session_project from state: {session_project.get('name') if session_project else None}",
+                    ],
+                )
 
             # NOTE: Session projects are explicitly set via set_project() - trust them.
             # Cross-repo session projects are allowed since the user deliberately set them.
@@ -343,14 +367,16 @@ async def resolve_logging_context(
                 if project_root != current_repo_root:
                     # Project is from different repo - don't use it
                     # Log this for debugging
-                    debug_log = Path("/tmp/scribe_session_debug.log")
-                    with open(debug_log, "a") as f:
-                        from datetime import datetime, timezone
-                        f.write(f"\n=== GLOBAL FALLBACK BLOCKED (cross-repo) ===\n")
-                        f.write(f"timestamp: {datetime.now(timezone.utc).isoformat()}\n")
-                        f.write(f"active_project: {active_name}\n")
-                        f.write(f"project_root: {project_root}\n")
-                        f.write(f"current_repo: {current_repo_root}\n")
+                    from datetime import datetime, timezone
+                    _session_debug_trace(
+                        "GLOBAL FALLBACK BLOCKED (cross-repo)",
+                        [
+                            f"timestamp: {datetime.now(timezone.utc).isoformat()}",
+                            f"active_project: {active_name}",
+                            f"project_root: {project_root}",
+                            f"current_repo: {current_repo_root}",
+                        ],
+                    )
                     active_project = None
                     active_name = None
             except Exception:
@@ -367,6 +393,31 @@ async def resolve_logging_context(
         if not project and active_name:
             # When an explicit project was requested but not found, attempt config lookup.
             project = load_project_config(active_name)
+
+    # Legacy resilience: if no active project is set but recents exist, try the
+    # newest recent project from storage. This keeps non-session invocations
+    # functional after restarts where current_project is unset.
+    if not project and recent_projects:
+        backend = getattr(server_module, "storage_backend", None)
+        if backend and hasattr(backend, "fetch_project"):
+            for candidate in recent_projects[:3]:
+                try:
+                    record = await backend.fetch_project(candidate)
+                except Exception:
+                    record = None
+                if not record:
+                    continue
+                project = {
+                    "name": record.name,
+                    "root": record.repo_root,
+                    "progress_log": record.progress_log_path,
+                }
+                if getattr(record, "docs_json", None):
+                    try:
+                        project["docs"] = json.loads(record.docs_json)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                break
 
     if not project and require_project:
         raise ProjectResolutionError(

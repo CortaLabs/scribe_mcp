@@ -1,0 +1,33 @@
+{
+  "current_project": null,
+  "projects": {},
+  "recent_projects": [],
+  "session_projects": {},
+  "recent_tools": [],
+  "last_activity_at": null,
+  "session_started_at": null,
+  "version": 0,
+  "last_updated_by": null,
+  "operation_timestamp": null,
+  "agent_state": {
+    "last_agent_id": "agent-20260212-072349-c240e89b",
+    "last_seen": "2026-02-12T07:23:49.767115+00:00",
+    "agent_metadata": {
+      "created_at": "2026-02-12T07:23:49.766362+00:00",
+      "id_type": "auto-generated"
+    },
+    "activity_log": [
+      {
+        "agent_id": "agent-20260212-072349-c240e89b",
+        "activity_type": "append_entry",
+        "timestamp": "2026-02-12T07:23:49.767106+00:00",
+        "metadata": {
+          "message_length": 1000,
+          "status": "success",
+          "bulk_mode": false
+        }
+      }
+    ],
+    "last_activity": "append_entry"
+  }
+}

@@ -25,6 +25,13 @@ from .file import FileFormatter
 from .entry import EntryFormatter
 from .project import ProjectFormatter
 
+# Tool logging import:
+# Prefer package import, fall back to relative import for src-layout/runtime variance.
+try:
+    from scribe_mcp.utils.tool_logger import log_tool_call as _log_tool_call
+except Exception:  # pragma: no cover - import fallback for unusual runtimes
+    from ..tool_logger import log_tool_call as _log_tool_call
+
 # MCP types for CallToolResult (Issue #9962 fix)
 # When we return CallToolResult with TextContent only (no structuredContent),
 # Claude Code displays text cleanly with actual newlines instead of escaped \n
@@ -128,11 +135,6 @@ class FormatterDispatcher:
         # JSONL: via tool_logger.py (synchronous file write)
         # SQL: via storage.record_tool_call() (async DB insert for analytics)
         try:
-            try:
-                from scribe_mcp.utils.tool_logger import log_tool_call
-            except ImportError:
-                from utils.tool_logger import log_tool_call
-
             # Extract session context from server module
             session_id = "unknown"
             project_name = None
@@ -203,7 +205,7 @@ class FormatterDispatcher:
             response_size = len(self._safe_json_dumps(data)) if isinstance(data, dict) else 0
 
             # Log synchronously (tool_logger is sync function)
-            log_tool_call(
+            _log_tool_call(
                 tool_name=tool_name,
                 session_id=session_id,
                 status="success" if data.get('ok', True) else "error",

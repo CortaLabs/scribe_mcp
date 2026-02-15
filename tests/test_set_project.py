@@ -292,6 +292,30 @@ class TestSlugCollisionDetection:
                     f"Variant '{variant}' should have collision/error in response"
 
 
+@pytest.mark.asyncio
+async def test_set_project_handles_execution_context_failure(monkeypatch):
+    """set_project should still succeed when execution context lookup raises."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        unique_id = str(uuid.uuid4())[:8]
+        agent_name = f"TestAgent-ContextFail-{unique_id}"
+        project_name = f"context_fail_project_{unique_id}"
+        project_root = Path(tmpdir)
+
+        def _raise_context_error():
+            raise RuntimeError("forced execution-context failure")
+
+        monkeypatch.setattr(set_project_module.server_module, "get_execution_context", _raise_context_error)
+
+        result = await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        )
+        result = extract_result(result)
+        assert result.get("ok", False), f"set_project should tolerate context failure. Got: {result}"
+
+
 if __name__ == "__main__":
     # Run tests directly
     pytest.main([__file__, "-v"])

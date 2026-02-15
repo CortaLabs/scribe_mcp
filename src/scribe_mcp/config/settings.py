@@ -41,6 +41,14 @@ class Settings:
     db_url: Optional[str]
     storage_backend: str
     sqlite_path: Path
+    postgres_schema: str
+    postgres_pool_min_size: int
+    postgres_pool_max_size: int
+    postgres_command_timeout_seconds: float
+    postgres_connect_timeout_seconds: float
+    postgres_max_inactive_connection_lifetime_seconds: float
+    postgres_connect_retries: int
+    postgres_connect_retry_backoff_seconds: float
     allow_network: bool
     mcp_server_name: str
     extra_options: Dict[str, Any]
@@ -100,6 +108,34 @@ class Settings:
             sqlite_path = Path(sqlite_override).expanduser()
         else:
             sqlite_path = default_db_path()
+
+        # Backward-compatible alias support:
+        # - SCRIBE_POSTGRES_SCHEMA is canonical
+        # - SCRIBE_DB_SCHEMA is accepted for downstream compatibility
+        postgres_schema = (
+            os.environ.get("SCRIBE_POSTGRES_SCHEMA")
+            or os.environ.get("SCRIBE_DB_SCHEMA")
+            or "scribe"
+        ).strip() or "scribe"
+        postgres_pool_min_size = max(1, _int_env("SCRIBE_POSTGRES_POOL_MIN_SIZE", 2))
+        postgres_pool_max_size = max(postgres_pool_min_size, _int_env("SCRIBE_POSTGRES_POOL_MAX_SIZE", 20))
+        postgres_command_timeout_seconds = max(
+            1.0,
+            float(os.environ.get("SCRIBE_POSTGRES_COMMAND_TIMEOUT_SECONDS", "30")),
+        )
+        postgres_connect_timeout_seconds = max(
+            1.0,
+            float(os.environ.get("SCRIBE_POSTGRES_CONNECT_TIMEOUT_SECONDS", "10")),
+        )
+        postgres_max_inactive_connection_lifetime_seconds = max(
+            1.0,
+            float(os.environ.get("SCRIBE_POSTGRES_MAX_INACTIVE_SECONDS", "300")),
+        )
+        postgres_connect_retries = max(0, _int_env("SCRIBE_POSTGRES_CONNECT_RETRIES", 3))
+        postgres_connect_retry_backoff_seconds = max(
+            0.1,
+            float(os.environ.get("SCRIBE_POSTGRES_CONNECT_RETRY_BACKOFF_SECONDS", "1.0")),
+        )
 
         allow_network = os.environ.get("SCRIBE_ALLOW_NETWORK", "false").lower() in {
             "1",
@@ -183,6 +219,14 @@ class Settings:
             db_url=db_url,
             storage_backend=storage_backend,
             sqlite_path=sqlite_path,
+            postgres_schema=postgres_schema,
+            postgres_pool_min_size=postgres_pool_min_size,
+            postgres_pool_max_size=postgres_pool_max_size,
+            postgres_command_timeout_seconds=postgres_command_timeout_seconds,
+            postgres_connect_timeout_seconds=postgres_connect_timeout_seconds,
+            postgres_max_inactive_connection_lifetime_seconds=postgres_max_inactive_connection_lifetime_seconds,
+            postgres_connect_retries=postgres_connect_retries,
+            postgres_connect_retry_backoff_seconds=postgres_connect_retry_backoff_seconds,
             allow_network=allow_network,
             mcp_server_name=mcp_server_name,
             extra_options=extra_options,

@@ -82,6 +82,17 @@ class _DummyRuntimeRouter:
         return "cached-project"
 
 
+class _CachingRuntimeRouter(_DummyRuntimeRouter):
+    def __init__(self) -> None:
+        self._stable_cache: dict[str, str] = {}
+
+    async def get_cached_agent_session_id(self, identity_key: str) -> str | None:
+        return self._stable_cache.get(identity_key)
+
+    async def cache_agent_session_id(self, identity_key: str, session_id: str) -> None:
+        self._stable_cache[identity_key] = session_id
+
+
 class _DummyState:
     @staticmethod
     def get_session_mode(_session_id: str):
@@ -91,6 +102,15 @@ class _DummyState:
 class _DummyStateManager:
     async def load(self):
         return _DummyState()
+
+
+class _CountingStorageBackend:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def get_or_create_agent_session(self, **_kwargs):
+        self.calls += 1
+        return "stable-1"
 
 
 @pytest.mark.asyncio
@@ -137,6 +157,57 @@ async def test_execute_tool_call_injects_project_for_project_aware_tool():
     )
 
     assert result == "cached-project"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_reuses_cached_stable_session_id():
+    def noop_stub(agent: str) -> str:
+        return agent
+
+    router = _CachingRuntimeRouter()
+    backend = _CountingStorageBackend()
+
+    kwargs = {
+        "context": {
+            "repo_root": "/tmp",
+            "mode": "project",
+            "session_id": "session-1",
+        }
+    }
+
+    result_one = await execute_tool_call(
+        name="noop",
+        arguments={"agent": "codex"},
+        kwargs=kwargs,
+        registry={"noop": noop_stub},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=backend,
+        settings=SimpleNamespace(project_root=Path("/tmp")),
+        state_manager=_DummyStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"noop"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    result_two = await execute_tool_call(
+        name="noop",
+        arguments={"agent": "codex"},
+        kwargs=kwargs,
+        registry={"noop": noop_stub},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=backend,
+        settings=SimpleNamespace(project_root=Path("/tmp")),
+        state_manager=_DummyStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"noop"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result_one == "codex"
+    assert result_two == "codex"
+    assert backend.calls == 1
 
 
 def test_templates_dir_contains_builtin_documents():

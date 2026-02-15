@@ -1,0 +1,18 @@
+{
+  "agent": "Codex",
+  "context": {
+    "files_read": [
+      "/home/austin/projects/MCP_SPINE/scribe_mcp/pyproject.toml"
+    ],
+    "intent": "tool:set_project",
+    "mode": "project",
+    "repo_root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+    "session_id": "4fbc955a-d4d4-4bc0-a5a9-1865258de935",
+    "stable_session_id": "4fbc955a-d4d4-4bc0-a5a9-1865258de935",
+    "transport_session_id": "cli:009f45c4b5f161f339d0d55f44dd5ee40e34ebc12459eca7aba5054d8f15050d"
+  },
+  "repo_root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+  "session_name": "p6parity2",
+  "transport_session_id": "cli:009f45c4b5f161f339d0d55f44dd5ee40e34ebc12459eca7aba5054d8f15050d",
+  "updated_at": "2026-02-12T06:06:38.339382+00:00"
+}

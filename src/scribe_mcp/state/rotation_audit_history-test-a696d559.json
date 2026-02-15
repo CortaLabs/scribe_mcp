@@ -1,0 +1,53 @@
+{
+  "project_name": "history-test-a696d559",
+  "created_timestamp": "2025-10-31T22:17:25.900660 UTC",
+  "rotations": [
+    {
+      "rotation_uuid": "82cf6ed6-1e4a-4c68-ad7b-84837b1e0b52",
+      "rotation_timestamp_utc": "2025-10-31T22:17:25.866723 UTC",
+      "sequence_number": 1,
+      "archived_file_path": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/24659b10-4a32-452d-a782-3a8d5bc0c20f/docs/dev_plans/history_test_a696d559/PROGRESS_LOG.md.rotation-1_82cf6ed6.md",
+      "archived_file_name": "PROGRESS_LOG.md.rotation-1_82cf6ed6.md",
+      "entry_count": 33,
+      "file_hash": "271612d1fc7475995d680993a0a81124d6696d0c4cd57407e6c90eb6006a527e",
+      "file_size": 1077,
+      "created_timestamp": "2025-10-31T18:17:25.883210",
+      "modified_timestamp": "2025-10-31T18:17:25.816185",
+      "log_type": "progress",
+      "stored_timestamp": "2025-10-31T22:17:25.900665 UTC"
+    },
+    {
+      "rotation_uuid": "2d7a7ce1-82a9-46db-83dd-a953dbcd4345",
+      "rotation_timestamp_utc": "2025-10-31T22:17:25.969549 UTC",
+      "sequence_number": 2,
+      "archived_file_path": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/24659b10-4a32-452d-a782-3a8d5bc0c20f/docs/dev_plans/history_test_a696d559/PROGRESS_LOG.md.rotation-2_2d7a7ce1.md",
+      "archived_file_name": "PROGRESS_LOG.md.rotation-2_2d7a7ce1.md",
+      "entry_count": 52,
+      "file_hash": "bb15ec4a110e41474f0aa3afb3beadde414a245906592834f1a08da7effa6b4f",
+      "file_size": 1477,
+      "created_timestamp": "2025-10-31T18:17:25.983747",
+      "modified_timestamp": "2025-10-31T18:17:25.908344",
+      "hash_chain_previous": "271612d1fc7475995d680993a0a81124d6696d0c4cd57407e6c90eb6006a527e",
+      "log_type": "progress",
+      "stored_timestamp": "2025-10-31T22:17:26.000983 UTC"
+    },
+    {
+      "rotation_uuid": "8e6a0deb-0fbd-41e6-9edd-d2b3f45ee03c",
+      "rotation_timestamp_utc": "2025-10-31T22:17:26.062822 UTC",
+      "sequence_number": 3,
+      "archived_file_path": "/home/austin/projects/MCP_SPINE/scribe_mcp/tmp_tests/24659b10-4a32-452d-a782-3a8d5bc0c20f/docs/dev_plans/history_test_a696d559/PROGRESS_LOG.md.rotation-3_8e6a0deb.md",
+      "archived_file_name": "PROGRESS_LOG.md.rotation-3_8e6a0deb.md",
+      "entry_count": 52,
+      "file_hash": "8bb0a7282c56f48dcf75228af5385bdda684549dc74a37065bde1cc2c8d4eb64",
+      "file_size": 1605,
+      "created_timestamp": "2025-10-31T18:17:26.080095",
+      "modified_timestamp": "2025-10-31T18:17:26.008881",
+      "hash_chain_previous": "bb15ec4a110e41474f0aa3afb3beadde414a245906592834f1a08da7effa6b4f",
+      "log_type": "progress",
+      "stored_timestamp": "2025-10-31T22:17:26.100722 UTC"
+    }
+  ],
+  "total_rotations": 3,
+  "last_updated": "2025-10-31T22:17:26.100722 UTC",
+  "version": "1.0"
+}

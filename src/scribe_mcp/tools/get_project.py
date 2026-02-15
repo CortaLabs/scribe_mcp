@@ -324,7 +324,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns dict with architecture/phase_plan/checklist/progress info.
     """
-    from utils.response import default_formatter
+    from scribe_mcp.utils.response import default_formatter
 
     progress_log = project.get('progress_log', '')
     if not progress_log or not Path(progress_log).exists():
@@ -418,30 +418,44 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         except Exception:
             exec_context = None
 
-    # Normalize project input to handle hyphens, underscores, mixed case
     if project:
-        project = normalize_project_input(project) or project
+        requested_project = project
+        normalized_project = normalize_project_input(project)
+        candidate_names: List[str] = []
+        for candidate in (
+            requested_project,
+            normalized_project,
+            requested_project.replace("_", "-"),
+            normalized_project.replace("_", "-") if normalized_project else None,
+        ):
+            if candidate and candidate not in candidate_names:
+                candidate_names.append(candidate)
 
-    if project:
-        # Attempt to load explicit project request
+        # Attempt to load explicit project request, preserving both raw and normalized forms.
         state = await server_module.state_manager.load()
-        project_data = state.get_project(project)
-        if not project_data and context.project and context.project.get("name") == project:
-            project_data = context.project
-        if not project_data:
-            config_project = load_project_config(project, allow_fallback=False)
-            if config_project:
-                project_data = config_project
+        project_data = None
+        resolved_name: Optional[str] = None
+        for candidate in candidate_names:
+            project_data = state.get_project(candidate)
+            if not project_data and context.project and context.project.get("name") == candidate:
+                project_data = context.project
+            if not project_data:
+                config_project = load_project_config(candidate, allow_fallback=False)
+                if config_project:
+                    project_data = config_project
+            if project_data:
+                resolved_name = project_data.get("name") or candidate
+                break
         if not project_data:
             return _GET_PROJECT_HELPER.apply_context_payload(
                 _GET_PROJECT_HELPER.error_response(
-                    f"Project '{project}' not found.",
+                    f"Project '{requested_project}' not found.",
                     suggestion="Ensure the project is registered via set_project or exists in config/projects/",
                 ),
                 context,
             )
         target_project = dict(project_data)
-        current_name = project
+        current_name = target_project.get("name") or resolved_name or requested_project
     else:
         if exec_context and getattr(exec_context, "mode", None) in {"project", "sentinel"}:
             if not target_project:
@@ -551,7 +565,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
 
     # Handle readable format with enhanced SITREP (Phase 4.2)
     if format == "readable":
-        from utils.response import default_formatter
+        from scribe_mcp.utils.response import default_formatter
 
         # Read recent entries from DB only if verbose=True
         recent_entries = []
@@ -631,7 +645,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         }
 
         # Add pagination info for recent_entries
-        from utils.estimator import PaginationCalculator
+        from scribe_mcp.utils.estimator import PaginationCalculator
         calc = PaginationCalculator()
         page = 1  # Default to page 1
         page_size = 5

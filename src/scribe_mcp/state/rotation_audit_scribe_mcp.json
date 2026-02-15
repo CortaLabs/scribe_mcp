@@ -1,0 +1,17 @@
+{
+  "project_name": "scribe_mcp",
+  "created_timestamp": "2025-12-07T20:35:11.982392 UTC",
+  "rotations": [
+    {
+      "timestamp": "2025-12-07T15:35:11.982326",
+      "log_type": "progress",
+      "entry_count": 0,
+      "suffix": null,
+      "auto_initiated": false,
+      "stored_timestamp": "2025-12-07T20:35:11.982396 UTC"
+    }
+  ],
+  "total_rotations": 1,
+  "last_updated": "2025-12-07T20:35:11.982396 UTC",
+  "version": "1.0"
+}

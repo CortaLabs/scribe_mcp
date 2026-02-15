@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -9,6 +11,41 @@ from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp import server as server_module
+
+
+@contextmanager
+def _isolated_server(state_manager, project_root=None):
+    """Monkey-patch server module for isolated test execution."""
+    originals = {
+        "state_manager": server_module.state_manager,
+        "storage_backend": server_module.storage_backend,
+    }
+    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
+    orig_agent_id = getattr(server_module, "get_agent_identity", None)
+
+    server_module.state_manager = state_manager
+    server_module.storage_backend = None
+    server_module.get_execution_context = lambda: None
+    server_module.get_agent_identity = lambda: None
+
+    fake_root = Path(project_root).resolve() if project_root else Path("/tmp")
+    from scribe_mcp.config.repo_config import RepoConfig
+
+    fake_config = RepoConfig(repo_slug="test", repo_root=fake_root)
+
+    try:
+        with patch(
+            "scribe_mcp.config.repo_config.get_current_repo_config",
+            return_value=(fake_root, fake_config),
+        ):
+            yield
+    finally:
+        server_module.state_manager = originals["state_manager"]
+        server_module.storage_backend = originals["storage_backend"]
+        if orig_exec_ctx is not None:
+            server_module.get_execution_context = orig_exec_ctx
+        if orig_agent_id is not None:
+            server_module.get_agent_identity = orig_agent_id
 
 
 async def _setup_project(tmp_path: Path) -> dict:
@@ -102,17 +139,12 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    original_state_manager = server_module.state_manager
-    original_storage_backend = server_module.storage_backend
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-
     async def _fail_set_current(*args, **kwargs):
         raise RuntimeError("boom")
 
     state_manager.set_current_project = _fail_set_current  # type: ignore[assignment]
 
-    try:
+    with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
             action="create",
             doc="custom_doc",
@@ -127,9 +159,6 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
         assert result["ok"] is True
         assert "warnings" in result
         assert "Registry update failed" in result["warnings"][0]
-    finally:
-        server_module.state_manager = original_state_manager
-        server_module.storage_backend = original_storage_backend
 
 
 @pytest.mark.asyncio
@@ -138,12 +167,7 @@ async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Pa
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    original_state_manager = server_module.state_manager
-    original_storage_backend = server_module.storage_backend
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-
-    try:
+    with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
             action="create",
             doc="custom_doc",
@@ -166,9 +190,6 @@ async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Pa
 
         warnings = result.get("warnings") or []
         assert any("register_doc skipped during dry_run" in warning for warning in warnings)
-    finally:
-        server_module.state_manager = original_state_manager
-        server_module.storage_backend = original_storage_backend
 
 
 @pytest.mark.asyncio
@@ -177,12 +198,7 @@ async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path) -> None
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    original_state_manager = server_module.state_manager
-    original_storage_backend = server_module.storage_backend
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-
-    try:
+    with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
             action="create",
             doc="custom_doc",
@@ -197,26 +213,15 @@ async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path) -> None
         path = Path(result["path"])
         parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
         assert "# Note\nDetails line two." in parsed.body
-    finally:
-        server_module.state_manager = original_state_manager
-        server_module.storage_backend = original_storage_backend
 
 
 @pytest.mark.asyncio
 async def test_create_custom_doc_respects_doc_name_parameter(tmp_path: Path) -> None:
-    """Test that doc_name parameter is respected over metadata.doc_type
-
-    Regression test for bug where doc_name parameter was ignored when
-    metadata contained doc_type, causing all custom docs to be named 'custom.md'.
-
-    See: RESEARCH_CUSTOM_DOC_NAMING_BUG_20260119.md
-    """
     project = await _setup_project(tmp_path)
 
-    # Use apply_doc_change directly (simpler than manage_docs for tests)
     change = await apply_doc_change(
         project,
-        doc_name="COORDINATION_PROTOCOL",  # This parameter should take priority
+        doc_name="COORDINATION_PROTOCOL",
         action="create_doc",
         section=None,
         content=None,
@@ -230,13 +235,11 @@ async def test_create_custom_doc_respects_doc_name_parameter(tmp_path: Path) -> 
         dry_run=False,
     )
 
-    # Should create COORDINATION_PROTOCOL.md, NOT custom.md
     assert change.success, f"Failed: {change.error_message}"
     path = Path(change.path)
     assert path.name == "COORDINATION_PROTOCOL.md", f"Expected COORDINATION_PROTOCOL.md but got {path.name}"
     assert "custom.md" not in str(path), f"Should not create custom.md, got {path}"
 
-    # Verify content is correct
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert "# Protocol" in parsed.body
     assert "Coordination rules here." in parsed.body
@@ -261,12 +264,7 @@ async def test_manage_docs_deprecated_create_aliases_fail_hard(
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    original_state_manager = server_module.state_manager
-    original_storage_backend = server_module.storage_backend
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-
-    try:
+    with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
             action=action,
             doc="legacy_alias_doc",
@@ -279,6 +277,3 @@ async def test_manage_docs_deprecated_create_aliases_fail_hard(
         allowed = result.get("allowed_actions") or result.get("extra", {}).get("allowed_actions", [])
         assert "create" in allowed
         assert action not in allowed
-    finally:
-        server_module.state_manager = original_state_manager
-        server_module.storage_backend = original_storage_backend
