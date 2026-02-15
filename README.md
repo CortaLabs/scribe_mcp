@@ -224,18 +224,26 @@ python -m pip install .
 - Codex CLI registration example:
   ```bash
   codex mcp add scribe \
+    --env SCRIBE_ROOT=/home/path/to/scribe_mcp \
+    --env REPO_ROOT=/home/path/to/your_project \
     --env SCRIBE_STORAGE_BACKEND=sqlite \
     -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
   ```
 - Claude Code registration example:
   ```bash
   claude mcp add scribe \
+    --env SCRIBE_ROOT=/home/path/to/scribe_mcp \
+    --env REPO_ROOT=/home/path/to/your_project \
     --env SCRIBE_STORAGE_BACKEND=sqlite \
     -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
   ```
 - Global Claude MCP example:
   ```bash
-  claude mcp add scribe --scope user --env SCRIBE_STORAGE_BACKEND=sqlite -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
+  claude mcp add scribe --scope user \
+    --env SCRIBE_ROOT=/home/path/to/scribe_mcp \
+    --env REPO_ROOT=/home/path/to/your_project \
+    --env SCRIBE_STORAGE_BACKEND=sqlite \
+    -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
   ```
 
 Compatibility note: legacy launch `python -m server` still works during migration.
@@ -355,22 +363,25 @@ These can be generated automatically by `scribe bootstrap` into your `.env`, the
 
 ### MCP Integration
 
-In all examples below, **`REPO_ROOT`** means the directory that contains
-`pyproject.toml` for this project (the repo root). The runtime package lives
-under `src/scribe_mcp/`.
+In all examples below:
+- **`SCRIBE_ROOT`** = where Scribe is installed (the directory you run `scribe-server` from).
+- **`REPO_ROOT`** = the project repository you want Scribe to work in (the repo that gets `.scribe/` docs/plans once selected).
+- Select the repo in-session with `set_project(..., root=/abs/path/to/repo)`.
 
 **For Claude Desktop (JSON config):**
 ```jsonc
 {
   "mcpServers": {
     "scribe": {
-      // Run from REPO_ROOT so `scribe_mcp` imports resolve
+      // Run from SCRIBE_ROOT (where Scribe is installed)
       "command": "bash",
       "args": [
         "-lc",
-        "cd /absolute/path/to/REPO_ROOT && exec scribe-server"
+        "cd /absolute/path/to/SCRIBE_ROOT && exec scribe-server"
       ],
       "env": {
+        "SCRIBE_ROOT": "/absolute/path/to/SCRIBE_ROOT",
+        "REPO_ROOT": "/absolute/path/to/YOUR_PROJECT_ROOT",
         // SQLite (default): "sqlite"
         // Postgres: set backend + db url (+ optional schema)
         "SCRIBE_STORAGE_BACKEND": "postgres",
@@ -386,20 +397,25 @@ under `src/scribe_mcp/`.
 ```bash
 # SQLite mode (default)
 codex mcp add scribe \
+  --env SCRIBE_ROOT=/absolute/path/to/SCRIBE_ROOT \
+  --env REPO_ROOT=/absolute/path/to/YOUR_PROJECT_ROOT \
   --env SCRIBE_STORAGE_BACKEND=sqlite \
-  -- bash -lc 'cd /absolute/path/to/REPO_ROOT && exec scribe-server'
+  -- bash -lc 'cd /absolute/path/to/SCRIBE_ROOT && exec scribe-server'
 
 # Postgres mode
 codex mcp add scribe \
+  --env SCRIBE_ROOT=/absolute/path/to/SCRIBE_ROOT \
+  --env REPO_ROOT=/absolute/path/to/YOUR_PROJECT_ROOT \
   --env SCRIBE_STORAGE_BACKEND=postgres \
   --env SCRIBE_DB_URL='postgresql://scribe_app:<password>@127.0.0.1:5432/scribe' \
   --env SCRIBE_POSTGRES_SCHEMA=scribe \
-  -- bash -lc 'cd /absolute/path/to/REPO_ROOT && exec scribe-server'
+  -- bash -lc 'cd /absolute/path/to/SCRIBE_ROOT && exec scribe-server'
 ```
 
 Notes:
-- We intentionally **do not** bake a per-repo root into the MCP config. Scribe is multi-repo: switch repos by calling `set_project(name=..., root=/abs/path/to/repo)` (no MCP re-register needed).
-- The same `bash -lc "cd REPO_ROOT && scribe-server"` pattern works for any MCP client that expects a stdio server command.
+- `REPO_ROOT` is a launch-time convenience value for your MCP config.
+- Scribe project context is selected in-session via `set_project(name=..., root=/abs/path/to/repo)`.
+- The launch command should run from `SCRIBE_ROOT`, not the target project repo.
 
 ---
 
@@ -407,11 +423,14 @@ Notes:
 
 You can run Scribe from any codebase (not just `MCP_SPINE`) by pointing it at that project’s root:
 
-1. Start the MCP server from the Scribe codebase (once), then use `set_project(..., root=/abs/path/to/your/repo)` to target any repository.
-2. Optional env vars:
+1. Start the MCP server from your Scribe install path (`SCRIBE_ROOT`).
+2. Set `REPO_ROOT=/abs/path/to/your/repo` in your MCP config so the target repo is explicit.
+3. Call `set_project(..., root=/abs/path/to/your/repo)` to activate that repo and create/update its `.scribe/` workspace.
+4. Use `set_project(..., root=/abs/path/to/another/repo)` to switch repositories without re-registering MCP.
+5. Optional env vars:
    - `SCRIBE_STATE_PATH=/abs/path/to/state.json` **(DEPRECATED in v2.2 - sessions now stored in database)**
    - `SCRIBE_STORAGE_BACKEND=postgres` and `SCRIBE_DB_URL=postgresql://...` if you want Postgres.
-3. Prefer launching via installed entry points (`scribe-server`, `scribe`) so no manual `PYTHONPATH` wiring is required.
+6. Prefer launching via installed entry points (`scribe-server`, `scribe`) so no manual `PYTHONPATH` wiring is required.
 
 ---
 
