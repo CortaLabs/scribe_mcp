@@ -576,6 +576,39 @@ class ProjectRegistry:
                 """
             )
 
+            # Ensure supporting tables exist so LEFT JOINs don't fail.
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scribe_metrics (
+                    project_id INTEGER PRIMARY KEY REFERENCES scribe_projects(id) ON DELETE CASCADE,
+                    total_entries INTEGER NOT NULL DEFAULT 0,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    warn_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    last_update TEXT
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dev_plans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
+                    file_path TEXT,
+                    doc_type TEXT
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS phases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
+                    phase_name TEXT
+                )
+                """
+            )
+
             cursor.execute("PRAGMA table_info(scribe_projects)")
             existing = {row[1] for row in cursor.fetchall()}
 
