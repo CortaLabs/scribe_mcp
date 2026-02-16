@@ -341,6 +341,17 @@ async def edit_file(
                 "backup_path": str(backup_path.relative_to(repo_root)),
             }
 
+        # Fire-and-forget sync to remote object store
+        try:
+            from scribe_mcp.object_store import sync_file_to_store
+            import asyncio
+            task = asyncio.create_task(sync_file_to_store(file_path, modified, repo_root))
+            from scribe_mcp.server import background_tasks
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
+        except Exception:
+            pass
+
         response = {
             "ok": True,
             "path": rel_path,

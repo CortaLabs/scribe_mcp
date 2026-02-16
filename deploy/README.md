@@ -77,22 +77,36 @@ All configuration is done via environment variables. Defaults are set in the Doc
 | `SCRIBE_POSTGRES_POOL_MIN_SIZE` | `2` | Minimum connection pool size |
 | `SCRIBE_POSTGRES_POOL_MAX_SIZE` | `10` | Maximum connection pool size |
 | `SCRIBE_LOG_LEVEL` | `INFO` | Logging verbosity (DEBUG, INFO, WARNING, ERROR) |
+| `SCRIBE_OBJECT_STORE_URL` | (none) | CortaStore URL (enables doc sync when set) |
+| `SCRIBE_OBJECT_STORE_PROVIDER` | `corta` | Object store provider (`corta` or `s3`) |
+| `SCRIBE_OBJECT_STORE_PROJECT` | (none) | CortaStore project namespace |
+| `SCRIBE_OBJECT_STORE_KEY` | (none) | HMAC signing key (loaded from Docker secret) |
 
-### Docker Secrets (PostgreSQL Authentication)
+### Docker Secrets
 
-For production deployments, use Docker secrets instead of environment variables for database credentials:
+For production deployments, use Docker secrets instead of environment variables for credentials:
 
-1. **Create the secret file:**
+| Secret Name | File Path | Env Var | Purpose |
+|-------------|-----------|---------|---------|
+| `scribe_db_url` | `secrets/scribe_db_url.txt` | `SCRIBE_DB_URL` | PostgreSQL connection string |
+| `store_hmac_key` | `secrets/store_hmac_key.txt` | `SCRIBE_OBJECT_STORE_KEY` | CortaStore HMAC signing key |
+
+1. **Create the secret files:**
    ```bash
    mkdir -p secrets/
+   # PostgreSQL connection string
    echo -n "postgresql://council:your_password@postgres:5432/agentkit?options=-c%20search_path%3Dscribe" \
      > secrets/scribe_db_url.txt
    chmod 600 secrets/scribe_db_url.txt
+
+   # CortaStore HMAC key (same key used by CortaStore server)
+   echo -n "your-hmac-secret" > secrets/store_hmac_key.txt
+   chmod 600 secrets/store_hmac_key.txt
    ```
 
-2. **The entrypoint script reads this secret:**
-   - Mounted at `/run/secrets/scribe_db_url` inside container
-   - `deploy/docker-entrypoint.sh` exports it as `SCRIBE_DB_URL`
+2. **The entrypoint script reads these secrets:**
+   - Mounted at `/run/secrets/<name>` inside container
+   - `deploy/docker-entrypoint.sh` exports them as environment variables
    - Not visible in `docker inspect` or process listings
 
 3. **Connection string format:**
@@ -342,6 +356,7 @@ docker compose logs scribe --tail=50
 **Related files:**
 - `../src/scribe_mcp/server_sse.py` - SSE transport implementation
 - `../src/scribe_mcp/__main__.py` - CLI entry point with `--transport sse` flag
+- `../src/scribe_mcp/object_store/` - Object store abstraction (CortaStore/S3 providers)
 - `../pyproject.toml` - Python package definition
 
 ## Additional Resources

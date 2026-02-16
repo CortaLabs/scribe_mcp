@@ -358,6 +358,7 @@ async def async_atomic_write(
     content: str,
     mode: str = 'w',
     repo_root: Optional[Path] = None,
+    document_store: Optional[Any] = None,
 ) -> None:
     """
     Asynchronously atomically write content to a file.
@@ -372,12 +373,23 @@ async def async_atomic_write(
         file_path: Target file path
         content: Content to write
         mode: Write mode - must be 'w' (overwrite) for atomic operations
+        repo_root: Repository root for path validation
+        document_store: Optional DocumentStore for remote sync
 
     Raises:
         AtomicFileError: If atomic operation fails
         ValueError: If mode is not 'w' (only overwrite is atomic)
     """
     await asyncio.to_thread(atomic_write, file_path, content, mode, repo_root)
+
+    # Fire-and-forget sync to remote object store when configured.
+    if document_store and repo_root:
+        try:
+            from scribe_mcp.object_store import sync_file_to_store
+
+            await sync_file_to_store(Path(file_path), content, Path(repo_root))
+        except Exception:
+            pass  # Never fail a write due to object store issues
 
 
 def preflight_backup(

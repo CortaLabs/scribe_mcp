@@ -754,10 +754,90 @@ from scribe_mcp.storage.sqlite import SQLiteStorage
 
 ---
 
+## 🐳 Docker & Deployment
+
+### Quick Reference
+
+```bash
+# Build image (from scribe_mcp/ root)
+docker build -f deploy/Dockerfile -t scribe-mcp:latest .
+
+# Standalone run (SQLite)
+docker run -d --name scribe-mcp -p 8200:8200 -v scribe_data:/app/.scribe scribe-mcp:latest
+
+# Production (with Council + Postgres + CortaStore)
+docker compose \
+  -f council_mcp/deploy/docker-compose.yaml \
+  -f scribe_mcp/deploy/docker-compose.scribe.yaml \
+  up -d
+
+# Health check
+curl http://localhost:8200/health
+
+# Logs
+docker compose logs scribe --tail=50 -f
+```
+
+### Environment Variables (Docker)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCRIBE_TRANSPORT` | `sse` | Transport mode (`sse` for Docker) |
+| `SCRIBE_TRANSPORT_PORT` | `8200` | SSE HTTP port |
+| `SCRIBE_STORAGE_BACKEND` | `sqlite` | `sqlite` or `postgres` |
+| `SCRIBE_OBJECT_STORE_URL` | (none) | CortaStore URL — enables doc sync |
+| `SCRIBE_OBJECT_STORE_KEY` | (none) | HMAC key (via Docker secret) |
+| `SCRIBE_OBJECT_STORE_PROJECT` | (none) | CortaStore project namespace |
+
+### Secrets
+
+Credentials use Docker secrets, NOT env vars:
+
+| Secret | File | Purpose |
+|--------|------|---------|
+| `scribe_db_url` | `secrets/scribe_db_url.txt` | PostgreSQL connection string |
+| `store_hmac_key` | `secrets/store_hmac_key.txt` | CortaStore HMAC signing key |
+
+### Object Store (CortaStore)
+
+Scribe syncs `.scribe/docs/` artifacts to CortaStore for cross-machine access. Enabled when `SCRIBE_OBJECT_STORE_URL` is set.
+
+**What syncs:** dev plan docs, agent report cards, reviews, bug reports, backups
+**What stays local:** logs, config, sentinel events, templates
+
+In Docker Compose, CortaStore is at `http://corta-store:8201` via Docker DNS.
+
+### Deployment to Hetzner
+
+```bash
+git push origin master
+ssh council-hub
+cd /opt/council_mcp
+git -C scribe_mcp pull origin master
+docker compose -f council_mcp/deploy/docker-compose.yaml \
+  -f scribe_mcp/deploy/docker-compose.scribe.yaml \
+  build scribe && \
+docker compose -f council_mcp/deploy/docker-compose.yaml \
+  -f scribe_mcp/deploy/docker-compose.scribe.yaml \
+  up -d scribe
+curl http://localhost:8200/health
+```
+
+### Rules
+
+1. **Keep image under 400MB** — no PyTorch/sentence-transformers in Docker
+2. **Non-root always** — app runs as `scribe` (UID 1001), only entrypoint reads secrets as root
+3. **Compose overlay** — don't duplicate postgres/network definitions
+4. **Test locally** — build + run + health check before pushing
+5. **`deploy/README.md`** has the full deployment guide
+
+---
+
 ## 📚 Additional Resources
 
 - **`AGENTS.md`** - Complete protocol details, commandments, MCP_SPINE architecture
 - **`docs/Scribe_Usage.md`** - Comprehensive tool reference (all params, examples, edge cases)
+- **`deploy/README.md`** - Docker deployment guide (compose, secrets, troubleshooting)
 - **`.codex/skills/scribe-mcp-usage/SKILL.md`** - Minimal enforceable contract
 
 **When in doubt:** Search `Scribe_Usage.md` using `scribe.read_file(agent="AgentName", mode="search")` for the answer.

@@ -71,12 +71,17 @@ services:
       SCRIBE_POSTGRES_POOL_MAX_SIZE: "10"
       SCRIBE_LOG_LEVEL: INFO
       HF_HUB_DISABLE_PROGRESS_BARS: "1"
+      # Object store (CortaStore on Hetzner)
+      SCRIBE_OBJECT_STORE_URL: "http://corta-store:8201"
+      SCRIBE_OBJECT_STORE_PROVIDER: corta
+      SCRIBE_OBJECT_STORE_PROJECT: "${COMPOSE_PROJECT_NAME:-council}"
 
     # --- Secrets ---
-    # Docker secret mounted at /run/secrets/scribe_db_url inside the container.
-    # The entrypoint script reads this file and exports SCRIBE_DB_URL.
+    # Docker secrets mounted at /run/secrets/<name> inside the container.
+    # The entrypoint script reads these files and exports environment variables.
     secrets:
       - scribe_db_url
+      - store_hmac_key
 
     # --- Startup order ---
     # Wait for Postgres to be healthy before starting Scribe.
@@ -168,3 +173,5 @@ networks:
 secrets:
   scribe_db_url:
     file: ../../secrets/scribe_db_url.txt
+  store_hmac_key:
+    file: ../../secrets/store_hmac_key.txt

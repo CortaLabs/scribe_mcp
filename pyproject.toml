@@ -12,6 +12,7 @@ license = { file = "LICENSE" }
 authors = [{ name = "Scribe MCP Contributors" }]
 dependencies = [
   "asyncpg~=0.29",
+  "httpx~=0.27",
   "jinja2~=3.1",
   "mcp==1.26.0",
   "numpy~=1.20",
@@ -30,6 +31,7 @@ dev = [
   "pytest-asyncio~=0.23",
   "faiss-cpu~=1.7",
 ]
+s3 = ["boto3>=1.28"]
 
 [project.scripts]
 scribe = "scribe_mcp.cli.main:main"
@@ -42,6 +44,7 @@ scribe-bootstrap-postgres = "scribe_mcp.scripts.bootstrap_postgres:main"
 scribe-metrics-postgres = "scribe_mcp.scripts.postgres_metrics:main"
 scribe-soak-postgres = "scribe_mcp.scripts.postgres_soak_test:main"
 scribe-server-sse = "scribe_mcp.server_sse:main"
+scribe-migrate-objects = "scribe_mcp.scripts.migrate_to_object_store:main"
 
 [tool.setuptools]
 include-package-data = true

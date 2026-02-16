@@ -142,8 +142,16 @@ async def apply_doc_change(
     template: Optional[str],
     metadata: Optional[Dict[str, Any]],
     dry_run: bool,
+    document_store: Optional[Any] = None,
 ) -> DocChangeResult:
     """Apply a document change with comprehensive error handling and verification."""
+    # Auto-resolve document_store from app.state when not explicitly passed.
+    if document_store is None:
+        try:
+            from scribe_mcp.server import app as _app
+            document_store = getattr(getattr(_app, "state", None), "document_store", None)
+        except Exception:
+            pass
     start_time = time.time()
     file_size_before = 0
     resolved_doc_name = doc_name or doc
@@ -602,7 +610,7 @@ async def apply_doc_change(
                             f"DOC_SNAPSHOT_FAILED: {exc}"
                         ) from exc
                 # Write the file
-                await async_atomic_write(doc_path, updated_text, mode="w", repo_root=repo_root)
+                await async_atomic_write(doc_path, updated_text, mode="w", repo_root=repo_root, document_store=document_store)
 
                 # Verify the write was successful
                 verification_passed = await _verify_file_write(doc_path, updated_text, after_hash)

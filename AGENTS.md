@@ -331,11 +331,128 @@ await backend.update_project_docs(project_name, docs_json)
 
 ---
 
+## 🐳 Docker & Deployment
+
+### Architecture
+
+Scribe MCP runs as a containerized SSE service on Hetzner, integrated with Council MCP via Docker Compose overlay.
+
+| Component | Port | Transport | Image |
+|-----------|------|-----------|-------|
+| Scribe MCP | 8200 | SSE (HTTP) | `scribe-mcp:latest` |
+| CortaStore | 8201 | HTTP REST | `corta-store:latest` |
+| Council MCP | 8100 | SSE (HTTP) | `council-mcp:latest` |
+| PostgreSQL | 5432 | TCP | `pgvector/pgvector:pg16` |
+
+### Build & Run Commands
+
+```bash
+# Build image (from scribe_mcp/ root)
+docker build -f deploy/Dockerfile -t scribe-mcp:latest .
+
+# Standalone run (SQLite, local dev)
+docker run -d --name scribe-mcp -p 8200:8200 -v scribe_data:/app/.scribe scribe-mcp:latest
+
+# Production deploy (with Council, PostgreSQL, CortaStore)
+docker compose \
+  -f council_mcp/deploy/docker-compose.yaml \
+  -f scribe_mcp/deploy/docker-compose.scribe.yaml \
+  up -d
+
+# Validate compose config without starting
+docker compose -f deploy/docker-compose.scribe.yaml config
+
+# Rebuild after code changes
+docker compose -f deploy/docker-compose.scribe.yaml build --no-cache scribe
+
+# View logs
+docker compose logs scribe --tail=50 -f
+
+# Health check
+curl http://localhost:8200/health
+```
+
+### Secrets (Non-Negotiable)
+
+**NEVER put credentials in environment variables, compose files, or code.**
+
+All secrets go in `secrets/` (gitignored) and are mounted as Docker secrets:
+
+| Secret File | Mounted At | Env Var |
+|-------------|-----------|---------|
+| `secrets/scribe_db_url.txt` | `/run/secrets/scribe_db_url` | `SCRIBE_DB_URL` |
+| `secrets/store_hmac_key.txt` | `/run/secrets/store_hmac_key` | `SCRIBE_OBJECT_STORE_KEY` |
+
+The entrypoint script (`deploy/docker-entrypoint.sh`) reads secret files and exports them as environment variables before dropping privileges to the `scribe` user (UID 1001).
+
+### Object Store Integration
+
+Scribe syncs managed docs to CortaStore (content-addressable object store on Hetzner) for cross-machine access.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCRIBE_OBJECT_STORE_URL` | (none) | CortaStore URL. Presence enables sync. |
+| `SCRIBE_OBJECT_STORE_KEY` | (none) | HMAC-SHA256 signing key (from Docker secret) |
+| `SCRIBE_OBJECT_STORE_PROJECT` | `${COMPOSE_PROJECT_NAME}` | CortaStore project namespace |
+| `SCRIBE_OBJECT_STORE_PROVIDER` | `corta` | Provider: `corta` or `s3` |
+
+**In Docker Compose**, CortaStore is reached via Docker DNS: `http://corta-store:8201`
+
+### Deployment Workflow (Hetzner)
+
+```bash
+# 1. Push code
+git push origin master
+
+# 2. SSH to Hetzner
+ssh council-hub
+
+# 3. Pull and rebuild
+cd /opt/council_mcp
+git -C scribe_mcp pull origin master
+docker compose \
+  -f council_mcp/deploy/docker-compose.yaml \
+  -f scribe_mcp/deploy/docker-compose.scribe.yaml \
+  build scribe
+
+# 4. Rolling restart
+docker compose \
+  -f council_mcp/deploy/docker-compose.yaml \
+  -f scribe_mcp/deploy/docker-compose.scribe.yaml \
+  up -d scribe
+
+# 5. Verify
+curl http://localhost:8200/health
+docker compose logs scribe --tail=20
+```
+
+### File Inventory
+
+| File | Purpose |
+|------|---------|
+| `deploy/Dockerfile` | Multi-stage build (builder → runtime, ~330MB) |
+| `deploy/docker-compose.scribe.yaml` | Compose overlay for Council integration |
+| `deploy/docker-entrypoint.sh` | Secret bridge + privilege drop via gosu |
+| `deploy/README.md` | Complete deployment guide |
+| `.dockerignore` | Build context filter |
+| `.env.example` | Environment variable template |
+
+### Rules for Docker Changes
+
+1. **Image size matters** — no PyTorch/sentence-transformers in Docker (excluded deliberately). Keep image under 400MB.
+2. **Non-root always** — app runs as `scribe` (UID 1001). Only the entrypoint reads secrets as root.
+3. **Compose overlay pattern** — Scribe's compose merges with Council's. Don't duplicate postgres/network definitions.
+4. **Test locally first** — `docker build && docker run` before pushing to Hetzner.
+5. **Health checks are required** — every service must expose `/health`.
+
+---
+
 ## References (Deeper Governance)
 
 This template is intentionally short. If present in the repo, these docs provide full rationale and examples:
 
 * `AGENTS_EXTENDED.md`
+* `deploy/README.md` (full Docker deployment guide)
 * `.scribe/docs/dev_plans/.../wiki/ORCHESTRATION_RULES.md`
 * `.scribe/docs/dev_plans/.../wiki/...` (bucket discipline, doc lifecycle examples)
 
@@ -343,11 +460,46 @@ This template is intentionally short. If present in the repo, these docs provide
 
 ## Repo-Specific Overrides
 
-Fill in:
+### Language & Runtime
 
-* language/runtime details
-* test commands
-* lint/typecheck commands
-* directory conventions
+* **Language:** Python 3.11+
+* **Package:** `scribe_mcp` (src layout: `src/scribe_mcp/`)
+* **Install:** `pip install -e .` (dev) or `pip install .` (production)
+
+### Test Commands
+
+```bash
+# All functional tests
+pytest
+
+# Specific test file
+pytest tests/test_object_store.py -v
+
+# Performance tests (opt-in)
+pytest -m performance
+```
+
+### Docker Commands
+
+```bash
+# Build
+docker build -f deploy/Dockerfile -t scribe-mcp:latest .
+
+# Run with health check
+docker run -d -p 8200:8200 --name scribe-mcp scribe-mcp:latest
+curl http://localhost:8200/health
+
+# Compose validate
+docker compose -f deploy/docker-compose.scribe.yaml config
+```
+
+### Key Entry Points
+
+| Command | Purpose |
+|---------|---------|
+| `scribe-server-sse` | SSE transport server (Docker) |
+| `scribe-mcp` | CLI entry point (`--transport sse\|stdio`) |
+| `scribe-migrate-objects` | Bulk sync local docs to object store |
+| `scribe-bootstrap-postgres` | PostgreSQL initial setup |
 
 **Rule:** Overrides must not contradict the commandments above.

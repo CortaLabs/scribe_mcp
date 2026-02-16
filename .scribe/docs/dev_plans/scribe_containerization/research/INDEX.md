@@ -1,0 +1,26 @@
+# Research Documents Index
+
+*Last Updated: 2026-02-16 01:04:39 UTC*
+
+This directory contains research documents generated during the development process.
+
+## Available Research Documents
+
+- **[RESEARCH_DOCKER_DOCUMENTATION_AUDIT_20260216_0604](RESEARCH_DOCKER_DOCUMENTATION_AUDIT_20260216_0604.md)** - 2026-02-16 01:04 (2081 bytes)
+- **[RESEARCH_POSTGRES_DEPLOYMENT_20260216](RESEARCH_POSTGRES_DEPLOYMENT_20260216.md)** - 2026-02-16 00:58 (13814 bytes)
+- **[RESEARCH_COUNCIL_INTEGRATION_GUIDE](RESEARCH_COUNCIL_INTEGRATION_GUIDE.md)** - 2026-02-15 23:41 (19768 bytes)
+- **[REVIEW_PRE_IMPLEMENTATION_20260216](REVIEW_PRE_IMPLEMENTATION_20260216.md)** - 2026-02-15 22:48 (2066 bytes)
+- **[RESEARCH_CONTAINERIZATION_REQS](RESEARCH_CONTAINERIZATION_REQS.md)** - 2026-02-15 22:21 (20300 bytes)
+- **[RESEARCH_STORAGE_CONFIG](RESEARCH_STORAGE_CONFIG.md)** - 2026-02-15 22:20 (15058 bytes)
+- **[RESEARCH_TRANSPORT_LAYER](RESEARCH_TRANSPORT_LAYER.md)** - 2026-02-15 22:19 (18277 bytes)
+- **[RESEARCH_DOCKER_BEST_PRACTICES](RESEARCH_DOCKER_BEST_PRACTICES.md)** - 2026-02-15 22:11 (29157 bytes)
+
+
+## Index Information
+
+- **Total Documents:** 8
+- **Index Location:** `scribe_containerization/research/INDEX.md`
+
+---
+
+*This index is automatically updated when research documents are created or modified.*

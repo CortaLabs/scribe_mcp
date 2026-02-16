@@ -42,6 +42,12 @@ if [ -z "${SCRIBE_DB_URL:-}" ] && [ -f /run/secrets/scribe_db_url ]; then
     echo "[scribe-entrypoint] Loaded SCRIBE_DB_URL from Docker secret"
 fi
 
+if [ -z "${SCRIBE_OBJECT_STORE_KEY:-}" ] && [ -f /run/secrets/store_hmac_key ]; then
+    SCRIBE_OBJECT_STORE_KEY="$(cat /run/secrets/store_hmac_key)"
+    export SCRIBE_OBJECT_STORE_KEY
+    echo "[scribe-entrypoint] Loaded SCRIBE_OBJECT_STORE_KEY from Docker secret"
+fi
+
 # ---------------------------------------------------------------------------
 # Log startup configuration
 # ---------------------------------------------------------------------------

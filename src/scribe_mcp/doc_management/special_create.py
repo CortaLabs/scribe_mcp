@@ -415,6 +415,14 @@ async def handle_special_document_creation(
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(rendered_content, encoding="utf-8")
 
+        # Fire-and-forget sync to remote object store
+        try:
+            from scribe_mcp.object_store import sync_file_to_store
+            from scribe_mcp.config.settings import settings as _settings
+            await sync_file_to_store(target_path, rendered_content, _settings.project_root)
+        except Exception:
+            pass
+
         after_hash = _hash_text(rendered_content)
 
         await _record_special_doc_change(

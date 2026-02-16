@@ -803,6 +803,17 @@ async def _startup() -> None:
     # Register bridge custom tools with MCP server
     _register_bridge_custom_tools()
 
+    # Initialize document store (object store layer)
+    try:
+        from scribe_mcp.object_store import create_document_store
+
+        document_store = create_document_store(settings)
+        await document_store.setup()
+        app.state.document_store = document_store
+        logger.info("Document store initialized")
+    except Exception:
+        logger.warning("Document store initialization failed — continuing without object store", exc_info=True)
+
     # Start background journal replay (non-blocking)
     # Journal recovery happens in background so server can respond to tool calls immediately
     schedule_background_task(
@@ -836,6 +847,14 @@ async def _shutdown() -> None:
         try:
             async with asyncio.timeout(settings.storage_timeout_seconds):
                 await asyncio.shield(storage_backend.close())
+        except Exception:
+            pass
+
+    # Close document store (object store layer)
+    doc_store = getattr(getattr(app, "state", None), "document_store", None)
+    if doc_store:
+        try:
+            await doc_store.close()
         except Exception:
             pass
 

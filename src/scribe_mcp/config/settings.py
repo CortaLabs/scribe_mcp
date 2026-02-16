@@ -84,6 +84,15 @@ class Settings:
     use_db_cooldown_tracking: bool
     use_session_aware_hashes: bool
     require_explicit_root: bool
+    # Object store settings
+    object_store_url: Optional[str]
+    object_store_provider: str
+    object_store_key: Optional[str]
+    object_store_project: Optional[str]
+    object_store_timeout: float
+    s3_bucket: Optional[str]
+    s3_prefix: str
+    s3_region: str
 
     @classmethod
     def load(cls) -> "Settings":
@@ -213,6 +222,19 @@ class Settings:
             "1", "true", "yes"
         }
 
+        # Object store configuration
+        object_store_url = os.environ.get("SCRIBE_OBJECT_STORE_URL")
+        object_store_provider = os.environ.get("SCRIBE_OBJECT_STORE_PROVIDER", "corta")
+        object_store_key = os.environ.get("SCRIBE_OBJECT_STORE_KEY")
+        object_store_project = os.environ.get("SCRIBE_OBJECT_STORE_PROJECT")
+        object_store_timeout = max(
+            1.0,
+            float(os.environ.get("SCRIBE_OBJECT_STORE_TIMEOUT", "10.0")),
+        )
+        s3_bucket = os.environ.get("SCRIBE_S3_BUCKET")
+        s3_prefix = os.environ.get("SCRIBE_S3_PREFIX", "scribe/")
+        s3_region = os.environ.get("SCRIBE_S3_REGION", "us-east-1")
+
         return cls(
             project_root=project_root,
             default_state_path=state_path,
@@ -259,6 +281,14 @@ class Settings:
             use_db_cooldown_tracking=use_db_cooldown_tracking,
             use_session_aware_hashes=use_session_aware_hashes,
             require_explicit_root=require_explicit_root,
+            object_store_url=object_store_url,
+            object_store_provider=object_store_provider,
+            object_store_key=object_store_key,
+            object_store_project=object_store_project,
+            object_store_timeout=object_store_timeout,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+            s3_region=s3_region,
         )
 
 

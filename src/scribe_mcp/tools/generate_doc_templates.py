@@ -347,6 +347,22 @@ def _write_template(path: Path, content: str, overwrite: bool) -> None:
     with path.open("w", encoding="utf-8") as handle:
         handle.write(content)
 
+    # Fire-and-forget sync to remote object store (sync context).
+    try:
+        from scribe_mcp.object_store import should_sync as _should_sync
+        if _should_sync(path, settings.project_root):
+            from scribe_mcp.object_store import sync_file_to_store
+            import asyncio
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(sync_file_to_store(path, content, settings.project_root))
+            from scribe_mcp.server import background_tasks
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
+    except RuntimeError:
+        pass  # No running event loop — skip sync.
+    except Exception:
+        pass
+
 
 def _select_documents(documents: Iterable[str] | None) -> List[str]:
     """

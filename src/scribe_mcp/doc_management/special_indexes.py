@@ -156,6 +156,13 @@ This directory contains bug reports generated during development and testing.
     with open(index_path, "w", encoding="utf-8") as handle:
         handle.write(content)
 
+    try:
+        from scribe_mcp.object_store import sync_file_to_store
+        from scribe_mcp.config.settings import settings as _settings
+        await sync_file_to_store(index_path, content, _settings.project_root)
+    except Exception:
+        pass
+
 
 async def update_review_index(docs_dir: Path, agent_id: str) -> None:
     index_path = docs_dir / "REVIEW_INDEX.md"
@@ -230,6 +237,13 @@ This directory contains review reports generated during the development quality 
     index_path.parent.mkdir(parents=True, exist_ok=True)
     with open(index_path, "w", encoding="utf-8") as handle:
         handle.write(content)
+
+    try:
+        from scribe_mcp.object_store import sync_file_to_store
+        from scribe_mcp.config.settings import settings as _settings
+        await sync_file_to_store(index_path, content, _settings.project_root)
+    except Exception:
+        pass
 
 
 async def update_agent_card_index(docs_dir: Path, agent_id: str) -> None:
@@ -311,6 +325,13 @@ This directory contains agent performance evaluation reports generated during th
     index_path.parent.mkdir(parents=True, exist_ok=True)
     with open(index_path, "w", encoding="utf-8") as handle:
         handle.write(content)
+
+    try:
+        from scribe_mcp.object_store import sync_file_to_store
+        from scribe_mcp.config.settings import settings as _settings
+        await sync_file_to_store(index_path, content, _settings.project_root)
+    except Exception:
+        pass
 
 
 async def render_review_report_template(

@@ -19,7 +19,7 @@ COPY src/ ./src/
 # to avoid pulling in PyTorch (~2GB)
 RUN pip install --no-cache-dir --no-deps . \
     && pip install --no-cache-dir \
-       asyncpg~=0.29 jinja2~=3.1 "mcp==1.26.0" \
+       asyncpg~=0.29 "httpx>=0.27" jinja2~=3.1 "mcp==1.26.0" \
        "numpy~=1.20" portalocker~=2.0 psutil~=7.1 \
        pyyaml~=6.0 rich~=13.7 tiktoken~=0.5 watchdog~=3.0
 
