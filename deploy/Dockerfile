@@ -51,6 +51,10 @@ RUN chmod +x docker-entrypoint.sh
 # Create volume mount points
 RUN mkdir -p /app/.scribe && chown -R scribe:scribe /app
 
+# Install gosu for privilege drop after reading secrets
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/*
+
 # Environment defaults
 ENV PYTHONPATH="/app/src" \
     SCRIBE_ROOT="/app" \
@@ -62,8 +66,7 @@ ENV PYTHONPATH="/app/src" \
 
 EXPOSE 8200
 
-USER scribe
-
+# Entrypoint runs as root to read secrets, then drops to scribe via gosu
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8200/health || exit 1
 

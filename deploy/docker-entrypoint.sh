@@ -54,17 +54,13 @@ echo "[scribe-entrypoint] Port: ${SCRIBE_TRANSPORT_PORT:-8200}"
 echo "[scribe-entrypoint] Storage: ${SCRIBE_STORAGE_BACKEND:-sqlite}"
 
 # ---------------------------------------------------------------------------
-# Hand off to the actual command
+# Hand off to the actual command as the scribe user
 # ---------------------------------------------------------------------------
+# The entrypoint runs as root to read secrets (owned by root).
+# gosu drops privileges to the scribe user before exec'ing the app.
+# This ensures the application process runs as non-root (UID 1001).
+#
 # "exec" replaces this shell process with the command.
 # "$@" expands to all arguments passed to this script (the CMD from Dockerfile).
-#
-# Example: CMD ["scribe-server-sse"]
-#   exec "$@" becomes: exec scribe-server-sse
-#
-# Using exec is important because:
-#   1. The app receives signals (SIGTERM) directly from tini
-#   2. Docker can properly monitor the process health
-#   3. "docker stop" triggers graceful shutdown via tini -> SIGTERM -> app
 # ---------------------------------------------------------------------------
-exec "$@"
+exec gosu scribe "$@"
