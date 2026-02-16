@@ -14,14 +14,11 @@ WORKDIR /build
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-# Install scribe-mcp package (no-deps to skip sentence-transformers)
-# Then install each dependency individually, EXCLUDING sentence-transformers
-# to avoid pulling in PyTorch (~2GB)
-RUN pip install --no-cache-dir --no-deps . \
-    && pip install --no-cache-dir \
-       asyncpg~=0.29 "httpx>=0.27" jinja2~=3.1 "mcp==1.26.0" \
-       "numpy~=1.20" portalocker~=2.0 psutil~=7.1 \
-       pyyaml~=6.0 rich~=13.7 tiktoken~=0.5 watchdog~=3.0
+# Install scribe-mcp with ALL dependencies including sentence-transformers.
+# This pulls in PyTorch (~800MB) for CPU-based embeddings (all-MiniLM-L6-v2).
+# The Hetzner CCX23 (16GB RAM, 4 vCPU) handles this easily.
+# --no-cache-dir keeps the builder layer from doubling in size.
+RUN pip install --no-cache-dir .
 
 # ===== STAGE 2: RUNTIME =====
 FROM python:3.11-slim AS runtime
