@@ -45,7 +45,6 @@ async def _run(args: argparse.Namespace) -> int:
     # Collect eligible files.
     scan_dirs: list[Path] = [
         repo_root / ".scribe" / "docs",
-        repo_root / ".scribe" / "backups",
         repo_root / "docs" / "bugs",
     ]
 

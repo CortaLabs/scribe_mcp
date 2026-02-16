@@ -12,12 +12,11 @@ from pathlib import Path, PurePosixPath
 _SYNC_PREFIXES: tuple[str, ...] = (
     ".scribe/docs/dev_plans/",
     ".scribe/docs/agent_report_cards/",
-    ".scribe/backups/",
     "docs/bugs/",
 )
 
 # Suffixes eligible for sync.
-_SYNC_SUFFIXES: tuple[str, ...] = (".md", ".bak")
+_SYNC_SUFFIXES: tuple[str, ...] = (".md",)
 
 # Prefixes that must **never** be synced even if they match above.
 _DENY_PREFIXES: tuple[str, ...] = (
