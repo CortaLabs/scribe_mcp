@@ -13,7 +13,10 @@ from scribe_mcp.config.paths import default_db_path, repo_root
 try:  # Prefer optional dotenv loading to keep env setup simple outside the repo
     from dotenv import load_dotenv  # type: ignore
 
-    load_dotenv()  # best-effort; safe no-op if .env missing
+    # Load from repo root .env so secrets (HMAC keys, DB URLs) are picked up
+    # regardless of the working directory Claude Code launches Scribe from.
+    _dotenv_path = repo_root() / ".env"
+    load_dotenv(_dotenv_path)  # best-effort; safe no-op if .env missing
 except Exception:
     pass
 
