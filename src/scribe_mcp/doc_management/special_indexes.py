@@ -10,6 +10,19 @@ from scribe_mcp.doc_management import preflight as preflight_shared
 from scribe_mcp.doc_management.manager import DocumentOperationError
 
 
+def _infer_repo_root(file_path: Path) -> Path | None:
+    """Walk up from *file_path* to find the parent of ``.scribe/``."""
+    resolved = file_path.resolve()
+    for parent in resolved.parents:
+        if parent.name == ".scribe":
+            return parent.parent
+    # Also check docs/bugs which lives outside .scribe
+    for parent in resolved.parents:
+        if parent.name == "docs" and (parent.parent / ".scribe").exists():
+            return parent.parent
+    return None
+
+
 def _current_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -22,7 +35,7 @@ def _validate_and_repair_index(index_path: Path, doc_dir: Path) -> bool:
     return preflight_shared.validate_and_repair_index(index_path, doc_dir)
 
 
-async def update_research_index(research_dir: Path, agent_id: str) -> None:
+async def update_research_index(research_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
     index_path = research_dir / "INDEX.md"
 
     if not _validate_and_repair_index(index_path, research_dir):
@@ -79,7 +92,7 @@ This directory contains research documents generated during the development proc
         logging.getLogger(__name__).warning("Failed to update research index at %s", index_path)
 
 
-async def update_bug_index(bugs_dir: Path, agent_id: str) -> None:
+async def update_bug_index(bugs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
     index_path = bugs_dir / "INDEX.md"
 
     bug_reports = []
@@ -156,15 +169,16 @@ This directory contains bug reports generated during development and testing.
     with open(index_path, "w", encoding="utf-8") as handle:
         handle.write(content)
 
-    try:
-        from scribe_mcp.object_store import sync_file_to_store
-        from scribe_mcp.config.settings import settings as _settings
-        await sync_file_to_store(index_path, content, _settings.project_root)
-    except Exception:
-        pass
+    _sync_root = repo_root or _infer_repo_root(index_path)
+    if _sync_root:
+        try:
+            from scribe_mcp.object_store import sync_file_to_store
+            await sync_file_to_store(index_path, content, _sync_root)
+        except Exception:
+            pass
 
 
-async def update_review_index(docs_dir: Path, agent_id: str) -> None:
+async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
     index_path = docs_dir / "REVIEW_INDEX.md"
 
     review_reports = []
@@ -238,15 +252,16 @@ This directory contains review reports generated during the development quality 
     with open(index_path, "w", encoding="utf-8") as handle:
         handle.write(content)
 
-    try:
-        from scribe_mcp.object_store import sync_file_to_store
-        from scribe_mcp.config.settings import settings as _settings
-        await sync_file_to_store(index_path, content, _settings.project_root)
-    except Exception:
-        pass
+    _sync_root = repo_root or _infer_repo_root(index_path)
+    if _sync_root:
+        try:
+            from scribe_mcp.object_store import sync_file_to_store
+            await sync_file_to_store(index_path, content, _sync_root)
+        except Exception:
+            pass
 
 
-async def update_agent_card_index(docs_dir: Path, agent_id: str) -> None:
+async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
     index_path = docs_dir / "AGENT_CARDS_INDEX.md"
 
     agent_cards = []
@@ -326,12 +341,13 @@ This directory contains agent performance evaluation reports generated during th
     with open(index_path, "w", encoding="utf-8") as handle:
         handle.write(content)
 
-    try:
-        from scribe_mcp.object_store import sync_file_to_store
-        from scribe_mcp.config.settings import settings as _settings
-        await sync_file_to_store(index_path, content, _settings.project_root)
-    except Exception:
-        pass
+    _sync_root = repo_root or _infer_repo_root(index_path)
+    if _sync_root:
+        try:
+            from scribe_mcp.object_store import sync_file_to_store
+            await sync_file_to_store(index_path, content, _sync_root)
+        except Exception:
+            pass
 
 
 async def render_review_report_template(

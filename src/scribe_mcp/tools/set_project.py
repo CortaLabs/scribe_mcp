@@ -220,6 +220,8 @@ async def set_project(
     bridge_managed: bool = False,  # Whether this project is bridge-managed
     # Output formatting
     format: str = "readable",  # Output format: readable, structured, compact
+    # Remote identity (injected by Council proxy)
+    _scribe_user: Optional[str] = None,  # User identity for workspace scoping in Docker/SSE
 ) -> Dict[str, Any]:
     """Register the project (if needed) and mark it as the current context.
 
@@ -281,7 +283,7 @@ async def set_project(
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
     context_root = _get_context_repo_root()
     try:
-        resolved_root = _resolve_root(root, context_root, skip_validation)
+        resolved_root = _resolve_root(root, context_root, skip_validation, scribe_user=_scribe_user)
     except ValueError as exc:
         return _SET_PROJECT_HELPER.apply_context_payload(
             _SET_PROJECT_HELPER.error_response(str(exc)),
@@ -291,7 +293,7 @@ async def set_project(
     # Detect if a path mapping occurred (for metadata).
     from scribe_mcp.config.paths import map_client_root as _mcr
 
-    _, client_root_original = _mcr(root or str(context_root or ""))
+    _, client_root_original = _mcr(root or str(context_root or ""), user=_scribe_user)
     # client_root_original is non-None only when a mapping happened.
 
     docs_dir = _resolve_docs_dir(name, resolved_root)
@@ -700,7 +702,12 @@ def _get_context_repo_root() -> Optional[Path]:
         return None
 
 
-def _resolve_root(root: Optional[str], context_root: Optional[Path], skip_validation: bool) -> Path:
+def _resolve_root(
+    root: Optional[str],
+    context_root: Optional[Path],
+    skip_validation: bool,
+    scribe_user: Optional[str] = None,
+) -> Path:
     base = settings.project_root.resolve()
     if not root:
         if context_root and context_root != base:
@@ -722,7 +729,7 @@ def _resolve_root(root: Optional[str], context_root: Optional[Path], skip_valida
     # No-op when the path exists on this filesystem (local dev).
     from scribe_mcp.config.paths import map_client_root
 
-    mapped, _original = map_client_root(str(root_path))
+    mapped, _original = map_client_root(str(root_path), user=scribe_user)
     root_path = Path(mapped)
 
     return root_path

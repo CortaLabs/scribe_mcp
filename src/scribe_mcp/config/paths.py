@@ -137,18 +137,34 @@ def cli_session_state_path(session_name: str = "default") -> Path:
     return cli_session_dir() / f"{safe_name}.json"
 
 
-def map_client_root(client_path: str) -> Tuple[str, Optional[str]]:
+def map_client_root(
+    client_path: str,
+    user: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
     """Map a client-provided repo root to a server-accessible path.
 
     Enables remote SSE clients to use Scribe when their local filesystem
     paths don't exist on the server (e.g. Docker containers).
 
+    Args:
+        client_path: The repo root path as sent by the client.
+        user: Explicit user identity (e.g. from Council's ``_scribe_user``).
+              Falls back to ``SCRIBE_USER`` env var, then ``"default"``.
+
     Returns ``(effective_path, original_client_path_or_None)``.
 
-    * Path exists on this filesystem → ``(client_path, None)`` — no mapping (local dev).
+    * Path exists on this filesystem → ``(client_path, None)`` — no mapping.
     * ``SCRIBE_PATH_MAP`` has an explicit match → ``(mapped, client_path)``.
-    * Path missing + ``SCRIBE_ROOT`` set → ``(SCRIBE_ROOT, client_path)``.
+    * Path missing + ``SCRIBE_ROOT`` set → scoped workspace path.
     * Otherwise → ``(client_path, None)`` — no mapping available.
+
+    **Scoping** (user-first, prevents collisions across repos and users)::
+
+        {SCRIBE_ROOT}/workspaces/{user}/{parent}/{repo_name}/
+
+    Where ``user`` is resolved from the ``user`` parameter, ``SCRIBE_USER``
+    env var, or ``"default"``.  ``parent/repo_name`` are the last two
+    components of the client path (e.g. ``MCP_SPINE/council_mcp``).
     """
     # 1. Explicit multi-repo map (semicolon-separated "client=server" pairs)
     path_map_raw = os.environ.get("SCRIBE_PATH_MAP")
@@ -170,13 +186,25 @@ def map_client_root(client_path: str) -> Tuple[str, Optional[str]]:
     if Path(client_path).exists():
         return (client_path, None)
 
-    # 3. Fallback to SCRIBE_ROOT when client path doesn't exist on server
+    # 3. Fallback to SCRIBE_ROOT when client path doesn't exist on server.
+    #    Hierarchy: workspaces/{user}/{parent}/{repo} — user-first scoping.
     scribe_root = os.environ.get("SCRIBE_ROOT")
     if scribe_root:
         resolved = Path(scribe_root).resolve()
         if resolved.exists():
-            logger.info("Path map (SCRIBE_ROOT fallback): %s → %s", client_path, resolved)
-            return (str(resolved), client_path)
+            # Resolve user identity: explicit param > env var > default
+            effective_user = user or os.environ.get("SCRIBE_USER") or "default"
+
+            # Repo scope from last two path components (e.g. MCP_SPINE/council_mcp)
+            parts = Path(client_path).parts
+            if len(parts) >= 2:
+                repo_scope = Path(parts[-2]) / parts[-1]
+            else:
+                repo_scope = Path(parts[-1] if parts else "unknown")
+
+            mapped = resolved / "workspaces" / effective_user / repo_scope
+            logger.info("Path map (SCRIBE_ROOT fallback): %s → %s", client_path, mapped)
+            return (str(mapped), client_path)
 
     # 4. No mapping available
     return (client_path, None)

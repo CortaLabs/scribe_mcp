@@ -208,7 +208,8 @@ class RouterContextManager:
         # No-op when the path exists on this filesystem (local dev).
         from scribe_mcp.config.paths import map_client_root
 
-        repo_root, _ = map_client_root(repo_root)
+        scribe_user = payload.get("_scribe_user")
+        repo_root, _ = map_client_root(repo_root, user=scribe_user)
         if mode not in {"sentinel", "project"}:
             raise ValueError("ExecutionContext mode must be 'sentinel' or 'project'")
         if not intent:

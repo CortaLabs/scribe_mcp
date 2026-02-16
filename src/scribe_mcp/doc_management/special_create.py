@@ -276,7 +276,7 @@ async def handle_special_document_creation(
             "doc_name": safe_name,
             "researcher": metadata.get("researcher", agent_id),
         }
-        index_updater = lambda: _update_research_index(research_dir, agent_id)
+        index_updater = lambda: _update_research_index(research_dir, agent_id, project_root)
         index_path = research_dir / "INDEX.md"
     elif action == "create_bug_report":
         category = metadata.get("category")
@@ -304,7 +304,7 @@ async def handle_special_document_creation(
             "category": category,
             "reported_at": metadata.get("reported_at", timestamp_str),
         }
-        index_updater = lambda: _update_bug_index(project_root / "docs" / "bugs", agent_id)
+        index_updater = lambda: _update_bug_index(project_root / "docs" / "bugs", agent_id, project_root)
         index_path = project_root / "docs" / "bugs" / "INDEX.md"
     elif action == "create_review_report":
         stage = metadata.get("stage", "unknown")
@@ -312,7 +312,7 @@ async def handle_special_document_creation(
         template_name = "REVIEW_REPORT_TEMPLATE.md"
         doc_label = "review_report"
         extra_metadata = {"stage": stage}
-        index_updater = lambda: _update_review_index(docs_dir, agent_id)
+        index_updater = lambda: _update_review_index(docs_dir, agent_id, project_root)
         index_path = docs_dir / "REVIEW_INDEX.md"
     elif action == "create_agent_report_card":
         card_agent = metadata.get("agent_name", agent_id)
@@ -324,7 +324,7 @@ async def handle_special_document_creation(
             "agent_name": card_agent,
             "stage": stage,
         }
-        index_updater = lambda: _update_agent_card_index(docs_dir, agent_id)
+        index_updater = lambda: _update_agent_card_index(docs_dir, agent_id, project_root)
         index_path = docs_dir / "AGENT_CARDS_INDEX.md"
     else:
         return helper.apply_context_payload(
@@ -418,8 +418,7 @@ async def handle_special_document_creation(
         # Fire-and-forget sync to remote object store
         try:
             from scribe_mcp.object_store import sync_file_to_store
-            from scribe_mcp.config.settings import settings as _settings
-            await sync_file_to_store(target_path, rendered_content, _settings.project_root)
+            await sync_file_to_store(target_path, rendered_content, project_root)
         except Exception:
             pass
 
@@ -547,20 +546,20 @@ async def handle_special_document_creation(
         )
 
 
-async def _update_research_index(research_dir: Path, agent_id: str) -> None:
-    await special_indexes_shared.update_research_index(research_dir, agent_id)
+async def _update_research_index(research_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    await special_indexes_shared.update_research_index(research_dir, agent_id, repo_root=repo_root)
 
 
-async def _update_bug_index(bugs_dir: Path, agent_id: str) -> None:
-    await special_indexes_shared.update_bug_index(bugs_dir, agent_id)
+async def _update_bug_index(bugs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    await special_indexes_shared.update_bug_index(bugs_dir, agent_id, repo_root=repo_root)
 
 
-async def _update_review_index(docs_dir: Path, agent_id: str) -> None:
-    await special_indexes_shared.update_review_index(docs_dir, agent_id)
+async def _update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    await special_indexes_shared.update_review_index(docs_dir, agent_id, repo_root=repo_root)
 
 
-async def _update_agent_card_index(docs_dir: Path, agent_id: str) -> None:
-    await special_indexes_shared.update_agent_card_index(docs_dir, agent_id)
+async def _update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    await special_indexes_shared.update_agent_card_index(docs_dir, agent_id, repo_root=repo_root)
 
 
 async def _render_review_report_template(

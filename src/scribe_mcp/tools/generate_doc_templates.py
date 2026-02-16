@@ -230,7 +230,7 @@ async def generate_doc_templates(
             continue
 
         if force_overwrite or not path.exists():
-            await asyncio.to_thread(_write_template, path, rendered, force_overwrite)
+            await asyncio.to_thread(_write_template, path, rendered, force_overwrite, project_root_for_docs)
             written.append(str(path))
 
             # Record baseline hash for doc lifecycle tracking
@@ -312,16 +312,17 @@ def _render_template(template: str, context: Dict[str, str]) -> str:
     return rendered
 
 
-def _write_template(path: Path, content: str, overwrite: bool) -> None:
+def _write_template(path: Path, content: str, overwrite: bool, repo_root: Path | None = None) -> None:
+    _effective_root = repo_root or settings.project_root
     if overwrite and path.exists():
         # Create centralized backup directory
         from datetime import datetime, timezone
-        backup_dir = settings.project_root / ".scribe" / "backups"
+        backup_dir = _effective_root / ".scribe" / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate path-preserving filename
         try:
-            relative_path = path.relative_to(settings.project_root)
+            relative_path = path.relative_to(_effective_root)
         except ValueError:
             # File is outside repo root, use last 3 components
             relative_path = Path(*path.parts[-3:])
@@ -350,11 +351,11 @@ def _write_template(path: Path, content: str, overwrite: bool) -> None:
     # Fire-and-forget sync to remote object store (sync context).
     try:
         from scribe_mcp.object_store import should_sync as _should_sync
-        if _should_sync(path, settings.project_root):
+        if _should_sync(path, _effective_root):
             from scribe_mcp.object_store import sync_file_to_store
             import asyncio
             loop = asyncio.get_running_loop()
-            task = loop.create_task(sync_file_to_store(path, content, settings.project_root))
+            task = loop.create_task(sync_file_to_store(path, content, _effective_root))
             from scribe_mcp.server import background_tasks
             background_tasks.add(task)
             task.add_done_callback(background_tasks.discard)
