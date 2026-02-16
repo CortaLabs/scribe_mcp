@@ -201,6 +201,23 @@ async def apply_doc_change(
         # Get original content and metadata
         original_text = ""
         file_size_before = 0
+        if not doc_path.exists():
+            # CortaStore fallback: fetch from remote object store if eligible.
+            try:
+                from scribe_mcp.object_store.keys import should_sync, path_to_key
+
+                if should_sync(doc_path, repo_root):
+                    from scribe_mcp import server as _srv
+
+                    _store = getattr(getattr(_srv.app, "state", None), "document_store", None)
+                    if _store:
+                        _key = path_to_key(doc_path, repo_root)
+                        _remote = await _store.read(_key)
+                        if _remote:
+                            doc_path.parent.mkdir(parents=True, exist_ok=True)
+                            await asyncio.to_thread(doc_path.write_text, _remote, encoding="utf-8")
+            except Exception:
+                pass  # Fallback failed — treat as new doc.
         if doc_path.exists():
             try:
                 original_text = await asyncio.to_thread(doc_path.read_text, encoding="utf-8")

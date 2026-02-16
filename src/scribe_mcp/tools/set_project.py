@@ -288,6 +288,12 @@ async def set_project(
             base_context,
         )
 
+    # Detect if a path mapping occurred (for metadata).
+    from scribe_mcp.config.paths import map_client_root as _mcr
+
+    _, client_root_original = _mcr(root or str(context_root or ""))
+    # client_root_original is non-None only when a mapping happened.
+
     docs_dir = _resolve_docs_dir(name, resolved_root)
     try:
         resolved_log = _resolve_log(progress_log, resolved_root, docs_dir)
@@ -353,6 +359,11 @@ async def set_project(
         "description": description,
         "tags": tags or [],
     }
+
+    # Preserve original client root when server-side mapping occurred.
+    if client_root_original:
+        project_data.setdefault("meta", {})
+        project_data["meta"]["client_root"] = client_root_original
 
     # Optional: allow agents to clear reminder cooldowns if they're confused.
     # This is scoped to (project_root + agent_id) to avoid impacting other agents.
@@ -706,6 +717,13 @@ def _resolve_root(root: Optional[str], context_root: Optional[Path], skip_valida
         root_path = (base / root_path).resolve()
     else:
         root_path = root_path.resolve()
+
+    # Server-side path mapping for remote clients (Docker/SSE).
+    # No-op when the path exists on this filesystem (local dev).
+    from scribe_mcp.config.paths import map_client_root
+
+    mapped, _original = map_client_root(str(root_path))
+    root_path = Path(mapped)
 
     return root_path
 

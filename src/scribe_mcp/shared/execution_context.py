@@ -203,6 +203,12 @@ class RouterContextManager:
             raise ValueError("ExecutionContext missing required field: repo_root")
         if not Path(repo_root).is_absolute():
             raise ValueError("ExecutionContext repo_root must be an absolute path")
+
+        # Server-side path mapping for remote clients (Docker/SSE).
+        # No-op when the path exists on this filesystem (local dev).
+        from scribe_mcp.config.paths import map_client_root
+
+        repo_root, _ = map_client_root(repo_root)
         if mode not in {"sentinel", "project"}:
             raise ValueError("ExecutionContext mode must be 'sentinel' or 'project'")
         if not intent:

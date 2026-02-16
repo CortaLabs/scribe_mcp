@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import importlib.resources
+import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 _PACKAGE_NAME = "scribe_mcp"
 
@@ -134,11 +137,57 @@ def cli_session_state_path(session_name: str = "default") -> Path:
     return cli_session_dir() / f"{safe_name}.json"
 
 
+def map_client_root(client_path: str) -> Tuple[str, Optional[str]]:
+    """Map a client-provided repo root to a server-accessible path.
+
+    Enables remote SSE clients to use Scribe when their local filesystem
+    paths don't exist on the server (e.g. Docker containers).
+
+    Returns ``(effective_path, original_client_path_or_None)``.
+
+    * Path exists on this filesystem → ``(client_path, None)`` — no mapping (local dev).
+    * ``SCRIBE_PATH_MAP`` has an explicit match → ``(mapped, client_path)``.
+    * Path missing + ``SCRIBE_ROOT`` set → ``(SCRIBE_ROOT, client_path)``.
+    * Otherwise → ``(client_path, None)`` — no mapping available.
+    """
+    # 1. Explicit multi-repo map (semicolon-separated "client=server" pairs)
+    path_map_raw = os.environ.get("SCRIBE_PATH_MAP")
+    if path_map_raw:
+        for entry in path_map_raw.split(";"):
+            entry = entry.strip()
+            if "=" not in entry:
+                continue
+            client_prefix, server_path = entry.split("=", 1)
+            client_prefix = client_prefix.strip()
+            server_path = server_path.strip()
+            if client_path.rstrip("/") == client_prefix.rstrip("/") or client_path.startswith(client_prefix.rstrip("/") + "/"):
+                suffix = client_path[len(client_prefix.rstrip("/")):].lstrip("/")
+                mapped = str(Path(server_path) / suffix) if suffix else server_path
+                logger.info("Path map (explicit): %s → %s", client_path, mapped)
+                return (mapped, client_path)
+
+    # 2. Path exists locally — no mapping needed (local dev / stdio)
+    if Path(client_path).exists():
+        return (client_path, None)
+
+    # 3. Fallback to SCRIBE_ROOT when client path doesn't exist on server
+    scribe_root = os.environ.get("SCRIBE_ROOT")
+    if scribe_root:
+        resolved = Path(scribe_root).resolve()
+        if resolved.exists():
+            logger.info("Path map (SCRIBE_ROOT fallback): %s → %s", client_path, resolved)
+            return (str(resolved), client_path)
+
+    # 4. No mapping available
+    return (client_path, None)
+
+
 __all__ = [
     "cli_session_dir",
     "cli_session_state_path",
     "config_data_dir",
     "db_init_sql",
+    "map_client_root",
     "postgres_migrations_dir",
     "default_db_path",
     "package_root",
