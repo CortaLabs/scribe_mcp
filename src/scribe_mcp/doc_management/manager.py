@@ -174,14 +174,19 @@ async def apply_doc_change(
         )
 
         # Resolve and validate document path
-        if action != "create_doc":
-            docs_mapping = project.get("docs") or {}
-            if doc_name not in docs_mapping:
-                raise DocumentOperationError(f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered")
         if action == "create_doc":
             doc_path = _resolve_create_doc_path(project, metadata, doc_name)
         else:
             doc_path = _resolve_doc_path(project, doc_name)
+            # Auto-register if file exists on disk but isn't in docs mapping
+            docs_mapping = project.get("docs") or {}
+            if doc_name not in docs_mapping:
+                if doc_path.exists():
+                    docs_mapping[doc_name] = str(doc_path)
+                    project["docs"] = docs_mapping
+                    doc_logger.info("Auto-registered '%s' at %s", doc_name, doc_path)
+                else:
+                    raise DocumentOperationError(f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered")
         repo_root = Path(project["root"]).resolve()
         await ensure_parent(doc_path, repo_root=repo_root)
 

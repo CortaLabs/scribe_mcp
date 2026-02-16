@@ -41,6 +41,7 @@ scribe-backup-postgres = "scribe_mcp.scripts.postgres_backup:main"
 scribe-bootstrap-postgres = "scribe_mcp.scripts.bootstrap_postgres:main"
 scribe-metrics-postgres = "scribe_mcp.scripts.postgres_metrics:main"
 scribe-soak-postgres = "scribe_mcp.scripts.postgres_soak_test:main"
+scribe-server-sse = "scribe_mcp.server_sse:main"
 
 [tool.setuptools]
 include-package-data = true

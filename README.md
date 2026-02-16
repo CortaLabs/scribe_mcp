@@ -311,6 +311,62 @@ python -m scribe_mcp.scripts.scribe "Starting new feature work" --project fronte
 
 ---
 
+## 🐳 Docker Deployment
+
+**Deploy Scribe MCP as a containerized service with SSE transport:**
+
+### Quick Start (Standalone)
+
+```bash
+# Build the image
+docker build -f deploy/Dockerfile -t scribe-mcp:latest .
+
+# Run the container
+docker run -d \
+  --name scribe-mcp \
+  -p 8200:8200 \
+  -v scribe_data:/app/.scribe \
+  scribe-mcp:latest
+
+# Verify health
+curl http://localhost:8200/health
+```
+
+### Quick Start (With Council + PostgreSQL)
+
+```bash
+# From MCP_SPINE root
+docker compose \
+  -f council_mcp/deploy/docker-compose.yaml \
+  -f scribe_mcp/deploy/docker-compose.scribe.yaml \
+  up -d
+```
+
+### Connecting MCP Clients to Docker
+
+Configure your MCP client for SSE transport instead of stdio:
+
+```json
+{
+  "mcpServers": {
+    "scribe": {
+      "url": "http://localhost:8200/sse"
+    }
+  }
+}
+```
+
+**Key features:**
+- SSE transport on port 8200 (HTTP-based, replaces stdio)
+- PostgreSQL support with Docker secrets for credentials
+- Compose overlay pattern for Council integration
+- Health checks at `/health` endpoint
+- Non-root user (UID 1001), minimal attack surface
+
+For full documentation including configuration, PostgreSQL setup, troubleshooting, and Council integration, see **[deploy/README.md](deploy/README.md)**.
+
+---
+
 ## 🛠️ Installation Options
 
 ### Prerequisites
