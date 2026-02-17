@@ -2,18 +2,40 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from scribe_mcp.storage.base import StorageBackend
 
+if TYPE_CHECKING:
+    from scribe_mcp.config.mode_detection import OperatingMode
 
-def create_storage_backend() -> Optional[StorageBackend]:
+
+def create_storage_backend(
+    mode: Optional["OperatingMode"] = None,
+) -> Optional[StorageBackend]:
     """Instantiate the configured storage backend.
 
     Imports are deferred so that only the chosen backend's module
     is loaded — avoids pulling in heavy dependency chains at import time.
+
+    Args:
+        mode: If ``OperatingMode.CLIENT``, return a
+              :class:`~scribe_mcp.storage.remote.RemoteStorageBackend`
+              that proxies all persistent ops to the remote server.
     """
     from scribe_mcp.config.settings import settings
+
+    # CLIENT mode: proxy all DB operations to the remote Scribe server
+    if mode is not None:
+        from scribe_mcp.config.mode_detection import OperatingMode as _OM
+
+        if mode == _OM.CLIENT:
+            from scribe_mcp.storage.remote import RemoteStorageBackend
+
+            return RemoteStorageBackend(
+                server_url=settings.remote_server_url or "",
+                timeout=settings.remote_connect_timeout,
+            )
 
     backend_name = settings.storage_backend
     if backend_name == "postgres" and settings.db_url:

@@ -88,6 +88,7 @@ from scribe_mcp.utils.sentinel_logs import log_scope_violation
 from scribe_mcp.state.agent_manager import init_agent_context_manager
 from scribe_mcp.state.agent_identity import init_agent_identity
 from scribe_mcp.storage import create_storage_backend
+from scribe_mcp.config.mode_detection import detect_operating_mode, OperatingMode
 
 if TYPE_CHECKING:
     class ToolDecorator(Protocol):
@@ -737,44 +738,67 @@ async def _bridge_health_monitor_service(monitor: Any) -> None:
 async def _startup() -> None:
     """Initialise shared resources before handling requests."""
     global agent_context_manager, agent_identity, _startup_complete
+    global storage_backend, state_manager, router_context_manager
     if _startup_complete:
         return
     _startup_complete = True
     startup_started = perf_counter()
 
+    # --- Mode detection (client/server/standalone) ---
+    mode = await detect_operating_mode(settings)
+    logger.info("Operating mode: %s", mode.value)
+
+    if mode == OperatingMode.CLIENT:
+        # Replace module-level storage_backend with RemoteStorageBackend
+        from scribe_mcp.storage.remote import RemoteStorageBackend
+
+        storage_backend = RemoteStorageBackend(
+            server_url=settings.remote_server_url or "",
+            timeout=settings.remote_connect_timeout,
+        )
+        # Update references held by state_manager and router_context_manager
+        state_manager._storage_backend = storage_backend
+        router_context_manager._storage_backend = storage_backend
+        logger.info(
+            "CLIENT mode: storage_backend replaced with RemoteStorageBackend → %s",
+            settings.remote_server_url,
+        )
+
     if storage_backend:
         storage_setup_started = perf_counter()
         await storage_backend.setup()
-        logger.info(
-            "Startup phase storage.setup completed in %.1fms",
+        logger.warning(
+            "PERF storage.setup completed in %.1fms",
             (perf_counter() - storage_setup_started) * 1000.0,
         )
-        # Cleanup can contend on shared SQLite writers, so keep startup non-blocking.
+        # Server-only: entry cleanup contends on shared SQLite writers
+        if mode != OperatingMode.CLIENT:
+            schedule_background_task(
+                _run_after_delay(
+                    _STARTUP_CLEANUP_DELAY_SECONDS,
+                    _cleanup_old_entries_background,
+                    label="entry cleanup",
+                ),
+                service_name="entry_cleanup",
+                description="Retention cleanup for old entries",
+            )
+
+    # Server-only background services: plugins, bridges, legacy migration
+    if mode != OperatingMode.CLIENT:
         schedule_background_task(
             _run_after_delay(
-                _STARTUP_CLEANUP_DELAY_SECONDS,
-                _cleanup_old_entries_background,
-                label="entry cleanup",
+                _STARTUP_PLUGIN_INIT_DELAY_SECONDS,
+                _init_plugins_background,
+                label="plugin initialization",
             ),
-            service_name="entry_cleanup",
-            description="Retention cleanup for old entries",
+            service_name="plugin_init",
+            description="Plugin subsystem initialization",
         )
-
-    # Plugin/bootstrap tasks are background services by design.
-    schedule_background_task(
-        _run_after_delay(
-            _STARTUP_PLUGIN_INIT_DELAY_SECONDS,
-            _init_plugins_background,
-            label="plugin initialization",
-        ),
-        service_name="plugin_init",
-        description="Plugin subsystem initialization",
-    )
-    schedule_background_task(
-        _init_bridges_background(),
-        service_name="bridge_init",
-        description="Bridge registry/bootstrap initialization",
-    )
+        schedule_background_task(
+            _init_bridges_background(),
+            service_name="bridge_init",
+            description="Bridge registry/bootstrap initialization",
+        )
 
     # Initialize AgentContextManager for agent-scoped project context
     if storage_backend and state_manager:
@@ -783,54 +807,66 @@ async def _startup() -> None:
         logger.info("AgentContextManager initialized for multi-agent support")
         logger.info("AgentIdentity system initialized for automatic agent detection")
 
-        schedule_background_task(
-            _run_after_delay(
-                _STARTUP_LEGACY_MIGRATION_DELAY_SECONDS,
-                _migrate_legacy_state_background,
-                label="legacy state migration",
-            ),
-            service_name="legacy_state_migration",
-            description="One-time legacy state migration",
-        )
-        schedule_background_task(
-            _session_cleanup_task(agent_context_manager),
-            service_name="session_cleanup",
-            description="Agent session lease cleanup loop",
-            persistent=True,
-        )
-        logger.info("Session cleanup task started")
+        # Server-only: legacy migration and session cleanup loop
+        if mode != OperatingMode.CLIENT:
+            schedule_background_task(
+                _run_after_delay(
+                    _STARTUP_LEGACY_MIGRATION_DELAY_SECONDS,
+                    _migrate_legacy_state_background,
+                    label="legacy state migration",
+                ),
+                service_name="legacy_state_migration",
+                description="One-time legacy state migration",
+            )
+            schedule_background_task(
+                _session_cleanup_task(agent_context_manager),
+                service_name="session_cleanup",
+                description="Agent session lease cleanup loop",
+                persistent=True,
+            )
+            logger.info("Session cleanup task started")
 
-    # Register bridge custom tools with MCP server
-    _register_bridge_custom_tools()
+    # Server-only: register bridge custom tools
+    if mode != OperatingMode.CLIENT:
+        _register_bridge_custom_tools()
 
     # Initialize document store (object store layer)
+    # Client mode KEEPS this — client talks to CortaStore directly
     try:
         from scribe_mcp.object_store import create_document_store
 
+        doc_store_started = perf_counter()
         document_store = create_document_store(settings)
         await document_store.setup()
         app.state.document_store = document_store
-        logger.info("Document store initialized")
+        logger.warning(
+            "PERF document_store.setup completed in %.1fms",
+            (perf_counter() - doc_store_started) * 1000.0,
+        )
     except Exception:
         logger.warning("Document store initialization failed — continuing without object store", exc_info=True)
 
-    # Start background journal replay (non-blocking)
-    # Journal recovery happens in background so server can respond to tool calls immediately
-    schedule_background_task(
-        _replay_journals_background(),
-        service_name="journal_replay",
-        description="Replay uncommitted journal entries",
-    )
+    # Server-only: journal replay
+    if mode != OperatingMode.CLIENT:
+        schedule_background_task(
+            _replay_journals_background(),
+            service_name="journal_replay",
+            description="Replay uncommitted journal entries",
+        )
+
     total_startup_ms = (perf_counter() - startup_started) * 1000.0
-    logger.info(
-        "Startup initialization completed in %.1fms (deferred services=%d)",
+    logger.warning(
+        "PERF startup total=%.1fms (deferred services=%d, mode=%s)",
         total_startup_ms,
         len(background_tasks),
+        mode.value,
     )
     # Protocol signal — Council MCP and other process managers pattern-match
     # stderr for "Server ready" to know the subprocess is ready for MCP
     # handshake. WARNING level ensures visibility at the default log level.
-    logger.warning("Server ready (journal replay continuing in background)")
+    logger.warning("Server ready (mode=%s, journal replay %s)",
+                   mode.value,
+                   "skipped" if mode == OperatingMode.CLIENT else "continuing in background")
 
 
 async def _shutdown() -> None:

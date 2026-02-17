@@ -14,6 +14,11 @@ class ConflictError(Exception):
     pass
 
 
+class RemoteUnavailableError(Exception):
+    """Raised when the remote Scribe server is unreachable."""
+    pass
+
+
 class StorageBackend(ABC):
     """Unified interface for persistence layers."""
 
@@ -341,6 +346,64 @@ class StorageBackend(ABC):
             or None if session not found
         """
         ...
+
+    # Extended session management (promoted from duck-typed to formal interface)
+
+    async def upsert_session(
+        self,
+        *,
+        session_id: str,
+        transport_session_id: Optional[str] = None,
+        repo_root: Optional[str] = None,
+        mode: Optional[str] = None,
+    ) -> None:
+        """Create or update a transport session record."""
+        raise NotImplementedError
+
+    async def set_session_mode(self, session_id: str, mode: str) -> None:
+        """Set the operating mode for a session."""
+        raise NotImplementedError
+
+    async def get_session_mode(self, session_id: str) -> Optional[str]:
+        """Get the operating mode for a session."""
+        raise NotImplementedError
+
+    async def set_session_project(self, session_id: str, project_name: str) -> None:
+        """Associate a session with a project."""
+        raise NotImplementedError
+
+    async def get_session_project(self, session_id: str) -> Optional[str]:
+        """Get the project name associated with a session."""
+        raise NotImplementedError
+
+    async def get_session_by_transport(self, transport_session_id: str) -> Optional[dict]:
+        """Look up a session by its transport-level session ID."""
+        raise NotImplementedError
+
+    async def upsert_agent_recent_project(self, agent_id: str, project_name: str) -> None:
+        """Record a project as recently used by an agent."""
+        raise NotImplementedError
+
+    async def get_or_create_agent_session(
+        self,
+        *,
+        identity_key: str,
+        agent_name: str = "",
+        agent_key: str = "",
+        repo_root: str = "",
+        mode: str = "",
+        scope_key: str = "",
+    ) -> str:
+        """Get existing or create new agent session, returning session_id."""
+        raise NotImplementedError
+
+    async def upsert_dev_plan(self, project_id: int, plan_type: str, **kwargs) -> None:
+        """Create or update a dev plan record for a project."""
+        raise NotImplementedError
+
+    async def fetch_project_sync(self, name: str) -> Optional['ProjectRecord']:
+        """Synchronous wrapper for fetch_project (used by middleware hot paths)."""
+        raise NotImplementedError
 
     # Bridge management methods
     @abstractmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from time import perf_counter as _pc
 
 logger = logging.getLogger(__name__)
 from pathlib import Path
@@ -230,7 +231,22 @@ async def set_project(
       tool calls (append_entry, etc.) for session isolation to work.
     - The `root` parameter is REQUIRED and specifies the repository root path.
     """
+    _t0 = _pc()
+    _timings: list[tuple[str, float]] = []
+    def _mark(label: str) -> None:
+        _timings.append((label, (_pc() - _t0) * 1000))
+    def _log_timings() -> None:
+        total = (_pc() - _t0) * 1000
+        parts = []
+        prev = 0.0
+        for lbl, cum in _timings:
+            delta = cum - prev
+            parts.append(f"{lbl}={delta:.0f}ms")
+            prev = cum
+        logger.warning("PERF set_project total=%.0fms | %s", total, " | ".join(parts))
+
     state_snapshot = await server_module.state_manager.record_tool("set_project")
+    _mark("record_tool")
 
     # agent is now REQUIRED - use it as agent_id for internal tracking
     agent_id = agent
@@ -261,6 +277,7 @@ async def set_project(
         await agent_identity.update_agent_activity(
             agent_id, "set_project", {"project_name": name, "expected_version": expected_version}
         )
+    _mark("update_agent_activity")
 
     base_context: LoggingContext = await _SET_PROJECT_HELPER.prepare_context(
         tool_name="set_project",
@@ -280,6 +297,7 @@ async def set_project(
         except ValueError:
             tags = [tags]  # Fallback: treat as single item
 
+    _mark("prepare_context")
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
     context_root = _get_context_repo_root()
     try:
@@ -314,10 +332,12 @@ async def set_project(
     if not validation.get("ok", False):
         return _SET_PROJECT_HELPER.apply_context_payload(validation, base_context)
 
+    _mark("resolve_paths")
     resolved_root.mkdir(parents=True, exist_ok=True)
 
     # Bootstrap documentation scaffolds when missing
     doc_result = await _ensure_documents(name, author, overwrite_docs, resolved_root, docs_dir, agent_id)
+    _mark("ensure_documents")
     if not doc_result.get("ok", False):
         return _SET_PROJECT_HELPER.apply_context_payload(doc_result, base_context)
 
@@ -382,6 +402,7 @@ async def set_project(
             project_data.setdefault("meta", {})
             project_data["meta"]["reminders_reset_error"] = str(exc)
 
+    _mark("build_project_data")
     # Create/upsert project in database first
     backend = server_module.storage_backend
     project_record = None
@@ -391,6 +412,7 @@ async def set_project(
         if collision:
             return _SET_PROJECT_HELPER.apply_context_payload(collision, base_context)
 
+        _mark("check_slug_collision")
         import json as _json
         project_record = await backend.upsert_project(
             name=name,
@@ -401,6 +423,7 @@ async def set_project(
             bridge_managed=bridge_managed,
         )
 
+        _mark("upsert_project")
         # Parse docs_json from project_record and populate project_data meta
         if project_record and project_record.docs_json:
             import json
@@ -424,6 +447,7 @@ async def set_project(
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("ProjectRegistry ensure/touch_access failed in set_project: %s", exc)
 
+        _mark("project_registry")
         # Populate dev_plans table for core docs so lifecycle rules can see them.
         try:
             if hasattr(backend, "upsert_dev_plan") and project_record:
@@ -452,6 +476,7 @@ async def set_project(
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("dev_plans upsert failed in set_project: %s", exc)
 
+    _mark("upsert_dev_plans")
     # Use AgentContextManager for agent-scoped project context
     agent_manager = server_module.get_agent_context_manager()
     session_id: Optional[str] = None
@@ -510,6 +535,7 @@ async def set_project(
             mirror_global = True
     # Mirror project data into JSON state; global current_project only updates for legacy fallback.
 
+    _mark("agent_context_manager")
     state = await server_module.state_manager.set_current_project(
         name,
         project_data,
@@ -520,10 +546,12 @@ async def set_project(
     if state is None:
         logger.warning("StateManager.set_current_project returned None; reloading state snapshot.")
         state = await server_module.state_manager.load()
+    _mark("state_set_current_project")
     await server_module.state_manager.set_session_mode(
         context_session_id or session_id,
         "project",
     )
+    _mark("state_set_session_mode")
     backend = server_module.storage_backend
     if backend:
         # CRITICAL: Use stable_session_id (deterministic) instead of context_session_id (unstable UUID)
@@ -557,9 +585,11 @@ async def set_project(
                     repo_root=str(resolved_root),
                     mode="project",
                 )
+        _mark("backend_session_ops")
         if agent_id and hasattr(backend, "upsert_agent_recent_project"):
             # NO SILENT ERRORS - agent tracking must work
             await backend.upsert_agent_recent_project(agent_id, name)
+    _mark("upsert_agent_recent")
     recent_projects = list(state.recent_projects)
 
     try:
@@ -573,6 +603,7 @@ async def set_project(
     except ProjectResolutionError:
         context_after = base_context
 
+    _mark("prepare_context_after")
     # Handle readable format with SITREP formatters
     if format == "readable":
         from scribe_mcp.utils.response import default_formatter
@@ -626,6 +657,8 @@ async def set_project(
                 "readable_content": readable_content
             }
 
+            _mark("format_new_sitrep")
+            _log_timings()
             return await default_formatter.finalize_tool_response(
                 response,
                 format="readable",
@@ -668,6 +701,8 @@ async def set_project(
                 "readable_content": readable_content
             }
 
+            _mark("format_existing_sitrep")
+            _log_timings()
             return await default_formatter.finalize_tool_response(
                 response,
                 format="readable",
@@ -686,6 +721,8 @@ async def set_project(
     if context_after.reminders:
         response["reminders"] = list(context_after.reminders)
 
+    _mark("format_structured")
+    _log_timings()
     return _SET_PROJECT_HELPER.apply_context_payload(response, context_after)
 
 

@@ -16,7 +16,7 @@ try:  # Prefer optional dotenv loading to keep env setup simple outside the repo
     # Load from repo root .env so secrets (HMAC keys, DB URLs) are picked up
     # regardless of the working directory Claude Code launches Scribe from.
     _dotenv_path = repo_root() / ".env"
-    load_dotenv(_dotenv_path)  # best-effort; safe no-op if .env missing
+    load_dotenv(_dotenv_path, override=True)  # .env is source of truth; override parent env
 except Exception:
     pass
 
@@ -96,6 +96,11 @@ class Settings:
     s3_bucket: Optional[str]
     s3_prefix: str
     s3_region: str
+    # Client/server mode detection
+    mode: str  # "auto", "server", "client", "standalone"
+    remote_server_url: Optional[str]
+    remote_connect_timeout: float
+    remote_fallback: bool
 
     @classmethod
     def load(cls) -> "Settings":
@@ -238,6 +243,19 @@ class Settings:
         s3_prefix = os.environ.get("SCRIBE_S3_PREFIX", "scribe/")
         s3_region = os.environ.get("SCRIBE_S3_REGION", "us-east-1")
 
+        # Client/server mode detection
+        mode = os.environ.get("SCRIBE_MODE", "auto").lower().strip()
+        if mode not in ("auto", "server", "client", "standalone"):
+            mode = "auto"
+        remote_server_url = os.environ.get("SCRIBE_REMOTE_URL")  # standardized name per review
+        remote_connect_timeout = max(
+            0.5,
+            float(os.environ.get("SCRIBE_REMOTE_CONNECT_TIMEOUT", "3.0")),
+        )
+        remote_fallback = os.environ.get("SCRIBE_REMOTE_FALLBACK", "true").lower() in {
+            "1", "true", "yes"
+        }
+
         return cls(
             project_root=project_root,
             default_state_path=state_path,
@@ -292,6 +310,10 @@ class Settings:
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
             s3_region=s3_region,
+            mode=mode,
+            remote_server_url=remote_server_url,
+            remote_connect_timeout=remote_connect_timeout,
+            remote_fallback=remote_fallback,
         )
 
 
