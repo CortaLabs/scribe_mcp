@@ -135,13 +135,16 @@ def _serialize(obj: Any) -> Any:
     return str(obj)
 
 
-def _rehydrate_project_kwarg(kwargs: dict[str, Any]) -> None:
-    """Convert a raw ``project`` dict back into a ProjectRecord.
+def _rehydrate_kwargs(kwargs: dict[str, Any]) -> None:
+    """Deserialise JSON-transported kwargs back into Python objects.
 
-    The RemoteStorageBackend client serialises ProjectRecord as
-    ``{"name": ..., "id": ...}``.  Backend methods expect a real
-    ProjectRecord, so we reconstruct it here on the server side.
+    The RemoteStorageBackend client serialises rich types for transport:
+    - ProjectRecord → dict with "name"/"id" keys
+    - datetime → ISO 8601 string
+
+    Backend methods expect real Python objects, so we reconstruct them here.
     """
+    # ProjectRecord
     proj = kwargs.get("project")
     if isinstance(proj, dict) and "name" in proj:
         kwargs["project"] = ProjectRecord(
@@ -155,6 +158,14 @@ def _rehydrate_project_kwarg(kwargs: dict[str, Any]) -> None:
             bridge_id=proj.get("bridge_id"),
             bridge_managed=proj.get("bridge_managed", False),
         )
+
+    # datetime (ts field from insert_entry)
+    ts_val = kwargs.get("ts")
+    if isinstance(ts_val, str):
+        try:
+            kwargs["ts"] = datetime.datetime.fromisoformat(ts_val)
+        except (ValueError, TypeError):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +223,7 @@ async def handle_backend_operation(request: Request) -> JSONResponse:
         body = {}
 
     # Deserialize ProjectRecord from dict if needed
-    _rehydrate_project_kwarg(body)
+    _rehydrate_kwargs(body)
 
     # Execute
     try:
@@ -304,7 +315,7 @@ async def handle_batch(request: Request) -> JSONResponse:
             continue
 
         try:
-            _rehydrate_project_kwarg(args)
+            _rehydrate_kwargs(args)
             result = await method(**args)
             results.append({"ok": True, "result": _serialize(result)})
         except Exception as exc:
