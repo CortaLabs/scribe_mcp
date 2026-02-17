@@ -354,6 +354,7 @@ class StorageBackend(ABC):
         *,
         session_id: str,
         transport_session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         repo_root: Optional[str] = None,
         mode: Optional[str] = None,
     ) -> None:

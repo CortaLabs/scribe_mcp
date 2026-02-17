@@ -142,12 +142,14 @@ class RemoteStorageBackend(StorageBackend):
         *,
         session_id: str,
         transport_session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         repo_root: Optional[str] = None,
         mode: Optional[str] = None,
     ) -> None:
         self._sessions[session_id] = {
             "session_id": session_id,
             "transport_session_id": transport_session_id,
+            "agent_id": agent_id,
             "repo_root": repo_root,
             "mode": mode,
             "created_at": datetime.utcnow().isoformat(),

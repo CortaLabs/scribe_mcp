@@ -65,3 +65,5 @@ Thumbs.db
 # Coverage artifacts
 .coverage
 htmlcov/
+.mcp.json
+.claude/rules/hetzner-deployment.md
