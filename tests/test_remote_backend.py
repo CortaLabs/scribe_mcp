@@ -592,3 +592,104 @@ class TestLifecycle:
         result = await live_backend.fetch_project_sync("test_project")
         assert isinstance(result, ProjectRecord)
         assert result.name == "test_project"
+
+
+# ===================================================================
+# 8. Project cache (OPT-2)
+# ===================================================================
+
+
+class TestProjectCache:
+    """Tests for the short-lived project record cache (OPT-2)."""
+
+    @pytest.mark.asyncio
+    async def test_project_cache_hit(self, live_backend: RemoteStorageBackend) -> None:
+        """Second fetch_project call returns cached result with no HTTP call."""
+        proj_dict = _make_project_dict()
+        live_backend._client.post = AsyncMock(return_value=_make_response({"result": proj_dict}))
+
+        # First call -- should hit the server
+        result1 = await live_backend.fetch_project("test_project")
+        assert isinstance(result1, ProjectRecord)
+        assert live_backend._client.post.call_count == 1
+
+        # Second call -- should return from cache, no new HTTP call
+        result2 = await live_backend.fetch_project("test_project")
+        assert isinstance(result2, ProjectRecord)
+        assert result2.name == result1.name
+        assert result2.id == result1.id
+        assert live_backend._client.post.call_count == 1  # still only 1 HTTP call
+
+    @pytest.mark.asyncio
+    async def test_upsert_populates_cache(self, live_backend: RemoteStorageBackend) -> None:
+        """upsert_project populates cache so subsequent fetch_project avoids HTTP."""
+        proj_dict = _make_project_dict(name="upserted_proj")
+        live_backend._client.post = AsyncMock(return_value=_make_response({"result": proj_dict}))
+
+        # Upsert -- should also populate cache
+        upserted = await live_backend.upsert_project(
+            name="upserted_proj",
+            repo_root="/repo",
+            progress_log_path="log.md",
+        )
+        assert upserted is not None
+        assert live_backend._client.post.call_count == 1
+
+        # Fetch immediately after upsert -- should come from cache
+        fetched = await live_backend.fetch_project("upserted_proj")
+        assert isinstance(fetched, ProjectRecord)
+        assert fetched.name == "upserted_proj"
+        assert live_backend._client.post.call_count == 1  # no second HTTP call
+
+    @pytest.mark.asyncio
+    async def test_project_cache_expiry(self, live_backend: RemoteStorageBackend) -> None:
+        """Cache expires after TTL and subsequent fetch hits the server again."""
+        proj_dict = _make_project_dict()
+        live_backend._client.post = AsyncMock(return_value=_make_response({"result": proj_dict}))
+
+        # First fetch -- populates cache
+        await live_backend.fetch_project("test_project")
+        assert live_backend._client.post.call_count == 1
+
+        # Artificially expire the cache entry by setting cached_at to past TTL
+        name = "test_project"
+        record, _cached_at = live_backend._project_cache[name]
+        live_backend._project_cache[name] = (record, 0.0)  # epoch (definitely expired)
+
+        # Second fetch -- cache is expired, should hit server again
+        await live_backend.fetch_project("test_project")
+        assert live_backend._client.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_project_cache_invalidation(self, live_backend: RemoteStorageBackend) -> None:
+        """delete_project removes the entry from the cache."""
+        proj_dict = _make_project_dict()
+        live_backend._client.post = AsyncMock(return_value=_make_response({"result": proj_dict}))
+
+        # Populate cache via fetch
+        await live_backend.fetch_project("test_project")
+        assert "test_project" in live_backend._project_cache
+
+        # delete_project should invalidate the cache entry
+        live_backend._client.post = AsyncMock(return_value=_make_response({"result": True}))
+        await live_backend.delete_project("test_project")
+        assert "test_project" not in live_backend._project_cache
+
+    def test_cache_miss_returns_none(self, backend: RemoteStorageBackend) -> None:
+        """_get_cached_project returns None for unknown project names."""
+        result = backend._get_cached_project("nonexistent")
+        assert result is None
+
+    def test_cache_hit_returns_record(self, backend: RemoteStorageBackend) -> None:
+        """_cache_project + _get_cached_project round-trip works correctly."""
+        record = ProjectRecord(
+            id=1,
+            name="cached_proj",
+            repo_root="/repo",
+            progress_log_path="log.md",
+        )
+        backend._cache_project(record)
+        cached = backend._get_cached_project("cached_proj")
+        assert cached is not None
+        assert cached.name == "cached_proj"
+        assert cached.id == 1

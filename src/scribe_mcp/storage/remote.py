@@ -8,6 +8,7 @@ for zero-latency middleware operations.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,6 +43,10 @@ class RemoteStorageBackend(StorageBackend):
         self._agent_sessions: Dict[str, str] = {}           # identity_key -> session_id
         self._agent_recent_projects: Dict[str, str] = {}    # agent_id -> project_name
         self._agent_projects: Dict[str, dict] = {}          # agent_id -> {project_name, version, ...}
+
+        # Project record cache (short TTL to avoid stale data)
+        self._project_cache: Dict[str, tuple] = {}           # name -> (record, monotonic_time)
+        self._project_cache_ttl: float = 10.0               # seconds
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -132,6 +137,25 @@ class RemoteStorageBackend(StorageBackend):
                 bridge_managed=data.get("bridge_managed", False),
             )
         return data  # Already a ProjectRecord
+
+    # ------------------------------------------------------------------
+    # Project record cache helpers
+    # ------------------------------------------------------------------
+
+    def _cache_project(self, record: ProjectRecord) -> None:
+        """Cache a project record with TTL."""
+        self._project_cache[record.name] = (record, time.monotonic())
+
+    def _get_cached_project(self, name: str) -> Optional[ProjectRecord]:
+        """Return cached project if TTL hasn't expired, else None."""
+        entry = self._project_cache.get(name)
+        if entry is None:
+            return None
+        record, cached_at = entry
+        if time.monotonic() - cached_at > self._project_cache_ttl:
+            del self._project_cache[name]
+            return None
+        return record
 
     # ==================================================================
     # Session methods (Task Package 4.2) -- in-memory, zero network
@@ -291,11 +315,21 @@ class RemoteStorageBackend(StorageBackend):
             bridge_id=bridge_id,
             bridge_managed=bridge_managed,
         )
-        return self._to_project_record(result)
+        record = self._to_project_record(result)
+        if record:
+            self._cache_project(record)
+        return record
 
     async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+        # Check cache first to avoid redundant HTTP calls
+        cached = self._get_cached_project(name)
+        if cached is not None:
+            return cached
         result = await self._call("fetch_project", name=name)
-        return self._to_project_record(result)
+        record = self._to_project_record(result)
+        if record:
+            self._cache_project(record)
+        return record
 
     async def list_projects(self) -> List[ProjectRecord]:
         result = await self._call("list_projects")
@@ -306,6 +340,7 @@ class RemoteStorageBackend(StorageBackend):
         return [self._to_project_record(r) for r in (result or []) if r]
 
     async def delete_project(self, name: str) -> bool:
+        self._project_cache.pop(name, None)
         result = await self._call("delete_project", name=name)
         return bool(result)
 

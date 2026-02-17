@@ -134,11 +134,15 @@ class StateManager:
     async def persist(self, state: State) -> None:
         """Persist cache-compatible state fields into database-backed storage.
 
-        In CLIENT mode the remote DB is the source of truth — individual
-        tool calls already upsert the single project they touch.  The
-        fan-out loop here (iterate *every* project and re-upsert) turns
-        into O(N) sequential HTTP round-trips for zero benefit, so we
-        skip the remote writes and only update in-memory caches.
+        Project upsert loops have been intentionally removed.  All callers
+        (set_project, append_entry, set_session_mode) already upsert the
+        single project they touch at the time of the write.  Re-iterating
+        every project in state.projects here was O(N) redundant work — the
+        data is unchanged by the time persist() is called.
+
+        For local backends: updates global project pointer, session project
+        bindings, and session modes.  For remote backends: skips all DB
+        writes and only updates in-memory caches.
         """
         async with self._lock:
             from scribe_mcp.storage.remote import RemoteStorageBackend
@@ -147,9 +151,6 @@ class StateManager:
             if not is_remote:
                 await self._ensure_backend_ready()
                 await self._run_legacy_migration_once()
-
-                for project_name, payload in state.projects.items():
-                    await self._upsert_project(project_name, payload)
 
                 await self._set_global_project(
                     project_name=state.current_project,
@@ -161,7 +162,6 @@ class StateManager:
                     project_name = self._resolve_project_name(project_payload)
                     if not project_name:
                         continue
-                    await self._upsert_project(project_name, project_payload)
                     if hasattr(self._storage_backend, "set_session_project"):
                         await self._storage_backend.set_session_project(session_id, project_name)
 

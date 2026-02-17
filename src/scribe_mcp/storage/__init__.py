@@ -25,6 +25,16 @@ def create_storage_backend(
     """
     from scribe_mcp.config.settings import settings
 
+    # Auto-detect mode from settings if not explicitly provided.
+    # This handles the module-level call in server.py which passes no mode arg —
+    # without this, a SCRIBE_DB_URL in .env would wastefully spin up PostgresStorage
+    # only to be discarded by _startup() once CLIENT mode is detected.
+    if mode is None:
+        mode_str = getattr(settings, "mode", None)
+        if mode_str == "client":
+            from scribe_mcp.config.mode_detection import OperatingMode
+            mode = OperatingMode.CLIENT
+
     # CLIENT mode: proxy all DB operations to the remote Scribe server
     if mode is not None:
         from scribe_mcp.config.mode_detection import OperatingMode as _OM

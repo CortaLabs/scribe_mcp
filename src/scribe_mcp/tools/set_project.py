@@ -459,20 +459,34 @@ async def set_project(
                     "checklist": docs.get("checklist"),
                     "progress_log": docs.get("progress_log"),
                 }
+
+                # Collect operations for batching
+                dev_plan_ops = []
                 for plan_type, path_str in core_docs.items():
                     if not path_str:
                         continue
                     path_obj = _Path(path_str)
                     if not path_obj.exists():
                         continue
-                    await backend.upsert_dev_plan(  # type: ignore[attr-defined]
-                        project_id=project_record.id,
-                        project_name=name,
-                        plan_type=plan_type,
-                        file_path=str(path_obj),
-                        version="1.0",
-                        metadata={"source": "set_project"},
-                    )
+                    dev_plan_ops.append({
+                        "project_id": project_record.id,
+                        "project_name": name,
+                        "plan_type": plan_type,
+                        "file_path": str(path_obj),
+                        "version": "1.0",
+                        "metadata": {"source": "set_project"},
+                    })
+
+                if dev_plan_ops:
+                    # Use execute_batch if available (RemoteStorageBackend), else sequential
+                    if hasattr(backend, "execute_batch"):
+                        await backend.execute_batch([  # type: ignore[attr-defined]
+                            {"operation": "upsert_dev_plan", "args": op}
+                            for op in dev_plan_ops
+                        ])
+                    else:
+                        for op in dev_plan_ops:
+                            await backend.upsert_dev_plan(**op)  # type: ignore[attr-defined]
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("dev_plans upsert failed in set_project: %s", exc)
 
@@ -609,9 +623,17 @@ async def set_project(
     if format == "readable":
         from scribe_mcp.utils.response import default_formatter
 
+        # Compute docs_were_generated BEFORE count_entries so we can skip the call for new projects.
+        # doc_result is set earlier (from _ensure_documents) and does not depend on count_entries.
+        # Note: _ensure_documents returns "generated" key (list of generated doc types)
+        docs_were_generated = bool(doc_result.get("generated") or doc_result.get("files"))
+
         # Detect project state using hash-based logic (fixes BUG-001)
         # Use backend.count_entries for accurate count instead of file parsing
-        if backend and project_record:
+        if docs_were_generated:
+            # New project — no entries exist yet, skip remote call
+            entry_count = 0
+        elif backend and project_record:
             try:
                 entry_count = await backend.count_entries(
                     project_record,
@@ -626,8 +648,6 @@ async def set_project(
 
         # Use hash-based detection instead of entry_count for state determination
         # Pass docs_were_generated flag to distinguish NEW vs EXISTING (SPEC-SET-001 fix)
-        # Note: _ensure_documents returns "generated" key (list of generated doc types)
-        docs_were_generated = bool(doc_result.get("generated") or doc_result.get("files"))
         state, sitrep_message = detect_project_state(
             project_data,
             entry_count,

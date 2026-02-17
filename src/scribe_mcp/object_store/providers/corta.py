@@ -48,6 +48,25 @@ class CortaStoreProvider(RemoteProvider):
             timeout=httpx.Timeout(self._timeout),
         )
 
+        # Non-fatal health probe — warn if CortaStore is unreachable at startup.
+        # This NEVER raises or blocks; it is informational only.
+        try:
+            resp = await self._client.get("/health", timeout=2.0)
+            if resp.status_code == 200:
+                logger.info("CortaStore connected: %s", self._base_url)
+            else:
+                logger.warning(
+                    "CortaStore health check returned %d at %s",
+                    resp.status_code,
+                    self._base_url,
+                )
+        except Exception as exc:
+            logger.warning(
+                "CortaStore unreachable at %s: %s (sync will fail silently)",
+                self._base_url,
+                exc,
+            )
+
     async def close(self) -> None:
         if self._client:
             await self._client.aclose()
