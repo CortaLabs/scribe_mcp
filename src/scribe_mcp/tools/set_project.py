@@ -542,6 +542,7 @@ async def set_project(
         agent_id=agent_id,
         session_id=context_session_id or session_id,
         mirror_global=mirror_global,
+        skip_upsert=True,  # Already upserted at line 417
     )
     if state is None:
         logger.warning("StateManager.set_current_project returned None; reloading state snapshot.")

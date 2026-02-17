@@ -132,36 +132,48 @@ class StateManager:
             return await self._load_locked()
 
     async def persist(self, state: State) -> None:
-        """Persist cache-compatible state fields into database-backed storage."""
+        """Persist cache-compatible state fields into database-backed storage.
+
+        In CLIENT mode the remote DB is the source of truth — individual
+        tool calls already upsert the single project they touch.  The
+        fan-out loop here (iterate *every* project and re-upsert) turns
+        into O(N) sequential HTTP round-trips for zero benefit, so we
+        skip the remote writes and only update in-memory caches.
+        """
         async with self._lock:
-            await self._ensure_backend_ready()
-            await self._run_legacy_migration_once()
+            from scribe_mcp.storage.remote import RemoteStorageBackend
+            is_remote = isinstance(self._storage_backend, RemoteStorageBackend)
 
-            for project_name, payload in state.projects.items():
-                await self._upsert_project(project_name, payload)
+            if not is_remote:
+                await self._ensure_backend_ready()
+                await self._run_legacy_migration_once()
 
-            await self._set_global_project(
-                project_name=state.current_project,
-                updated_by=state.last_updated_by or _GLOBAL_AGENT_ID,
-                session_id=None,
-            )
+                for project_name, payload in state.projects.items():
+                    await self._upsert_project(project_name, payload)
 
-            for session_id, project_payload in state.session_projects.items():
-                project_name = self._resolve_project_name(project_payload)
-                if not project_name:
-                    continue
-                await self._upsert_project(project_name, project_payload)
-                if hasattr(self._storage_backend, "set_session_project"):
-                    await self._storage_backend.set_session_project(session_id, project_name)
+                await self._set_global_project(
+                    project_name=state.current_project,
+                    updated_by=state.last_updated_by or _GLOBAL_AGENT_ID,
+                    session_id=None,
+                )
 
-            for session_id, mode in state.session_modes.items():
-                if mode not in {"project", "sentinel"}:
-                    continue
-                if hasattr(self._storage_backend, "upsert_session"):
-                    await self._storage_backend.upsert_session(session_id=session_id, mode=mode)
-                if hasattr(self._storage_backend, "set_session_mode"):
-                    await self._storage_backend.set_session_mode(session_id, mode)
+                for session_id, project_payload in state.session_projects.items():
+                    project_name = self._resolve_project_name(project_payload)
+                    if not project_name:
+                        continue
+                    await self._upsert_project(project_name, project_payload)
+                    if hasattr(self._storage_backend, "set_session_project"):
+                        await self._storage_backend.set_session_project(session_id, project_name)
 
+                for session_id, mode in state.session_modes.items():
+                    if mode not in {"project", "sentinel"}:
+                        continue
+                    if hasattr(self._storage_backend, "upsert_session"):
+                        await self._storage_backend.upsert_session(session_id=session_id, mode=mode)
+                    if hasattr(self._storage_backend, "set_session_mode"):
+                        await self._storage_backend.set_session_mode(session_id, mode)
+
+            # Always update in-memory caches regardless of backend type
             self._agent_state_cache = dict(state.agent_state or {})
             self._recent_projects_cache = list(state.recent_projects or [])
             self._session_projects_cache.update(dict(state.session_projects or {}))
@@ -222,6 +234,7 @@ class StateManager:
         agent_id: Optional[str] = None,
         session_id: Optional[str] = None,
         mirror_global: bool = True,
+        skip_upsert: bool = False,
     ) -> State:
         """Persist active project into DB-backed session/global state."""
         async with self._lock:
@@ -232,7 +245,8 @@ class StateManager:
             resolved_payload = dict(project_data or {})
             if resolved_name:
                 resolved_payload.setdefault("name", resolved_name)
-                await self._upsert_project(resolved_name, resolved_payload)
+                if not skip_upsert:
+                    await self._upsert_project(resolved_name, resolved_payload)
 
                 if session_id and hasattr(self._storage_backend, "set_session_project"):
                     await self._storage_backend.set_session_project(str(session_id), resolved_name)

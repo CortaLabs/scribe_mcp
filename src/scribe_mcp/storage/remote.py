@@ -327,19 +327,35 @@ class RemoteStorageBackend(StorageBackend):
         meta: Optional[Dict[str, Any]],
         raw_line: str,
         sha256: str,
+        priority: Optional[str] = None,
+        category: Optional[str] = None,
+        tags: Optional[str] = None,
+        confidence: Optional[float] = None,
+        log_type: Optional[str] = None,
     ) -> None:
-        await self._call(
-            "insert_entry",
-            entry_id=entry_id,
-            project={"name": project.name, "id": project.id},
-            ts=ts.isoformat() if isinstance(ts, datetime) else str(ts),
-            emoji=emoji,
-            agent=agent,
-            message=message,
-            meta=meta,
-            raw_line=raw_line,
-            sha256=sha256,
-        )
+        kwargs: Dict[str, Any] = {
+            "entry_id": entry_id,
+            "project": {"name": project.name, "id": project.id},
+            "ts": ts.isoformat() if isinstance(ts, datetime) else str(ts),
+            "emoji": emoji,
+            "agent": agent,
+            "message": message,
+            "meta": meta,
+            "raw_line": raw_line,
+            "sha256": sha256,
+        }
+        # Only send optional fields if provided
+        if priority is not None:
+            kwargs["priority"] = priority
+        if category is not None:
+            kwargs["category"] = category
+        if tags is not None:
+            kwargs["tags"] = tags
+        if confidence is not None:
+            kwargs["confidence"] = confidence
+        if log_type is not None:
+            kwargs["log_type"] = log_type
+        await self._call("insert_entry", **kwargs)
 
     async def fetch_recent_entries(
         self,

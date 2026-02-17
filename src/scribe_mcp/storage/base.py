@@ -90,6 +90,11 @@ class StorageBackend(ABC):
         meta: Optional[Dict[str, Any]],
         raw_line: str,
         sha256: str,
+        priority: Optional[str] = None,
+        category: Optional[str] = None,
+        tags: Optional[str] = None,
+        confidence: Optional[float] = None,
+        log_type: Optional[str] = None,
     ) -> None:
         """Insert a progress log entry and update metrics."""
 
