@@ -41,6 +41,7 @@ import uvicorn
 
 import scribe_mcp.server as server_module
 from scribe_mcp.server import app, _startup, _shutdown
+from scribe_mcp.storage.base import ProjectRecord
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,28 @@ def _serialize(obj: Any) -> Any:
     return str(obj)
 
 
+def _rehydrate_project_kwarg(kwargs: dict[str, Any]) -> None:
+    """Convert a raw ``project`` dict back into a ProjectRecord.
+
+    The RemoteStorageBackend client serialises ProjectRecord as
+    ``{"name": ..., "id": ...}``.  Backend methods expect a real
+    ProjectRecord, so we reconstruct it here on the server side.
+    """
+    proj = kwargs.get("project")
+    if isinstance(proj, dict) and "name" in proj:
+        kwargs["project"] = ProjectRecord(
+            id=proj.get("id"),
+            name=proj["name"],
+            repo_root=proj.get("repo_root", ""),
+            progress_log_path=proj.get("progress_log_path", ""),
+            docs_json=proj.get("docs_json"),
+            created_at=proj.get("created_at"),
+            updated_at=proj.get("updated_at"),
+            bridge_id=proj.get("bridge_id"),
+            bridge_managed=proj.get("bridge_managed", False),
+        )
+
+
 # ---------------------------------------------------------------------------
 # REST API: backend operation endpoints
 # ---------------------------------------------------------------------------
@@ -187,6 +210,9 @@ async def handle_backend_operation(request: Request) -> JSONResponse:
             body = {}
     except Exception:
         body = {}
+
+    # Deserialize ProjectRecord from dict if needed
+    _rehydrate_project_kwarg(body)
 
     # Execute
     try:
@@ -278,6 +304,7 @@ async def handle_batch(request: Request) -> JSONResponse:
             continue
 
         try:
+            _rehydrate_project_kwarg(args)
             result = await method(**args)
             results.append({"ok": True, "result": _serialize(result)})
         except Exception as exc:

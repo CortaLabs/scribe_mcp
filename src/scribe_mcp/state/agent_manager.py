@@ -298,17 +298,12 @@ class AgentContextManager:
         """
         Mirror session information to JSON state for UI continuity.
 
-        Args:
-            agent_id: Agent identifier
-            session_id: Session ID
-            metadata: Session metadata
+        This is a no-op — session data is already persisted in the database
+        by upsert_agent_session(). The previous implementation loaded all
+        projects and re-persisted them unchanged, causing O(N) remote calls
+        in CLIENT mode for zero benefit.
         """
-        # Create minimal crumbs in JSON state (non-authoritative)
-        state = await self.state_manager.load()
-
-        # We could add agent sessions to JSON state if needed for UI
-        # For now, just update last activity and agent tracking
-        await self.state_manager.persist(state)
+        pass
 
     async def _mirror_project_to_json_state(self, agent_id: str, agent_project: Dict[str, Any]) -> None:
         """
