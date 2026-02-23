@@ -70,3 +70,9 @@ htmlcov/
 workspaces/*
 src/scribe_mcp.egg-info/entry_points.txt
 src/scribe_mcp.egg-info/*
+
+
+# Ignore all Council MCP integration for Scribe.
+.council/
+.mcp.json
+config.toml
