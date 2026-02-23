@@ -76,3 +76,6 @@ src/scribe_mcp.egg-info/*
 .council/
 .mcp.json
 config.toml
+.claude/rules/*
+.claude/skills/*
+.codex/skills/*
