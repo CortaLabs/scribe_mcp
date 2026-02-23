@@ -1,0 +1,438 @@
+---
+id: council_downstream_cicd-architecture
+title: "\U0001F3D7\uFE0F Architecture Guide \u2014 council_downstream_cicd"
+doc_type: architecture
+doc_name: architecture
+category: engineering
+status: draft
+version: '0.1'
+last_updated: 2026-02-17 09:16:50 UTC
+maintained_by: Corta Labs
+created_by: Corta Labs
+owners: []
+related_docs: []
+tags: []
+summary: ''
+---
+
+# 🏗️ Architecture Guide — council_downstream_cicd
+**Author:** Scribe
+**Version:** Draft v0.1
+**Status:** Draft
+**Last Updated:** 2026-02-17 09:05:17 UTC
+
+> Architecture guide for council_downstream_cicd.
+
+---
+## 1. Problem Statement
+<!-- ID: problem_statement -->
+## 1. Problem Statement
+
+**Context:** Council MCP runs on a Hetzner CCX23 VPS inside Docker. Downstream councils (rom-lab, osrs_hiscore_pull, future repos) are registered in the DB with repo_path pointing to `/opt/<repo>`, but the `council-web` container has **no volume mounts** for those directories. Custom pages, static assets, and dynamic routes all rely on filesystem access via `template_loader.discover_pages(repo_path)` -- which silently returns empty when the path does not exist inside the container.
+
+**Root Cause Chain:**
+1. `pages.py:487` reads `repo_path = Path(council["repo_path"])` from `council.councils` table
+2. `template_loader.py:241` calls `repo_path / ".council" / "web" / "pages"` which resolves to e.g. `/opt/rom_lab/.council/web/pages/`
+3. Docker container has no bind mount for `/opt/rom_lab` -- `pages_dir.is_dir()` returns False
+4. Empty page list returned, no pages discoverable, static files 404
+
+**Goals:**
+- Make custom pages, static assets, and routes work for downstream councils in Docker
+- Provide CLI tooling to manage downstream repos on the hub server
+- Provide GitHub webhook endpoint for automated sync on push
+- Document onboarding flow for new downstream councils
+
+**Non-Goals:**
+- Per-council Docker containers (downstream repos share the hub's daemon + web)
+- Grandparent hierarchy chains (flat parent-child is sufficient)
+- Per-council authentication tokens (all use hub API key for now)
+
+**Success Metrics:**
+- Downstream council custom pages render in the web UI when council is switched
+- `council repo add/list/sync/remove` commands work via SSH on Hetzner
+- GitHub webhook triggers git pull + cache clear on downstream push
+- End-to-end onboarding of rom-lab verified
+<!-- ID: requirements_constraints -->
+## 2. Requirements & Constraints
+
+**Functional Requirements:**
+- FR1: Bind-mount downstream repos read-only into council-web container
+- FR2: `council repo add <name> <git-url>` -- clone, register, update compose, restart web
+- FR3: `council repo list` -- show registered repos with sync status
+- FR4: `council repo sync [name]` -- git pull + clear template cache
+- FR5: `council repo remove <name>` -- unregister, remove bind mount (files untouched by default)
+- FR6: `POST /api/webhooks/repo-sync` -- GitHub push webhook with HMAC verification
+- FR7: Webhook triggers git pull + cache clear for the matching repo
+
+**Non-Functional Requirements:**
+- NFR1: Read-only mounts -- web container never writes to downstream repos
+- NFR2: Zero-downtime for page updates -- cache clear via API, no container restart needed
+- NFR3: Container restart only when bind mounts change (new repo added/removed)
+- NFR4: Existing services must NOT be disrupted by compose changes
+- NFR5: All config values from council.yaml -- no hardcoded paths
+
+**Assumptions:**
+- Downstream repos already cloned to `/opt/<name>/` on Hetzner (or `council repo add` clones them)
+- All repos share the same Postgres database and daemon/web processes
+- Operator has SSH access to council-hub via Tailscale
+- Downstream repos have `.council/` directory from `council init --parent`
+
+**Risks & Mitigations:**
+- **Risk:** docker-compose.yaml changes break existing services
+  - **Mitigation:** Use a compose override file (`docker-compose.repos.yaml`) instead of editing the main file
+- **Risk:** Webhook endpoint exposed to internet
+  - **Mitigation:** HMAC signature verification + Tailscale-only port binding
+- **Risk:** Git pull fails mid-sync
+  - **Mitigation:** Return error status, do NOT clear cache on failed pull
+<!-- ID: architecture_overview -->
+## 3. Architecture Overview
+
+**Solution Summary:** Enable downstream council filesystem visibility inside Docker via compose overrides, provide CLI + webhook tooling for repo lifecycle management, and leverage existing template loader + cache clear infrastructure for zero-downtime page updates.
+
+**Component Breakdown:**
+
+### 3.1 Compose Override Generator (`deploy/docker-compose.repos.yaml`)
+- **Purpose:** Declare read-only bind mounts for downstream repos without touching the main `docker-compose.yaml`
+- **Mechanism:** Docker Compose merges multiple `-f` files. A generated override adds volumes to `council-web` and `council-daemon` services.
+- **Example output:**
+  ```yaml
+  # AUTO-GENERATED by `council repo add` -- do not edit manually
+  services:
+    council-web:
+      volumes:
+        - /opt/rom_lab:/opt/rom_lab:ro
+        - /opt/osrs_hiscore_pull:/opt/osrs_hiscore_pull:ro
+    council-daemon:
+      volumes:
+        - /opt/rom_lab:/opt/rom_lab:ro
+        - /opt/osrs_hiscore_pull:/opt/osrs_hiscore_pull:ro
+  ```
+- **Why council-daemon too?** The daemon runs Scribe which may need to read downstream `.scribe/` directories.
+
+### 3.2 Repo Manager (`src/council_mcp/cli/repo_cmd.py`)
+- **Purpose:** CLI group (`council repo`) for managing downstream repos on the hub
+- **Subcommands:** `add`, `list`, `sync`, `remove`
+- **Data Store:** `council.councils` table -- existing `metadata JSONB` column stores repo management data:
+  ```json
+  {
+    "git_url": "https://github.com/CortaLabs/rom_lab.git",
+    "branch": "master",
+    "last_sync_at": "2026-02-17T09:00:00Z",
+    "last_sync_status": "success",
+    "managed": true
+  }
+  ```
+- **Interface:** Click group registered in `main.py` as `cli.add_command(repo_group, name="repo")`
+
+### 3.3 Webhook Endpoint (`src/council_mcp/web/routes/webhooks.py`)
+- **Purpose:** Receive GitHub push events and trigger repo sync
+- **Route:** `POST /api/webhooks/repo-sync`
+- **Auth:** HMAC-SHA256 signature verification using `X-Hub-Signature-256` header
+- **Secret:** New Docker secret `webhook_secret.txt` (or reuse `STORE_HMAC_KEY`)
+- **Flow:** Verify signature -> identify repo from payload -> git pull -> clear template cache -> return 200
+
+### 3.4 Repo Sync Engine (`src/council_mcp/repo_sync.py`)
+- **Purpose:** Shared logic for git pull + cache clear, used by both CLI and webhook
+- **Functions:**
+  - `sync_repo(repo_path: Path, branch: str = "master") -> SyncResult`
+  - `clear_cache_for_repo(repo_path: Path) -> int`
+  - `update_sync_metadata(council_id: str, status: str) -> None`
+
+**Data Flow:**
+```
+Trigger (CLI/webhook) -> sync_repo(path) -> git pull -> update DB metadata -> clear template cache
+                                                                                      |
+                                                                                      v
+                                                                         Template loader re-discovers pages
+                                                                         on next request (30s TTL or immediate)
+```
+
+**External Integrations:**
+- GitHub (webhook source, git clone/pull target)
+- Docker Compose (generated override file)
+- Existing template_loader.clear_cache() API
+- Existing council.councils DB table
+<!-- ID: detailed_design -->
+## 4. Detailed Design
+
+### 4.1 Compose Override Strategy
+
+**Why an override file instead of editing docker-compose.yaml:**
+- The main `deploy/docker-compose.yaml` is version-controlled and shared between CI/CD, dev, and production
+- Override files are the Docker Compose standard for environment-specific config
+- `docker compose -f docker-compose.yaml -f docker-compose.repos.yaml up -d` merges both
+- The override file can be `.gitignore`d (it is Hetzner-specific)
+
+**File:** `deploy/docker-compose.repos.yaml`
+- Auto-generated by `council repo add` and `council repo remove`
+- Header comment marks it as auto-generated
+- Only contains `services.council-web.volumes` and `services.council-daemon.volumes` entries
+- Each downstream repo gets a bind mount: `/opt/<name>:/opt/<name>:ro`
+
+**Deploy script integration:** The `deploy/scripts/deploy.sh` and manual deploy commands must use `-f deploy/docker-compose.repos.yaml` when the file exists. The `council repo add` command prints the updated docker compose command after generating the file.
+
+### 4.2 Repo Manager CLI Design
+
+**File:** `src/council_mcp/cli/repo_cmd.py`
+
+```python
+@click.group(name="repo")
+def repo_group():
+    """Manage downstream council repositories on the hub."""
+
+@repo_group.command("add")
+@click.argument("name")
+@click.argument("git_url")
+@click.option("--branch", default="master")
+@click.option("--clone-dir", default="/opt")
+def repo_add(name: str, git_url: str, branch: str, clone_dir: str) -> None:
+    """Clone a downstream repo and register it for serving."""
+
+@repo_group.command("list")
+@click.option("--json", "as_json", is_flag=True)
+def repo_list(as_json: bool) -> None:
+    """Show all managed downstream repos with sync status."""
+
+@repo_group.command("sync")
+@click.argument("name", required=False)
+@click.option("--all", "sync_all", is_flag=True)
+def repo_sync(name: str | None, sync_all: bool) -> None:
+    """Pull latest changes for a repo (or all repos)."""
+
+@repo_group.command("remove")
+@click.argument("name")
+@click.option("--delete-files", is_flag=True, help="Also delete repo directory")
+@click.option("--force", is_flag=True)
+def repo_remove(name: str, delete_files: bool, force: bool) -> None:
+    """Unregister a repo and remove its bind mount."""
+```
+
+**Registration in main.py:** Add `from council_mcp.cli.repo_cmd import repo_group` and `cli.add_command(repo_group, name="repo")`.
+
+### 4.3 Repo Sync Engine
+
+**File:** `src/council_mcp/repo_sync.py`
+
+```python
+@dataclass
+class SyncResult:
+    success: bool
+    repo_name: str
+    commit_before: str | None
+    commit_after: str | None
+    files_changed: int
+    error: str | None = None
+
+def sync_repo(repo_path: Path, branch: str = "master") -> SyncResult:
+    """Git pull a repo and return sync result."""
+    # 1. Validate repo_path exists and is a git repo
+    # 2. Run `git -C <repo_path> rev-parse HEAD` to get current commit
+    # 3. Run `git -C <repo_path> pull origin <branch>`
+    # 4. Run `git -C <repo_path> rev-parse HEAD` to get new commit
+    # 5. Run `git -C <repo_path> diff --stat <old>..<new>` for files_changed
+    # 6. Return SyncResult
+
+def clone_repo(git_url: str, target_dir: Path, branch: str = "master") -> Path:
+    """Clone a git repo to target directory. Returns repo path."""
+    # 1. Extract repo name from URL (strip .git suffix)
+    # 2. Run `git clone --branch <branch> <url> <target_dir>/<name>`
+    # 3. Return Path to cloned directory
+
+def generate_compose_override(repos: list[dict[str, Any]], output_path: Path) -> None:
+    """Generate docker-compose.repos.yaml with bind mounts for all managed repos."""
+    # 1. Read all councils where metadata->>'managed' = 'true'
+    # 2. For each, add volume entry: /opt/<name>:/opt/<name>:ro
+    # 3. Write YAML to output_path with auto-generated header comment
+
+def update_sync_metadata(council_id: str, status: str, error: str | None = None) -> None:
+    """Update last_sync_at and last_sync_status in council metadata."""
+    # UPDATE council.councils SET metadata = metadata || jsonb_build_object(...)
+```
+
+### 4.4 Webhook Endpoint Design
+
+**File:** `src/council_mcp/web/routes/webhooks.py`
+
+```python
+router = APIRouter(tags=["webhooks"])
+
+@router.post("/api/webhooks/repo-sync")
+async def webhook_repo_sync(request: Request) -> JSONResponse:
+    """Handle GitHub push webhook to sync a downstream repo."""
+    # 1. Read raw body for HMAC verification
+    # 2. Verify X-Hub-Signature-256 header against webhook secret
+    # 3. Parse JSON payload, extract repository.full_name or repository.name
+    # 4. Look up council by name in council.councils
+    # 5. If found and metadata.managed == true:
+    #    a. Run sync_repo(repo_path, branch)
+    #    b. Clear template cache for that repo
+    #    c. Update sync metadata
+    # 6. Return 200 with sync result
+```
+
+**HMAC Verification:**
+```python
+def verify_github_signature(payload: bytes, signature: str, secret: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+```
+
+**Webhook secret source:** Read from `WEBHOOK_SECRET` env var (loaded from `/run/secrets/webhook_secret` in Docker). Falls back to `STORE_HMAC_KEY` if webhook-specific secret not set.
+
+### 4.5 Router Registration
+
+The webhook router must be registered in the web app. It uses the existing pattern from `src/council_mcp/web/routes/__init__.py`:
+
+```python
+from council_mcp.web.routes.webhooks import router as webhooks_router
+app.include_router(webhooks_router)
+```
+
+**Auth note:** The webhook endpoint does NOT use `get_current_user` -- it uses HMAC signature verification instead of API key auth. This is because GitHub sends the webhook, not a browser session.
+<!-- ID: directory_structure -->
+## 5. Directory Structure
+
+**New files (to be created):**
+```
+council_mcp/
+├── src/council_mcp/
+│   ├── cli/
+│   │   └── repo_cmd.py              # NEW: council repo CLI group
+│   ├── web/routes/
+│   │   └── webhooks.py              # NEW: GitHub webhook endpoint
+│   └── repo_sync.py                 # NEW: Shared sync engine
+├── deploy/
+│   ├── docker-compose.yaml          # EXISTING: main compose (unchanged)
+│   └── docker-compose.repos.yaml    # NEW: auto-generated bind mounts
+└── .github/
+    └── templates/
+        └── downstream-sync.yml      # NEW: template GH Action for downstream repos
+```
+
+**Existing files to modify:**
+```
+src/council_mcp/cli/main.py          # Add repo_group import + registration
+src/council_mcp/web/routes/__init__.py # Add webhooks router import
+src/council_mcp/storage/registry.py   # Add get_managed_repos_sync() helper
+deploy/scripts/deploy.sh              # Detect and use repos override file
+```
+<!-- ID: data_storage -->
+## 6. Data & Storage
+
+**Primary Datastore:** `council.councils` table (already exists)
+
+Key columns used:
+- `id` (UUID) -- council identifier
+- `name` (TEXT UNIQUE) -- council name, used as repo directory name
+- `repo_path` (TEXT) -- filesystem path on hub (e.g., `/opt/rom_lab`)
+- `parent_council_id` (UUID FK) -- reference to parent council
+- `metadata` (JSONB) -- extended data for repo management
+- `status` (TEXT) -- active/inactive
+- `last_seen` (TIMESTAMPTZ) -- heartbeat
+
+**Metadata JSONB schema for managed repos:**
+```json
+{
+  "git_url": "https://github.com/CortaLabs/rom_lab.git",
+  "branch": "master",
+  "last_sync_at": "2026-02-17T09:00:00Z",
+  "last_sync_status": "success|error",
+  "last_sync_error": null,
+  "managed": true
+}
+```
+
+**New registry helper needed:**
+```python
+def get_managed_repos_sync() -> list[dict[str, Any]]:
+    """Return all councils where metadata->>'managed' = 'true'."""
+```
+
+**No schema migration required** -- the `metadata JSONB` column already exists and is flexible.
+<!-- ID: testing_strategy -->
+## 7. Testing & Validation Strategy
+
+**Unit Tests:**
+- `tests/test_repo_sync.py` -- test `sync_repo()`, `clone_repo()`, `generate_compose_override()` with mocked git subprocess
+- `tests/test_webhook.py` -- test HMAC verification, payload parsing, error handling
+- `tests/test_repo_cmd.py` -- test CLI commands via click.testing.CliRunner
+
+**Integration Tests:**
+- Verify compose override YAML is valid and parseable
+- Verify webhook endpoint returns correct HTTP codes for valid/invalid signatures
+- Verify `get_managed_repos_sync()` returns correct data from DB
+
+**Manual QA (Hetzner):**
+- SSH to hub, run `council repo add rom-lab <url>`, verify clone + DB registration
+- Run `docker compose -f deploy/docker-compose.yaml -f deploy/docker-compose.repos.yaml up -d council-web`
+- Switch to rom-lab in web UI, verify custom pages render
+- Push a change to downstream repo, verify webhook triggers sync
+
+**Observability:**
+- All sync operations logged via Python logging (repo_sync.py)
+- CLI commands print status to stdout
+- Webhook endpoint returns JSON with sync result details
+<!-- ID: deployment_operations -->
+## 8. Deployment & Operations
+
+**Environments:**
+- **Hetzner hub (production):** Docker Compose stack at `/opt/council_mcp/deploy/`
+- **Local dev:** Not applicable for bind mounts (downstream repos are Hetzner-only)
+
+**Deploy Flow with Repos Override:**
+```bash
+# Standard deploy (with repos override when it exists)
+cd /opt/council_mcp/deploy
+if [ -f docker-compose.repos.yaml ]; then
+    docker compose -f docker-compose.yaml -f docker-compose.repos.yaml up -d
+else
+    docker compose -f docker-compose.yaml up -d
+fi
+```
+
+**deploy.sh integration:** The deploy script should auto-detect `docker-compose.repos.yaml` and include it in the compose command. This is a 3-line change to the existing script.
+
+**Configuration (council.yaml):**
+```yaml
+council:
+  repos:
+    clone_base_dir: "/opt"           # Where repos are cloned
+    webhook_secret_env: "WEBHOOK_SECRET"  # Env var name for webhook HMAC secret
+    compose_override_path: "deploy/docker-compose.repos.yaml"  # Override file location
+```
+
+**Maintenance:**
+- `council repo list` shows sync status for all managed repos
+- `council repo sync --all` can be run as a cron job for periodic sync
+- Webhook provides real-time sync on push
+<!-- ID: open_questions -->
+## 9. Open Questions & Follow-Ups
+
+| Item | Owner | Status | Notes |
+|------|-------|--------|-------|
+| Should deploy.sh auto-detect repos override or require explicit flag? | Blueprint | DECIDED | Auto-detect: check file existence |
+| Reuse STORE_HMAC_KEY or create separate webhook secret? | Operator | TODO | Recommend separate for isolation |
+| Should webhook endpoint be behind auth middleware too? | Blueprint | DECIDED | No -- uses HMAC, not session auth |
+| Should `council repo add` auto-restart web container? | Operator | DECIDED | Yes -- bind mount requires restart |
+<!-- ID: references_appendix -->
+## 10. References & Appendix
+
+**Key Source Files (verified):**
+- `deploy/docker-compose.yaml` (584 lines) -- main compose, council-web at line 242, NO downstream volume mounts
+- `src/council_mcp/web/template_loader.py` (494 lines) -- `discover_pages()` at line 216, `clear_cache()` at line 426
+- `src/council_mcp/web/routes/pages.py` (571 lines) -- custom page route reads `repo_path` from DB at line 487
+- `src/council_mcp/web/routes/system.py` -- `POST /api/system/clear-cache` at line 690
+- `src/council_mcp/storage/registry.py` (419 lines) -- `register_council_sync()` at line 46, `metadata JSONB` available
+- `src/council_mcp/cli/main.py` (49 lines) -- CLI entry point, click group registration pattern
+- `src/council_mcp/cli/roster_cmd.py` (528 lines) -- reference pattern for click command groups
+
+**Research Documents:**
+- `research/RESEARCH_DOWNSTREAM_CICD_FLOW_20260217.md` -- CI/CD flow, registration system, deployment patterns
+- `research/RESEARCH_CUSTOM_PAGES_DOCKER.md` -- root cause analysis scaffold
+- `research/docker_multi_repo_research.md` -- multi-repo Docker patterns
+
+**ADRs:**
+- ADR-1: Use compose override instead of editing main compose -- isolation, git-safety
+- ADR-2: Use HMAC for webhook auth instead of API key -- GitHub standard, no session needed
+- ADR-3: Store repo metadata in existing JSONB column -- no schema migration needed
+- ADR-4: Shared sync engine for CLI + webhook -- DRY, consistent behavior

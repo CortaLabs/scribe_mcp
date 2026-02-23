@@ -6,6 +6,7 @@ src/scribe_mcp/__main__.py
 src/scribe_mcp/py.typed
 src/scribe_mcp/reminders.py
 src/scribe_mcp/server.py
+src/scribe_mcp/server_sse.py
 src/scribe_mcp.egg-info/PKG-INFO
 src/scribe_mcp.egg-info/SOURCES.txt
 src/scribe_mcp.egg-info/dependency_links.txt
@@ -50,6 +51,7 @@ src/scribe_mcp/db/__init__.py
 src/scribe_mcp/db/init.sql
 src/scribe_mcp/db/postgres_migrations/001_jsonb_indexes.sql
 src/scribe_mcp/db/postgres_migrations/002_query_path_indexes.sql
+src/scribe_mcp/db/postgres_migrations/003_legacy_document_tables.sql
 src/scribe_mcp/doc_management/__init__.py
 src/scribe_mcp/doc_management/change_logger.py
 src/scribe_mcp/doc_management/change_rollback.py
@@ -77,6 +79,14 @@ src/scribe_mcp/doc_management/actions/edit.py
 src/scribe_mcp/doc_management/actions/query.py
 src/scribe_mcp/doc_management/actions/search.py
 src/scribe_mcp/doc_management/actions/status.py
+src/scribe_mcp/object_store/__init__.py
+src/scribe_mcp/object_store/base.py
+src/scribe_mcp/object_store/filesystem.py
+src/scribe_mcp/object_store/hybrid.py
+src/scribe_mcp/object_store/keys.py
+src/scribe_mcp/object_store/providers/__init__.py
+src/scribe_mcp/object_store/providers/corta.py
+src/scribe_mcp/object_store/providers/s3.py
 src/scribe_mcp/plugins/__init__.py
 src/scribe_mcp/plugins/registry.py
 src/scribe_mcp/plugins/vector_indexer.json
@@ -88,7 +98,10 @@ src/scribe_mcp/scripts/check_vector_index.py
 src/scribe_mcp/scripts/migrate_database.py
 src/scribe_mcp/scripts/migrate_sqlite_to_postgres.py
 src/scribe_mcp/scripts/migrate_state.py
+src/scribe_mcp/scripts/migrate_to_object_store.py
 src/scribe_mcp/scripts/postgres_backup.py
+src/scribe_mcp/scripts/postgres_metrics.py
+src/scribe_mcp/scripts/postgres_soak_test.py
 src/scribe_mcp/scripts/reindex_docs.py
 src/scribe_mcp/scripts/reindex_vector.py
 src/scribe_mcp/scripts/scribe.py
@@ -312,8 +325,12 @@ tests/test_manage_docs_semantic_limits.py
 tests/test_manage_docs_structured_edit.py
 tests/test_manage_docs_validate_crosslinks.py
 tests/test_mcp_tools_enhancements.py
+tests/test_migrate_sqlite_to_postgres_script.py
 tests/test_migration_priority_columns.py
 tests/test_multi_repo_file_ops.py
+tests/test_object_store.py
+tests/test_object_store_hybrid.py
+tests/test_object_store_providers.py
 tests/test_parameter_validator.py
 tests/test_path_resolution_debug.py
 tests/test_path_suggestions.py
@@ -360,11 +377,13 @@ tests/test_set_project.py
 tests/test_set_project_formatters.py
 tests/test_set_project_integration.py
 tests/test_set_project_sitrep.py
+tests/test_settings_schema_alias.py
 tests/test_slug.py
 tests/test_sqlite_internals.py
 tests/test_sqlite_sessions_ops.py
 tests/test_state_migration.py
 tests/test_storage_backend_conformance.py
+tests/test_storage_factory_backends.py
 tests/test_template_engine_manage_docs.py
 tests/test_template_filter.py
 tests/test_token_count.py
@@ -372,6 +391,7 @@ tests/test_token_optimization.py
 tests/test_tool_calls_schema.py
 tests/test_tool_logger.py
 tests/test_tools.py
+tests/test_transport_sse.py
 tests/test_ui_formatter.py
 tests/test_utils.py
 tests/test_vector_complete_integration.py
