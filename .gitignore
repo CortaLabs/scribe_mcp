@@ -1,81 +1,129 @@
-*:Zone.Identifier
-.env
-*/__pycache__/*
-*.pyc
-data/snapshots/*
-reports/*
-example_code/*
-#Please keep the example code out of the repository.  it is not meant to go online.
-.venv/*
-scribe_fullcode.txt
-fullcode.txt
-*_fullcode.txt
-MCP_SPINE/scribe_mcp/state/*.json
-tmp_tests/*
-tmp_manual/*
-*.lock
-state/*.json
-*.db
-# Vector index artifacts
-.scribe_vectors/
+# =====================================================
+# Scribe MCP — .gitignore
+# =====================================================
 
-# Enhanced Scribe data directory
-data/*.db
-data/backups/*
-data/snapshots/*
+# -----------------------------------------------------
+# Python Artifacts
+# -----------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+*.lock
+
+# -----------------------------------------------------
+# Environment & Secrets
+# -----------------------------------------------------
+.env
+config.toml
+
+# -----------------------------------------------------
+# Database & State Files
+# -----------------------------------------------------
+*.db
+*.db-shm
+*.db-wal
+*.journal
+state/*.json
+.scribe/state.json
+MCP_SPINE/scribe_mcp/state/*.json
+
+# -----------------------------------------------------
+# Vector / Embedding Artifacts
+# -----------------------------------------------------
+.scribe_vectors/
 *.faiss
 *.npy
 *.shard
-docs/claude_code_subagents/reference/*
-docs/dev_plans/*
-.scribe/scribe.db
-docs/claude_code_subagents/*
-docs/archived_projects/*
-docs/archived_global_logs/*
-docs/bugs/*
-*.preflight-*.bak
-TOOL_LOG.*.*.md
-data/scribe_projects.db-shm
-data/scribe_projects.db-wal
-.scribe/state.json
 
-# Pip install artifacts
-=*
+# -----------------------------------------------------
+# Data Directories
+# -----------------------------------------------------
+data/*.db
+data/backups/
+data/snapshots/
+reports/
 
-# Broken file creation
-None
-None.*
-
-# Temp files
-tmp_state*.json
-
-# Temp directories (broader pattern)
+# -----------------------------------------------------
+# Temporary / Test Directories
+# -----------------------------------------------------
+tmp_tests/
 tmp_manual*/
+tmp_state*.json
+workspaces/
 
-# Backups (all .bak files)
+# -----------------------------------------------------
+# Generated Code Exports
+# -----------------------------------------------------
+*_fullcode.txt
+scribe_fullcode.txt
+fullcode.txt
+
+# -----------------------------------------------------
+# Backups
+# -----------------------------------------------------
 *.bak
+*.preflight-*.bak
 
-# Lock/journal artifacts
-*.journal
+# -----------------------------------------------------
+# Tool Logs
+# -----------------------------------------------------
+TOOL_LOG.*.*.md
 
-# OS files
-.DS_Store
-Thumbs.db
+# -----------------------------------------------------
+# Documentation (Private / Internal)
+# -----------------------------------------------------
+docs/dev_plans/
+docs/archived_projects/
+docs/archived_global_logs/
+docs/bugs/
 
-# Coverage artifacts
-.coverage
-htmlcov/
-.mcp.json
-.claude/rules/hetzner-deployment.md
-workspaces/*
-src/scribe_mcp.egg-info/entry_points.txt
-src/scribe_mcp.egg-info/*
+# -----------------------------------------------------
+# Claude / Codex configs (INCLUDE dirs, exclude skills)
+# -----------------------------------------------------
+# Keep these directories in repo…
+!.claude/
+!.codex/
 
+# also ignore council generated rules
+.claude/rules/
 
-# Ignore all Council MCP integration for Scribe.
+# …but ignore their skills folders (usually auto/generated/noisy)
+.claude/skills/
+.codex/skills/
+
+# …except: keep Scribe MCP usage skill so it’s visible/public
+!.claude/skills/scribe_mcp_usage
+!.codex/skills/scribe_mcp_usage
+
+# If the usage skill might have an extension or be a folder, these help:
+!.claude/skills/scribe_mcp_usage.*
+!.codex/skills/scribe_mcp_usage.*
+!.claude/skills/scribe_mcp_usage/**
+!.codex/skills/scribe_mcp_usage/**
+
+# -----------------------------------------------------
+# Council / MCP integration (local-only)
+# -----------------------------------------------------
 .council/
 .mcp.json
-config.toml
-.claude/rules/*
-.claude/skills/*
-.codex/skills/*
+
+# -----------------------------------------------------
+# Example / Local-Only Code
+# -----------------------------------------------------
+example_code/
+
+# -----------------------------------------------------
+# OS Artifacts
+# -----------------------------------------------------
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+# -----------------------------------------------------
+# Coverage
+# -----------------------------------------------------
+.coverage
+htmlcov/
