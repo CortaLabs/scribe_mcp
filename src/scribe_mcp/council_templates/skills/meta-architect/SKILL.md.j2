@@ -1,0 +1,368 @@
+---
+name: Meta-Architect
+slug: meta-architect
+description: Large-project planning protocol that splits architecture into domain-specific blueprints (Opus) with Opus synthesis. Use when research spans 5+ documents or 3+ architectural domains.
+version: 1.0.0
+domains: [architecture, planning, orchestration, coordination]
+visibility: exported
+owner: scribe-mcp
+user-invocable: true
+context: full
+allowed_tools: [Read, Glob, Grep, Agent, SendMessage, TaskCreate, TaskUpdate, TaskGet, TaskList, TeamCreate]
+disallowed_tools: [Edit, Write, NotebookEdit]
+---
+
+# Meta-Architect Protocol
+
+Use this skill when a project's research output is too large or too cross-cutting
+for a single architect agent to reason about coherently.
+
+## When to Use
+
+Trigger this protocol when ANY of these conditions are met:
+
+- **5+ research documents** spanning distinct architectural concerns
+- **3+ architectural domains** that interact (e.g., storage + security + API)
+- **External review inputs** that reframe the approach
+- Research output exceeds **~30K tokens** of source material
+- The coordinator judges that a single architect pass will skim or lose coherence
+
+**When NOT to use:** Single-domain changes, bug fixes, features with < 3 research docs.
+Use standard `pipeline-gates` for those.
+
+## Protocol Overview
+
+```
+Research swarm (Lens agents)
+       |
+       v
+Domain blueprint agents (Opus, parallel)
+       |
+       v
+Meta-architect synthesis (Opus, sequential)
+       |
+       v
+Phased implementation plan
+```
+
+This is an **extension** of the standard pipeline, not a replacement. The standard
+`Research -> Blueprint -> Forge` path still applies — this skill governs how the
+Blueprint stage is decomposed for large projects.
+
+## Phase 1: Domain Decomposition
+
+After research is complete, the coordinator reviews all research documents and
+identifies **architectural domains** — groups of related concerns that can be
+planned independently.
+
+### Domain Identification Checklist
+
+For each research document, answer:
+1. What architectural subsystem does this primarily affect?
+2. Does it share schema/API/config concerns with other docs?
+3. Can its implementation plan be written without knowing the details of other domains?
+
+Group documents into 2-5 domains. More than 5 domains means the project should
+be split into separate Scribe projects entirely.
+
+### Domain Assignment Template
+
+Log the decomposition before proceeding:
+
+```python
+append_entry(
+    agent="seshat",
+    message="Meta-architect: decomposed into N domains",
+    status="plan",
+    meta={
+        "reasoning": {
+            "why": "Research spans N docs across M domains — single architect would lose coherence",
+            "what": "Domain assignments with source document mapping",
+            "how": "Grouped by architectural subsystem affinity"
+        },
+        "domains": [
+            {
+                "id": "BP-A",
+                "label": "Domain label",
+                "focus": "One-line description of architectural scope",
+                "sources": ["RESEARCH_X", "RESEARCH_Y"],
+                "model": "opus"
+            }
+        ]
+    }
+)
+```
+
+## Phase 2: Domain Blueprint Agents (Opus, Parallel)
+
+Deploy one architect agent per domain using a **Team**. Each domain blueprint agent:
+
+1. Reads ONLY its assigned research documents
+2. Produces a domain-scoped architecture plan
+3. Documents its assumptions about other domains (these become synthesis inputs)
+
+### Team Setup
+
+```python
+TeamCreate(team_name="meta-blueprint-<project>", description="Domain blueprint team for <project>")
+
+# Create tasks per domain
+TaskCreate(subject="Blueprint: <domain-label>", description="...")
+
+# No cross-domain dependencies — all blueprints run in parallel
+```
+
+### Domain Blueprint Agent Prompt Template
+
+```
+Project: <project_name>
+Repo Root: <repo_root>
+
+IMPORTANT: Use `mcp__scribe__*` tools DIRECTLY. NEVER use `mcp__council-v2__scribe_call`.
+
+You are a domain blueprint agent. Your scope is strictly bounded to: <DOMAIN_LABEL>
+
+## Your Research Inputs
+Read these documents from the project:
+<list of RESEARCH_*.md documents assigned to this domain>
+
+## Your Output
+Produce a domain-scoped architecture document via manage_docs:
+- Doc name: BLUEPRINT_<DOMAIN_SLUG>
+- Doc type: architecture
+
+Required sections:
+1. **Domain Scope** — What this blueprint covers and explicitly does NOT cover
+2. **Design Decisions** — Choices made, alternatives rejected, rationale
+3. **Implementation Strategy** — How to build it, migration steps if applicable
+4. **Cross-Domain Assumptions** — What you assume about OTHER domains
+   (the meta-architect will validate these)
+5. **Task Packages** — Bounded implementation units with acceptance criteria
+6. **Risk Register** — What could go wrong, mitigation strategies
+
+## Constraints
+- Do NOT design outside your domain scope
+- Do NOT read research documents assigned to other domains
+- DO document every assumption about adjacent domains in section 4
+- Model: Opus (domain architecture requires deep reasoning)
+
+Reminder: Project "<project_name>" for ALL Scribe calls.
+Repo Root: <repo_root>
+```
+
+### Domain Blueprint Output
+
+Each agent produces:
+
+```
+BLUEPRINT_<DOMAIN_SLUG>.md
+  - Domain Scope
+  - Design Decisions
+  - Implementation Strategy
+  - Cross-Domain Assumptions    <-- critical for synthesis
+  - Task Packages
+  - Risk Register
+```
+
+## Phase 3: Meta-Architect Synthesis (Opus, Sequential)
+
+After ALL domain blueprints complete, deploy a single **Opus** architect to synthesize.
+
+**This agent MUST run on Opus.** This is non-negotiable — synthesis across domains
+requires deep reasoning about contradictions, sequencing, and cross-cutting concerns.
+
+### Synthesis Agent Prompt Template
+
+```
+Project: <project_name>
+Repo Root: <repo_root>
+
+IMPORTANT: Use `mcp__scribe__*` tools DIRECTLY. NEVER use `mcp__council-v2__scribe_call`.
+
+You are the meta-architect. Your job is SYNTHESIS, not original design.
+
+## Your Inputs
+Read ALL domain blueprints:
+<list of BLUEPRINT_<DOMAIN>.md documents>
+
+Also read the original research for cross-reference:
+<list of all RESEARCH_*.md documents>
+
+## Your Responsibilities
+
+### 1. Contradiction Resolution
+Find places where domain blueprints make incompatible assumptions.
+For each contradiction:
+- State what BP-X assumes vs what BP-Y assumes
+- Decide the resolution with rationale
+- Document which blueprint's task packages need adjustment
+
+### 2. Phase Sequencing
+Domain blueprints describe WHAT. You decide WHEN.
+Sequence into phases based on:
+- Dependency order (what must exist before what)
+- Risk reduction (hardening before new features)
+- Parallel execution opportunities
+- Migration safety (data changes before code changes)
+
+### 3. Cross-Cutting Concerns
+Enforce global consistency across all domains:
+- Security model coherence
+- Migration strategy alignment
+- API contract compatibility
+- Test coverage completeness
+- Backwards compatibility guarantees
+
+### 4. Evidence-Based Input Log
+Before synthesizing, log exactly what you are consuming:
+
+```python
+append_entry(
+    agent="architect",
+    message="Meta-architect: ingesting domain blueprints for synthesis",
+    status="info",
+    meta={
+        "inputs": ["BLUEPRINT_A", "BLUEPRINT_B", "BLUEPRINT_C"],
+        "research_cross_refs": ["RESEARCH_1", "RESEARCH_2"],
+        "reasoning": {
+            "why": "Synthesizing N domain plans into coherent phased roadmap",
+            "what": "Cross-domain contradiction resolution + phase sequencing",
+            "how": "Reading all blueprints, validating cross-domain assumptions, sequencing"
+        }
+    }
+)
+```
+
+## Your Output
+Produce the final architecture documents via manage_docs:
+
+1. **ARCHITECTURE_GUIDE** — Unified architecture with resolved contradictions
+   - Sections: overview, domain integration map, resolved contradictions,
+     cross-cutting decisions, migration strategy
+2. **PHASE_PLAN** — Sequenced phases with domain attribution
+   - Each phase: scope, domain sources, dependencies, acceptance criteria
+3. **CHECKLIST** — Implementation checklist derived from all domain task packages
+   - Resequenced per phase plan, with domain tags
+
+## Constraints
+- Do NOT invent new architecture — synthesize what the domain agents designed
+- DO resolve contradictions with clear rationale
+- DO resequence task packages into a coherent phase order
+- MUST log every contradiction found and its resolution
+- Model: Opus (mandatory for cross-domain synthesis)
+
+Reminder: Project "<project_name>" for ALL Scribe calls.
+Repo Root: <repo_root>
+```
+
+## Coordinator Checklist
+
+The coordinator follows this sequence:
+
+```
+1. [ ] Verify research completeness
+       - All expected RESEARCH_*.md docs exist
+       - Key sections are populated (not empty scaffolds)
+       - Confidence scores are acceptable
+
+2. [ ] Identify architectural domains
+       - Group research docs by subsystem affinity
+       - Assign 2-5 domains (split project if >5)
+       - Log domain decomposition with source mapping
+
+3. [ ] Deploy domain blueprint team
+       - Create team with parallel tasks
+       - Each agent gets ONLY its assigned research docs
+       - All agents run on Opus
+       - Wait for ALL to complete before proceeding
+
+4. [ ] Validate domain blueprints
+       - All BLUEPRINT_*.md docs exist with populated sections
+       - Cross-Domain Assumptions sections are non-empty
+       - Task packages have acceptance criteria
+
+5. [ ] Deploy meta-architect (Opus)
+       - Single sequential agent
+       - Reads ALL blueprints + ALL research
+       - Produces ARCHITECTURE_GUIDE, PHASE_PLAN, CHECKLIST
+       - Must log contradictions found and resolutions
+
+6. [ ] Verify synthesis output
+       - All contradictions resolved with rationale
+       - Phases are sequenced with dependency order
+       - Checklist items have domain attribution
+       - No task packages dropped during synthesis
+
+7. [ ] (Optional) Deploy review agent
+       - Adversarial review of final architecture
+       - >= 93% to proceed to implementation
+```
+
+## Validation Gates
+
+### Gate: Research Completeness
+
+Before decomposition, verify:
+- All research docs have populated `findings` and `recommendations` sections
+- Code references exist (not pure speculation)
+- No research doc is an empty scaffold
+
+```python
+# Check via manage_docs query
+manage_docs(action="query", doc_type="research", project_name="<project>")
+```
+
+### Gate: Blueprint Completeness
+
+Before synthesis, verify each domain blueprint has:
+- Non-empty `Cross-Domain Assumptions` section
+- At least one task package with acceptance criteria
+- No TODO/TBD placeholders in design decisions
+
+### Gate: Synthesis Quality
+
+After meta-architect completes, verify:
+- Every cross-domain assumption from every blueprint is addressed
+- No task packages from domain blueprints are missing from the checklist
+- Phase sequencing respects stated dependencies
+
+## Example Domain Splits
+
+### Infrastructure Hardening Project
+
+| Blueprint | Focus | Sources |
+|-----------|-------|---------|
+| BP-SECURITY | Auth, secrets, input validation | RESEARCH_auth, RESEARCH_owasp |
+| BP-STORAGE | Schema migrations, connection pooling | RESEARCH_db, RESEARCH_perf |
+| BP-API | Endpoint contracts, error handling | RESEARCH_api, RESEARCH_compat |
+
+### Platform Evolution Project
+
+| Blueprint | Focus | Sources |
+|-----------|-------|---------|
+| BP-HARDENING | P0/P1 bugs, security fixes | RESEARCH_bugs, RESEARCH_security + external review |
+| BP-KERNEL | Core interaction model, registry | RESEARCH_patterns, RESEARCH_registry |
+| BP-FEDERATION | Cross-council governance, CLI | RESEARCH_federation, RESEARCH_governance |
+
+## Anti-Patterns
+
+- **Single mega-architect on 9 docs** — will skim, lose coherence, or produce unusable output
+- **Domain agents reading each other's research** — defeats the purpose of bounded reasoning
+- **Skipping the synthesis step** — produces 3 uncoordinated plans instead of 1 coherent roadmap
+- **Using Sonnet for synthesis** — cross-domain contradiction resolution requires Opus-tier reasoning
+- **More than 5 domains** — split into separate Scribe projects instead
+- **Domain blueprints without cross-domain assumptions** — makes synthesis blind to integration risks
+- **Coordinator doing synthesis directly** — the coordinator delegates, does not architect
+
+## Relationship to Standard Pipeline
+
+```
+Standard:  Research -> Blueprint -> Forge
+                         |
+Meta:      Research -> [Domain Blueprints (Opus)] -> [Synthesis (Opus)] -> Forge
+                         |                              |
+                         +-- parallel per domain        +-- sequential, single agent
+```
+
+The meta-architect pattern replaces the single Blueprint stage. Everything before
+(Research) and after (Forge, optional Review) remains unchanged.
