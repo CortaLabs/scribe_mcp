@@ -232,6 +232,7 @@ async def handle_special_document_creation(
     index_path: Optional[Path] = None
     extra_metadata: Dict[str, Any] = {}
     placement_warning: Optional[str] = None
+    primary_doc_key: Optional[str] = None
 
     if action == "create_research_doc":
         if not doc_name:
@@ -271,6 +272,7 @@ async def handle_special_document_creation(
         target_path = research_dir / f"{safe_name}.md"
         template_name = "RESEARCH_REPORT_TEMPLATE.md"
         doc_label = "research_report"
+        primary_doc_key = safe_name
         extra_metadata = {
             "title": doc_name.replace("_", " ").title(),
             "doc_name": safe_name,
@@ -299,6 +301,7 @@ async def handle_special_document_creation(
         target_path = bug_dir / "report.md"
         template_name = "BUG_REPORT_TEMPLATE.md"
         doc_label = "bug_report"
+        primary_doc_key = slug
         extra_metadata = {
             "slug": slug,
             "category": category,
@@ -306,11 +309,41 @@ async def handle_special_document_creation(
         }
         index_updater = lambda: _update_bug_index(project_root / "docs" / "bugs", agent_id, project_root)
         index_path = project_root / "docs" / "bugs" / "INDEX.md"
+    elif action == "create_security_report":
+        category = metadata.get("category")
+        if not category or not category.strip():
+            return helper.apply_context_payload(
+                helper.error_response(
+                    "metadata with non-empty 'category' is required for security report creation",
+                ),
+                context,
+            )
+
+        category = re.sub(r"[^\w\-_.]", "_", category.strip())
+
+        slug = metadata.get("slug")
+        if slug:
+            slug = re.sub(r"[^\w\-_.]", "_", str(slug).strip())
+        if not slug:
+            slug = f"sec_{int(now.timestamp())}"
+        security_dir = project_root / "docs" / "security" / category / f"{now.strftime('%Y-%m-%d')}_{slug}"
+        target_path = security_dir / "report.md"
+        template_name = "SECURITY_REPORT_TEMPLATE.md"
+        doc_label = "security_report"
+        primary_doc_key = slug
+        extra_metadata = {
+            "slug": slug,
+            "category": category,
+            "reported_at": metadata.get("reported_at", timestamp_str),
+        }
+        index_updater = lambda: _update_bug_index(project_root / "docs" / "security", agent_id, project_root)
+        index_path = project_root / "docs" / "security" / "INDEX.md"
     elif action == "create_review_report":
         stage = metadata.get("stage", "unknown")
         target_path = docs_dir / f"REVIEW_REPORT_{stage}_{now.strftime('%Y-%m-%d')}_{now.strftime('%H%M')}.md"
         template_name = "REVIEW_REPORT_TEMPLATE.md"
         doc_label = "review_report"
+        primary_doc_key = str(doc_name).strip() if doc_name else target_path.stem
         extra_metadata = {"stage": stage}
         index_updater = lambda: _update_review_index(docs_dir, agent_id, project_root)
         index_path = docs_dir / "REVIEW_INDEX.md"
@@ -320,6 +353,7 @@ async def handle_special_document_creation(
         target_path = docs_dir / f"AGENT_REPORT_CARD_{card_agent}_{stage}_{now.strftime('%Y%m%d_%H%M')}.md"
         template_name = "AGENT_REPORT_CARD_TEMPLATE.md"
         doc_label = "agent_report_card"
+        primary_doc_key = str(doc_name).strip() if doc_name else target_path.stem
         extra_metadata = {
             "agent_name": card_agent,
             "stage": stage,
@@ -487,21 +521,47 @@ async def handle_special_document_creation(
             try:
                 project_name = project.get("name")
                 if project_name:
-                    doc_key = f"{doc_label}_{target_path.stem}"
-                    current_docs = project.get("docs", {})
-                    current_docs[doc_key] = str(target_path)
+                    registration_keys: list[str] = []
+                    if primary_doc_key and str(primary_doc_key).strip():
+                        registration_keys.append(str(primary_doc_key).strip())
+                    if doc_name and str(doc_name).strip():
+                        alias_key = str(doc_name).strip()
+                        if alias_key not in registration_keys:
+                            registration_keys.append(alias_key)
+                    legacy_key = f"{doc_label}_{target_path.stem}"
+                    if legacy_key not in registration_keys:
+                        registration_keys.append(legacy_key)
+
+                    current_docs = dict(project.get("docs", {}) or {})
+                    for key in registration_keys:
+                        current_docs[key] = str(target_path)
+                    project["docs"] = current_docs
                     docs_json = json.dumps(current_docs)
                     await storage_backend.update_project_docs(project_name, docs_json)
+                    state_manager = getattr(server_module, "state_manager", None)
+                    if state_manager and hasattr(state_manager, "set_current_project"):
+                        try:
+                            await state_manager.set_current_project(
+                                project_name,
+                                project,
+                                agent_id=agent_id,
+                                mirror_global=False,
+                            )
+                        except Exception as state_exc:
+                            registration_warning = f"State sync failed: {state_exc}"
                     try:
                         project_registry.record_doc_update(
                             project_name=project_name,
-                            doc=doc_key,
+                            doc=registration_keys[0] if registration_keys else legacy_key,
                             action="create",
                             before_hash=None,
                             after_hash=after_hash,
                         )
                     except Exception as reg_exc:
-                        registration_warning = f"Registry update failed: {reg_exc}"
+                        if registration_warning:
+                            registration_warning += f"; Registry update failed: {reg_exc}"
+                        else:
+                            registration_warning = f"Registry update failed: {reg_exc}"
             except Exception as exc:
                 registration_warning = f"Doc registration failed: {exc}"
 
@@ -529,6 +589,7 @@ async def handle_special_document_creation(
             "ok": True,
             "path": str(target_path),
             "document_type": doc_label,
+            "doc_name": primary_doc_key or target_path.stem,
             "file_size": target_path.stat().st_size,
         }
         if log_warning:

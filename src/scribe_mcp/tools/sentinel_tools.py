@@ -537,7 +537,7 @@ async def open_security(
         # Create detailed security report document
         # Build metadata dict (used for both doc creation and completeness scoring)
         security_metadata = {
-            "doc_type": "bug",  # Use bug template for security too
+            "doc_type": "security",  # Use dedicated security template
             "category": category,
             "slug": case_id,
             "title": title,
@@ -657,6 +657,9 @@ async def link_fix(
     # Project mode: route through append_entry
     if context.mode == "project":
         from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
 
         message = f"[FIX LINKED] {case_id}: {artifact_ref} ({landing_status})"
         meta = {
@@ -684,13 +687,75 @@ async def link_fix(
         if not result.get("ok"):
             return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
 
-        return {
+        # Update the bug/security report document with fix reference information.
+        # The case_id was registered in project["docs"] when open_bug/open_security was called.
+        doc_update_warning: str | None = None
+        try:
+            # Update the appendix section with fix reference details
+            appendix_content = (
+                f"- **Fix Reference:** {artifact_ref} (execution: {execution_id})\n"
+                f"- **Landing Status:** {landing_status}\n"
+                f"- **Fix Linked By:** {agent}\n"
+            )
+            appendix_result = await manage_docs_tool(
+                agent=agent,
+                action="replace_section",
+                doc_name=case_id,
+                section="appendix",
+                content=appendix_content,
+            )
+            if not isinstance(appendix_result, dict) or not appendix_result.get("ok"):
+                doc_update_warning = (
+                    appendix_result.get("error", "Unknown error")
+                    if isinstance(appendix_result, dict)
+                    else "manage_docs returned non-dict"
+                )
+                _logger.warning(
+                    "link_fix: failed to update appendix section for %s: %s",
+                    case_id,
+                    doc_update_warning,
+                )
+            else:
+                # Update the resolution_plan section with landing status
+                resolution_content = (
+                    f"### Immediate Actions\n"
+                    f"Fix landed with status: **{landing_status}**\n\n"
+                    f"### Fix Details\n"
+                    f"- Artifact: {artifact_ref}\n"
+                    f"- Execution ID: {execution_id}\n"
+                )
+                resolution_result = await manage_docs_tool(
+                    agent=agent,
+                    action="replace_section",
+                    doc_name=case_id,
+                    section="resolution_plan",
+                    content=resolution_content,
+                )
+                if not isinstance(resolution_result, dict) or not resolution_result.get("ok"):
+                    doc_update_warning = (
+                        resolution_result.get("error", "Could not update resolution_plan")
+                        if isinstance(resolution_result, dict)
+                        else "manage_docs returned non-dict"
+                    )
+                    _logger.warning(
+                        "link_fix: failed to update resolution_plan for %s: %s",
+                        case_id,
+                        doc_update_warning,
+                    )
+        except Exception as exc:
+            doc_update_warning = str(exc)
+            _logger.warning("link_fix: exception updating doc for %s: %s", case_id, exc)
+
+        response: dict[str, Any] = {
             "ok": True,
             "case_id": str(case_id),
             "entry_id": str(result.get("id", "")),
             "path": str(result.get("path", "")),
             "project_name": str(result.get("project_name", "")),
         }
+        if doc_update_warning:
+            response["doc_update_warning"] = doc_update_warning
+        return response
 
     # Sentinel mode: original behavior
     append_case_event(

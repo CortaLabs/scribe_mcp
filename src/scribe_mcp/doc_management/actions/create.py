@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 _CREATE_DOC_TYPE_ACTIONS = {
     "research": "create_research_doc",
     "bug": "create_bug_report",
+    "security": "create_security_report",
     "review": "create_review_report",
     "agent_card": "create_agent_report_card",
 }
@@ -41,7 +42,7 @@ async def normalize_or_handle_create_action(
         if not mapped_action:
             return action, helper.error_response(
                 f"Unknown doc_type: {doc_type}",
-                suggestion="Valid doc_types: custom, research, bug, review, agent_card",
+                suggestion="Valid doc_types: custom, research, bug, security, review, agent_card",
             )
 
         response = await handle_special_document_creation(
