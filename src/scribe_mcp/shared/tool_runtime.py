@@ -137,6 +137,59 @@ def _accepts_keyword_argument(func: ToolCallable, argument_name: str) -> bool:
     )
 
 
+def _coerce_int_params(func: ToolCallable, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce string-encoded integers to int for parameters annotated as int.
+
+    MCP transport may serialize integer values as strings (e.g. page_number="1"
+    instead of page_number=1).  The JSON schema for such parameters was widened
+    to accept both "integer" and "string", so they pass schema validation.  This
+    function converts any string value back to a proper Python int before the
+    tool function is called, so the tool receives the type it expects.
+    """
+    import typing
+
+    try:
+        type_hints = typing.get_type_hints(func)
+    except Exception:
+        return arguments
+
+    # Python 3.10+ uses types.UnionType for `X | Y` syntax; earlier Python uses
+    # typing.Union.  Both need to be handled when unwrapping Optional[int].
+    try:
+        from types import UnionType as _UnionType  # Python 3.10+
+    except ImportError:
+        _UnionType = None  # type: ignore[assignment,misc]
+
+    coerced = dict(arguments)
+    for param_name, value in list(coerced.items()):
+        if not isinstance(value, str):
+            continue
+        hint = type_hints.get(param_name)
+        if hint is None:
+            continue
+        # Unwrap Optional[X] / Union[X, None] / X | None to get the inner type
+        type_args = getattr(hint, "__args__", ())
+        origin = getattr(hint, "__origin__", None)
+        is_union = (origin is typing.Union) or (
+            _UnionType is not None and isinstance(hint, _UnionType)
+        )
+        if is_union and type_args:
+            non_none = [a for a in type_args if a is not type(None)]
+            if len(non_none) == 1:
+                hint = non_none[0]
+        if hint is int:
+            try:
+                coerced[param_name] = int(value)
+            except (ValueError, TypeError):
+                pass  # Leave as-is; tool will handle the bad value
+        elif hint is float:
+            try:
+                coerced[param_name] = float(value)
+            except (ValueError, TypeError):
+                pass
+    return coerced
+
+
 async def _resolve_mode(
     *,
     tool_name: str,
@@ -361,6 +414,11 @@ async def execute_tool_call(
                 call_arguments["project"] = cached_project
             elif _accepts_keyword_argument(func, "project_name"):
                 call_arguments["project_name"] = cached_project
+
+    # Coerce string-encoded integers/floats to their proper Python types.
+    # MCP transport may pass integer parameters as strings (e.g. start_line="21").
+    # The schema was widened to accept both types; here we normalize before dispatch.
+    call_arguments = _coerce_int_params(func, call_arguments)
 
     try:
         result = func(**call_arguments)

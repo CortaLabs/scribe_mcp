@@ -384,9 +384,12 @@ if _MCP_AVAILABLE:
                     if annotation is str or annotation == str:
                         param_schema = {"type": "string"}
                     elif annotation is int or annotation == int:
-                        param_schema = {"type": "integer"}
+                        # Accept both integer and string: MCP transport may serialize
+                        # integer values as strings (e.g. "21" instead of 21).
+                        # Coercion to int happens in execute_tool_call before dispatch.
+                        param_schema = {"type": ["integer", "string"]}
                     elif annotation is float or annotation == float:
-                        param_schema = {"type": "number"}
+                        param_schema = {"type": ["number", "string"]}
                     elif annotation is bool or annotation == bool:
                         param_schema = {"type": "boolean"}
                     elif origin is list or annotation is list:
