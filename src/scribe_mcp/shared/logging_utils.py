@@ -335,21 +335,40 @@ async def resolve_logging_context(
             agent_id=agent_id,
         )
 
-    # Project mode with an ExecutionContext should never fall back to global state.
+    # Project mode should prefer session bindings, but if an explicit active project
+    # is already persisted in StateManager, honor it before failing hard. This keeps
+    # direct StateManager-driven flows and tests functional without reopening a session.
     if exec_context and getattr(exec_context, "mode", None) == "project" and not project:
-        if require_project:
+        recovered_project = None
+        try:
+            state = await server_module.state_manager.load()
+            if state.current_project:
+                recovered_project = state.get_project(state.current_project)
+                if not recovered_project and hasattr(server_module.state_manager, "_fetch_project"):
+                    recovered_project = await server_module.state_manager._fetch_project(state.current_project)  # type: ignore[attr-defined]
+                if recovered_project:
+                    project = dict(recovered_project)
+                    recent_projects = [project.get("name")] if project.get("name") else []
+                    for name in state.recent_projects:
+                        if name and name not in recent_projects:
+                            recent_projects.append(name)
+        except Exception:
+            recovered_project = None
+
+        if not project and require_project:
             raise ProjectResolutionError(
                 "No session-scoped project configured. Invoke set_project for this session.",
                 recent_projects,
             )
-        return LoggingContext(
-            tool_name=tool_name,
-            project=None,
-            recent_projects=recent_projects,
-            state_snapshot=state_snapshot,
-            reminders=[],
-            agent_id=agent_id,
-        )
+        if not project:
+            return LoggingContext(
+                tool_name=tool_name,
+                project=None,
+                recent_projects=recent_projects,
+                state_snapshot=state_snapshot,
+                reminders=[],
+                agent_id=agent_id,
+            )
 
     # Final fallback: use the state's active project snapshot (legacy/no context).
     # WARNING: This path uses GLOBAL state - only safe when scoped to current repo.
@@ -364,7 +383,8 @@ async def resolve_logging_context(
                 from scribe_mcp.config.repo_config import get_current_repo_config
                 current_repo_root, _ = get_current_repo_config()
                 project_root = Path(active_project["root"]).resolve()
-                if project_root != current_repo_root:
+                same_repo = project_root == current_repo_root or current_repo_root in project_root.parents
+                if not same_repo:
                     # Project is from different repo - don't use it
                     # Log this for debugging
                     from datetime import datetime, timezone

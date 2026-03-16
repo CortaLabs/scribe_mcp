@@ -739,3 +739,67 @@ def test_toggle_checklist_status_updates_inline_section_anchor_without_appending
     assert "- [x] Ship docs | proof=commit_abc <!-- ID: p4_documents -->" in updated
     assert "<!-- ID: p4_documents -->" in updated
     assert "\n\n<!-- ID: p4_documents -->\n" not in updated
+
+
+def test_toggle_checklist_status_updates_all_items_in_section_by_default() -> None:
+    marker = SECTION_MARKER.format(section="phase_0")
+    original = (
+        f"{marker}\n"
+        "- [ ] Ship docs\n"
+        "- [ ] Ship API\n"
+        "- [x] Ship tests | proof=old\n"
+        "<!-- ID: phase_1 -->\n"
+        "- [ ] Later\n"
+    )
+
+    updated = _toggle_checklist_status(
+        original,
+        "phase_0",
+        {"status": "done", "proof": "commit_xyz"},
+    )
+
+    assert "- [x] Ship docs | proof=commit_xyz" in updated
+    assert "- [x] Ship API | proof=commit_xyz" in updated
+    assert "- [x] Ship tests | proof=commit_xyz" in updated
+    assert "- [ ] Later" in updated
+
+
+def test_toggle_checklist_status_targets_label_within_section() -> None:
+    marker = SECTION_MARKER.format(section="phase_0")
+    original = (
+        f"{marker}\n"
+        "- [ ] Ship docs\n"
+        "- [ ] Ship API\n"
+        "<!-- ID: phase_1 -->\n"
+        "- [ ] Later\n"
+    )
+
+    updated = _toggle_checklist_status(
+        original,
+        "phase_0",
+        {"status": "done", "proof": "commit_api", "label": "Ship API"},
+    )
+
+    assert "- [ ] Ship docs" in updated
+    assert "- [x] Ship API | proof=commit_api" in updated
+    assert "- [ ] Later" in updated
+
+
+def test_toggle_checklist_status_targets_item_index_within_section() -> None:
+    marker = SECTION_MARKER.format(section="phase_0")
+    original = (
+        f"{marker}\n"
+        "- [ ] Ship docs\n"
+        "- [ ] Ship API\n"
+        "- [ ] Ship tests\n"
+    )
+
+    updated = _toggle_checklist_status(
+        original,
+        "phase_0",
+        {"status": "done", "proof": "commit_idx", "item_index": 2},
+    )
+
+    assert "- [ ] Ship docs" in updated
+    assert "- [x] Ship API | proof=commit_idx" in updated
+    assert "- [ ] Ship tests" in updated

@@ -251,6 +251,83 @@ async def test_replace_text_scoped_block_ignores_inline_anchor_markers(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_replace_text_prefix_mode_preserves_trailing_proof_tokens(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    checklist_path = Path(project["docs"]["checklist"])
+    checklist_path.write_text(
+        "# Checklist\n"
+        "<!-- ID: phase_0 -->\n"
+        "- [ ] Ship docs | proof=old-proof\n"
+        "- [ ] Ship API\n",
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="checklist",
+        action="replace_text",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={
+            "find": "- [ ] Ship docs",
+            "replace": "- [x] Ship docs",
+            "replace_all": False,
+            "match_mode": "prefix",
+            "scope": "section:phase_0",
+        },
+        dry_run=False,
+    )
+
+    assert change.success
+    updated = checklist_path.read_text(encoding="utf-8")
+    assert "- [x] Ship docs | proof=old-proof" in updated
+    assert "- [ ] Ship API" in updated
+
+
+@pytest.mark.asyncio
+async def test_replace_text_line_scope_targets_single_line(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+    architecture_path.write_text(
+        "alpha\n"
+        "target alpha\n"
+        "target alpha\n",
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_text",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={
+            "find": "target",
+            "replace": "done",
+            "replace_all": True,
+            "match_mode": "literal",
+            "scope": "line:2",
+        },
+        dry_run=False,
+    )
+
+    assert change.success
+    updated_text = architecture_path.read_text(encoding="utf-8")
+    updated = parse_frontmatter(updated_text).body.splitlines()
+    assert updated == ["alpha", "done alpha", "target alpha"]
+
+
+@pytest.mark.asyncio
 async def test_apply_patch_patch_mode_conflict(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
 

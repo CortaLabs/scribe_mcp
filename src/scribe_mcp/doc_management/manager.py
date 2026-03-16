@@ -466,9 +466,9 @@ async def apply_doc_change(
                 if replace_text is None:
                     replace_text = ""
                 match_mode = str(metadata.get("match_mode") or "literal").strip().lower()
-                if match_mode not in {"literal", "regex"}:
+                if match_mode not in {"literal", "regex", "prefix"}:
                     raise DocumentOperationError(
-                        "REPLACE_TEXT_MATCH_MODE_INVALID: use literal or regex"
+                        "REPLACE_TEXT_MATCH_MODE_INVALID: use literal, regex, or prefix"
                     )
                 replace_all = bool(metadata.get("replace_all", True))
                 scope = metadata.get("scope")
@@ -1142,6 +1142,39 @@ def _replace_text_regex(
     return updated, hits
 
 
+def _replace_text_prefix(
+    text: str,
+    find_text: str,
+    replace_text: str,
+    *,
+    replace_all: bool,
+) -> tuple[str, int]:
+    hits = 0
+    updated_lines: list[str] = []
+
+    for line in text.splitlines(keepends=True):
+        newline = ""
+        body = line
+        if line.endswith("\r\n"):
+            body = line[:-2]
+            newline = "\r\n"
+        elif line.endswith("\n"):
+            body = line[:-1]
+            newline = "\n"
+
+        leading_ws_len = len(body) - len(body.lstrip())
+        leading_ws = body[:leading_ws_len]
+        content = body[leading_ws_len:]
+
+        if content.startswith(find_text) and (replace_all or hits == 0):
+            content = replace_text + content[len(find_text):]
+            hits += 1
+
+        updated_lines.append(f"{leading_ws}{content}{newline}")
+
+    return "".join(updated_lines), hits
+
+
 def _replace_text_with_scope(
     text: str,
     *,
@@ -1202,9 +1235,40 @@ def _replace_text_with_scope(
                 prefix = text[:line_start]
                 target_text = text[line_start:target_end]
                 suffix = text[target_end:]
+        elif normalized.startswith("line:"):
+            line_number_raw = normalized.split(":", 1)[1].strip()
+            if not line_number_raw:
+                raise DocumentOperationError("REPLACE_TEXT_SCOPE_INVALID: line number missing")
+            try:
+                line_number = int(line_number_raw)
+            except ValueError as exc:
+                raise DocumentOperationError(
+                    "REPLACE_TEXT_SCOPE_INVALID: line number must be an integer"
+                ) from exc
+            if line_number < 1:
+                raise DocumentOperationError(
+                    "REPLACE_TEXT_SCOPE_INVALID: line number must be >= 1"
+                )
+
+            scoped_lines = text.splitlines(keepends=True)
+            if line_number > len(scoped_lines):
+                raise DocumentOperationError(
+                    f"REPLACE_TEXT_SCOPE_LINE_MISSING: line {line_number} not found"
+                )
+
+            prefix = "".join(scoped_lines[: line_number - 1])
+            target_text = scoped_lines[line_number - 1]
+            suffix = "".join(scoped_lines[line_number:])
 
     if match_mode == "regex":
         updated, hits = _replace_text_regex(
+            target_text,
+            find_text,
+            replace_text,
+            replace_all=replace_all,
+        )
+    elif match_mode == "prefix":
+        updated, hits = _replace_text_prefix(
             target_text,
             find_text,
             replace_text,
@@ -2384,7 +2448,23 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     desired_raw = metadata.get("status")
     desired = desired_raw.lower().strip() if isinstance(desired_raw, str) else None
     proof = metadata.get("proof")
-    label = metadata.get("label") or metadata.get("item") or metadata.get("text") or metadata.get("title")
+    label_raw = metadata.get("label") or metadata.get("item") or metadata.get("text") or metadata.get("title")
+    label = label_raw.strip() if isinstance(label_raw, str) and label_raw.strip() else None
+    item_index_raw = metadata.get("item_index")
+    if item_index_raw is None:
+        item_index_raw = metadata.get("index")
+    item_index: Optional[int] = None
+    if item_index_raw is not None:
+        try:
+            item_index = int(item_index_raw)
+        except (TypeError, ValueError) as exc:
+            raise DocumentOperationError(
+                "CHECKLIST_ITEM_INDEX_INVALID: item_index must be a positive integer"
+            ) from exc
+        if item_index < 1:
+            raise DocumentOperationError(
+                "CHECKLIST_ITEM_INDEX_INVALID: item_index must be >= 1"
+            )
     allow_append = bool(
         metadata.get("allow_append") or metadata.get("scaffold") or metadata.get("create_if_missing")
     )
@@ -2400,6 +2480,37 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
         if existing_line:
             return "[x]" if "- [x]" in existing_line else "[ ]"
         return "[x]"
+
+    def extract_checklist_label(line: str) -> Optional[str]:
+        trimmed = line.strip()
+        if trimmed.startswith("- [ ] "):
+            label_text = trimmed[len("- [ ] "):]
+        elif trimmed.startswith("- [x] "):
+            label_text = trimmed[len("- [x] "):]
+        else:
+            return None
+        label_text = re.sub(r"\s*<!--\s*ID:\s*[^>]+-->\s*$", "", label_text).rstrip()
+        return label_text.split(" | ", 1)[0].strip()
+
+    def update_checklist_line(line: str, token: str) -> str:
+        if "- [x]" in line:
+            new_line = line.replace("- [x]", f"- {token}", 1)
+        else:
+            new_line = line.replace("- [ ]", f"- {token}", 1)
+
+        trailing_anchor = ""
+        anchor_match = re.search(r"\s*(<!--\s*ID:\s*[^>]+-->)\s*$", new_line)
+        if anchor_match:
+            trailing_anchor = " " + anchor_match.group(1)
+            new_line = new_line[: anchor_match.start()].rstrip()
+
+        parts = new_line.split(" | ")
+        prefix = parts[0].rstrip()
+        other_tokens = [part for part in parts[1:] if not part.startswith("proof=")]
+        if proof:
+            other_tokens.append(f"proof={proof}")
+        new_line = " | ".join([prefix] + other_tokens) if other_tokens else prefix
+        return new_line + trailing_anchor
 
     lines = text.splitlines()
     section_marker = SECTION_MARKER.format(section=section) if section else None
@@ -2453,6 +2564,7 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     else:
         candidate_indices = list(range(search_start, search_end))
 
+    checklist_indices: list[int] = []
     for idx in candidate_indices:
         line = lines[idx]
         if "- [ ]" not in line and "- [x]" not in line:
@@ -2461,28 +2573,35 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
                     f"CHECKLIST_ITEM_INVALID: section '{section}' does not point to a checklist item"
                 )
             continue
+        checklist_indices.append(idx)
 
-        token = resolve_token(line)
-        if "- [x]" in line:
-            new_line = line.replace("- [x]", f"- {token}", 1)
+    target_indices: list[int]
+    if inline_target_idx is not None:
+        target_indices = checklist_indices
+    elif label:
+        normalized_label = label.casefold()
+        matches = [
+            idx for idx in checklist_indices
+            if (extract_checklist_label(lines[idx]) or "").casefold() == normalized_label
+        ]
+        if len(matches) > 1:
+            raise DocumentOperationError(
+                f"CHECKLIST_ITEM_AMBIGUOUS: multiple checklist items match label '{label}'"
+            )
+        target_indices = matches
+    elif item_index is not None:
+        if item_index > len(checklist_indices):
+            target_indices = []
         else:
-            new_line = line.replace("- [ ]", f"- {token}", 1)
+            target_indices = [checklist_indices[item_index - 1]]
+    elif section_start_idx is not None:
+        target_indices = checklist_indices
+    else:
+        target_indices = checklist_indices[:1]
 
-        trailing_anchor = ""
-        anchor_match = re.search(r"\s*(<!--\s*ID:\s*[^>]+-->)\s*$", new_line)
-        if anchor_match:
-            trailing_anchor = " " + anchor_match.group(1)
-            new_line = new_line[: anchor_match.start()].rstrip()
-
-        parts = new_line.split(" | ")
-        prefix = parts[0].rstrip()
-        other_tokens = [part for part in parts[1:] if not part.startswith("proof=")]
-        if proof:
-            other_tokens.append(f"proof={proof}")
-        new_line = " | ".join([prefix] + other_tokens) if other_tokens else prefix
-        lines[idx] = new_line + trailing_anchor
+    for idx in target_indices:
+        lines[idx] = update_checklist_line(lines[idx], resolve_token(lines[idx]))
         replacement = True
-        break
 
     if not replacement:
         token = resolve_token(None)

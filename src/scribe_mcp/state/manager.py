@@ -243,14 +243,15 @@ class StateManager:
 
             resolved_name = self._resolve_project_name(project_data) or name
             resolved_payload = dict(project_data or {})
+            resolved_session_id = str(session_id) if session_id else self._resolve_session_id_from_context()
             if resolved_name:
                 resolved_payload.setdefault("name", resolved_name)
                 if not skip_upsert:
                     await self._upsert_project(resolved_name, resolved_payload)
 
-                if session_id and hasattr(self._storage_backend, "set_session_project"):
-                    await self._storage_backend.set_session_project(str(session_id), resolved_name)
-                    self._session_projects_cache[str(session_id)] = dict(resolved_payload)
+                if resolved_session_id and hasattr(self._storage_backend, "set_session_project"):
+                    await self._storage_backend.set_session_project(resolved_session_id, resolved_name)
+                    self._session_projects_cache[resolved_session_id] = dict(resolved_payload)
 
                 if agent_id and hasattr(self._storage_backend, "upsert_agent_recent_project"):
                     await self._storage_backend.upsert_agent_recent_project(agent_id, resolved_name)
@@ -261,12 +262,12 @@ class StateManager:
                 await self._set_global_project(
                     project_name=resolved_name,
                     updated_by=agent_id or _GLOBAL_AGENT_ID,
-                    session_id=session_id,
+                    session_id=resolved_session_id,
                 )
 
             state = await self._load_locked()
-            if session_id and resolved_name:
-                state.session_projects[str(session_id)] = (
+            if resolved_session_id and resolved_name:
+                state.session_projects[resolved_session_id] = (
                     state.get_project(resolved_name)
                     or {"name": resolved_name}
                 )
