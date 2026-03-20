@@ -1,0 +1,939 @@
+council:
+  name: scribe_mcp
+  version: 2.0.0
+  generation:
+    rules_mode: merge
+    rules_autoload_policy: critical_only
+    rules: []
+    critical_rule_slugs:
+    - taskoutput-banned
+    - mcp-tool-calls
+    - session-protocol
+    - dual-logging
+    - root-cause-only
+    - pipeline-gates
+    - orchestration-law
+    - manage-docs-create
+    - error-handling
+    - coordinator-discipline
+    - migrations
+    - team-orchestration
+    - codebase-ownership
+    rule_skill_migrations:
+      enabled: true
+      mode: auto_apply
+      cleanup_mode: soft_retire
+      mapping_file: .council/rule_skill_migrations.yaml
+      warn_on_unmapped_orphans: true
+      allow_package_defaults: true
+    agent_template:
+      include_default_identity_prompt: true
+      include_default_expertise_prompt: true
+      include_council_membership: true
+      include_council_protocol: true
+      include_default_communication_style: true
+      include_default_behavioral_guidelines: true
+      auto_apply_default_protocol_bundles_on_create: true
+      default_protocol_bundles:
+        council_tools: true
+        scribe_protocol: true
+        session_protocol: false
+        agentkit_patterns: false
+        dual_logging: false
+        persona_embodiment: false
+  hooks:
+    shared_secret: null
+    web_url: http://localhost:8015
+    request_timeout: 5.0
+    registry: {}
+  sessions:
+    stale_timeout_minutes: 240
+    max_concurrent_per_persona: 0
+    cleanup_on_startup: true
+    stale_cleanup_interval_seconds: 1800
+    stale_session_timeout_minutes: 180
+  memories:
+    default_visibility: private
+    default_strength: 0.5
+    neuroplasticity_enabled: true
+    promote_default_strength: 0.7
+    default_strength_by_type:
+      semantic: 0.6
+      episodic: 0.7
+      abstract: 0.7
+      synthesis: 0.7
+  messages:
+    urgent_blocking_enabled: true
+    auto_thread: true
+    retention_days: 0
+    pending_messages_limit: 10
+  access:
+    require_project_id: true
+    allow_cross_project: false
+    default_cross_persona: false
+    omniscient_roles:
+    - operator
+    - admin
+    - omniscient
+    cross_agent_roles:
+    - coordinator
+    - auditor
+    reserved_personas:
+    - operator
+    - system
+    - ALL
+    enforce_tool_restrictions: false
+    allowed_tools: []
+    blocked_tools: []
+    blocked_paths: []
+    max_tokens_per_session: 0
+    protected_agents: []
+  decay:
+    enabled: true
+    half_life_days: 30
+    min_strength: 0.05
+  reinforcement:
+    enabled: true
+    access_boost: 0.05
+    max_daily_boost: 0.2
+    min_interval_hours: 1
+  memory:
+    tier_thresholds:
+      t1_max_strength: 0.3
+      t1_max_arousal: 0.2
+      t3_min_arousal: 0.7
+      t3_min_strength: 0.85
+    arousal_weights:
+      emotional: 0.8
+      ethical: 0.1
+      truth: 0.1
+  reflection:
+    on_session_close: true
+    auto_reflect_on_close: true
+    min_session_duration: 5
+    micro_reflections_enabled: true
+    micro_allowed_layers:
+    - semantic
+    - abstract
+    contradiction_detection: true
+    coherence_threshold: 0.4
+    dream_cycles_enabled: false
+    dreams:
+      enabled: true
+      max_seed_scan: 200
+      max_clusters_per_run: 3
+      min_cluster_size: 3
+      strong_memory_threshold: 0.7
+    patterns:
+      enabled: true
+    layer_strengths:
+      semantic: 0.6
+      episodic: 0.7
+      abstract: 0.7
+      synthesis: 0.7
+  queries:
+    default_limit: 20
+    max_limit: 100
+    include_embeddings: false
+  llm:
+    primary_provider: oss
+    fallback_to_openai: false
+    oss_context_limit: 8000
+    openai_model: gpt-5-mini
+    temperature: 0.7
+    max_response_tokens: 1024
+  prompts:
+    override_dir: .council/prompts
+    first_person_mode: strict
+    include_memory_metadata: true
+    max_context_memories: 12
+    budget:
+      pools:
+        personal:
+          tokens: 4000
+        domain:
+          tokens: 4000
+        session:
+          tokens: 2000
+        reasoning:
+          tokens: 2000
+      soft_cap: 12000
+  reminders:
+    max_count: 10
+  transport:
+    mode: stdio
+    ws_host: 0.0.0.0
+    ws_port: 8016
+    ws_path: /mcp
+    require_daemon: false
+    timeouts:
+      stderr_read: 1.0
+      subprocess_ready: 60.0
+      init: 10.0
+      shutdown: 5.0
+      websocket_read: 30.0
+      tool_call_default: 30.0
+    ws_client:
+      initial_attempts: 3
+      initial_delay_seconds: 0.2
+      max_retries: 20
+  client:
+    heartbeat_seconds: 30
+    stale_seconds: 180
+  web:
+    host: 0.0.0.0
+    port: 8015
+    force_ws_transport: true
+    reload: true
+    reload_dirs:
+    - src/council_mcp
+    reload_includes:
+    - '*.py'
+    reload_excludes: []
+    reload_delay_seconds: 0.5
+    shutdown_timeout_seconds: 10
+    session_cookie_name: council_session
+    session_cookie_days: null
+    session_cookie_secure: false
+    session_cookie_httponly: true
+    session_cookie_samesite: lax
+    login_url: http://localhost:8015/api/auth/login
+    reload_delay_ms: 500
+    browser_reconnect_base_ms: 500
+    browser_reconnect_cap_ms: 10000
+    connection_status_enabled: true
+    custom_pages_enabled: true
+    custom_routes_enabled: true
+    hidden_pages: []
+    hidden_nav_items: []
+    nav_group_label: null
+    custom_static_enabled: true
+    nav_acronyms:
+    - MCP
+    - SDK
+    - API
+    - UI
+    - CLI
+    - LLM
+    - AI
+    - DB
+    - WS
+    - HTTP
+    - URL
+    - ID
+    ws_timeline_idle_timeout_seconds: 600
+    ws_timeline_heartbeat_seconds: 30
+  daemon:
+    pre_restart_notify_url: http://127.0.0.1:8015/api/daemon/pre-restart
+    pre_restart_timeout: 3.0
+    pre_restart_grace_period: 1.0
+    project_resolution_retry_delays:
+    - 1
+    - 2
+    log_filename: daemon.log
+    log_max_size_mb: 10
+    log_backup_count: 3
+    restart_http_timeout: 3
+    cleanup_stale_on_start: true
+  ws_proxy:
+    default_url: ws://127.0.0.1:8016/mcp
+    endpoints: []
+    probe_timeout_seconds: 2.0
+    probe_on_reconnect: true
+    ping_interval_seconds: 20.0
+    ping_timeout_seconds: 120.0
+    max_reconnect_attempts: 0
+    default_client_type: terminal
+    dev_mode_backoff_cap_seconds: 5
+    dev_mode_max_retries: 0
+    inactivity_timeout_seconds: 0
+    monitor_parent_pid: false
+  runtime_routing:
+    policy: prefer_workstation
+    preferred_hostnames: []
+    preferred_roles:
+    - dev-workstation
+    prefer_gpu: true
+    allow_fallback: true
+    manual_hostname: ''
+    stale_seconds: 120
+    route_class: interactive_control
+    resource_pool: ''
+    gpu_requirements:
+      min_count: 0
+      min_vram_gb: null
+      accelerator_labels: []
+    affinity:
+      preferred_hostnames: []
+      preferred_roles:
+      - dev-workstation
+      ray_node_id: ''
+      soft_affinity: true
+    fallback_mode: legacy_transport
+    strict_manual_hostname: ''
+  ask:
+    scribe_context_entries: 5
+    scribe_context_token_budget: 500
+  limits:
+    memory_query_default: 10
+    pattern_mining_query: 50
+    session_context_memories: 20
+    coherence_check_memories: 50
+  bridges:
+    scribe_health_check_timeout: 1.0
+    scribe_tool_timeout: 5.0
+  scribe:
+    sse_endpoint: null
+  server:
+    resolver_retry_delays_seconds:
+    - 1
+    - 2
+    - 4
+  process_manager:
+    health_check_interval_seconds: 30
+    default_grace_seconds: 5.0
+    max_restarts_before_giveup: 3
+    restart_backoff_base_seconds: 1.0
+    restart_backoff_cap_seconds: 60.0
+    registry_db_path: .council/process_registry.db
+    reboot_timeout_seconds: 30
+  system_health:
+    enabled: true
+    check_interval_seconds: 60
+    include_gpu: true
+    gpu_command: nvidia-smi
+    disk_paths:
+    - /
+    alert_thresholds:
+      cpu_percent: 90.0
+      memory_percent: 90.0
+      disk_percent: 95.0
+      gpu_memory_percent: 95.0
+      temperature_celsius: 90.0
+  logs:
+    log_dir: .
+    default_tail_lines: 50
+    max_tail_lines: 5000
+    stream_poll_interval_ms: 500
+    level_patterns:
+      error: (?i)\b(ERROR|CRITICAL|FATAL)\b
+      warning: (?i)\b(WARNING|WARN)\b
+      info: (?i)\b(INFO)\b
+      debug: (?i)\b(DEBUG)\b
+    known_sources:
+      daemon:
+        path: daemon.log
+        format: plain
+      web:
+        path: web_ui.log
+        format: plain
+  agents:
+    types:
+      valid_types:
+      - claude_code
+      - web_ui
+      - service
+      - webhook
+      default_type: claude_code
+  chat:
+    enabled: true
+    default_agent: coordinator
+    auto_open: false
+    persist_session: true
+    rooms_enabled: false
+    mention_pattern: '@(\w[\w-]*)'
+    max_hops: 4
+    max_room_participants: 20
+    realtime_agent_replies: false
+    page_agents: {}
+    page_agent_profiles:
+      git_page_main:
+        enforce:
+          strict_tool_allowlist: true
+          allowed_tools:
+          - sdk_create_session
+          - sdk_send_message
+          - sdk_end_session
+          - git_status
+          - git_diff
+          - git_log
+          - git_branches
+          - git_stage
+          - git_unstage
+          - git_commit
+          - git_stale_branches
+          - Bash
+          - Read
+          - Grep
+          - Glob
+          - Write
+          - Edit
+          blocked_tools:
+          - git_reset
+          - git_clean
+          - git_push_force
+          - git_rebase
+          - git_branch_delete
+          - git_checkout_discard
+      git_page_executor:
+        enforce:
+          strict_tool_allowlist: true
+          allowed_tools_by_mode:
+            read_only:
+            - git_status
+            - git_diff
+            - git_log
+            - git_branches
+            stage:
+            - git_status
+            - git_diff
+            - git_log
+            - git_branches
+            - git_stage
+            - git_unstage
+            commit:
+            - git_status
+            - git_diff
+            - git_log
+            - git_branches
+            - git_stage
+            - git_unstage
+            - git_commit
+            - git_stale_branches
+            sync:
+            - git_status
+            - git_diff
+            - git_log
+            - git_branches
+            - git_stage
+            - git_unstage
+            - git_commit
+            - git_stale_branches
+            - git_pull
+            - git_fetch
+          blocked_tools:
+          - sdk_create_session
+          - sdk_send_message
+          - sdk_end_session
+          - git_reset
+          - git_clean
+          - git_push_force
+          - git_rebase
+          - git_branch_delete
+          - git_checkout_discard
+          - bash
+          - write
+          - edit
+        mode_metadata_key: session_mode
+  codex_task:
+    protocol:
+      default_profile: scribe_strict
+      override_mode: per_run
+      allowed_profile_overrides: []
+    bounds:
+      watchdog_interval_seconds: 5
+      terminate_grace_seconds: 2
+  governance:
+    enabled: false
+    scribe_compliance:
+      enabled: true
+      require_set_project_by_turn: 2
+      max_turns_without_log: 5
+      require_reasoning_traces: true
+      require_open_session: true
+    enforcement:
+      mode: graduated
+      warn_threshold: 3
+      soft_block_threshold: 5
+      hard_block_threshold: 8
+    exempt_tools:
+    - mcp__scribe__set_project
+    - mcp__scribe__append_entry
+    - mcp__scribe__read_recent
+    - mcp__council-v2__open_session
+    - mcp__council-v2__end_session
+    - mcp__council-v2__store_memory
+    - mcp__council-v2__list_messages
+    - mcp__council-v2__list_urgent_messages
+    - mcp__council-v2__mark_read
+    - mcp__council-v2__record_message
+    git_blocklist_extra: []
+    escalation_exempt_roles:
+    - coordinator
+    - omniscient
+    budget_enforcement: hard
+    budget_warn_threshold: 0.8
+    workflow_stage_gating: 'off'
+    enforce_tool_restrictions: true
+    allowlists:
+      per_agent: {}
+      default: []
+    approval_rules:
+      require_approval: []
+      bypass_roles:
+      - operator
+      timeout_minutes: 30
+      auto_approve_below_severity: null
+  sdk:
+    enabled: false
+    max_concurrent_sessions: 10
+    worker_startup_timeout_seconds: 30
+    session_create_timeout_seconds: 60
+    worker_idle_timeout_seconds: 0
+    worker_heartbeat_interval_seconds: 15
+    uds_socket_dir: /tmp
+    uds_socket_prefix: council_sdk_
+    uds_max_message_bytes: 10485760
+    stream_buffer_size: 100
+    event_queue_timeout_seconds: 600
+    ws_endpoint: /ws/sdk
+    approval_timeout_seconds: 300
+    approval_auto_deny_on_timeout: true
+    persist_messages: true
+    message_retention_days: 30
+    default_provider: claude
+    providers:
+      claude:
+        enabled: true
+        cli_path: null
+        default_model: claude-sonnet-4-5
+        fallback_model: claude-3-5-haiku
+        models:
+        - claude-sonnet-4-5
+        - claude-sonnet-4-5-20250929
+        - claude-opus-4-6
+        - claude-opus-4-5
+        - claude-haiku-4-5-20251001
+        - claude-3-5-haiku
+        permission_mode: default
+        setting_sources:
+        - project
+        max_budget_usd: 10.0
+        max_turns: 100
+        include_partial_messages: true
+        max_thinking_tokens: null
+        betas: []
+        env: {}
+      openai:
+        enabled: false
+        default_model: gpt-4o
+        models:
+        - gpt-4o
+        - gpt-4o-mini
+        - gpt-5.2-codex
+        - gpt-5.2-codex-mini
+        - gpt-5.1-codex
+        - gpt-5.1-codex-mini
+        - gpt-5-codex
+        - gpt-5-codex-mini
+        - gpt-5.3-codex
+        - gpt-5.3-codex-spark
+        max_budget_usd: 10.0
+      codex:
+        enabled: false
+        display_name: Codex CLI
+        cli_path: codex
+        default_model: gpt-5.3-codex
+        fallback_model: gpt-5.3-codex-spark
+        fallback_models:
+        - gpt-5.3-codex-spark
+        - gpt-5.2-codex
+        - gpt-5.2-codex-mini
+        - gpt-5.1-codex
+        - gpt-5.1-codex-mini
+        - gpt-5-codex
+        - gpt-5-codex-mini
+        models:
+        - gpt-5.3-codex
+        - gpt-5.3-codex-spark
+        - gpt-5.2-codex
+        - gpt-5.2-codex-mini
+        - gpt-5.1-codex
+        - gpt-5.1-codex-mini
+        - gpt-5-codex
+        - gpt-5-codex-mini
+        sandbox_mode: workspace-write
+        skip_git_repo_check: true
+        full_auto: false
+        dangerously_bypass_approvals_and_sandbox: false
+        enforce_cwd_restrictions: true
+        allowed_cwd_roots: []
+        strict_fork_isolation: true
+        max_budget_usd: 10.0
+        env: {}
+      zlm:
+        enabled: false
+        display_name: ZLM (GLM)
+        default_model: GLM-5
+        fallback_model: GLM-5-Air
+        models:
+        - GLM-5
+        - GLM-5-Air
+        - GLM-5-Flash
+        - GLM-5-FlashX
+        - GLM-5-X
+        - GLM-5-Code
+        - GLM-4.7
+        - GLM-4.7-Flash
+        - GLM-4.5-Air
+        - GLM-4.5-Flash
+        - GLM-4.7-FlashX
+        permission_mode: default
+        setting_sources:
+        - project
+        max_budget_usd: 10.0
+        max_turns: 100
+        include_partial_messages: true
+        max_thinking_tokens: null
+        betas: []
+        env:
+          api_key_var: ZAI_API_KEY
+          base_url: https://api.z.ai/api/anthropic
+          timeout_ms: 3000000
+    warm_pool_size: 0
+    warm_pool_idle_timeout_seconds: 300
+    warm_pool_check_interval_seconds: 30
+    sandbox:
+      enabled: true
+      temp_dir_prefix: council_sandbox_
+      temp_dir_base: /tmp
+      permission_mode: default
+      include_mcp_servers: false
+      allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - WebFetch
+      - WebSearch
+      cleanup_on_end: true
+    worktree_base_dir: .worktrees
+    worktree_branch_prefix: agent/
+    worktree_cleanup_on_start: true
+    agents:
+      max_depth: 2
+      max_concurrent: 8
+      recursive_spawning: true
+      output_buffer_lines: 2000
+      output_flush_threshold: 0.8
+  cost_tracking:
+    enabled: true
+    pricing:
+      claude:
+        claude-sonnet-4-5:
+          input_per_mtok: 3.0
+          output_per_mtok: 15.0
+        claude-sonnet-4-5-20250929:
+          input_per_mtok: 3.0
+          output_per_mtok: 15.0
+        claude-opus-4-6:
+          input_per_mtok: 5.0
+          output_per_mtok: 25.0
+        claude-opus-4-5:
+          input_per_mtok: 15.0
+          output_per_mtok: 75.0
+        claude-haiku-4-5-20251001:
+          input_per_mtok: 0.8
+          output_per_mtok: 4.0
+        claude-3-5-haiku:
+          input_per_mtok: 0.8
+          output_per_mtok: 4.0
+      openai:
+        gpt-4o:
+          input_per_mtok: 2.5
+          output_per_mtok: 10.0
+        gpt-4o-mini:
+          input_per_mtok: 0.15
+          output_per_mtok: 0.6
+        gpt-5-codex:
+          input_per_mtok: 1.25
+          output_per_mtok: 10.0
+        gpt-5-codex-mini:
+          input_per_mtok: 0.25
+          output_per_mtok: 2.0
+        gpt-5.1-codex:
+          input_per_mtok: 1.5
+          output_per_mtok: 12.0
+        gpt-5.1-codex-mini:
+          input_per_mtok: 0.25
+          output_per_mtok: 2.0
+        gpt-5.2-codex:
+          input_per_mtok: 1.75
+          output_per_mtok: 14.0
+        gpt-5.2-codex-mini:
+          input_per_mtok: 0.35
+          output_per_mtok: 2.8
+        gpt-5.3-codex:
+          input_per_mtok: 1.75
+          output_per_mtok: 14.0
+          estimated: true
+          estimate_basis: mirrors gpt-5.2-codex until official API pricing is published
+        gpt-5.3-codex-spark:
+          input_per_mtok: 0.35
+          output_per_mtok: 2.8
+          estimated: true
+          estimate_basis: mirrors gpt-5.2-codex-mini until official API pricing is
+            published
+      codex:
+        gpt-5.3-codex:
+          input_per_mtok: 1.75
+          output_per_mtok: 14.0
+          estimated: true
+          estimate_basis: mirrors gpt-5.2-codex until official API pricing is published
+        gpt-5.2-codex:
+          input_per_mtok: 1.75
+          output_per_mtok: 14.0
+        gpt-5.2-codex-mini:
+          input_per_mtok: 0.35
+          output_per_mtok: 2.8
+        gpt-5.1-codex:
+          input_per_mtok: 1.5
+          output_per_mtok: 12.0
+        gpt-5.1-codex-mini:
+          input_per_mtok: 0.25
+          output_per_mtok: 2.0
+        gpt-5-codex:
+          input_per_mtok: 1.25
+          output_per_mtok: 10.0
+        gpt-5-codex-mini:
+          input_per_mtok: 0.25
+          output_per_mtok: 2.0
+        gpt-5.3-codex-spark:
+          input_per_mtok: 0.35
+          output_per_mtok: 2.8
+          estimated: true
+          estimate_basis: mirrors gpt-5.2-codex-mini until official API pricing is
+            published
+      zlm:
+        GLM-5:
+          input_per_mtok: 0.28
+          output_per_mtok: 1.12
+        GLM-5-Air:
+          input_per_mtok: 0.07
+          output_per_mtok: 0.28
+        GLM-5-Flash:
+          input_per_mtok: 0.0
+          output_per_mtok: 0.0
+        GLM-5-FlashX:
+          input_per_mtok: 0.014
+          output_per_mtok: 0.07
+        GLM-5-X:
+          input_per_mtok: 0.7
+          output_per_mtok: 2.8
+        GLM-5-Code:
+          input_per_mtok: 0.28
+          output_per_mtok: 1.12
+        GLM-4.7:
+          input_per_mtok: 0.6
+          output_per_mtok: 2.2
+        GLM-4.7-Flash:
+          input_per_mtok: 0.0
+          output_per_mtok: 0.0
+        GLM-4.7-FlashX:
+          input_per_mtok: 0.07
+          output_per_mtok: 0.4
+        GLM-4.5-Air:
+          input_per_mtok: 0.2
+          output_per_mtok: 1.1
+        GLM-4.5-Flash:
+          input_per_mtok: 0.0
+          output_per_mtok: 0.0
+  retrieval:
+    min_tier: null
+    max_per_tag_cluster: 3
+    recency_half_life_days: 30
+    dual_pool:
+      personal_weight: 0.6
+      domain_weight: 0.4
+  context:
+    max_context_tokens: 6000
+    max_thread_events: 50
+  reasoning:
+    governance_enabled: true
+    log_passes: true
+    pass_1_temperature: 0.5
+    pass_2_temperature: 0.7
+    pass_3_temperature: 0.3
+  explore:
+    max_limit: 50
+  daemon_federation:
+    enabled: true
+    shared_secret: 2abd7fa519fd0cdb18c5500a75e9bac0bee1c44efa1458dc6cdbcdc936d5163b
+    timeout_seconds: 10
+    max_retries: 3
+  federation:
+    enabled: false
+    transport:
+      receive_path: /api/v1/federation/receive
+      timeout_seconds: 30
+      max_payload_bytes: 1048576
+    idempotency:
+      ttl_hours: 72
+    ipc:
+      notify_channel: federation_events
+    scribe:
+      proxy_enabled: false
+      meta_tag_prefix: fed
+    hierarchy:
+      policy_push_enabled: false
+      push_debounce_seconds: 5
+    autonomous:
+      enabled: false
+      system_persona_id: system-daemon
+    services:
+      registry_enabled: false
+  git:
+    command_timeout_seconds: 30
+    max_diff_size_bytes: 1048576
+    max_repo_scan_depth: 3
+    stale_branch_days: 30
+    commit_message_max_length: 10000
+  compute:
+    execution_mode: auto
+    ray_enabled: false
+    ray_address: auto
+    gpu_fallback_to_cpu: true
+    dispatch_timeout_seconds: 30
+    supervision_check_interval_seconds: 15
+    supervision_reconnect_max_backoff_seconds: 60
+    tei_url: ''
+    tei_timeout_seconds: 5
+    service_routes: {}
+    service_timeout_seconds: 10
+    agent_dispatch:
+      enabled: false
+      repo_node_map: {}
+    tei_container:
+      enabled: false
+      image: ghcr.io/huggingface/text-embeddings-inference:turing-1.5
+      model: sentence-transformers/all-MiniLM-L6-v2
+      dtype: float16
+      port: 8080
+      startup_timeout_seconds: 120
+      health_check_interval_seconds: 30
+      health_check_timeout_seconds: 5
+    faiss:
+      verify_on_serve_start: true
+      rebuild_if_stale: true
+      rebuild_on_verify_failure: true
+      storage_root_candidates: []
+      create_storage_root_if_missing: true
+  node:
+    heartbeat_interval_seconds: 30
+    stale_timeout_seconds: 90
+    auto_detect_capabilities: true
+    default_role: dev-workstation
+    services_by_role:
+      gpu-compute:
+        tei: true
+      dev-workstation:
+        tei: false
+      ci-runner:
+        tei: false
+      hub:
+        tei: false
+  platform:
+    health:
+      stale_threshold_seconds: 120
+      sync_lag_threshold_seconds: 300
+  deployment:
+    mode: local
+    operating_mode: local_default
+    hub_tailscale_ip: ''
+    gateway_domain: ''
+    operating_modes:
+      local_default:
+        stm_backend: memory
+        redis_required: false
+        control_plane_topology: single-node
+        notes: Default local control plane; keep Redis out of the topology.
+      distributed_stateful:
+        stm_backend: redis
+        redis_required: true
+        control_plane_topology: distributed
+        degraded_state: If Redis is unavailable or unhealthy, fail closed for distributed
+          stateful flows until Redis recovers.
+  connection:
+    db_connect_timeout_seconds: 5
+    daemon_health_timeout_seconds: 3
+    startup_fail_fast: true
+  repos:
+    clone_base_dir: /opt
+    webhook_secret_env: WEBHOOK_SECRET
+    compose_override_path: deploy/docker-compose.repos.yaml
+  sync:
+    enabled: false
+    syncthing_url: http://localhost:8384
+    syncthing_api_key: ''
+    default_sync_paths:
+    - .council/web/pages
+    - .council/web/static
+    role_policies:
+      hub:
+        sync_paths:
+        - .council/web/pages
+        - .council/web/static
+        - .council/web/routes
+        direction: sendreceive
+      gpu-compute:
+        sync_paths:
+        - .council/web/pages
+        direction: receiveonly
+      dev-workstation:
+        sync_paths:
+        - .council/web/pages
+        - .council/web/static
+        - .council/web/routes
+        direction: sendreceive
+      ci-runner:
+        sync_paths: []
+        direction: receiveonly
+  dev_serve:
+    enabled: false
+    scribe_sse_endpoint: ''
+    auto_set_scribe_sse: true
+    register_dev_web_service: true
+    web_reload: false
+  reactive:
+    enabled: false
+    poll_interval_seconds: 30
+    max_concurrent_agents: 3
+    default_agent: mantis
+    default_model: gpt-5-mini
+    default_provider: openai
+    approval_required: true
+    auto_approve_severities: []
+    dispatch_rules:
+    - category: security
+      agent: sentinel
+      model: gpt-5
+      provider: openai
+    - category: runtime
+      agent: mantis
+      model: gpt-5-mini
+      provider: openai
+    - category: performance
+      agent: forge
+      model: gpt-5-mini
+      provider: openai
+    - category: logic
+      agent: mantis
+      model: gpt-5
+      provider: openai
+  description: Council for scribe_mcp
+  repo_path: null
+  parent_council_name: null
+  council_id: d8e0a87a-5b9e-4c8b-b868-07443d707b24
+federation:
+  enabled: false
+  scope: ancestors
+  push_to_parent: false
+  pull_scope: ancestors
+policy:
+  mode: inherit
+  restrict_only_fields:
+  - hooks.registry.*.allowed_sources
+  - access.max_sessions
+search:
+  default_scope: local
+update:
+  auto_commit: false    # scribe_mcp agents are committed manually
