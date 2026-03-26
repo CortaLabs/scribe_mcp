@@ -441,6 +441,31 @@ async def apply_doc_change(
                 if resolved_end is not None:
                     resolved_end = int(resolved_end)
 
+                # --- Coordinate system adjustment ---
+                # replace_range operates on the *body* (frontmatter stripped).
+                # Callers using line numbers from read_file (scan_only, line_range)
+                # get full-file coordinates that include frontmatter lines.
+                # When metadata.line_reference="file", auto-adjust by subtracting
+                # frontmatter line count.  Default is "body" (legacy behavior) for
+                # internal callers; the MCP tool layer injects "file" when the caller
+                # doesn't specify.
+                line_ref = "body"
+                if isinstance(metadata, dict):
+                    line_ref = str(metadata.get("line_reference", "body")).strip().lower()
+                if line_ref not in ("file", "body"):
+                    line_ref = "body"
+
+                if line_ref == "file" and frontmatter_line_count > 0 and resolved_start is not None and resolved_end is not None:
+                    resolved_start = resolved_start - frontmatter_line_count
+                    resolved_end = resolved_end - frontmatter_line_count
+                    if resolved_start < 1:
+                        raise DocumentOperationError(
+                            f"REPLACE_RANGE_IN_FRONTMATTER: adjusted start_line={resolved_start + frontmatter_line_count} "
+                            f"(file-relative) falls within frontmatter ({frontmatter_line_count} lines). "
+                            f"Use line numbers that target the document body (line {frontmatter_line_count + 1}+), "
+                            f"or pass metadata.line_reference='body' if your numbers already exclude frontmatter."
+                        )
+
                 replacement_text = str(content or "")
                 # NOTE: replacement content is a body fragment, NOT a standalone document.
                 # Never parse it as frontmatter — a leading "---" is a Markdown horizontal
@@ -454,6 +479,13 @@ async def apply_doc_change(
                     resolved_end,
                     replacement_text,
                 )
+                if line_ref == "file" and frontmatter_line_count > 0:
+                    extra["line_adjustment"] = {
+                        "line_reference": "file",
+                        "frontmatter_lines": frontmatter_line_count,
+                        "original_range": [start_line, end_line],
+                        "adjusted_range": [resolved_start, resolved_end],
+                    }
             elif action == "replace_text":
                 if not isinstance(metadata, dict):
                     raise DocumentOperationError(
@@ -705,6 +737,18 @@ async def apply_doc_change(
                 if not key.startswith("frontmatter")
             }
 
+        # Always include document structure info so agents know the coordinate
+        # system.  Frontmatter lines shift all body content; agents using
+        # read_file line numbers need to know this.
+        body_line_count = len(updated_body.splitlines()) if updated_body else 0
+        document_info: Dict[str, Any] = {
+            "frontmatter_lines": frontmatter_line_count,
+            "body_lines": body_line_count,
+            "total_lines": frontmatter_line_count + body_line_count,
+        }
+        if frontmatter_line_count > 0:
+            document_info["body_starts_at_line"] = frontmatter_line_count + 1
+
         return DocChangeResult(
             doc_name=doc_name,
             section=section,
@@ -717,6 +761,7 @@ async def apply_doc_change(
             extra={
                 **(extra if "extra" in locals() else {}),
                 **frontmatter_extra,
+                "document_info": document_info,
             },
             success=True,
             verification_passed=verification_passed,

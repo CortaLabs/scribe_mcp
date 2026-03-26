@@ -693,6 +693,134 @@ replaced line 2
 
 
 @pytest.mark.asyncio
+async def test_replace_range_line_reference_file_adjusts_for_frontmatter(tmp_path: Path) -> None:
+    """When metadata.line_reference='file', line numbers are adjusted by frontmatter offset."""
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+
+    # Write content WITH frontmatter (6 frontmatter lines: ---, key: val x4, ---)
+    architecture_path.write_text(
+        "---\ntitle: Test\nstatus: draft\nmodified: today\n---\nalpha\nbeta\ngamma\n",
+        encoding="utf-8",
+    )
+    parsed = parse_frontmatter(architecture_path.read_text(encoding="utf-8"))
+    fm_lines = len(parsed.frontmatter_raw.splitlines())
+    assert fm_lines == 5  # 5 lines of frontmatter raw (---, title, status, modified, ---)
+
+    # Body line 1 ("alpha") is file line 6.  Replace file line 6 (= body line 1).
+    result = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="REPLACED\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=6,
+        end_line=6,
+        template=None,
+        metadata={"line_reference": "file"},
+        dry_run=False,
+    )
+    assert result.success, result.error_message
+    parsed = parse_frontmatter(architecture_path.read_text(encoding="utf-8"))
+    assert parsed.body.startswith("REPLACED\n")
+    assert "alpha" not in parsed.body
+    # Verify adjustment info in extra
+    assert result.extra.get("line_adjustment", {}).get("frontmatter_lines") == fm_lines
+
+
+@pytest.mark.asyncio
+async def test_replace_range_line_reference_body_is_legacy_default(tmp_path: Path) -> None:
+    """When metadata.line_reference='body' (or absent), line numbers are body-relative (no adjustment)."""
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+
+    architecture_path.write_text(
+        "---\ntitle: Test\nstatus: draft\nmodified: today\n---\nalpha\nbeta\ngamma\n",
+        encoding="utf-8",
+    )
+
+    # Body-relative: line 1 = "alpha" (the first line AFTER frontmatter)
+    result = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="REPLACED\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=1,
+        template=None,
+        metadata={"line_reference": "body"},
+        dry_run=False,
+    )
+    assert result.success, result.error_message
+    parsed = parse_frontmatter(architecture_path.read_text(encoding="utf-8"))
+    assert parsed.body.startswith("REPLACED\n")
+    assert "alpha" not in parsed.body
+
+
+@pytest.mark.asyncio
+async def test_replace_range_file_reference_in_frontmatter_errors(tmp_path: Path) -> None:
+    """File-relative line numbers targeting frontmatter itself should error clearly."""
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+
+    architecture_path.write_text(
+        "---\ntitle: Test\nstatus: draft\nmodified: today\n---\nalpha\nbeta\ngamma\n",
+        encoding="utf-8",
+    )
+
+    # Try to replace file line 2 (inside frontmatter)
+    result = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="BAD\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=2,
+        end_line=3,
+        template=None,
+        metadata={"line_reference": "file"},
+        dry_run=False,
+    )
+    assert not result.success
+    assert "REPLACE_RANGE_IN_FRONTMATTER" in (result.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_replace_range_no_frontmatter_file_reference_noop(tmp_path: Path) -> None:
+    """When there's no frontmatter, file and body references are equivalent."""
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+
+    # No frontmatter
+    architecture_path.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+
+    result = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="REPLACED\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=1,
+        template=None,
+        metadata={"line_reference": "file"},
+        dry_run=False,
+    )
+    assert result.success, result.error_message
+    parsed = parse_frontmatter(architecture_path.read_text(encoding="utf-8"))
+    assert parsed.body.startswith("REPLACED\n")
+
+
+@pytest.mark.asyncio
 async def test_healing_before_reminders(tmp_path: Path) -> None:
     """Ensure healed scaffold/action values drive reminder selection."""
     project = await _setup_project(tmp_path)

@@ -174,10 +174,26 @@ async def auto_register_document(
         raise ValueError("Project must have a name for auto-registration")
 
     try:
-        current_docs = project.get("docs", {})
+        current_docs = dict(project.get("docs", {}) or {})
         current_docs[doc_name] = str(doc_path)
+        project["docs"] = current_docs
         docs_json = json.dumps(current_docs)
         await backend.update_project_docs(project_name, docs_json)
+        state_manager = getattr(server_module, "state_manager", None)
+        if state_manager and hasattr(state_manager, "set_current_project"):
+            try:
+                await state_manager.set_current_project(
+                    project_name,
+                    project,
+                    agent_id="manage_docs",
+                    mirror_global=False,
+                )
+            except Exception as exc:  # pragma: no cover - defensive state sync
+                logger.warning(
+                    "Auto-registration database update succeeded but state sync failed for '%s': %s",
+                    doc_name,
+                    exc,
+                )
         logger.info("Auto-registered document '%s' for project '%s'", doc_name, project_name)
     except Exception as exc:
         raise ValueError(f"Failed to update database for auto-registration: {exc}") from exc
@@ -462,6 +478,16 @@ async def handle_manage_docs_request(
                 return helper.apply_context_payload(error_payload, context)
 
     metadata_mapping = metadata if isinstance(metadata, dict) else None
+
+    # For replace_range called via the MCP tool surface, default to file-relative
+    # line numbers so that agents using read_file line numbers get correct results.
+    # The internal API (apply_doc_change) defaults to body-relative for backwards
+    # compatibility; this injection bridges the gap.
+    if action == "replace_range":
+        if metadata_mapping is None:
+            metadata_mapping = {}
+        if "line_reference" not in metadata_mapping:
+            metadata_mapping["line_reference"] = "file"
 
     action, create_response = await create_actions.normalize_or_handle_create_action(
         action=action,
