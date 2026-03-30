@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import stateful_local_tool
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import runtime as runtime_shared
 from scribe_mcp.doc_management import special_create as special_create_shared
@@ -80,7 +81,7 @@ async def _auto_register_document(project: Dict[str, Any], doc_name: str) -> boo
     )
 
 
-@app.tool()
+@app.tool(**stateful_local_tool(title="Manage Docs", tags=("docs", "governance", "write")))
 async def manage_docs(
     agent: str = "Codex",
     action: str = "",

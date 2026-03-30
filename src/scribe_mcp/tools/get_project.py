@@ -9,6 +9,7 @@ from pathlib import Path
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.project_utils import load_active_project, load_project_config
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
@@ -374,7 +375,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Get Active Project", tags=("projects", "context", "read-only")))
 async def get_project(agent: str = "Codex", project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
     """Return the active project selection, resolving defaults when necessary.
 

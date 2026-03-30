@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from scribe_mcp import server as server_module
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import stateful_local_tool
 from scribe_mcp import reminders
 from scribe_mcp.tools.agent_project_utils import ensure_agent_session
 from scribe_mcp.tools.project_utils import (
@@ -194,7 +195,7 @@ async def _check_slug_collision(
     return None  # No collision detected
 
 
-@app.tool()
+@app.tool(**stateful_local_tool(title="Set Project Context", tags=("projects", "context", "write")))
 async def set_project(
     agent: str = "Codex",  # REQUIRED: Agent name for session identity (e.g., "Coder-1", "ResearchAgent")
     name: str = "",

@@ -13,6 +13,7 @@ from scribe_mcp.utils.time import format_utc, utcnow
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.constants import STATUS_EMOJI
 from scribe_mcp.tools.project_utils import load_project_config
 from scribe_mcp.utils.config_manager import ConfigManager, validate_enum_value, validate_range, BulletproofFallbackManager
@@ -1142,7 +1143,7 @@ async def _execute_search_with_fallbacks(
             }
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Query Log Entries", tags=("logs", "search", "read-only")))
 async def query_entries(
     agent: str = "Codex",
     project: Optional[str] = None,

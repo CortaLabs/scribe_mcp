@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import destructive_local_tool
 from scribe_mcp.tools.agent_project_utils import (
     ensure_agent_session,
     validate_agent_session,
@@ -20,7 +21,7 @@ from scribe_mcp.tools.project_utils import (
 from scribe_mcp.utils.slug import normalize_project_input
 
 
-@app.tool()
+@app.tool(**destructive_local_tool(title="Delete Project", tags=("projects", "admin", "destructive")))
 async def delete_project(
     agent: str = "Codex",  # Agent identification
     name: str = "",

@@ -19,6 +19,7 @@ from scribe_mcp.utils.time import format_utc, utcnow
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import stateful_local_tool
 from scribe_mcp.config.log_config import load_log_config
 from scribe_mcp.utils.config_manager import ConfigManager, apply_response_defaults, build_response_payload
 from scribe_mcp.utils.bulk_processor import BulkProcessor
@@ -1366,7 +1367,7 @@ def _format_readable(response: Dict[str, Any], project_name: str) -> str:
     return "\n".join(lines)
 
 
-@app.tool()
+@app.tool(**stateful_local_tool(title="Rotate Logs", tags=("logs", "maintenance", "write"), surface="admin"))
 async def rotate_log(
     agent: str = "Codex",
     project: Optional[str] = None,

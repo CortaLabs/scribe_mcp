@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.constants import STATUS_EMOJI
 from scribe_mcp.utils.files import read_tail
 from scribe_mcp.utils.response import create_pagination_info, ResponseFormatter
@@ -151,7 +152,7 @@ class _ReadRecentHelper(LoggingToolMixin):
 _READ_RECENT_HELPER = _ReadRecentHelper()
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Read Recent Entries", tags=("logs", "inspection", "read-only")))
 async def read_recent(
     agent: str,
     project: Optional[str] = None,

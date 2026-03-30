@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from scribe_mcp import server as server_module
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.shared.execution_context import ExecutionContext
 from scribe_mcp.utils.response import default_formatter
 
@@ -172,7 +173,7 @@ def _iterate_files(
 ) -> Iterator[Path]:
     """Yield files under *root* respecting filters and skip rules.
 
-    - Skips hidden dirs (except .scribe), node_modules, __pycache__, etc.
+    - Skips explicit high-noise directories (node_modules, __pycache__, etc.).
     - Skips binary extensions and binary content when *skip_binary* is True.
     - Skips files larger than *max_file_size_bytes*.
     - Applies glob and type filters.
@@ -186,20 +187,23 @@ def _iterate_files(
             # Unknown type -- yield nothing
             return
 
+    glob_candidates: Optional[List[str]] = None
+    if glob_pattern:
+        # Python fnmatch treats "**/*.ext" as requiring a slash, so files in
+        # the search root won't match. Add a root-level fallback pattern.
+        glob_candidates = [glob_pattern]
+        if glob_pattern.startswith("**/"):
+            glob_candidates.append(glob_pattern[3:])
+
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune skipped directories in-place
         dirnames[:] = [
             d for d in dirnames
             if d not in _SKIP_DIRS
-            and (not d.startswith(".") or d == ".scribe")
         ]
 
         for fname in filenames:
             fpath = Path(dirpath) / fname
-
-            # Skip hidden files
-            if fname.startswith("."):
-                continue
 
             # Type filter FIRST -- so skip stats only count relevant files
             if type_extensions and fpath.suffix.lower() not in type_extensions:
@@ -211,7 +215,11 @@ def _iterate_files(
                     rel = str(fpath.relative_to(root))
                 except ValueError:
                     continue
-                if not fnmatch(rel, glob_pattern) and not fnmatch(fname, glob_pattern):
+                assert glob_candidates is not None
+                if not any(
+                    fnmatch(rel, candidate) or fnmatch(fname, candidate)
+                    for candidate in glob_candidates
+                ):
                     continue
 
             # Skip binary by extension (only for files that passed type/glob)
@@ -556,7 +564,7 @@ def _format_search_readable(data: Dict[str, Any], line_numbers: bool) -> str:
 # MCP Tool (Task 1.1 + integration)
 # ---------------------------------------------------------------------------
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Search Codebase", tags=("files", "search", "read-only")))
 async def search(
     # REQUIRED
     agent: str,

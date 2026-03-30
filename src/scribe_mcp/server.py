@@ -39,7 +39,7 @@ except ImportError:
         def __init__(self, name: str) -> None:
             self.name = name
 
-        def tool(self, _name: str | None = None):
+        def tool(self, _name: str | None = None, **_: Any):
             def decorator(func):
                 return func
 
@@ -424,10 +424,69 @@ if _MCP_AVAILABLE:
             func: Callable[..., Awaitable[Any]] | None = None,
             *,
             name: str | None = None,
+            title: str | None = None,
             description: str | None = None,
             input_schema: Dict[str, Any] | None = None,
             output_schema: Dict[str, Any] | None = None,
+            annotations: Any = None,
+            icons: Any = None,
+            _meta: Dict[str, Any] | None = None,
+            meta: Dict[str, Any] | None = None,
+            execution: Any = None,
+            tags: list[str] | tuple[str, ...] | None = None,
         ):
+            def _coerce_tool_annotations(value: Any) -> Any:
+                if value is None:
+                    return None
+                if isinstance(value, mcp_types.ToolAnnotations):
+                    return value
+                if isinstance(value, dict):
+                    return mcp_types.ToolAnnotations(**value)
+                raise TypeError(f"Unsupported tool annotations type: {type(value)!r}")
+
+            def _coerce_icons(value: Any) -> list[Any] | None:
+                if value is None:
+                    return None
+                if not isinstance(value, (list, tuple)):
+                    raise TypeError(f"Unsupported tool icons type: {type(value)!r}")
+                resolved_icons: list[Any] = []
+                for item in value:
+                    if isinstance(item, mcp_types.Icon):
+                        resolved_icons.append(item)
+                    elif isinstance(item, dict):
+                        resolved_icons.append(mcp_types.Icon(**item))
+                    else:
+                        raise TypeError(f"Unsupported tool icon entry type: {type(item)!r}")
+                return resolved_icons or None
+
+            def _coerce_tool_execution(value: Any) -> Any:
+                if value is None:
+                    return None
+                if isinstance(value, mcp_types.ToolExecution):
+                    return value
+                if isinstance(value, dict):
+                    return mcp_types.ToolExecution(**value)
+                raise TypeError(f"Unsupported tool execution type: {type(value)!r}")
+
+            def _normalize_tool_meta(primary: Dict[str, Any] | None, alias: Dict[str, Any] | None) -> Dict[str, Any] | None:
+                selected = primary if primary is not None else alias
+                if selected is None:
+                    return None
+                return dict(selected)
+
+            def _normalize_tags(value: list[str] | tuple[str, ...] | None) -> list[str] | None:
+                if value is None:
+                    return None
+                normalized: list[str] = []
+                seen: set[str] = set()
+                for tag in value:
+                    tag_str = str(tag).strip()
+                    if not tag_str or tag_str in seen:
+                        continue
+                    seen.add(tag_str)
+                    normalized.append(tag_str)
+                return normalized or None
+
             def register(target: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
                 tool_name = name or target.__name__
                 # Build schema from function signature if not explicitly provided
@@ -436,12 +495,23 @@ if _MCP_AVAILABLE:
                 else:
                     schema = input_schema
                 tool_description = description or (inspect.getdoc(target) or "")
+                tool_annotations = _coerce_tool_annotations(annotations)
+                tool_icons = _coerce_icons(icons)
+                tool_execution = _coerce_tool_execution(execution)
+                tool_meta = _normalize_tool_meta(_meta, meta)
+                tool_tags = _normalize_tags(tags)
                 Server._scribe_tool_registry[tool_name] = target
                 Server._scribe_tool_defs[tool_name] = mcp_types.Tool(
                     name=tool_name,
+                    title=title,
                     description=tool_description,
                     inputSchema=schema,
                     outputSchema=output_schema,
+                    icons=tool_icons,
+                    annotations=tool_annotations,
+                    _meta=tool_meta,
+                    execution=tool_execution,
+                    tags=tool_tags,
                 )
                 return target
 
@@ -932,19 +1002,31 @@ def list_registered_tools() -> list[str]:
 
 def describe_registered_tools() -> dict[str, dict[str, Any]]:
     """Return tool metadata keyed by tool name for CLI discovery."""
+    tools.ensure_all_tools_loaded()
     registry = getattr(Server, "_scribe_tool_registry", {})
     defs = getattr(Server, "_scribe_tool_defs", {})
     description_map: dict[str, dict[str, Any]] = {}
     for tool_name, func in registry.items():
         tool_def = defs.get(tool_name)
         schema = getattr(tool_def, "inputSchema", None) if tool_def else None
+        output_schema = getattr(tool_def, "outputSchema", None) if tool_def else None
         description = getattr(tool_def, "description", "") if tool_def else ""
         if not description:
             description = inspect.getdoc(func) or ""
+        annotations = getattr(tool_def, "annotations", None) if tool_def else None
+        execution = getattr(tool_def, "execution", None) if tool_def else None
+        meta = getattr(tool_def, "meta", None) if tool_def else None
+        tags = getattr(tool_def, "tags", None) if tool_def else None
         description_map[str(tool_name)] = {
             "name": str(tool_name),
+            "title": getattr(tool_def, "title", "") if tool_def else "",
             "description": description,
             "input_schema": schema if isinstance(schema, dict) else {},
+            "output_schema": output_schema if isinstance(output_schema, dict) else {},
+            "annotations": annotations.model_dump() if hasattr(annotations, "model_dump") else annotations,
+            "execution": execution.model_dump() if hasattr(execution, "model_dump") else execution,
+            "meta": meta if isinstance(meta, dict) else {},
+            "tags": list(tags) if isinstance(tags, (list, tuple, set)) else [],
         }
     return description_map
 

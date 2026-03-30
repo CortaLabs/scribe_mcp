@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from scribe_mcp import reminders
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import destructive_local_tool, read_only_local_tool, stateful_local_tool
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import ProjectResolutionError
 from scribe_mcp.utils.response import default_formatter
@@ -132,7 +133,7 @@ def _format_reset_readable(data: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Query Reminders", tags=("reminders", "read-only")))
 async def query_reminders(
     agent: str,
     project: Optional[str] = None,
@@ -204,7 +205,7 @@ async def query_reminders(
     return response
 
 
-@app.tool()
+@app.tool(**stateful_local_tool(title="Configure Reminders", tags=("reminders", "write")))
 async def configure_reminders(
     agent: str,
     project: Optional[str] = None,
@@ -304,7 +305,7 @@ async def configure_reminders(
     return response
 
 
-@app.tool()
+@app.tool(**destructive_local_tool(title="Reset Reminders", tags=("reminders", "admin", "destructive")))
 async def reset_reminders(
     agent: str,
     project: Optional[str] = None,

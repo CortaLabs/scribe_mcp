@@ -20,6 +20,7 @@ from scribe_mcp import server as server_module
 from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import additive_local_tool
 from scribe_mcp.utils.bulk_processor import BulkProcessor, ParallelBulkProcessor
 from scribe_mcp.utils.estimator import BulkProcessingCalculator
 from scribe_mcp.tools.agent_project_utils import (
@@ -1102,7 +1103,7 @@ async def _process_large_bulk_chunked(
     }
 
 
-@app.tool()
+@app.tool(**additive_local_tool(title="Append Log Entry", tags=("logs", "project", "write")))
 async def append_entry(
     agent: str = "Codex",
     message: str = "",

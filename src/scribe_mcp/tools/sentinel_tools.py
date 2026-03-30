@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import additive_local_tool
 from scribe_mcp.utils.sentinel_logs import append_case_event, append_sentinel_event
 
 
@@ -172,7 +173,7 @@ def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[st
     return event_type
 
 
-@app.tool()
+@app.tool(**additive_local_tool(title="Append Sentinel Event", tags=("sentinel", "logs", "write")))
 async def append_event(
     agent: str,
     message: Optional[str] = None,
@@ -293,7 +294,7 @@ async def append_event(
     return {"ok": True, "event_type": status or "info", "written_count": written}
 
 
-@app.tool()
+@app.tool(**additive_local_tool(title="Open Bug Case", tags=("bugs", "sentinel", "write")))
 async def open_bug(
     agent: str,
     title: str,
@@ -464,7 +465,7 @@ async def open_bug(
     return {"ok": True, "case_id": case_id}
 
 
-@app.tool()
+@app.tool(**additive_local_tool(title="Open Security Case", tags=("security", "sentinel", "write")))
 async def open_security(
     agent: str,
     title: str,
@@ -633,7 +634,7 @@ async def open_security(
     return {"ok": True, "case_id": case_id}
 
 
-@app.tool()
+@app.tool(**additive_local_tool(title="Link Fix Artifact", tags=("bugs", "security", "traceability", "write")))
 async def link_fix(
     agent: str,
     case_id: str,

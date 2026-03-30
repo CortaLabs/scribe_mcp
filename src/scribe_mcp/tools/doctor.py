@@ -9,6 +9,7 @@ from typing import Any, Dict
 from scribe_mcp.server import app
 from scribe_mcp.config.settings import settings
 from scribe_mcp.config.repo_config import RepoDiscovery
+from scribe_mcp.tool_contracts import read_only_local_tool
 
 
 def _get_vector_indexer() -> Any:
@@ -28,7 +29,7 @@ def _safe_bool(value: Any) -> bool:
     return bool(value)
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Scribe Doctor", tags=("diagnostics", "runtime", "read-only")))
 async def scribe_doctor(agent: str) -> Dict[str, Any]:
     """Return runtime diagnostics for the current MCP server instance."""
     repo_root = settings.project_root

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from scribe_mcp import server as server_module
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app, router_context_manager
+from scribe_mcp.tool_contracts import stateful_local_tool
 from scribe_mcp.utils.response import default_formatter
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ def _format_edit_readable(
 # ---------------------------------------------------------------------------
 
 
-@app.tool()
+@app.tool(**stateful_local_tool(title="Edit File", tags=("files", "code", "write")))
 async def edit_file(
     # REQUIRED
     agent: str,

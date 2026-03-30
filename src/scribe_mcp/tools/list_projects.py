@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.project_utils import load_active_project
 from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.context_safety import ContextManager
@@ -187,7 +188,7 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="List Projects", tags=("projects", "discovery", "read-only")))
 async def list_projects(
     agent: str = "Codex",
     limit: Optional[int] = 5,  # Changed default to 5 for context safety

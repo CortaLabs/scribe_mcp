@@ -18,6 +18,7 @@ import difflib
 from scribe_mcp import server as server_module
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.shared.execution_context import ExecutionContext
 from scribe_mcp.shared.logging_utils import compose_log_line, default_status_emoji, resolve_logging_context
 from scribe_mcp.utils.files import append_line
@@ -1724,7 +1725,7 @@ async def _log_project_read(context: ExecutionContext, message: str, meta: Dict[
     return  # Do nothing - tool events go to TOOL_LOG.jsonl, not PROGRESS_LOG
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Read File", tags=("files", "inspection", "read-only")))
 async def read_file(
     agent: str,
     path: str,
@@ -1752,6 +1753,7 @@ async def read_file(
     allow_outside_repo: bool = False,  # Allow reads outside repo_root (denylist still enforced)
     include_full_content: bool = False,  # Bypass token limit in mode='full' (for web dashboard/API use)
 ) -> Union[Dict[str, Any], str]:
+    """Read a repository file using scan, page, chunk, line-range, or search modes."""
     exec_context = server_module.get_execution_context()
     if exec_context is None:
         return {"ok": False, "error": "ExecutionContext missing"}

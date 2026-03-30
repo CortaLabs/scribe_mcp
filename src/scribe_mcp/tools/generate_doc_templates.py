@@ -14,6 +14,7 @@ from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.config.settings import settings
 from scribe_mcp.tools.project_utils import slugify_project_name
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import additive_local_tool
 from scribe_mcp.template_engine import Jinja2TemplateEngine, TemplateEngineError
 from scribe_mcp.templates import TEMPLATE_FILENAMES, load_templates, substitution_context
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
@@ -42,7 +43,7 @@ _GENERATE_DOC_TEMPLATES_HELPER = _GenerateDocTemplatesHelper()
 _PROJECT_REGISTRY = ProjectRegistry()
 
 
-@app.tool()
+@app.tool(**additive_local_tool(title="Generate Document Templates", tags=("docs", "templates", "write")))
 async def generate_doc_templates(
     agent: str = "Codex",
     project_name: str = "",
@@ -161,6 +162,9 @@ async def generate_doc_templates(
         template_directories_info = engine.describe_template_directories()
         available_templates = engine.list_templates()
     output_dir = _target_directory(project_name, base_dir, project_root=project_root_for_docs)
+    metadata_context = dict(render_context)
+    metadata_context["project_docs_dir"] = str(output_dir)
+    metadata_context["PROJECT_DOCS_DIR"] = str(output_dir)
     if not validate_only:
         await asyncio.to_thread(output_dir.mkdir, parents=True, exist_ok=True)
 
@@ -169,7 +173,7 @@ async def generate_doc_templates(
             continue
         template_name = f"documents/{TEMPLATE_FILENAMES[key]}"
         rendered = None
-        metadata_payload = _metadata_for(key, project_name, render_context)
+        metadata_payload = _metadata_for(key, project_name, metadata_context)
 
         if engine:
             validation_result = engine.validate_template(template_name)
@@ -281,25 +285,34 @@ async def generate_doc_templates(
     return _GENERATE_DOC_TEMPLATES_HELPER.apply_context_payload(response, logging_context)
 
 
+def _path_has_suffix(path: Path, suffix: Tuple[str, ...]) -> bool:
+    parts = path.parts
+    return len(parts) >= len(suffix) and tuple(parts[-len(suffix):]) == suffix
+
+
 def _target_directory(project_name: str, base_dir: str | None, *, project_root: Path) -> Path:
     slug = slugify_project_name(project_name)
+    canonical_suffix = tuple(settings.dev_plans_base.parts)
+    legacy_suffix = ("docs", "dev_plans")
     if base_dir:
-        base_path = Path(base_dir).resolve()
+        base_path = Path(base_dir)
+        if not base_path.is_absolute():
+            base_path = project_root / base_path
+        base_path = base_path.resolve()
 
-        # If caller already points at .../docs/dev_plans/<slug>, avoid re-nesting.
-        if (
-            base_path.name == slug
-            and base_path.parent.name == "dev_plans"
-            and base_path.parent.parent.name == "docs"
+        # If caller already points at a project docs directory, avoid re-nesting.
+        if base_path.name == slug and (
+            _path_has_suffix(base_path.parent, canonical_suffix)
+            or _path_has_suffix(base_path.parent, legacy_suffix)
         ):
             return base_path
 
-        # If caller points at .../docs/dev_plans, append slug.
-        if base_path.name == "dev_plans" and base_path.parent.name == "docs":
+        # If caller points at a supported docs base, append slug.
+        if _path_has_suffix(base_path, canonical_suffix) or _path_has_suffix(base_path, legacy_suffix):
             return base_path / slug
 
         # Treat base_dir as repo root by default.
-        return base_path / "docs" / "dev_plans" / slug
+        return (base_path / settings.dev_plans_base / slug).resolve()
 
     return (project_root / settings.dev_plans_base / slug).resolve()
 
@@ -426,6 +439,12 @@ def _metadata_for(doc_key: str, project_name: str, context: Dict[str, str]) -> D
 
 def _architecture_metadata(project_name: str, context: Dict[str, str]) -> Dict[str, Any]:
     project_root = context.get("project_root", "project")
+    project_docs_dir = context.get("project_docs_dir")
+    directory_structure = (
+        str(Path(project_docs_dir))
+        if project_docs_dir
+        else str(Path(project_root) / settings.dev_plans_base / slugify_project_name(project_name))
+    )
     return {
         "summary": f"Architecture guide for {project_name}.",
         "version": "Draft v0.1",
@@ -488,7 +507,7 @@ def _architecture_metadata(project_name: str, context: Dict[str, str]) -> Dict[s
                 "error_handling": "Rollback on verification failure",
             }
         ],
-        "directory_structure": f"{project_root}/docs/dev_plans/{slugify_project_name(project_name)}",
+        "directory_structure": directory_structure,
         "data_storage": {
             "datastores": ["Filesystem markdown", "SQLite mirror"],
             "indexing": "FTS for sections",
