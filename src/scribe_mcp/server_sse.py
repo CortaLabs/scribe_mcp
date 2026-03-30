@@ -26,6 +26,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import dataclasses
 import datetime
 import logging
@@ -399,6 +400,13 @@ async def run_sse(host: str = "0.0.0.0", port: int = 8200) -> None:
             )
         return Response()
 
+    @asynccontextmanager
+    async def lifespan(_: Starlette):
+        try:
+            yield
+        finally:
+            await _shutdown()
+
     # Build the Starlette application -----------------------------------
     starlette_app = Starlette(
         routes=[
@@ -408,7 +416,7 @@ async def run_sse(host: str = "0.0.0.0", port: int = 8200) -> None:
             Route("/api/v1/backend/{operation}", handle_backend_operation, methods=["POST"]),
             Route("/api/v1/batch", handle_batch, methods=["POST"]),
         ],
-        on_shutdown=[_shutdown],
+        lifespan=lifespan,
     )
 
     # Run uvicorn -------------------------------------------------------

@@ -192,10 +192,11 @@ class TestSSERouteStructure:
 
     @pytest.mark.asyncio
     async def test_run_sse_registers_shutdown_handler(self):
-        """run_sse should register _shutdown as an on_shutdown handler."""
+        """run_sse should register _shutdown via the app lifespan."""
         captured_app = None
 
         with patch("scribe_mcp.server_sse._startup", new_callable=AsyncMock), \
+             patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock) as mock_shutdown, \
              patch("scribe_mcp.server_sse.uvicorn") as mock_uvicorn:
 
             mock_server_instance = MagicMock()
@@ -216,9 +217,10 @@ class TestSSERouteStructure:
             from scribe_mcp.server_sse import run_sse
             await run_sse()
 
-        # Starlette stores on_shutdown handlers on the router
-        from scribe_mcp.server import _shutdown
-        assert _shutdown in captured_app.router.on_shutdown
+            async with captured_app.router.lifespan_context(captured_app):
+                pass
+
+            mock_shutdown.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
