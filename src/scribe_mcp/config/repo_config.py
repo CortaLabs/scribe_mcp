@@ -18,6 +18,22 @@ from scribe_mcp.config.settings import settings
 repo_config_logger = logging.getLogger(__name__)
 
 
+def _canonical_dev_plans_base() -> Path:
+    """Return the canonical relative base for per-project docs."""
+    return Path(settings.dev_plans_base)
+
+
+def _default_dev_plans_dir(repo_root: Path) -> Path:
+    """Prefer the canonical .scribe home, but preserve legacy trees if they already exist."""
+    canonical_path = (repo_root / _canonical_dev_plans_base()).resolve()
+    legacy_path = (repo_root / "docs" / "dev_plans").resolve()
+    if canonical_path.exists():
+        return canonical_path
+    if legacy_path.exists():
+        return legacy_path
+    return canonical_path
+
+
 
 @dataclass
 class RepoConfig:
@@ -28,7 +44,7 @@ class RepoConfig:
     repo_root: Path
 
     # Documentation structure
-    dev_plans_dir: Path = field(default_factory=lambda: Path("docs/dev_plans"))
+    dev_plans_dir: Path = field(default_factory=_canonical_dev_plans_base)
     progress_log_name: str = "PROGRESS_LOG.md"
 
     # Template and customization
@@ -67,7 +83,11 @@ class RepoConfig:
     def from_dict(cls, data: Dict[str, Any], repo_root: Path) -> "RepoConfig":
         """Create RepoConfig from dictionary data."""
         # Resolve path fields relative to repo root
-        dev_plans_dir = repo_root / Path(data.get("dev_plans_dir", "docs/dev_plans"))
+        dev_plans_dir_value = data.get("dev_plans_dir")
+        if dev_plans_dir_value:
+            dev_plans_dir = repo_root / Path(dev_plans_dir_value)
+        else:
+            dev_plans_dir = _default_dev_plans_dir(repo_root)
         custom_templates_dir = None
         if data.get("custom_templates_dir"):
             custom_templates_dir = repo_root / Path(data["custom_templates_dir"])
@@ -116,7 +136,7 @@ class RepoConfig:
         return cls(
             repo_slug=repo_root.name,
             repo_root=repo_root,
-            dev_plans_dir=repo_root / "docs/dev_plans",
+            dev_plans_dir=_default_dev_plans_dir(repo_root),
             vector_index_docs=False,
             vector_index_logs=False,
             vector_search_doc_k=5,
@@ -241,7 +261,7 @@ class RepoDiscovery:
         1. .scribe/config/scribe.yaml
         2. .scribe/scribe.yaml (legacy)
         3. .scribe/scribe.yml (legacy)
-        4. docs/dev_plans/scribe.yaml
+        4. docs/dev_plans/scribe.yaml (legacy)
         5. .scribe/config.json
         6. Create default config
 

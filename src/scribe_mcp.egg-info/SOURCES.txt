@@ -40,6 +40,7 @@ src/scribe_mcp/config/log_config.json
 src/scribe_mcp/config/log_config.py
 src/scribe_mcp/config/logging.py
 src/scribe_mcp/config/mcp_config.json
+src/scribe_mcp/config/mode_detection.py
 src/scribe_mcp/config/paths.py
 src/scribe_mcp/config/reminder_config.json
 src/scribe_mcp/config/reminder_rules.json
@@ -47,6 +48,9 @@ src/scribe_mcp/config/repo_config.py
 src/scribe_mcp/config/scribe_config_template.yaml
 src/scribe_mcp/config/settings.py
 src/scribe_mcp/config/vector_config.py
+src/scribe_mcp/council_templates/__init__.py
+src/scribe_mcp/council_templates/__pycache__/__init__.cpython-311.pyc
+src/scribe_mcp/council_templates/skills/meta-architect/SKILL.md.j2
 src/scribe_mcp/db/__init__.py
 src/scribe_mcp/db/init.sql
 src/scribe_mcp/db/postgres_migrations/001_jsonb_indexes.sql
@@ -130,6 +134,7 @@ src/scribe_mcp/storage/__init__.py
 src/scribe_mcp/storage/base.py
 src/scribe_mcp/storage/models.py
 src/scribe_mcp/storage/pool.py
+src/scribe_mcp/storage/remote.py
 src/scribe_mcp/storage/postgres/__init__.py
 src/scribe_mcp/storage/postgres/documents.py
 src/scribe_mcp/storage/postgres/internals.py
@@ -327,6 +332,7 @@ tests/test_manage_docs_validate_crosslinks.py
 tests/test_mcp_tools_enhancements.py
 tests/test_migrate_sqlite_to_postgres_script.py
 tests/test_migration_priority_columns.py
+tests/test_mode_detection.py
 tests/test_multi_repo_file_ops.py
 tests/test_object_store.py
 tests/test_object_store_hybrid.py
@@ -361,6 +367,7 @@ tests/test_reminder_history_schema.py
 tests/test_reminder_storage.py
 tests/test_reminder_time_variables.py
 tests/test_reminder_tools.py
+tests/test_remote_backend.py
 tests/test_response_formatter_helpers.py
 tests/test_response_formatter_readable.py
 tests/test_rotate_log_config.py
@@ -369,6 +376,7 @@ tests/test_sandbox_bypass.py
 tests/test_schema_fix.py
 tests/test_search_pagination.py
 tests/test_search_tool.py
+tests/test_server_api.py
 tests/test_session_identity_integration.py
 tests/test_session_integration.py
 tests/test_session_isolation.py

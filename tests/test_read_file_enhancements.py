@@ -93,7 +93,7 @@ async def test_markdown_headings(exec_context_token):
 
     result = await read_file(
         agent="test_agent",
-        path="CLAUDE.md",
+        path=".council/README.md",
         mode="scan_only",
         format="structured"
     )

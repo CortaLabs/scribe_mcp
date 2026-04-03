@@ -10,3 +10,6 @@ scribe-migrate-postgres = scribe_mcp.scripts.migrate_sqlite_to_postgres:main
 scribe-server = scribe_mcp.__main__:main
 scribe-server-sse = scribe_mcp.server_sse:main
 scribe-soak-postgres = scribe_mcp.scripts.postgres_soak_test:main
+
+[council.templates]
+scribe-mcp = scribe_mcp.council_templates:get_council_templates

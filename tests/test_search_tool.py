@@ -12,6 +12,7 @@ from scribe_mcp.tools.search import (
     Match,
     FileResult,
     TraversalStats,
+    _iterate_files,
     _is_binary_content,
     _is_binary_extension,
     _search_file,
@@ -238,6 +239,44 @@ class TestTraversalStats:
             traversal_stats=stats,
         )
         assert "files_skipped" not in result
+
+
+class TestIterateFiles:
+    def test_hidden_directory_is_searchable(self, tmp_path):
+        hidden_dir = tmp_path / ".claude" / "agents"
+        hidden_dir.mkdir(parents=True)
+        target = hidden_dir / "scribe-research-analyst.md"
+        target.write_text("disallowedTools:\n  - Write\n")
+
+        files = list(
+            _iterate_files(
+                root=tmp_path,
+                glob_pattern="**/*.md",
+                file_type=None,
+                skip_binary=True,
+                max_file_size_bytes=1024 * 1024,
+                stats=TraversalStats(),
+            )
+        )
+
+        assert target in files
+
+    def test_hidden_file_is_searchable(self, tmp_path):
+        hidden_file = tmp_path / ".custom-config.md"
+        hidden_file.write_text("set_project(agent='x')\n")
+
+        files = list(
+            _iterate_files(
+                root=tmp_path,
+                glob_pattern="*.md",
+                file_type=None,
+                skip_binary=True,
+                max_file_size_bytes=1024 * 1024,
+                stats=TraversalStats(),
+            )
+        )
+
+        assert hidden_file in files
 
 
 # ---------------------------------------------------------------------------

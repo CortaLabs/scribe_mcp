@@ -17,7 +17,7 @@
 ├── config/
 │   ├── {{ project_slug }}_config.json     # Project configuration
 │   └── log_config.json                # Multi-log routing configuration
-├── docs/dev_plans/{{ project_slug }}/
+├── .scribe/docs/dev_plans/{{ project_slug }}/
 │   ├── ARCHITECTURE_GUIDE.md          # System design and technical blueprint
 │   ├── PHASE_PLAN.md                  # Development roadmap with phases and tasks
 │   ├── CHECKLIST.md                   # Verification ledger with acceptance criteria
@@ -33,6 +33,7 @@
 ```
 
 > This directory structure follows Python best practices with clear separation of concerns. Update this structure as the project evolves and grows.
+> Legacy repos may continue using `docs/dev_plans/{{ project_slug }}/` when that tree is intentionally preserved for backward compatibility.
 
 {% if project_description %}
 **Project Description:** {{ project_description }}

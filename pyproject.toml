@@ -34,6 +34,9 @@ dev = [
 ]
 s3 = ["boto3>=1.28"]
 
+[project.entry-points."council.templates"]
+scribe-mcp = "scribe_mcp.council_templates:get_council_templates"
+
 [project.scripts]
 scribe = "scribe_mcp.cli.main:main"
 scribe-mcp = "scribe_mcp.__main__:main"
@@ -65,4 +68,5 @@ include = ["scribe_mcp*"]
   "plugins/*.json",
   "templates/*",
   "templates/**/*",
+  "council_templates/**/*",
 ]

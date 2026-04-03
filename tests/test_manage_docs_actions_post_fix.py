@@ -113,6 +113,57 @@ async def test_create_research_doc_via_create_with_doc_name():
         raise
 
 
+async def test_create_research_doc_allows_followup_replace_section_by_doc_name():
+    """Regression: create(research) must register the provided doc_name for edits."""
+    doc_name = f"TEST_RESEARCH_REGISTRATION_{uuid.uuid4().hex[:8].upper()}"
+
+    create_result = await manage_docs(
+        action="create",
+        doc_name=doc_name,
+        metadata={
+            "doc_type": "research",
+            "research_goal": "Verify registration key supports immediate replace_section",
+        },
+        dry_run=False,
+    )
+    assert create_result.get("ok") is True, create_result
+
+    edit_result = await manage_docs(
+        action="replace_section",
+        doc_name=doc_name,
+        section="findings",
+        content="## Findings\n\n- registration uses user-facing doc_name\n",
+        dry_run=False,
+    )
+    assert edit_result.get("ok") is True, edit_result
+
+
+async def test_create_bug_report_allows_followup_list_sections_by_slug():
+    """Regression: create(bug) must register slug so follow-up lookups resolve."""
+    slug = f"test_bug_slug_{uuid.uuid4().hex[:8]}"
+
+    create_result = await manage_docs(
+        action="create",
+        metadata={
+            "doc_type": "bug",
+            "category": "logic",
+            "slug": slug,
+            "severity": "medium",
+            "title": "Bug registration slug test",
+            "symptoms": "validate list_sections lookup",
+        },
+        dry_run=False,
+    )
+    assert create_result.get("ok") is True, create_result
+    assert create_result.get("doc_name") == slug
+
+    sections_result = await manage_docs(
+        action="list_sections",
+        doc_name=slug,
+    )
+    assert sections_result.get("ok") is True, sections_result
+
+
 async def test_batch_without_doc():
     """Test batch action without doc parameter (doc should be optional)."""
     print("\n3. Testing batch action without 'doc' parameter...")
