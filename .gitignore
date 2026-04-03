@@ -73,41 +73,67 @@ fullcode.txt
 TOOL_LOG.*.*.md
 
 # -----------------------------------------------------
-# Documentation (Private / Internal)
+# Documentation
 # -----------------------------------------------------
-docs/dev_plans/
 docs/archived_projects/
 docs/archived_global_logs/
+docs/dev_plans/
 docs/bugs/
 
 # -----------------------------------------------------
-# Claude / Codex configs (INCLUDE dirs, exclude skills)
+# Scribe runtime / operator state (local-only)
 # -----------------------------------------------------
-# Keep these directories in repo…
+.scribe/logs/
+.scribe/sentinel/
+.scribe/cli/default.json
+.scribe/docs/
+tool_calls.jsonl
+
+
+# -----------------------------------------------------
+# Council boundary (private)
+# -----------------------------------------------------
+.council/
+src/scribe_mcp/council_templates/
+
+# -----------------------------------------------------
+# Generated orchestration / mirror artifacts
+# -----------------------------------------------------
+# Public git is source-safe: do not treat generated orchestration outputs as
+# committed source-of-truth. Regenerate them from `.council/**` or the packaged
+# export lane in `src/scribe_mcp/council_templates/**`.
+AGENTS.md
+CLAUDE.md
+.claude/CLAUDE.md
+src/scribe_mcp/config/CLAUDE.md
+.claude/agents/
+.codex/agents/
+.claude/rules/
+docs/claude_code_subagents/
+docs/agent_report_cards/
+.claude/logs/
+
+# Keep repo-managed support surfaces visible while ignoring generated skill packs
+# by default. Approved public-safe exceptions stay explicit here.
 !.claude/
 !.codex/
+.claude/hooks/*
+!.claude/hooks/protect-managed-docs.sh
+.claude/skills/**
+.codex/skills/**
+!.claude/skills/
+!.codex/skills/
+!.claude/settings.json
 
-# also ignore council generated rules
-.claude/rules/
-
-# …but ignore their skills folders (usually auto/generated/noisy)
-.claude/skills/
-.codex/skills/
-
-# …except: keep Scribe MCP usage skill so it’s visible/public
-!.claude/skills/scribe_mcp_usage
-!.codex/skills/scribe_mcp_usage
-
-# If the usage skill might have an extension or be a folder, these help:
-!.claude/skills/scribe_mcp_usage.*
-!.codex/skills/scribe_mcp_usage.*
-!.claude/skills/scribe_mcp_usage/**
-!.codex/skills/scribe_mcp_usage/**
+# Public-safe generated skill-pack exception
+!.claude/skills/scribe-mcp-usage/
+!.codex/skills/scribe-mcp-usage/
+!.claude/skills/scribe-mcp-usage/**
+!.codex/skills/scribe-mcp-usage/**
 
 # -----------------------------------------------------
 # Council / MCP integration (local-only)
 # -----------------------------------------------------
-.council/
 .mcp.json
 
 # -----------------------------------------------------

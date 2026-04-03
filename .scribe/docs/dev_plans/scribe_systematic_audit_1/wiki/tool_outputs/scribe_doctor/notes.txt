@@ -1,5 +1,0 @@
-scribe_doctor Tool Notes:
-- Does NOT support format parameter (returns error with format="readable")
-- Returns structured JSON only (no readable or compact modes)
-- 784 characters
-- Provides diagnostics: repo paths, config, plugins, vector dependencies
