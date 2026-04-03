@@ -11,7 +11,13 @@ from scribe_mcp.config.vector_config import load_vector_config
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.utils.time import format_utc
 
-from .utils import chunk_text_for_vector, generate_doc_entry_id, hash_text, parse_int
+from .utils import (
+    chunk_text_for_vector,
+    classify_scribe_source_document,
+    generate_doc_entry_id,
+    hash_text,
+    parse_int,
+)
 
 _LOG_DOC_KEYS = {"progress_log", "doc_log", "security_log", "bug_log"}
 _LOG_DOC_FILENAMES = {
@@ -171,9 +177,17 @@ def get_index_updater_for_path(
         if research_dir.exists() and file_path.is_relative_to(research_dir):
             return lambda: update_research_index(research_dir, agent_id)
 
-        bugs_dir = project_root / "docs" / "bugs"
-        if bugs_dir.exists() and file_path.is_relative_to(bugs_dir):
-            return lambda: update_bug_index(bugs_dir, agent_id)
+        classification = classify_scribe_source_document(
+            file_path,
+            project_root=project_root,
+            docs_dir=docs_dir,
+        )
+        if classification and classification.source_family == "case_report":
+            case_root = project_root / "docs" / (
+                "security" if classification.doc_type == "security_report" else "bugs"
+            )
+            if case_root.exists():
+                return lambda: update_bug_index(case_root, agent_id)
 
         if file_path.parent == docs_dir and file_path.name.startswith("REVIEW_REPORT_"):
             return lambda: update_review_index(docs_dir, agent_id)

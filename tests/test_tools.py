@@ -37,13 +37,21 @@ def run(coro):
 def isolated_state(tmp_path, monkeypatch):
     """Provide an isolated StateManager and assign it to the server module."""
 
-    manager = StateManager(path=tmp_path / "state.json")
-    monkeypatch.setattr(server, "state_manager", manager, raising=False)
-    if getattr(server, "storage_backend", None):
-        run(server.storage_backend.close())
     storage = SQLiteStorage(tmp_path / "scribe.db")
     run(storage.setup())
+    manager = StateManager(path=tmp_path / "state.json", storage_backend=storage)
+
+    existing_backend = getattr(server, "storage_backend", None)
+    if existing_backend and existing_backend is not storage and hasattr(existing_backend, "close"):
+        try:
+            run(existing_backend.close())
+        except RuntimeError:
+            pass
+        except Exception:
+            pass
+
     monkeypatch.setattr(server, "storage_backend", storage, raising=False)
+    monkeypatch.setattr(server, "state_manager", manager, raising=False)
     append_entry._RATE_TRACKER.clear()
     append_entry._RATE_LOCKS.clear()
 
@@ -62,7 +70,12 @@ def isolated_state(tmp_path, monkeypatch):
                 except Exception:
                     pass  # Ignore cleanup errors
 
-    return manager
+    yield manager
+
+    try:
+        run(storage.close())
+    except Exception:
+        pass
 
 
 @pytest.fixture
@@ -279,9 +292,9 @@ def test_rotate_log_creates_archive(isolated_state, project_root):
 
 def test_generate_doc_templates_renders_files(tmp_path, isolated_state):
     project_name = "UnitTestDocs"
-    target_dir = tmp_path / "docs" / "dev_plans" / slugify_project_name(project_name)
-    if target_dir.exists():
-        shutil.rmtree(target_dir)
+    docs_root = tmp_path / "render-root" / "docs" / "dev_plans"
+    target_dir = docs_root / slugify_project_name(project_name)
+    settings_default_dir = settings.project_root / ".scribe" / "docs" / "dev_plans" / slugify_project_name(project_name)
 
     try:
         result = run(
@@ -289,7 +302,7 @@ def test_generate_doc_templates_renders_files(tmp_path, isolated_state):
                 agent="test_agent",
                 project_name=project_name,
                 author="QA",
-                base_dir=str(tmp_path),
+                base_dir=str(docs_root),
             )
         )
         assert result["ok"]
@@ -303,6 +316,9 @@ def test_generate_doc_templates_renders_files(tmp_path, isolated_state):
             assert path.exists()
             content = path.read_text(encoding="utf-8")
             assert "{{" not in content
+        architecture = (target_dir / "ARCHITECTURE_GUIDE.md").read_text(encoding="utf-8")
+        assert str(target_dir) in architecture
+        assert str(settings_default_dir) not in architecture
     finally:
         if target_dir.exists():
             shutil.rmtree(target_dir)
@@ -357,7 +373,7 @@ def test_log_rotation_triggers_when_max_bytes_reached(monkeypatch, isolated_stat
 class TestEnhancedRotationEngine:
     """Integration tests for enhanced rotation engine with Phase 0 utilities."""
 
-    def test_enhanced_rotation_with_integrity(isolated_state, project_root):
+    def test_enhanced_rotation_with_integrity(self, isolated_state, project_root):
         """Test enhanced rotation with SHA-256 integrity verification."""
         # Set up project
         root = project_root
@@ -457,7 +473,7 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
     assert precise_result["entry_count_method"] == "full_count"
     assert precise_result["entry_count"] >= 1
 
-    def test_rotation_with_custom_metadata(isolated_state, project_root):
+def test_rotation_with_custom_metadata(isolated_state, project_root):
         """Test rotation with custom metadata."""
         # Set up project
         root = project_root
@@ -482,15 +498,19 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
         custom_metadata = {"environment": "test", "version": "1.0", "test_run": True}
         rotation_result = run(
             rotate_log.rotate_log(
+                agent="test_agent",
                 suffix="metadata-test",
                 custom_metadata=json.dumps(custom_metadata),
-                confirm=True
+                confirm=True,
+                format="structured",
             )
         )
         assert rotation_result["ok"]
         assert rotation_result["rotation_completed"] is True
+        assert rotation_result.get("emergency_fallback") is not True
+        assert rotation_result["archive_path"].endswith(".metadata-test.md")
 
-    def test_rotation_with_invalid_metadata(isolated_state, project_root):
+def test_rotation_with_invalid_metadata(isolated_state, project_root):
         """Test rotation with invalid JSON metadata."""
         # Set up project
         root = project_root
@@ -505,13 +525,15 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
         # Test rotation with invalid JSON
         rotation_result = run(
             rotate_log.rotate_log(
-                custom_metadata="{'invalid': json structure"
+                agent="test_agent",
+                custom_metadata="{'invalid': json structure",
+                format="structured",
             )
         )
         assert rotation_result["ok"] is False
-        assert "Invalid JSON" in rotation_result["error"]
+        assert "custom_metadata" in rotation_result["error"]
 
-    def test_rotation_hash_chain_tracking(isolated_state, project_root):
+def test_rotation_hash_chain_tracking(isolated_state, project_root):
         """Test hash chain tracking across multiple rotations."""
         # Set up project
         root = project_root
@@ -553,7 +575,7 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
         assert sequence_2 == sequence_1 + 1
         assert hash_2 != hash_1
 
-    def test_rotation_integrity_verification(isolated_state, project_root):
+def test_rotation_integrity_verification(isolated_state, project_root):
         """Test rotation integrity verification."""
         # Set up project
         root = project_root
@@ -587,7 +609,7 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
         assert verification_result["integrity_valid"] is True
         assert verification_result["project"] == "integrity-test"
 
-    def test_rotation_history_tracking(isolated_state, project_root):
+def test_rotation_history_tracking(isolated_state, project_root):
         """Test rotation history tracking."""
         # Set up project with unique name to avoid audit file conflicts
         import uuid
@@ -616,7 +638,7 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
             assert rotation_result["ok"]
 
         # Test rotation history
-        history_result = run(rotate_log.get_rotation_history(agent="test_agent", limit=5))
+        history_result = run(rotate_log.get_rotation_history(limit=5, project=project_name))
         if not history_result["ok"]:
             print(f"❌ History tracking failed: {history_result.get('error', 'Unknown error')}")
         assert history_result["ok"]
@@ -624,7 +646,7 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
         assert history_result["rotation_count"] == 3
         assert len(history_result["rotations"]) == 3
 
-    def test_rotation_error_handling(isolated_state, project_root, monkeypatch):
+def test_rotation_error_handling(isolated_state, project_root, monkeypatch):
         """Test rotation error handling."""
         # Test with no project configured - mock all project discovery methods
         from scribe_mcp.state.manager import StateManager
@@ -642,7 +664,10 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
 
         # Create a completely fresh state manager with no project data
         fresh_state_path = project_root / "fresh_state.json"
-        fresh_state_manager = StateManager(path=fresh_state_path)
+        fresh_state_manager = StateManager(
+            path=fresh_state_path,
+            storage_backend=server_module.storage_backend,
+        )
 
         # Temporarily replace the server's state manager
         original_state_manager = server_module.state_manager
@@ -673,10 +698,12 @@ def test_rotate_log_dry_run_precision_controls(isolated_state, project_root):
             log_path.unlink()
 
         error_result = run(rotate_log.rotate_log(agent="test_agent", format="structured"))
-        assert error_result["ok"] is False
-        assert "not found" in error_result["error"]
+        assert error_result["ok"] is True
+        assert error_result["rotation_executed"] is False
+        assert error_result["results"][0]["status"] == "dry_run_complete"
+        assert error_result["results"][0]["entry_count"] == 0
 
-    def test_rotation_performance_monitoring(isolated_state, project_root):
+def test_rotation_performance_monitoring(isolated_state, project_root):
         """Test rotation performance monitoring."""
         # Set up project
         root = project_root

@@ -179,7 +179,7 @@ def _heal_rotate_log_parameters(
         healed_params["suffix"] = None
 
     # Heal custom_metadata parameter using Phase 1 corrector
-    healed_metadata = BulletproofParameterCorrector.correct_metadata_parameter(custom_metadata)
+    healed_metadata = _normalize_custom_metadata_parameter(custom_metadata)
     if healed_metadata != custom_metadata:
         healing_applied = True
         healing_messages.append(f"Auto-corrected custom_metadata parameter to valid dict")
@@ -351,6 +351,18 @@ def _heal_rotate_log_parameters(
     return healed_params, healing_applied, healing_messages
 
 
+def _normalize_custom_metadata_parameter(custom_metadata: Any) -> Optional[str]:
+    """Preserve rotate_log's JSON-string contract for custom metadata."""
+    if custom_metadata is None:
+        return None
+    if isinstance(custom_metadata, str):
+        normalized = custom_metadata.strip()
+        return normalized or None
+
+    corrected = BulletproofParameterCorrector.correct_metadata_parameter(custom_metadata)
+    return json.dumps(corrected, sort_keys=True)
+
+
 def _add_healing_info_to_rotate_response(
     response: Dict[str, Any],
     healing_applied: bool,
@@ -429,9 +441,9 @@ def _validate_rotation_parameters(
                 healed_params["suffix"] = healed_suffix
                 healing_applied = True
 
-        # Heal custom_metadata parameter
-        if custom_metadata:
-            healed_metadata = _ROTATE_HELPER.parameter_corrector.correct_metadata_parameter(custom_metadata)
+        # Heal custom_metadata parameter while preserving JSON-string contract
+        if custom_metadata is not None:
+            healed_metadata = _normalize_custom_metadata_parameter(custom_metadata)
             if healed_metadata != custom_metadata:
                 healed_params["custom_metadata"] = healed_metadata
                 healing_applied = True
@@ -533,6 +545,9 @@ def _validate_rotation_parameters(
         return final_config, {"healing_applied": healing_applied, "healed_params": healed_params}
 
     except Exception as e:
+        if isinstance(e, ValueError) and "custom_metadata" in str(e):
+            raise
+
         # Apply Phase 2 ExceptionHealer for parameter validation errors
         healed_exception = _EXCEPTION_HEALER.heal_parameter_validation_error(
             e, {
@@ -1423,19 +1438,30 @@ async def rotate_log(
     try:
         # === PHASE 3 ENHANCED PARAMETER VALIDATION AND PREPARATION ===
         # Replace monolithic parameter handling with bulletproof validation and healing
-        final_config, validation_info = _validate_rotation_parameters(
-            suffix=suffix,
-            custom_metadata=custom_metadata,
-            confirm=confirm,
-            dry_run=dry_run,
-            dry_run_mode=dry_run_mode,
-            log_type=log_type,
-            log_types=log_types,
-            rotate_all=rotate_all,
-            auto_threshold=auto_threshold,
-            threshold_entries=threshold_entries,
-            config=config
-        )
+        try:
+            final_config, validation_info = _validate_rotation_parameters(
+                suffix=suffix,
+                custom_metadata=custom_metadata,
+                confirm=confirm,
+                dry_run=dry_run,
+                dry_run_mode=dry_run_mode,
+                log_type=log_type,
+                log_types=log_types,
+                rotate_all=rotate_all,
+                auto_threshold=auto_threshold,
+                threshold_entries=threshold_entries,
+                config=config
+            )
+        except ValueError as exc:
+            if "custom_metadata" in str(exc):
+                return {
+                    "ok": False,
+                    "error": str(exc),
+                    "suggestion": "Provide custom_metadata as a valid JSON object string.",
+                    "rotation_executed": False,
+                    "dry_run": True,
+                }
+            raise
 
         # Preserve explicit project spelling; context resolver handles alias normalization.
         normalized_project = project.strip() if isinstance(project, str) else project
