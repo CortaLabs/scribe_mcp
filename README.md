@@ -203,52 +203,52 @@ Scribe transforms how AI agents and developers maintain project documentation. I
 
 ### 1️⃣ Install Dependencies
 ```bash
-# Clone and navigate to Scribe
-git clone <your-repo-url>
-cd scribe_mcp
-
-# Set up Python environment
+# From a checkout or unpacked release tarball
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install Scribe (editable + dev extras)
-python -m pip install -e ".[dev]"
+# Refresh packaging tools
+python -m pip install --upgrade pip
 
-# Optional: verify wheel/non-editable install path too
+# SQLite / default stdio profile (package metadata only)
 python -m pip install .
+
+# PostgreSQL profile (adds asyncpg only when requested)
+python -m pip install ".[postgres]"
+
+# Contributor profile (editable install + test deps)
+python -m pip install -e ".[dev]"
+```
+
+Trusted SSE uses the same package install as SQLite/Postgres; no extra wheel is required. After install, launch the alternate entry point:
+
+```bash
+scribe-server-sse --help
 ```
 
 ### 2️⃣ Add Scribe MCP Server to Claude Code, Codex
 - Codex CLI registration example:
   ```bash
   codex mcp add scribe \
-    --env SCRIBE_ROOT=/home/path/to/scribe_mcp \
-    --env REPO_ROOT=/home/path/to/your_project \
     --env SCRIBE_STORAGE_BACKEND=sqlite \
-    -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
+    -- scribe-server
   ```
 - Claude Code registration example:
   ```bash
   claude mcp add scribe \
-    --env SCRIBE_ROOT=/home/path/to/scribe_mcp \
-    --env REPO_ROOT=/home/path/to/your_project \
     --env SCRIBE_STORAGE_BACKEND=sqlite \
-    -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
+    -- scribe-server
   ```
 - Global Claude MCP example:
   ```bash
   claude mcp add scribe --scope user \
-    --env SCRIBE_ROOT=/home/path/to/scribe_mcp \
-    --env REPO_ROOT=/home/path/to/your_project \
     --env SCRIBE_STORAGE_BACKEND=sqlite \
-    -- bash -lc 'cd /home/path/to/scribe_mcp && exec scribe-server'
+    -- scribe-server
   ```
-
-Compatibility note: legacy launch `python -m server` still works during migration.
 
 Once connected from Claude / Codex MCP:
 
-- Use **`set_project`** to register/select a project and bootstrap dev_plan docs (pass `root=/abs/path/to/repo` to work in any repo).
+- Use **`set_project`** to register/select a project and bootstrap dev_plan docs (pass `root=/abs/path/to/repo` for the repo you want to work in).
 - Use **`append_entry`** for all logging (single/bulk).
 - Use **`manage_docs`** for architecture/phase/checklist updates.  **2.1.1** introduces diff edits.
 - Use **`read_file`** for safe, auditable file reads (scan/chunk/page/search).
@@ -267,10 +267,10 @@ For shell workflows or CI checks, use the unified CLI runtime:
 
 ```bash
 # List all registered MCP tools
-python -m scribe_mcp.cli.main tools --json
+scribe tools --json
 
 # Call any tool directly (example: append_entry)
-python -m scribe_mcp.cli.main call append_entry \
+scribe call append_entry \
   --agent Codex \
   --arg message="Scribe CLI call works" \
   --arg status=success
@@ -285,26 +285,26 @@ This path uses the same runtime dispatcher as MCP (`invoke_tool`), so mode/sessi
 **Project Management:**
 ```bash
 # Log project milestones
-python -m scribe_mcp.scripts.scribe "Completed authentication module" --status success --meta component=auth,tests=47
+scribe "Completed authentication module" --status success --meta component=auth,tests=47
 
 # Track bugs and issues
-python -m scribe_mcp.scripts.scribe "Fixed JWT token expiry bug" --status bug --meta severity=high,component=security
+scribe "Fixed JWT token expiry bug" --status bug --meta severity=high,component=security
 ```
 
 
 **Research Workflows:**
 ```bash
 # Document research findings
-python -m scribe_mcp.scripts.scribe "Discovered performance bottleneck in database queries" --status info --meta research=true,impact=high
+scribe "Discovered performance bottleneck in database queries" --status info --meta research=true,impact=high
 ```
 
 **Team Collaboration:**
 ```bash
 # List all projects
-python -m scribe_mcp.scripts.scribe --list-projects
+scribe --list-projects
 
 # Switch between projects
-python -m scribe_mcp.scripts.scribe "Starting new feature work" --project frontend --status plan
+scribe "Starting new feature work" --project frontend --status plan
 ```
 
 ---
@@ -386,20 +386,26 @@ For full documentation including configuration, PostgreSQL setup, troubleshootin
 - **pip** - Standard Python package manager
 - **Optional:** PostgreSQL for team deployments (SQLite works out of the box)
 
-### Storage Backends
+### Install Profiles
 
-**🗄️ SQLite (Default - Zero Config)**
-- Perfect for solo developers and small teams
-- No setup required - just run and go
-- Automatic database creation and management
+**🗄️ SQLite / default stdio**
+- Zero-config local profile.
+- Installs only the base package metadata:
+  ```bash
+  python -m pip install .
+  ```
+- Register MCP clients against the packaged `scribe-server` entry point.
 
-**🐘 PostgreSQL (Enterprise)**
-- Ideal for large teams and production deployments
+**🐘 PostgreSQL**
+- Adds the optional `asyncpg` dependency only when requested:
+  ```bash
+  python -m pip install ".[postgres]"
+  ```
 - One-command interactive bootstrap (no env exports required):
   ```bash
   scribe bootstrap
   ```
-- The interactive flow now explains setup-only vs runtime values:
+- The interactive flow explains setup-only vs runtime values:
   - `Scribe admin database`: usually `postgres`, used for admin/setup connections.
   - `Scribe app database`: where Scribe stores runtime data.
 - Bootstrap writes `.env` keys automatically (`SCRIBE_STORAGE_BACKEND`, `SCRIBE_DB_URL`, schema/role fields).
@@ -407,6 +413,15 @@ For full documentation including configuration, PostgreSQL setup, troubleshootin
   ```bash
   scribe bootstrap --no-interactive --superuser-password '<superuser-password>' --app-db scribe --schema scribe
   ```
+
+**🔐 Trusted SSE**
+- Uses the same wheel/install metadata as SQLite or Postgres; choose the matching package install above.
+- Launch the SSE entry point only for trusted/local or explicitly internal clients:
+  ```bash
+  export SCRIBE_TRANSPORT_AUTH_TOKEN="<shared-secret>"
+  scribe-server-sse
+  ```
+- Non-loopback/network-exposed SSE requires an auth token and remains an explicit operator choice.
 
 ### Postgres Env Vars (Runtime + MCP)
 
@@ -432,29 +447,19 @@ These can be generated automatically by `scribe bootstrap` into your `.env`, the
 ### MCP Integration
 
 In all examples below:
-- **`SCRIBE_ROOT`** = where Scribe is installed (the directory you run `scribe-server` from).
-- **`REPO_ROOT`** = the project repository you want Scribe to work in (the repo that gets `.scribe/` docs/plans once selected).
-- Select the repo in-session with `set_project(..., root=/abs/path/to/repo)`.
+- Start the server via the installed `scribe-server` entry point.
+- Select the target repo in-session with `set_project(..., root=/abs/path/to/repo)`.
 
 **For Claude Desktop (JSON config):**
 ```jsonc
 {
   "mcpServers": {
     "scribe": {
-      // Run from SCRIBE_ROOT (where Scribe is installed)
-      "command": "bash",
-      "args": [
-        "-lc",
-        "cd /absolute/path/to/SCRIBE_ROOT && exec scribe-server"
-      ],
+      "command": "scribe-server",
       "env": {
-        "SCRIBE_ROOT": "/absolute/path/to/SCRIBE_ROOT",
-        "REPO_ROOT": "/absolute/path/to/YOUR_PROJECT_ROOT",
         // SQLite (default): "sqlite"
         // Postgres: set backend + db url (+ optional schema)
-        "SCRIBE_STORAGE_BACKEND": "postgres",
-        "SCRIBE_DB_URL": "postgresql://scribe_app:<password>@127.0.0.1:5432/scribe",
-        "SCRIBE_POSTGRES_SCHEMA": "scribe"
+        "SCRIBE_STORAGE_BACKEND": "sqlite"
       }
     }
   }
@@ -465,25 +470,21 @@ In all examples below:
 ```bash
 # SQLite mode (default)
 codex mcp add scribe \
-  --env SCRIBE_ROOT=/absolute/path/to/SCRIBE_ROOT \
-  --env REPO_ROOT=/absolute/path/to/YOUR_PROJECT_ROOT \
   --env SCRIBE_STORAGE_BACKEND=sqlite \
-  -- bash -lc 'cd /absolute/path/to/SCRIBE_ROOT && exec scribe-server'
+  -- scribe-server
 
 # Postgres mode
 codex mcp add scribe \
-  --env SCRIBE_ROOT=/absolute/path/to/SCRIBE_ROOT \
-  --env REPO_ROOT=/absolute/path/to/YOUR_PROJECT_ROOT \
   --env SCRIBE_STORAGE_BACKEND=postgres \
   --env SCRIBE_DB_URL='postgresql://scribe_app:<password>@127.0.0.1:5432/scribe' \
   --env SCRIBE_POSTGRES_SCHEMA=scribe \
-  -- bash -lc 'cd /absolute/path/to/SCRIBE_ROOT && exec scribe-server'
+  -- scribe-server
 ```
 
 Notes:
-- `REPO_ROOT` is a launch-time convenience value for your MCP config.
+- Base install stays SQLite/slim unless you explicitly install `.[postgres]`.
 - Scribe project context is selected in-session via `set_project(name=..., root=/abs/path/to/repo)`.
-- The launch command should run from `SCRIBE_ROOT`, not the target project repo.
+- Trusted SSE clients should connect to `scribe-server-sse` with the shared auth token rather than adding repo-root shell wrappers.
 
 ---
 
@@ -491,15 +492,14 @@ Notes:
 
 You can run Scribe from any codebase (not just `MCP_SPINE`) by pointing it at that project’s root:
 
-1. Start the MCP server from your Scribe install path (`SCRIBE_ROOT`).
-2. Set `REPO_ROOT=/abs/path/to/your/repo` in your MCP config so the target repo is explicit.
-3. Call `set_project(..., root=/abs/path/to/your/repo)` to activate that repo and create/update its `.scribe/` workspace.
-4. Use `set_project(..., root=/abs/path/to/another/repo)` to switch repositories without re-registering MCP.
-5. Optional env vars:
-   - `SCRIBE_STATE_PATH=/abs/path/to/state.json` **(DEPRECATED in v2.2 - sessions now stored in database)**
-   - `SCRIBE_STORAGE_BACKEND=postgres` and `SCRIBE_DB_URL=postgresql://...` if you want Postgres.
-   - `SCRIBE_ALLOW_OUTSIDE_REPO_READS=true` if a trusted/local deployment needs cross-repo `read_file(... allow_outside_repo=True)` behavior.
-6. Prefer launching via installed entry points (`scribe-server`, `scribe`) so no manual `PYTHONPATH` wiring is required.
+1. Install Scribe once, then start the MCP server with the packaged `scribe-server` entry point.
+2. Call `set_project(..., root=/abs/path/to/your/repo)` to activate a repo and create/update its `.scribe/` workspace.
+3. Use `set_project(..., root=/abs/path/to/another/repo)` to switch repositories without re-registering MCP.
+4. Optional env vars:
+    - `SCRIBE_STATE_PATH=/abs/path/to/state.json` **(DEPRECATED in v2.2 - sessions now stored in database)**
+    - `SCRIBE_STORAGE_BACKEND=postgres` and `SCRIBE_DB_URL=postgresql://...` if you want Postgres.
+    - `SCRIBE_ALLOW_OUTSIDE_REPO_READS=true` if a trusted/local deployment needs cross-repo `read_file(... allow_outside_repo=True)` behavior.
+5. Prefer installed entry points (`scribe-server`, `scribe`, `scribe-server-sse`) so no manual `PYTHONPATH` wiring or repo-root `cd` shim is required.
 
 Trusted/local cross-repo reads remain supported behind explicit policy. Remotely exposed/network SSE posture disables outside-repo reads by default unless an operator explicitly re-enables them.
 
@@ -580,7 +580,7 @@ For a deeper dive into available variables and expected metadata per template, s
 ### Example: Generate Architecture Guide
 ```bash
 # Auto-generate a complete architecture document
-python -m scribe_mcp.scripts.scribe "Generated architecture guide for new project" --status success --meta template=architecture,auto_generated=true
+scribe "Generated architecture guide for new project" --status success --meta template=architecture,auto_generated=true
 ```
 
 ---
@@ -592,19 +592,19 @@ python -m scribe_mcp.scripts.scribe "Generated architecture guide for new projec
 ### 🎯 Core Commands
 ```bash
 # List all available projects
-python -m scribe_mcp.scripts.scribe --list-projects
+scribe --list-projects
 
 # Log with rich metadata
-python -m scribe_mcp.scripts.scribe "Fixed critical bug" \
+scribe "Fixed critical bug" \
   --status success \
   --emoji 🔧 \
   --meta component=auth,tests=12,severity=high
 
 # Dry run to preview entries
-python -m scribe_mcp.scripts.scribe "Test message" --dry-run
+scribe "Test message" --dry-run
 
 # Switch between projects
-python -m scribe_mcp.scripts.scribe "Starting frontend work" \
+scribe "Starting frontend work" \
   --project mobile_app \
   --status plan
 ```
@@ -840,33 +840,33 @@ python scripts/test_mcp_server.py
 **Structured workflows for AI development:**
 ```bash
 # Research phase
-python -m scribe_mcp.scripts.scribe "Research completed: authentication patterns" --status info --meta phase=research,confidence=0.9
+scribe "Research completed: authentication patterns" --status info --meta phase=research,confidence=0.9
 
 # Architecture phase
-python -m scribe_mcp.scripts.scribe "Architecture guide updated with auth design" --status success --meta phase=architecture,sections=5
+scribe "Architecture guide updated with auth design" --status success --meta phase=architecture,sections=5
 
 # Implementation phase
-python -m scribe_mcp.scripts.scribe "JWT authentication implemented" --status success --meta phase=implementation,tests=47,coverage=95%
+scribe "JWT authentication implemented" --status success --meta phase=implementation,tests=47,coverage=95%
 ```
 
 ### 🏢 Enterprise Documentation
 **Compliance and audit trails:**
 ```bash
 # Security events
-python -m scribe_mcp.scripts.scribe "Security audit completed - all controls verified" --log security --status success --meta auditor=external,findings=0
+scribe "Security audit completed - all controls verified" --log security --status success --meta auditor=external,findings=0
 
 # Change management
-python -m scribe_mcp.scripts.scribe "Production deployment completed" --status success --meta version=v2.1.0,rollback_available=true
+scribe "Production deployment completed" --status success --meta version=v2.1.0,rollback_available=true
 ```
 
 ### 📚 Research Projects
 **Structured research documentation:**
 ```bash
 # Research findings
-python -m scribe_mcp.scripts.scribe "Performance bottleneck identified in database queries" --status info --meta research=true,impact=high,evidence=query_analysis
+scribe "Performance bottleneck identified in database queries" --status info --meta research=true,impact=high,evidence=query_analysis
 
 # Experiment results
-python -m scribe_mcp.scripts.scribe "A/B test results: new algorithm 23% faster" --status success --meta experiment=performance_optimization,improvement=23%
+scribe "A/B test results: new algorithm 23% faster" --status success --meta experiment=performance_optimization,improvement=23%
 ```
 
 ---
@@ -940,7 +940,7 @@ if your workload is text-only.
 python -m pip install -e ".[dev]"
 
 # Verify server startup
-python -m server --help
+scribe-server --help
 ```
 
 ### Getting Help
@@ -965,10 +965,10 @@ pytest
 python scripts/test_mcp_server.py
 
 # 3. Test your changes
-python -m scribe_mcp.scripts.scribe "Testing new feature" --dry-run
+scribe "Testing new feature" --dry-run
 
 # 4. Log your contribution
-python -m scribe_mcp.scripts.scribe "Added new feature: description" --status success --meta contribution=true,feature_type=enhancement
+scribe "Added new feature: description" --status success --meta contribution=true,feature_type=enhancement
 ```
 
 ### 📋 Development Guidelines
