@@ -5,7 +5,7 @@ Supports two transport modes selectable via ``--transport`` (or the
 
 * **stdio** (default) -- runs the MCP server over stdin/stdout.
 * **sse** -- starts an HTTP server with SSE transport on a configurable
-  host/port for containerised deployments.
+  host/port for trusted local or explicitly approved internal deployments.
 """
 
 from __future__ import annotations
@@ -15,10 +15,12 @@ import asyncio
 import os
 from collections.abc import Sequence
 
+from scribe_mcp.config.settings import Settings
 from scribe_mcp.server import main as server_main
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    runtime_settings = Settings.load()
     parser = argparse.ArgumentParser(
         description="Run the Scribe MCP server.",
     )
@@ -36,13 +38,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("SCRIBE_TRANSPORT_PORT", "8200")),
+        default=runtime_settings.transport_port,
         help="Port for SSE transport (default: 8200, env: SCRIBE_TRANSPORT_PORT)",
     )
     parser.add_argument(
         "--host",
-        default=os.environ.get("SCRIBE_TRANSPORT_HOST", "0.0.0.0"),
-        help="Host for SSE transport (default: 0.0.0.0, env: SCRIBE_TRANSPORT_HOST)",
+        default=runtime_settings.transport_host,
+        help="Host for SSE transport (default: 127.0.0.1, env: SCRIBE_TRANSPORT_HOST)",
     )
     return parser.parse_args(argv)
 
@@ -58,4 +60,3 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -36,7 +36,6 @@ from scribe_mcp.tools.query_entries import query_entries
 from scribe_mcp.tools.read_recent import read_recent
 from scribe_mcp.tools.rotate_log import rotate_log
 from scribe_mcp.tools.set_project import set_project
-from scribe_mcp.tools.vector_search import vector_search
 from scribe_mcp.shared.project_registry import ProjectRegistry
 
 
@@ -108,7 +107,6 @@ TOOL_RUNNERS: dict[str, ToolFn] = {
     "manage_docs": manage_docs,
     "generate_doc_templates": generate_doc_templates,
     "delete_project": delete_project,
-    "vector_search": vector_search,
     # Probe-only helper (not exposed as an MCP tool)
     "registry_sanity": _registry_sanity_probe,
 }
@@ -221,13 +219,6 @@ def _build_payload(tool: str, args: "ProbeArgs") -> Dict[str, Any]:
     if tool == "delete_project":
         return {"name": args.project, "mode": "archive", "confirm": False}
 
-    if tool == "vector_search":
-        return {
-            "project": args.project,
-            "query": args.message or "test query",
-            "limit": args.limit or 5,
-        }
-
     if tool == "get_project":
         return {}
 
@@ -309,13 +300,13 @@ def parse_args(argv: list[str]) -> ProbeArgs:
         help="Comma-separated list of tools to invoke (e.g., set_project,append_entry,query_entries,manage_docs).",
     )
     parser.add_argument("--project", default="mcp_connection_test")
-    parser.add_argument("--message", help="Message/query text for append_entry/query_entries/vector_search.")
+    parser.add_argument("--message", help="Message/query text for append_entry/query_entries.")
     parser.add_argument("--status", default="info", help="Status for append_entry.")
     parser.add_argument("--emoji", default="🧪", help="Emoji for append_entry.")
     parser.add_argument("--agent", default="ScribeProbe", help="Agent name for append_entry.")
     parser.add_argument("--meta", help="JSON metadata string for append_entry/manage_docs.")
     parser.add_argument("--log-type", help="Log type for append_entry/rotate_log (default progress).")
-    parser.add_argument("--limit", type=int, help="Limit for query_entries/read_recent/vector_search.")
+    parser.add_argument("--limit", type=int, help="Limit for query_entries/read_recent.")
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=50)
     parser.add_argument(

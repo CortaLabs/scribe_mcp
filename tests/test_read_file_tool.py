@@ -1,8 +1,10 @@
 import json
+from dataclasses import replace
 
 import pytest
 
 from scribe_mcp import server as server_module
+import scribe_mcp.tools.read_file as read_file_module
 from scribe_mcp.shared.execution_context import AgentIdentity, ExecutionContext
 from scribe_mcp.tools.read_file import _DEFAULT_MAX_MATCHES, _FULL_MODE_TOKEN_LIMIT, read_file
 
@@ -26,6 +28,50 @@ def _install_execution_context(tmp_path) -> object:
         sentinel_day="2026-01-02",
     )
     return server_module.router_context_manager.set_current(context)
+
+
+def _set_transport_policy(policy: dict[str, object]) -> object:
+    old_policy = getattr(server_module.app.state, "transport_policy", None)
+    server_module.app.state.transport_policy = policy
+    return old_policy
+
+
+def _restore_transport_policy(old_policy: object) -> None:
+    if old_policy is None:
+        try:
+            delattr(server_module.app.state, "transport_policy")
+        except AttributeError:
+            pass
+        return
+    server_module.app.state.transport_policy = old_policy
+
+
+def _transport_policy(
+    *,
+    transport: str = "stdio",
+    bind_host: str = "stdio",
+    network_exposed: bool = False,
+    auth_required: bool = False,
+    auth_configured: bool = False,
+    allow_outside_repo_reads: bool = False,
+) -> dict[str, object]:
+    return {
+        "transport": transport,
+        "bind_host": bind_host,
+        "port": 8200,
+        "network_exposed": network_exposed,
+        "auth_required": auth_required,
+        "auth_configured": auth_configured,
+        "allow_outside_repo_reads": allow_outside_repo_reads,
+    }
+
+
+def _override_read_file_settings(monkeypatch: pytest.MonkeyPatch, **changes) -> None:
+    monkeypatch.setattr(
+        read_file_module,
+        "settings",
+        replace(read_file_module.settings, **changes),
+    )
 
 
 @pytest.mark.asyncio
@@ -117,6 +163,58 @@ async def test_read_file_allows_normal_relative_paths(tmp_path):
         )
         assert result["ok"] is True
     finally:
+        server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_read_file_allows_requested_outside_repo_reads_for_trusted_stdio(
+    tmp_path,
+    monkeypatch,
+):
+    token = _install_execution_context(tmp_path)
+    old_policy = _set_transport_policy(_transport_policy())
+    outside_file = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+    outside_file.write_text("trusted stdio outside repo", encoding="utf-8")
+    _override_read_file_settings(monkeypatch, force_disable_outside_repo_reads=False)
+    try:
+        result = await read_file(
+            agent="test_agent",
+            path=str(outside_file),
+            mode="full",
+            allow_outside_repo=True,
+            format="structured",
+        )
+
+        assert result["ok"] is True
+        assert "trusted stdio outside repo" in result["chunk"]["content"]
+    finally:
+        _restore_transport_policy(old_policy)
+        server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_read_file_global_force_disable_beats_trusted_stdio_default_allow(
+    tmp_path,
+    monkeypatch,
+):
+    token = _install_execution_context(tmp_path)
+    old_policy = _set_transport_policy(_transport_policy())
+    outside_file = tmp_path.parent / f"{tmp_path.name}-disabled.txt"
+    outside_file.write_text("force disabled", encoding="utf-8")
+    _override_read_file_settings(monkeypatch, force_disable_outside_repo_reads=True)
+    try:
+        result = await read_file(
+            agent="test_agent",
+            path=str(outside_file),
+            mode="full",
+            allow_outside_repo=True,
+            format="structured",
+        )
+
+        assert result["ok"] is False
+        assert result["reason"] == "outside_repo_reads_disabled_by_global_policy"
+    finally:
+        _restore_transport_policy(old_policy)
         server_module.router_context_manager.reset(token)
 
 

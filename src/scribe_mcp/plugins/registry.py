@@ -17,6 +17,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,18 @@ from scribe_mcp.security.sandbox import safe_file_operation
 
 # Setup secure logging for plugin operations
 plugin_logger = logging.getLogger(__name__)
+_TRUSTED_PLUGIN_ENV_VARS = ("SCRIBE_TRUST_REPO_PLUGINS", "SCRIBE_ENABLE_EXTERNAL_PLUGINS")
+
+
+def _bool_env(name: str) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _trusted_plugin_runtime_enabled() -> bool:
+    return any(_bool_env(name) for name in _TRUSTED_PLUGIN_ENV_VARS)
 
 
 @dataclass
@@ -216,15 +229,21 @@ class PluginRegistry:
     def load_plugins(self, config: RepoConfig) -> None:
         """Load plugins from the repository's plugins directory with security hardening."""
         plugin_settings = config.plugin_config or {}
-        if not plugin_settings.get("enabled"):
+        if not config.plugin_loading_requested():
             plugin_logger.info("Plugin loading disabled (plugin_config.enabled is false or missing)")
+            return
+        if not _trusted_plugin_runtime_enabled():
+            plugin_logger.warning(
+                "Repo-local plugin loading requested but blocked until a trusted runtime "
+                f"opt-in is set via one of: {', '.join(_TRUSTED_PLUGIN_ENV_VARS)}"
+            )
             return
 
         # Security settings
         allowlist = set(plugin_settings.get("allowlist", []))
         blocklist = set(plugin_settings.get("blocklist", []))
-        require_manifest = plugin_settings.get("require_manifest", False)
-        verify_hashes = plugin_settings.get("verify_hashes", True)
+        require_manifest = True
+        verify_hashes = True
 
         # Load built-in plugins first
         self._load_builtin_plugins(config)
@@ -263,19 +282,17 @@ class PluginRegistry:
 
             # Security check 3: Load and validate manifest if required
             manifest = self._load_plugin_manifest(plugin_file)
+            if require_manifest and not plugin_file.with_suffix(".json").exists():
+                plugin_logger.error(f"Plugin {plugin_name} missing required manifest")
+                continue
             if not manifest:
-                if require_manifest:
-                    plugin_logger.error(f"Plugin {plugin_name} missing required manifest")
-                    continue
-                # Create basic manifest for compatibility
-                manifest = PluginManifest(
-                    name=plugin_name,
-                    version="1.0.0",
-                    description=f"Plugin from {plugin_file.name}",
-                    author="Unknown"
-                )
+                plugin_logger.error(f"Plugin {plugin_name} manifest failed validation")
+                continue
 
             # Security check 4: Hash verification
+            if verify_hashes and not manifest.file_hash:
+                plugin_logger.error(f"Plugin {plugin_name} manifest must declare file_hash")
+                continue
             if verify_hashes and not self._verify_plugin_hash(plugin_file, manifest.file_hash):
                 plugin_logger.error(f"Plugin {plugin_name} failed hash verification")
                 continue
@@ -297,30 +314,9 @@ class PluginRegistry:
         plugin_logger.info(f"Plugin loading completed. Loaded {plugins_loaded} plugins.")
 
     def _load_builtin_plugins(self, config: RepoConfig) -> None:
-        """Load built-in plugins."""
-        plugin_settings = config.plugin_config or {}
-        allowlist = set(plugin_settings.get("allowlist", []))
-        blocklist = set(plugin_settings.get("blocklist", []))
-
-        try:
-            from scribe_mcp.plugins.vector_indexer import VectorIndexer
-        except Exception as exc:
-            plugin_logger.error(f"Failed to import built-in vector_indexer: {exc}")
-            return
-
-        if not self._is_plugin_allowed("vector_indexer", allowlist, blocklist):
-            return
-
-        if "vector_indexer" in self.plugins:
-            return
-
-        try:
-            plugin = VectorIndexer()
-            plugin.initialize(config)
-            self._register_plugin(plugin)
-            plugin_logger.info(f"Loaded built-in plugin: {plugin.name} v{plugin.version}")
-        except Exception as exc:
-            plugin_logger.error(f"Failed to initialize built-in vector_indexer: {exc}", exc_info=True)
+        """Core no longer ships any built-in plugins."""
+        _ = config
+        return
 
     def _load_plugin_file(self, plugin_file: Path, config: RepoConfig, manifest: Optional[PluginManifest] = None) -> Optional[ScribePlugin]:
         """Load a plugin from a Python file with security validation."""
@@ -498,14 +494,6 @@ def initialize_plugins(config: RepoConfig) -> None:
     registry = get_plugin_registry(config.repo_root)
     registry.cleanup()  # Cleanup any existing plugins
     registry.load_plugins(config)
-
-    # Register vector tools if VectorIndexer plugin is loaded and initialized
-    _register_vector_tools_if_available()
-
-
-def _register_vector_tools_if_available() -> None:
-    """Register vector search tools if VectorIndexer plugin is available."""
-    plugin_logger.debug("Vector search tools are deprecated; use manage_docs action='search' with search_mode='semantic'.")
 
 
 def get_plugin_security_info() -> Dict[str, Any]:

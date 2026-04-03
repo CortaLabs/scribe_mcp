@@ -398,7 +398,7 @@ await generate_doc_templates(project_name="<project_name>")
 **Possible Causes:**
 1. Large document files
 2. Complex YAML frontmatter
-3. Semantic search with large vector index
+3. Large search scope across many documents
 4. Multiple batch operations
 
 **Diagnosis Steps:**
@@ -414,9 +414,9 @@ start = time.time()
 await manage_docs(action="...", doc="...", ...)
 print(f"Operation took {time.time() - start:.2f}s")
 
-# 3. Check vector index size (for semantic search)
+# 3. Check current project and plugin state
 await scribe_doctor()
-# Shows vector index metrics if enabled
+# Confirms repo root, config resolution, and plugin status
 ```
 
 **Solutions:**
@@ -426,14 +426,13 @@ await scribe_doctor()
 # Instead of batch, do individual targeted edits
 await manage_docs(action="replace_section", doc="architecture", section="specific_section", ...)
 
-# Solution 2: Reduce semantic search scope
+# Solution 2: Reduce search scope
 await manage_docs(
     action="search",
     doc="*",
     metadata={
         "query": "...",
-        "search_mode": "semantic",
-        "doc_k": 5,  # Limit results
+        "k": 5,  # Limit results
         "project_slug": "specific_project"  # Narrow scope
     }
 )

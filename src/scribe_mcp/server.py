@@ -139,7 +139,19 @@ class BackgroundServiceStatus:
     last_error: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class TransportPolicy:
+    transport: str
+    bind_host: str
+    port: int
+    network_exposed: bool
+    auth_required: bool
+    auth_configured: bool
+    allow_outside_repo_reads: bool
+
+
 _background_services: dict[str, BackgroundServiceStatus] = {}
+_LOCAL_BIND_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 _SENTINEL_ONLY_TOOLS = {"append_event"}
 _SENTINEL_ALLOWED_TOOLS = _SENTINEL_ONLY_TOOLS | {
@@ -167,7 +179,67 @@ def _float_env(name: str, default: float, minimum: float = 0.0) -> float:
     return max(minimum, value)
 
 
+def _is_loopback_host(host: str) -> bool:
+    return host.strip().lower() in _LOCAL_BIND_HOSTS
+
+
+def build_transport_policy(
+    *,
+    transport: str,
+    host: str | None = None,
+    port: int | None = None,
+    auth_required: bool | None = None,
+    auth_configured: bool | None = None,
+    allow_outside_repo_reads: bool | None = None,
+) -> TransportPolicy:
+    bind_host = (host or settings.transport_host).strip() or settings.transport_host
+    bind_port = int(port if port is not None else settings.transport_port)
+    network_exposed = transport == "sse" and not _is_loopback_host(bind_host)
+    return TransportPolicy(
+        transport=transport,
+        bind_host=bind_host,
+        port=bind_port,
+        network_exposed=network_exposed,
+        auth_required=(transport == "sse") if auth_required is None else auth_required,
+        auth_configured=bool(settings.transport_auth_token) if auth_configured is None else auth_configured,
+        allow_outside_repo_reads=(
+            settings.allow_outside_repo_reads
+            if allow_outside_repo_reads is None
+            else allow_outside_repo_reads
+        ),
+    )
+
+
+def set_transport_policy(policy: TransportPolicy) -> None:
+    app.state.transport_policy = {
+        "transport": policy.transport,
+        "bind_host": policy.bind_host,
+        "port": policy.port,
+        "network_exposed": policy.network_exposed,
+        "auth_required": policy.auth_required,
+        "auth_configured": policy.auth_configured,
+        "allow_outside_repo_reads": policy.allow_outside_repo_reads,
+    }
+
+
+def get_transport_policy() -> dict[str, Any]:
+    policy = getattr(app.state, "transport_policy", None)
+    if isinstance(policy, dict):
+        return dict(policy)
+    fallback = build_transport_policy(transport="stdio", host="stdio", port=0, auth_required=False)
+    return {
+        "transport": fallback.transport,
+        "bind_host": fallback.bind_host,
+        "port": fallback.port,
+        "network_exposed": fallback.network_exposed,
+        "auth_required": fallback.auth_required,
+        "auth_configured": fallback.auth_configured,
+        "allow_outside_repo_reads": fallback.allow_outside_repo_reads,
+    }
+
+
 _STARTUP_CLEANUP_DELAY_SECONDS = _float_env("SCRIBE_STARTUP_CLEANUP_DELAY_SECONDS", 60.0, 0.0)
+set_transport_policy(build_transport_policy(transport="stdio", host="stdio", port=0, auth_required=False))
 _STARTUP_LEGACY_MIGRATION_DELAY_SECONDS = _float_env(
     "SCRIBE_STARTUP_LEGACY_MIGRATION_DELAY_SECONDS",
     20.0,
@@ -1091,6 +1163,7 @@ async def main() -> None:
         raise RuntimeError(
             "MCP Python SDK not installed. Install the 'mcp' package to run the server."
         )
+    set_transport_policy(build_transport_policy(transport="stdio", host="stdio", port=0, auth_required=False))
     await _startup()
 
     try:

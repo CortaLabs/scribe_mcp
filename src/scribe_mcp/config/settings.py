@@ -35,6 +35,23 @@ def _load_env_json(name: str) -> Dict[str, Any]:
     return {}
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
+def _optional_env(*names: str) -> Optional[str]:
+    for name in names:
+        value = os.environ.get(name)
+        if value is not None:
+            stripped = value.strip()
+            if stripped:
+                return stripped
+    return None
+
+
 @dataclass(frozen=True)
 class Settings:
     """Resolved configuration for the MCP server."""
@@ -53,6 +70,11 @@ class Settings:
     postgres_connect_retries: int
     postgres_connect_retry_backoff_seconds: float
     allow_network: bool
+    transport_host: str
+    transport_port: int
+    transport_auth_token: Optional[str]
+    allow_outside_repo_reads: bool
+    force_disable_outside_repo_reads: bool
     mcp_server_name: str
     extra_options: Dict[str, Any]
     recent_projects_limit: int
@@ -65,14 +87,6 @@ class Settings:
     reminder_idle_minutes: int
     reminder_warmup_minutes: int
     dev_plans_base: Path
-    # Vector indexing settings
-    vector_enabled: bool
-    vector_backend: str
-    vector_dimension: int
-    vector_model: str
-    vector_gpu: bool
-    vector_queue_max: int
-    vector_batch_size: int
     # Token optimization settings
     default_page_size: int
     max_page_size: int
@@ -101,6 +115,43 @@ class Settings:
     remote_server_url: Optional[str]
     remote_connect_timeout: float
     remote_fallback: bool
+
+    def resolve_outside_repo_read_policy(
+        self,
+        transport_policy: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Resolve the canonical outside-repo read posture for the active runtime."""
+        policy = transport_policy if isinstance(transport_policy, dict) else {}
+        transport = str(policy.get("transport") or "stdio").strip().lower() or "stdio"
+        bind_host = str(policy.get("bind_host") or self.transport_host).strip() or self.transport_host
+        network_exposed = bool(policy.get("network_exposed", False))
+        auth_required = bool(policy.get("auth_required", transport == "sse"))
+        auth_configured = bool(
+            policy.get("auth_configured", bool(self.transport_auth_token))
+        )
+        force_enabled = bool(policy.get("allow_outside_repo_reads", False))
+        trusted_runtime = transport == "stdio" or (
+            transport == "sse"
+            and not network_exposed
+            and auth_required
+            and auth_configured
+        )
+        return {
+            "transport": transport,
+            "bind_host": bind_host,
+            "network_exposed": network_exposed,
+            "auth_required": auth_required,
+            "auth_configured": auth_configured,
+            "trusted_runtime": trusted_runtime,
+            "default_allowed": trusted_runtime,
+            "force_enabled": force_enabled,
+            "force_disabled": self.force_disable_outside_repo_reads,
+            "enabled": (
+                False
+                if self.force_disable_outside_repo_reads
+                else bool(trusted_runtime or force_enabled)
+            ),
+        }
 
     @classmethod
     def load(cls) -> "Settings":
@@ -154,11 +205,18 @@ class Settings:
             float(os.environ.get("SCRIBE_POSTGRES_CONNECT_RETRY_BACKOFF_SECONDS", "1.0")),
         )
 
-        allow_network = os.environ.get("SCRIBE_ALLOW_NETWORK", "false").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        allow_network = _bool_env("SCRIBE_ALLOW_NETWORK", False)
+        transport_host = os.environ.get("SCRIBE_TRANSPORT_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        transport_port = max(1, _int_env("SCRIBE_TRANSPORT_PORT", 8200))
+        transport_auth_token = _optional_env("SCRIBE_TRANSPORT_AUTH_TOKEN", "SCRIBE_AUTH_TOKEN")
+        allow_outside_repo_reads = _bool_env(
+            "SCRIBE_ALLOW_OUTSIDE_REPO_READS",
+            _bool_env("SCRIBE_ALLOW_CROSS_REPO_READS", False),
+        )
+        force_disable_outside_repo_reads = _bool_env(
+            "SCRIBE_FORCE_DISABLE_OUTSIDE_REPO_READS",
+            _bool_env("SCRIBE_DISABLE_OUTSIDE_REPO_READS", False),
+        )
         mcp_server_name = os.environ.get("SCRIBE_MCP_NAME", "scribe.mcp")
 
         extra_options = _load_env_json("SCRIBE_EXTRA_OPTIONS")
@@ -183,20 +241,6 @@ class Settings:
             # Treat as a relative-to-repo path by stripping the anchor.
             # This keeps the setting repo-scoped even if an absolute was provided.
             dev_plans_base = Path(*dev_plans_base.parts[1:])
-
-        # Vector indexing configuration
-        from .vector_config import load_vector_config, merge_with_env_overrides
-
-        vector_config = load_vector_config(project_root)
-        vector_config = merge_with_env_overrides(vector_config)
-
-        vector_enabled = vector_config.enabled
-        vector_backend = vector_config.backend
-        vector_dimension = max(1, vector_config.dimension)
-        vector_model = vector_config.model
-        vector_gpu = vector_config.gpu
-        vector_queue_max = max(1, vector_config.queue_max)
-        vector_batch_size = max(1, vector_config.batch_size)
 
         # Token optimization configuration
         default_page_size = max(1, _int_env("SCRIBE_DEFAULT_PAGE_SIZE", 50))
@@ -271,6 +315,11 @@ class Settings:
             postgres_connect_retries=postgres_connect_retries,
             postgres_connect_retry_backoff_seconds=postgres_connect_retry_backoff_seconds,
             allow_network=allow_network,
+            transport_host=transport_host,
+            transport_port=transport_port,
+            transport_auth_token=transport_auth_token,
+            allow_outside_repo_reads=allow_outside_repo_reads,
+            force_disable_outside_repo_reads=force_disable_outside_repo_reads,
             mcp_server_name=mcp_server_name,
             extra_options=extra_options,
             recent_projects_limit=recent_limit,
@@ -283,13 +332,6 @@ class Settings:
             reminder_idle_minutes=reminder_idle_minutes,
             reminder_warmup_minutes=reminder_warmup_minutes,
             dev_plans_base=dev_plans_base,
-            vector_enabled=vector_enabled,
-            vector_backend=vector_backend,
-            vector_dimension=vector_dimension,
-            vector_model=vector_model,
-            vector_gpu=vector_gpu,
-            vector_queue_max=vector_queue_max,
-            vector_batch_size=vector_batch_size,
             default_page_size=default_page_size,
             max_page_size=max_page_size,
             default_compact_mode=default_compact_mode,

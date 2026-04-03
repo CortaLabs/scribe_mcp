@@ -7,6 +7,7 @@ src/scribe_mcp/py.typed
 src/scribe_mcp/reminders.py
 src/scribe_mcp/server.py
 src/scribe_mcp/server_sse.py
+src/scribe_mcp/tool_contracts.py
 src/scribe_mcp.egg-info/PKG-INFO
 src/scribe_mcp.egg-info/SOURCES.txt
 src/scribe_mcp.egg-info/dependency_links.txt
@@ -93,8 +94,6 @@ src/scribe_mcp/object_store/providers/corta.py
 src/scribe_mcp/object_store/providers/s3.py
 src/scribe_mcp/plugins/__init__.py
 src/scribe_mcp/plugins/registry.py
-src/scribe_mcp/plugins/vector_indexer.json
-src/scribe_mcp/plugins/vector_indexer.py
 src/scribe_mcp/scripts/__init__.py
 src/scribe_mcp/scripts/backfill_log_type.py
 src/scribe_mcp/scripts/bootstrap_postgres.py
@@ -171,6 +170,7 @@ src/scribe_mcp/templates/documents/PROGRESS_LOG_TEMPLATE.md
 src/scribe_mcp/templates/documents/RESEARCH_REPORT_TEMPLATE.md
 src/scribe_mcp/templates/documents/REVIEW_REPORT_TEMPLATE.md
 src/scribe_mcp/templates/documents/SECURITY_LOG_TEMPLATE.md
+src/scribe_mcp/templates/documents/SECURITY_REPORT_TEMPLATE.md
 src/scribe_mcp/templates/documents/base_document.md
 src/scribe_mcp/templates/documents/base_log.md
 src/scribe_mcp/templates/fragments/api_endpoints.md
@@ -198,7 +198,6 @@ src/scribe_mcp/tools/rotate_log.py
 src/scribe_mcp/tools/search.py
 src/scribe_mcp/tools/sentinel_tools.py
 src/scribe_mcp/tools/set_project.py
-src/scribe_mcp/tools/vector_search.py
 src/scribe_mcp/tools/base/__init__.py
 src/scribe_mcp/tools/base/base_tool.py
 src/scribe_mcp/tools/base/parameter_normalizer.py
@@ -307,6 +306,7 @@ tests/test_get_project_sitrep.py
 tests/test_global_optimization_utils.py
 tests/test_global_scribe.py
 tests/test_health_check.py
+tests/test_int_param_coercion.py
 tests/test_integration_phase5.py
 tests/test_jinja2_engine.py
 tests/test_last_known_project_hint.py
@@ -341,6 +341,7 @@ tests/test_parameter_validator.py
 tests/test_path_resolution_debug.py
 tests/test_path_suggestions.py
 tests/test_performance.py
+tests/test_phase2_vector_core_removal.py
 tests/test_phase3_state_manager.py
 tests/test_plugin_registry_runtime.py
 tests/test_postgres_backup_script.py
@@ -368,6 +369,7 @@ tests/test_reminder_storage.py
 tests/test_reminder_time_variables.py
 tests/test_reminder_tools.py
 tests/test_remote_backend.py
+tests/test_repo_config_docs_paths.py
 tests/test_response_formatter_helpers.py
 tests/test_response_formatter_readable.py
 tests/test_rotate_log_config.py
@@ -376,6 +378,7 @@ tests/test_sandbox_bypass.py
 tests/test_schema_fix.py
 tests/test_search_pagination.py
 tests/test_search_tool.py
+tests/test_sentinel_tools.py
 tests/test_server_api.py
 tests/test_session_identity_integration.py
 tests/test_session_integration.py
@@ -398,6 +401,7 @@ tests/test_token_count.py
 tests/test_token_optimization.py
 tests/test_tool_calls_schema.py
 tests/test_tool_logger.py
+tests/test_tool_metadata_contract.py
 tests/test_tools.py
 tests/test_transport_sse.py
 tests/test_ui_formatter.py

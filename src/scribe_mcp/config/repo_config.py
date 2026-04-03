@@ -57,10 +57,6 @@ class RepoConfig:
     # Plugin configuration
     plugins_dir: Optional[Path] = None
     plugin_config: Dict[str, Any] = field(default_factory=dict)
-    vector_index_docs: bool = False
-    vector_index_logs: bool = False
-    vector_search_doc_k: int = 5
-    vector_search_log_k: int = 3
 
     # Project defaults
     default_emoji: str = "📋"
@@ -79,9 +75,34 @@ class RepoConfig:
     # Output formatting settings
     use_ansi_colors: bool = True  # Enable ANSI colors in tool output (Phase 1.5 - Issue #9962 fix)
 
+    def allows_outside_repo_reads(self) -> bool:
+        """Return the legacy repo-local preference flag.
+
+        Tool-time authorization must still flow through the runtime transport/trust
+        policy surface; this flag is not the final outside-repo allow/deny decision.
+        """
+        permissions = self.permissions if isinstance(self.permissions, dict) else {}
+        return bool(
+            permissions.get("allow_outside_repo_reads", False)
+            or permissions.get("allow_cross_repo_reads", False)
+        )
+
+    def plugin_loading_requested(self) -> bool:
+        """Return whether repo config requests repo-local plugin loading."""
+        plugin_config = self.plugin_config if isinstance(self.plugin_config, dict) else {}
+        return bool(plugin_config.get("enabled", False))
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any], repo_root: Path) -> "RepoConfig":
         """Create RepoConfig from dictionary data."""
+        permissions = data.get("permissions", {})
+        if not isinstance(permissions, dict):
+            permissions = {}
+
+        plugin_config = data.get("plugin_config", {})
+        if not isinstance(plugin_config, dict):
+            plugin_config = {}
+
         # Resolve path fields relative to repo root
         dev_plans_dir_value = data.get("dev_plans_dir")
         if dev_plans_dir_value:
@@ -99,12 +120,6 @@ class RepoConfig:
         if data.get("db_path"):
             db_path = repo_root / Path(data["db_path"])
 
-        def _safe_int(value: Any, fallback: int) -> int:
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return fallback
-
         return cls(
             repo_slug=data.get("repo_slug", repo_root.name),
             repo_root=repo_root,
@@ -112,13 +127,9 @@ class RepoConfig:
             progress_log_name=data.get("progress_log_name", "PROGRESS_LOG.md"),
             templates_pack=data.get("templates_pack", "default"),
             custom_templates_dir=custom_templates_dir,
-            permissions=data.get("permissions", {}),
+            permissions=permissions,
             plugins_dir=plugins_dir,
-            plugin_config=data.get("plugin_config", {}),
-            vector_index_docs=bool(data.get("vector_index_docs", False)),
-            vector_index_logs=bool(data.get("vector_index_logs", False)),
-            vector_search_doc_k=_safe_int(data.get("vector_search_doc_k", 5), 5),
-            vector_search_log_k=_safe_int(data.get("vector_search_log_k", 3), 3),
+            plugin_config=plugin_config,
             default_emoji=data.get("default_emoji", "📋"),
             default_agent=data.get("default_agent", "Agent"),
             reminder_config=data.get("reminder_config", {}),
@@ -137,10 +148,6 @@ class RepoConfig:
             repo_slug=repo_root.name,
             repo_root=repo_root,
             dev_plans_dir=_default_dev_plans_dir(repo_root),
-            vector_index_docs=False,
-            vector_index_logs=False,
-            vector_search_doc_k=5,
-            vector_search_log_k=3,
         )
 
     @classmethod
@@ -162,10 +169,6 @@ class RepoConfig:
             "templates_pack": self.templates_pack,
             "permissions": self.permissions,
             "plugin_config": self.plugin_config,
-            "vector_index_docs": self.vector_index_docs,
-            "vector_index_logs": self.vector_index_logs,
-            "vector_search_doc_k": self.vector_search_doc_k,
-            "vector_search_log_k": self.vector_search_log_k,
             "default_emoji": self.default_emoji,
             "default_agent": self.default_agent,
             "reminder_config": self.reminder_config,
@@ -253,7 +256,7 @@ class RepoDiscovery:
         return None
 
     @staticmethod
-    def load_config(repo_root: Path) -> RepoConfig:
+    def load_config(repo_root: Path, *, seed_if_missing: bool = True) -> RepoConfig:
         """
         Load Scribe configuration for a repository.
 
@@ -285,7 +288,7 @@ class RepoDiscovery:
         legacy_config = repo_root / ".scribe" / "scribe.yaml"
         template_path = settings.project_root / "config" / "scribe_config_template.yaml"
 
-        if not config_file.exists():
+        if seed_if_missing and not config_file.exists():
             try:
                 if legacy_config.exists():
                     shutil.copy2(legacy_config, config_file)

@@ -25,10 +25,7 @@ permissions:
 plugins_dir: .scribe/plugins  # Directory for repo-specific plugins
 plugin_config:
   # Plugin-specific configuration goes here
-vector_index_docs: false  # Enable semantic indexing for manage_docs content
-vector_index_logs: false  # Enable semantic indexing for log entries
-vector_search_doc_k: 5    # Default doc results when semantic search runs without k
-vector_search_log_k: 3    # Default log results when semantic search runs without k
+  enabled: false  # Enable repo-local plugins only when you explicitly install them
 
 # Default values for this repository
 default_emoji: "📋"  # Default emoji for log entries

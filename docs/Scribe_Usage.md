@@ -56,12 +56,8 @@ Original `utils/response.py` retained as backwards-compatible facade.
 - `create_doc` preserves multiline body content in metadata (`body`, `snippet`, `content`).
 - `read_file` adds repo-scoped scan/chunk/page/search modes with provenance logging for every read (optional `allow_outside_repo` for approved external reads).
 - `read_file` **Phase 5 enhancements**: Full signature extraction (types, defaults, return types), line ranges for all functions/classes/methods, method display under classes, structure filtering (`structure_filter` for regex-based class/function search), and structure pagination (`structure_page`, `structure_page_size`) for browsing large classes with 50+ methods.
-- `scribe_doctor` provides environment readiness diagnostics (repo root, config, plugin status, vector readiness).
-- `manage_docs` adds semantic search via `action="search"` with `search_mode="semantic"` and doc/log separation.
-- Semantic search supports `project_slug`, `project_slugs`, `project_slug_prefix`, `doc_type`, `file_path`, `time_start/time_end`.
-- Per-type defaults: `vector_search_doc_k` / `vector_search_log_k` (overrides via `doc_k` / `log_k`).
-- Vector indexing uses registry-managed docs only; log/rotated-log files are excluded from doc indexing.
-- `scripts/reindex_vector.py` supports `--rebuild` for clean index rebuilds, `--safe` for low-thread fallback, and `--wait-for-drain` to block until embeddings are written.
+- `scribe_doctor` provides environment readiness diagnostics (repo root, config resolution, plugin status).
+- `manage_docs` supports text search via `action="search"` with project/document filters and explicit fallback metadata when unsupported legacy modes are requested.
 
 ## Readable Output Formatting (v2.2+)
 
@@ -1110,7 +1106,7 @@ await edit_file(agent="Coder", path="server.py", old_string="def handle_error(se
 - The tool respects repo sandbox boundaries
 
 ### `scribe_doctor`
-**Purpose**: Diagnostics for repo root, config resolution, plugin status, and vector readiness.
+**Purpose**: Diagnostics for repo root, config resolution, and plugin status.
 
 **Required Parameters:**
 - `agent` (string): Agent identifier for session tracking
@@ -1122,8 +1118,7 @@ await scribe_doctor(agent="Codex")
 
 **Returns:**
 - Repo root, cwd, config paths
-- Plugin status (including vector indexer availability)
-- Vector index metadata and queue depth (if enabled)
+- Plugin status and activation details
 
 ---
 
@@ -1417,44 +1412,42 @@ await manage_docs(
 }
 ```
 
-### `manage_docs` semantic search
-**Purpose**: Semantic retrieval across registry-managed docs and logs (doc-first results by default).
+### `manage_docs` search
+**Purpose**: Text retrieval across registry-managed docs and logs.
 
 **Required Parameters:**
 - `action`: `"search"`
 - `doc_name`: `"*"` (search all) or specific document identifier
 - `metadata.query`: search string
-- `metadata.search_mode`: `"semantic"`
 
 **Optional Filters:**
 - `content_type`: `"doc"` or `"log"` (default is both)
 - `project_slug` / `project_slugs` / `project_slug_prefix`
 - `doc_type`, `file_path`
 - `time_start` / `time_end`
-- `k` (total results), `doc_k` / `log_k` overrides
-- `min_similarity` (float)
+- `k` (total results)
+- `search_mode`: optional text-mode selector; unsupported legacy values fall back to text with `fallback_applied`, `requested_search_mode`, `effective_search_mode`, and a warning in the response
 
 **Example Usage:**
 ```python
-# Semantic search across docs + logs
+# Text search across docs + logs
 await manage_docs(
     agent="Codex",
     action="search",
     doc_name="*",
-    metadata={"query": "ExecutionContext", "search_mode": "semantic", "k": 8}
+    metadata={"query": "ExecutionContext", "k": 8}
 )
 
-# Doc-only semantic search scoped to a project
+# Doc-only search scoped to a project
 await manage_docs(
     agent="Codex",
     action="search",
     doc_name="*",
     metadata={
         "query": "ExecutionContext",
-        "search_mode": "semantic",
         "content_type": "doc",
         "project_slug": "scribe_sentinel_concurrency_v1",
-        "doc_k": 5
+        "k": 5
     }
 )
 ```

@@ -130,6 +130,14 @@ def _is_external_skill_path(path: Path) -> bool:
     return False
 
 
+def _outside_repo_policy_state() -> Dict[str, Any]:
+    try:
+        transport_policy = server_module.get_transport_policy()
+    except Exception:
+        transport_policy = {}
+    return settings.resolve_outside_repo_read_policy(transport_policy)
+
+
 def _enforce_path_policy(
     path: Path,
     repo_root: Path,
@@ -137,7 +145,6 @@ def _enforce_path_policy(
     allow_outside_repo: bool = False,
 ) -> Optional[str]:
     config = _load_sentinel_config(repo_root)
-    allowlist = _normalize_patterns(config.get("allowlist"))
     denylist = _normalize_patterns(config.get("denylist")) or list(_DEFAULT_DENYLIST)
 
     abs_path = str(path)
@@ -150,12 +157,17 @@ def _enforce_path_policy(
         return "denylist_match"
 
     if rel_path is None:
+        policy_state = _outside_repo_policy_state()
+        if not allow_outside_repo:
+            return "outside_repo_requires_explicit_opt_in"
+        if policy_state["force_disabled"]:
+            return "outside_repo_reads_disabled_by_global_policy"
+        if not policy_state["enabled"]:
+            if policy_state["network_exposed"]:
+                return "outside_repo_reads_disabled_by_network_posture"
+            return "outside_repo_reads_disabled_by_policy"
         if _is_external_skill_path(path):
             return None
-        if allow_outside_repo:
-            return None
-        if not _matches_any(abs_path, allowlist):
-            return "absolute_path_not_allowlisted"
 
     if rel_path is not None:
         return None

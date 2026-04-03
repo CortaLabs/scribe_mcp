@@ -28,7 +28,6 @@ _TOOL_MODULES: Dict[str, str] = {
     "search": "scribe_mcp.tools.search",
     "sentinel_tools": "scribe_mcp.tools.sentinel_tools",
     "set_project": "scribe_mcp.tools.set_project",
-    "vector_search": "scribe_mcp.tools.vector_search",
 }
 
 _TOOL_NAME_TO_MODULE: Dict[str, str] = {
@@ -103,4 +102,3 @@ __all__ = sorted(_TOOL_MODULES.keys()) + [
     "ensure_tool_loaded",
     "tool_module_for_name",
 ]
-

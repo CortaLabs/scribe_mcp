@@ -399,19 +399,17 @@ The Modern Tool Architecture provides a unified foundation for all Scribe MCP to
 
 **Read + Diagnostics (v2.1.1 additions):**
 - `read_file`: Repo-scoped file access with scan/chunk/line/page/full_stream/search modes plus provenance logging for every read.
-- `scribe_doctor`: Readiness diagnostics (repo root, config paths, plugin status, vector index readiness).
+- `scribe_doctor`: Readiness diagnostics (repo root, config paths, and plugin status).
 
 **Codebase Search & Edit (v2.2 additions):**
 - `search`: Multi-file codebase search with grep/ripgrep feature parity. Supports regex and literal patterns, file type and glob filtering, three output modes (content/files_with_matches/count), configurable context lines, multiline matching, and safety limits (max matches per file/total, max files, file size cap). Enforces repo-boundary access control.
 - `edit_file`: Safe file editing with exact string replacement. Enforces read-before-edit (file must be read with `read_file` in current session), dry-run by default, replace-all mode for bulk renaming, unified diff preview, and repo-boundary enforcement. All edits are audit-logged.
 
-**Semantic Search (v2.1.1 additions):**
-- `manage_docs` supports `action="search"` with `search_mode="semantic"` (doc/log partitioned search in a single FAISS index).
-- Default behavior returns docs first, then logs; results are labeled with `content_type`.
-- Filters: `project_slug`, `project_slugs`, `project_slug_prefix`, `doc_type`, `file_path`, `time_start/time_end`.
-- Per-type limits: `vector_search_doc_k` / `vector_search_log_k` defaults, with overrides via `doc_k` / `log_k` and total `k`.
-- Registry-only doc indexing (logs/rotated logs excluded from doc ingestion).
-- Reindex controls: `scripts/reindex_vector.py --rebuild` for a clean index, `--safe` for low-thread fallback during native crashes, and `--wait-for-drain` to block until embeddings are written.
+**Document Search (current core release):**
+- `manage_docs` supports `action="search"` for text retrieval across registry-managed docs and logs.
+- Filters include `project_slug`, `project_slugs`, `project_slug_prefix`, `doc_type`, `file_path`, and `time_start/time_end`.
+- Results remain labeled with `content_type` so doc/log output stays distinguishable.
+- Legacy `search_mode="semantic"` or `"vector"` requests are preserved as compatibility inputs but explicitly fall back to text search with structured fallback disclosure in the response.
 
 ### Precision-First Document Mutation
 

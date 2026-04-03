@@ -17,7 +17,7 @@ Usage::
     # Programmatic
     import asyncio
     from scribe_mcp.server_sse import run_sse
-    asyncio.run(run_sse(host="0.0.0.0", port=8200))
+    asyncio.run(run_sse(host="127.0.0.1", port=8200, auth_token="change-me"))
 
     # CLI
     python -m scribe_mcp --transport sse --port 8200
@@ -30,17 +30,20 @@ from contextlib import asynccontextmanager
 import dataclasses
 import datetime
 import logging
+import secrets
 import time
 from typing import Any
 
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 import uvicorn
 
 import scribe_mcp.server as server_module
+from scribe_mcp.config.settings import Settings
 from scribe_mcp.server import app, _startup, _shutdown
 from scribe_mcp.storage.base import ProjectRecord
 
@@ -51,6 +54,74 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _server_start_time: float | None = None
+_AUTH_EXEMPT_PATHS: frozenset[str] = frozenset({"/health"})
+
+
+def _resolve_transport_runtime(
+    host: str | None,
+    port: int | None,
+    auth_token: str | None,
+) -> tuple[Settings, server_module.TransportPolicy, str]:
+    runtime_settings = Settings.load()
+    resolved_host = (host or runtime_settings.transport_host).strip() or runtime_settings.transport_host
+    resolved_port = int(port if port is not None else runtime_settings.transport_port)
+    resolved_auth_token = (auth_token or runtime_settings.transport_auth_token or "").strip()
+    policy = server_module.build_transport_policy(
+        transport="sse",
+        host=resolved_host,
+        port=resolved_port,
+        auth_required=True,
+        auth_configured=bool(resolved_auth_token),
+        allow_outside_repo_reads=runtime_settings.allow_outside_repo_reads,
+    )
+    if not resolved_auth_token:
+        raise RuntimeError(
+            "SSE/REST transport requires SCRIBE_TRANSPORT_AUTH_TOKEN (or auth_token=...) so "
+            "network requests cannot reach the server anonymously."
+        )
+    return runtime_settings, policy, resolved_auth_token
+
+
+def _extract_request_token(request: Request) -> str | None:
+    auth_header = request.headers.get("authorization", "").strip()
+    if auth_header.lower().startswith("bearer "):
+        candidate = auth_header[7:].strip()
+        if candidate:
+            return candidate
+    header_token = request.headers.get("x-scribe-auth", "").strip()
+    return header_token or None
+
+
+def _request_is_authenticated(request: Request, expected_token: str) -> bool:
+    candidate = _extract_request_token(request)
+    if candidate is None:
+        return False
+    return secrets.compare_digest(candidate, expected_token)
+
+
+def _unauthorized_response() -> JSONResponse:
+    return JSONResponse(
+        {
+            "error": "Missing or invalid transport auth token",
+            "type": "Unauthorized",
+        },
+        status_code=401,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+class TransportAuthMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, *, expected_auth_token: str) -> None:
+        super().__init__(app)
+        self._expected_auth_token = expected_auth_token
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path not in _AUTH_EXEMPT_PATHS and not _request_is_authenticated(
+            request,
+            self._expected_auth_token,
+        ):
+            return _unauthorized_response()
+        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -348,47 +419,16 @@ async def health_check(request: Request) -> JSONResponse:
 # SSE transport runner
 # ---------------------------------------------------------------------------
 
-async def run_sse(host: str = "0.0.0.0", port: int = 8200) -> None:
-    """Run the MCP server over SSE transport.
-
-    Parameters
-    ----------
-    host:
-        Network interface to bind to.  Defaults to ``0.0.0.0`` (all
-        interfaces) for container deployments.
-    port:
-        TCP port to listen on.  Defaults to ``8200``.
-
-    The function performs the following steps:
-
-    1. Calls ``_startup()`` to initialise storage, background tasks, etc.
-       (same initialisation path as stdio mode in ``server.py``).
-    2. Creates an ``SseServerTransport`` instance for ``/messages/``.
-    3. Builds a Starlette ASGI application with health, SSE, and message
-       routes.
-    4. Runs the application via uvicorn until interrupted.
-    """
-    global _server_start_time
-
-    # Initialise server (same as stdio path in server.py)
-    await _startup()
-    _server_start_time = time.time()
-
-    logger.info("Scribe MCP SSE transport starting on %s:%d", host, port)
-
-    # Create SSE transport -- ``/messages/`` is the path where clients POST
-    # their MCP messages.
-    sse_transport = SseServerTransport("/messages/")
-
-    # SSE connection handler.
-    #
+def _build_starlette_app(
+    *,
+    sse_transport: SseServerTransport,
+    expected_auth_token: str,
+) -> Starlette:
     # ``SseServerTransport.connect_sse`` manages the SSE response stream
     # directly through the ASGI ``send`` callable (accessed via the
-    # semi-private ``request._send``).  After the connection closes we
-    # return an empty ``Response`` so that Starlette's
-    # ``request_response`` wrapper does not raise ``TypeError`` when the
-    # handler returns ``None``.  This pattern matches the MCP SDK's own
-    # recommended usage (see ``mcp.server.sse`` module docstring).
+    # semi-private ``request._send``). After the connection closes we return an
+    # empty ``Response`` so Starlette's ``request_response`` wrapper does not
+    # raise ``TypeError`` when the handler returns ``None``.
     async def handle_sse(request: Request) -> Response:
         async with sse_transport.connect_sse(
             request.scope, request.receive, request._send,
@@ -407,7 +447,6 @@ async def run_sse(host: str = "0.0.0.0", port: int = 8200) -> None:
         finally:
             await _shutdown()
 
-    # Build the Starlette application -----------------------------------
     starlette_app = Starlette(
         routes=[
             Route("/health", health_check),
@@ -418,12 +457,72 @@ async def run_sse(host: str = "0.0.0.0", port: int = 8200) -> None:
         ],
         lifespan=lifespan,
     )
+    starlette_app.add_middleware(
+        TransportAuthMiddleware,
+        expected_auth_token=expected_auth_token,
+    )
+
+    return starlette_app
+
+
+async def run_sse(
+    host: str | None = None,
+    port: int | None = None,
+    auth_token: str | None = None,
+) -> None:
+    """Run the MCP server over SSE transport.
+
+    Parameters
+    ----------
+    host:
+        Network interface to bind to. Defaults to the configured transport host,
+        which is loopback-safe unless explicitly overridden.
+    port:
+        TCP port to listen on. Defaults to the configured transport port.
+    auth_token:
+        Application-layer token required for ``/sse``, ``/messages/``, and
+        ``/api/v1/*``. Defaults to ``SCRIBE_TRANSPORT_AUTH_TOKEN``.
+
+    The function performs the following steps:
+
+    1. Calls ``_startup()`` to initialise storage, background tasks, etc.
+       (same initialisation path as stdio mode in ``server.py``).
+    2. Creates an ``SseServerTransport`` instance for ``/messages/``.
+    3. Builds a Starlette ASGI application with health, SSE, and message
+       routes.
+    4. Runs the application via uvicorn until interrupted.
+    """
+    global _server_start_time
+
+    _, policy, resolved_auth_token = _resolve_transport_runtime(host, port, auth_token)
+    server_module.set_transport_policy(policy)
+
+    # Initialise server (same as stdio path in server.py)
+    await _startup()
+    _server_start_time = time.time()
+
+    logger.info(
+        "Scribe MCP SSE transport starting on %s:%d (network_exposed=%s)",
+        policy.bind_host,
+        policy.port,
+        policy.network_exposed,
+    )
+
+    # Create SSE transport -- ``/messages/`` is the path where clients POST
+    # their MCP messages.
+    sse_transport = SseServerTransport("/messages/")
+
+    # Build the Starlette application -----------------------------------
+    starlette_app = _build_starlette_app(
+        sse_transport=sse_transport,
+        expected_auth_token=resolved_auth_token,
+    )
 
     # Run uvicorn -------------------------------------------------------
     config = uvicorn.Config(
         starlette_app,
-        host=host,
-        port=port,
+        host=policy.bind_host,
+        port=policy.port,
         log_level="info",
     )
     server = uvicorn.Server(config)

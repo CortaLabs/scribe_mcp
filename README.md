@@ -154,10 +154,8 @@ edit_file(agent="CoderAgent", path="utils/helpers.py", old_string="old_name", ne
 
 Parameters: `agent`, `path`, `old_string`, `new_string`, `replace_all` (default: False), `dry_run` (default: True), `format`
 
-- `scribe_doctor` reports repo root, config, plugin status, and vector readiness for faster diagnostics.
-- `manage_docs` now supports semantic search via `action="search"` with `search_mode="semantic"`, including doc/log separation and `doc_k`/`log_k` overrides.
-- Vector indexing now prefers registry-managed docs only; log/rotated-log files are excluded from doc indexing.
-- Reindex supports `--rebuild` (clear index), `--safe` (low-thread fallback), and `--wait-for-drain` to block until embeddings are written.
+- `scribe_doctor` reports repo root, config resolution, and plugin status for faster diagnostics.
+- `manage_docs` supports text search via `action="search"` and returns explicit fallback metadata when unsupported legacy modes are requested.
 
 Example (structured mode with edit):
 ```json
@@ -254,7 +252,7 @@ Once connected from Claude / Codex MCP:
 - Use **`append_entry`** for all logging (single/bulk).
 - Use **`manage_docs`** for architecture/phase/checklist updates.  **2.1.1** introduces diff edits.
 - Use **`read_file`** for safe, auditable file reads (scan/chunk/page/search).
-- Use **`scribe_doctor`** for readiness checks (repo root, config, vector index status).
+- Use **`scribe_doctor`** for readiness checks (repo root, config resolution, plugin status).
 - Use **`read_recent` / `list_projects`** to resume context after compaction.
 
 **Automatic log routing (BUG / SECURITY)**
@@ -313,7 +311,7 @@ python -m scribe_mcp.scripts.scribe "Starting new feature work" --project fronte
 
 ## 🐳 Docker Deployment
 
-**Deploy Scribe MCP as a containerized service with SSE transport:**
+**Deploy Scribe MCP as a trusted local/internal containerized service with SSE transport:**
 
 ### Quick Start (Standalone)
 
@@ -321,10 +319,19 @@ python -m scribe_mcp.scripts.scribe "Starting new feature work" --project fronte
 # Build the image
 docker build -f deploy/Dockerfile -t scribe-mcp:latest .
 
-# Run the container
+# Pick an application-layer token for all HTTP/SSE requests
+export SCRIBE_TRANSPORT_AUTH_TOKEN="$(python - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+)"
+
+# Run the container (explicitly opting into non-loopback bind)
 docker run -d \
   --name scribe-mcp \
   -p 8200:8200 \
+  -e SCRIBE_TRANSPORT_HOST=0.0.0.0 \
+  -e SCRIBE_TRANSPORT_AUTH_TOKEN="$SCRIBE_TRANSPORT_AUTH_TOKEN" \
   -v scribe_data:/app/.scribe \
   scribe-mcp:latest
 
@@ -344,24 +351,29 @@ docker compose \
 
 ### Connecting MCP Clients to Docker
 
-Configure your MCP client for SSE transport instead of stdio:
+Configure only trusted/local or explicitly internal clients for SSE transport, and make sure they send the same auth token on `/sse`, `/messages/`, and `/api/v1/*`:
 
 ```json
 {
   "mcpServers": {
     "scribe": {
-      "url": "http://localhost:8200/sse"
+      "url": "http://localhost:8200/sse",
+      "headers": {
+        "Authorization": "Bearer ${SCRIBE_TRANSPORT_AUTH_TOKEN}"
+      }
     }
   }
 }
 ```
 
 **Key features:**
-- SSE transport on port 8200 (HTTP-based, replaces stdio)
+- SSE transport on port 8200 for trusted single-tenant use (HTTP-based, replaces stdio)
 - PostgreSQL support with Docker secrets for credentials
 - Compose overlay pattern for Council integration
 - Health checks at `/health` endpoint
 - Non-root user (UID 1001), minimal attack surface
+
+**Release posture:** Scribe 1.0 does **not** claim public unauthenticated or multi-tenant hosting support. Loopback/stdio remains the default. Non-loopback SSE exposure is an explicit operator choice and requires `SCRIBE_TRANSPORT_AUTH_TOKEN`.
 
 For full documentation including configuration, PostgreSQL setup, troubleshooting, and Council integration, see **[deploy/README.md](deploy/README.md)**.
 
@@ -486,7 +498,10 @@ You can run Scribe from any codebase (not just `MCP_SPINE`) by pointing it at th
 5. Optional env vars:
    - `SCRIBE_STATE_PATH=/abs/path/to/state.json` **(DEPRECATED in v2.2 - sessions now stored in database)**
    - `SCRIBE_STORAGE_BACKEND=postgres` and `SCRIBE_DB_URL=postgresql://...` if you want Postgres.
+   - `SCRIBE_ALLOW_OUTSIDE_REPO_READS=true` if a trusted/local deployment needs cross-repo `read_file(... allow_outside_repo=True)` behavior.
 6. Prefer launching via installed entry points (`scribe-server`, `scribe`) so no manual `PYTHONPATH` wiring is required.
+
+Trusted/local cross-repo reads remain supported behind explicit policy. Remotely exposed/network SSE posture disables outside-repo reads by default unless an operator explicitly re-enables them.
 
 ---
 
@@ -985,7 +1000,7 @@ python -m scribe_mcp.scripts.scribe "Added new feature: description" --status su
 ### 🌟 Advanced Features
 - **🤖 Claude Code Integration** - Structured workflows and subagent coordination
 - **📊 Agent Report Cards** - Performance grading and quality metrics
-- **🔍 Vector Search** - FAISS integration for semantic search
+- **🔎 Repo Search & Diagnostics** - Auditable file search and runtime health checks
 - **🔐 Security Framework** - Comprehensive access control and audit trails
 
 ### 🚀 Production Deployment

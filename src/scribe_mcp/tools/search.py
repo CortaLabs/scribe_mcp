@@ -109,6 +109,10 @@ _BINARY_CHECK_BYTES = 8192
 
 # Maximum characters per line in search results (prevents output explosion)
 MAX_LINE_LENGTH = 500  # characters - safety limit for output size
+MAX_REGEX_PATTERN_LENGTH = 256
+_ADVANCED_REGEX_GROUP_RE = re.compile(r"\(\?(?!:)")
+_BACKREFERENCE_RE = re.compile(r"\\[1-9]")
+_NESTED_QUANTIFIER_RE = re.compile(r"\((?:[^()\\]|\\.)*[+*{](?:[^()\\]|\\.)*\)(?:[+*]|\{\d)")
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +289,24 @@ def _truncate_line(line: str, max_length: int = MAX_LINE_LENGTH) -> str:
     if len(line) <= max_length:
         return line
     return f"{line[:max_length]}... [TRUNCATED - {len(line)} chars total]"
+
+
+def _validate_regex_pattern(pattern: str, *, multiline: bool) -> Optional[str]:
+    """Reject regex constructs that widen the public search attack surface."""
+    if len(pattern) > MAX_REGEX_PATTERN_LENGTH:
+        return (
+            f"Regex patterns are limited to {MAX_REGEX_PATTERN_LENGTH} characters "
+            "on the public search surface"
+        )
+    if multiline:
+        return "Multiline regex search is disabled; use literal multiline search instead"
+    if _ADVANCED_REGEX_GROUP_RE.search(pattern):
+        return "Advanced regex groups and inline flags are disabled on the public search surface"
+    if _BACKREFERENCE_RE.search(pattern):
+        return "Regex backreferences are disabled on the public search surface"
+    if _NESTED_QUANTIFIER_RE.search(pattern):
+        return "Nested quantifiers are disabled on the public search surface"
+    return None
 
 
 def _search_file(
@@ -590,7 +612,7 @@ async def search(
 
     # Search Behavior
     case_insensitive: bool = False,
-    regex: bool = True,
+    regex: bool = False,
     multiline: bool = False,
 
     # Limits
@@ -612,7 +634,7 @@ async def search(
 
     Parameters:
         agent: Agent identifier (required for audit trail)
-        pattern: Search pattern (regex by default, literal if regex=False)
+        pattern: Search pattern (literal by default, regex if regex=True)
         path: Directory or file to search (default: repo root)
         glob: Glob pattern to filter files (e.g. "*.py", "src/**/*.ts")
         type: File type filter (py, js, ts, rust, go, java, etc.)
@@ -771,6 +793,13 @@ async def search(
 
     try:
         if regex:
+            regex_error = _validate_regex_pattern(pattern, multiline=multiline)
+            if regex_error:
+                return {
+                    "ok": False,
+                    "error": "unsafe regex rejected",
+                    "reason": regex_error,
+                }
             compiled = re.compile(pattern, flags)
         else:
             compiled = re.compile(re.escape(pattern), flags)

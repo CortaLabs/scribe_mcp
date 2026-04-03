@@ -14,7 +14,6 @@ from scribe_mcp.tool_contracts import stateful_local_tool
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import runtime as runtime_shared
 from scribe_mcp.doc_management import special_create as special_create_shared
-from scribe_mcp.doc_management import utils as utils_shared
 from scribe_mcp.doc_management.manager import _resolve_doc_path
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.utils.parameter_validator import BulletproofParameterCorrector
@@ -44,19 +43,9 @@ VALID_ACTIONS = runtime_shared.VALID_ACTIONS
 ACTION_ROUTER = runtime_shared.ACTION_ROUTER
 
 
-def _chunk_text_for_vector(text: str, max_chars: int = 4000) -> List[str]:
-    """Compatibility wrapper for legacy tests/import paths."""
-    return utils_shared.chunk_text_for_vector(text, max_chars=max_chars)
-
-
 def _should_skip_doc_index(doc_key: Optional[str], path: Path) -> bool:
     """Compatibility wrapper for legacy tests/import paths."""
     return indexing_shared.should_skip_doc_index(doc_key, path)
-
-
-def _resolve_semantic_limits(*, search_meta: Dict[str, Any], repo_root: Optional[Path]) -> Dict[str, Any]:
-    """Compatibility wrapper for legacy tests/import paths."""
-    return indexing_shared.resolve_semantic_limits(search_meta=search_meta, repo_root=repo_root)
 
 
 async def _get_or_create_storage_project(backend: Any, project: Dict[str, Any]) -> Any:

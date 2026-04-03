@@ -1,10 +1,5 @@
 """Tests for deterministic entry ID generation in append_entry."""
 
-import pytest
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
-
 from scribe_mcp.tools.append_entry import (
     _generate_deterministic_entry_id,
     _get_repo_slug,
@@ -12,7 +7,7 @@ from scribe_mcp.tools.append_entry import (
 )
 
 
-class TestDeterministicEntryIDs:
+class TestAppendEntryDeterministicEntryIDs:
     """Test deterministic entry ID generation functionality."""
 
     def test_get_repo_slug_basic(self):
@@ -168,7 +163,7 @@ class TestDeterministicEntryIDs:
 
     def test_entry_id_reproducibility_across_calls(self):
         """Test that entry IDs are reproducible across multiple function calls."""
-        # This is crucial for vector index stability
+        # This is crucial for append-entry id stability across repeated writes
         test_cases = [
             {
                 "repo_slug": "test-repo",

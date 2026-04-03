@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.testclient import TestClient
 
 # Ensure the src directory is on the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -143,7 +144,7 @@ class TestSSERouteStructure:
             mock_uvicorn.Config = capture_config
 
             from scribe_mcp.server_sse import run_sse
-            await run_sse(host="127.0.0.1", port=9999)
+            await run_sse(host="127.0.0.1", port=9999, auth_token="test-token")
 
         mock_startup.assert_called_once()
         assert captured_app is not None
@@ -184,7 +185,7 @@ class TestSSERouteStructure:
             mock_uvicorn.Config = capture_config
 
             from scribe_mcp.server_sse import run_sse
-            await run_sse(host="192.168.1.1", port=7777)
+            await run_sse(host="192.168.1.1", port=7777, auth_token="test-token")
 
         assert captured_kwargs["host"] == "192.168.1.1"
         assert captured_kwargs["port"] == 7777
@@ -215,7 +216,7 @@ class TestSSERouteStructure:
             mock_uvicorn.Config = capture_config
 
             from scribe_mcp.server_sse import run_sse
-            await run_sse()
+            await run_sse(auth_token="test-token")
 
             async with captured_app.router.lifespan_context(captured_app):
                 pass
@@ -223,9 +224,94 @@ class TestSSERouteStructure:
             mock_shutdown.assert_awaited_once()
 
 
+class TestSSEOutsideRepoRuntimePolicy:
+    def test_loopback_authenticated_sse_is_trusted_default_allow(self):
+        from scribe_mcp.server_sse import _resolve_transport_runtime
+
+        with patch.dict(os.environ, {"SCRIBE_TRANSPORT_AUTH_TOKEN": "top-secret"}, clear=False):
+            runtime_settings, policy, resolved_token = _resolve_transport_runtime(
+                "127.0.0.1",
+                8200,
+                None,
+            )
+
+        effective_policy = runtime_settings.resolve_outside_repo_read_policy(
+            {
+                "transport": policy.transport,
+                "bind_host": policy.bind_host,
+                "port": policy.port,
+                "network_exposed": policy.network_exposed,
+                "auth_required": policy.auth_required,
+                "auth_configured": policy.auth_configured,
+                "allow_outside_repo_reads": policy.allow_outside_repo_reads,
+            }
+        )
+
+        assert resolved_token == "top-secret"
+        assert effective_policy["trusted_runtime"] is True
+        assert effective_policy["enabled"] is True
+        assert effective_policy["force_enabled"] is False
+
+    def test_non_loopback_sse_requires_explicit_force_enable(self):
+        from scribe_mcp.server_sse import _resolve_transport_runtime
+
+        with patch.dict(
+            os.environ,
+            {
+                "SCRIBE_TRANSPORT_AUTH_TOKEN": "top-secret",
+                "SCRIBE_ALLOW_OUTSIDE_REPO_READS": "1",
+            },
+            clear=False,
+        ):
+            runtime_settings, policy, _ = _resolve_transport_runtime("0.0.0.0", 8200, None)
+
+        effective_policy = runtime_settings.resolve_outside_repo_read_policy(
+            {
+                "transport": policy.transport,
+                "bind_host": policy.bind_host,
+                "port": policy.port,
+                "network_exposed": policy.network_exposed,
+                "auth_required": policy.auth_required,
+                "auth_configured": policy.auth_configured,
+                "allow_outside_repo_reads": policy.allow_outside_repo_reads,
+            }
+        )
+
+        assert effective_policy["network_exposed"] is True
+        assert effective_policy["trusted_runtime"] is False
+        assert effective_policy["force_enabled"] is True
+        assert effective_policy["enabled"] is True
+
+
 # ---------------------------------------------------------------------------
 # Task 1.2: __main__.py CLI tests
 # ---------------------------------------------------------------------------
+
+class TestTransportAuthBoundary:
+    """Verify the shared auth boundary for SSE, MCP message POST, and REST helpers."""
+
+    def test_unauthenticated_sse_and_rest_requests_are_rejected(self):
+        import scribe_mcp.server_sse as sse_mod
+
+        with patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock):
+            app = sse_mod._build_starlette_app(
+                sse_transport=sse_mod.SseServerTransport("/messages/"),
+                expected_auth_token="top-secret",
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                sse_response = client.get("/sse")
+                rest_response = client.post("/api/v1/batch", json={"operations": []})
+                message_response = client.post("/messages/")
+                health_response = client.get("/health")
+
+        assert sse_response.status_code == 401
+        assert rest_response.status_code == 401
+        assert message_response.status_code == 401
+        assert sse_response.json()["type"] == "Unauthorized"
+        assert rest_response.json()["type"] == "Unauthorized"
+        assert message_response.json()["type"] == "Unauthorized"
+        assert health_response.status_code == 200
+
 
 class TestCLIArgumentParsing:
     """Verify --transport, --port, --host arguments work correctly."""
@@ -252,13 +338,13 @@ class TestCLIArgumentParsing:
         finally:
             os.environ.update(env_backup)
 
-    def test_default_host_is_all_interfaces(self):
+    def test_default_host_is_loopback_safe(self):
         from scribe_mcp.__main__ import _parse_args
         env_backup = {k: os.environ.pop(k) for k in
                       ["SCRIBE_TRANSPORT_HOST"] if k in os.environ}
         try:
             args = _parse_args([])
-            assert args.host == "0.0.0.0"
+            assert args.host == "127.0.0.1"
         finally:
             os.environ.update(env_backup)
 
@@ -331,8 +417,9 @@ class TestCLIMainFunction:
     def test_stdio_calls_server_main(self):
         from scribe_mcp.__main__ import main
 
+        mock_server_main = MagicMock(return_value="server-main-coro")
         with patch("scribe_mcp.__main__.asyncio") as mock_asyncio, \
-             patch("scribe_mcp.__main__.server_main") as mock_server_main:
+             patch("scribe_mcp.__main__.server_main", mock_server_main):
             main(["--transport", "stdio"])
             # asyncio.run should be called once with a coroutine from server_main
             mock_asyncio.run.assert_called_once()
@@ -343,10 +430,9 @@ class TestCLIMainFunction:
     def test_sse_lazy_imports_run_sse(self):
         from scribe_mcp.__main__ import main
 
-        mock_run_sse = AsyncMock()
+        mock_run_sse = MagicMock(return_value="run-sse-coro")
 
         with patch("scribe_mcp.__main__.asyncio") as mock_asyncio, \
-             patch.dict("sys.modules", {}), \
              patch("scribe_mcp.server_sse.run_sse", mock_run_sse):
             main(["--transport", "sse", "--port", "8200", "--host", "0.0.0.0"])
             # asyncio.run should be called with the result of run_sse(...)

@@ -1,17 +1,17 @@
 # Scribe MCP - Docker Deployment Guide
 
-This directory contains production-ready Docker configurations for deploying Scribe MCP as a containerized service with SSE (Server-Sent Events) transport.
+This directory contains Docker configurations for running Scribe MCP as a trusted local or internal-only SSE (Server-Sent Events) service.
 
 ## Overview
 
 The Docker deployment provides:
 
-- **SSE Transport**: HTTP-based MCP communication on port 8200 (replaces stdio)
+- **SSE Transport**: HTTP-based MCP communication on port 8200 for trusted single-tenant use
 - **PostgreSQL Integration**: Shared database with Council MCP for enterprise deployments
 - **Compose Overlay Pattern**: Seamlessly integrates with Council's docker-compose infrastructure
-- **Standalone Option**: Can run independently with SQLite for simpler deployments
+- **Standalone Option**: Can run independently with SQLite for simpler trusted deployments
 - **Health Checks**: Built-in Docker health monitoring via `/health` endpoint
-- **Security**: Non-root user (UID 1001), Docker secrets for credentials, minimal attack surface
+- **Security**: Non-root user (UID 1001), Docker secrets for credentials, application-layer auth token, minimal attack surface
 
 ## Quick Start
 
@@ -23,9 +23,17 @@ Get Scribe running in under 5 minutes:
 # From scribe_mcp root directory
 docker build -f deploy/Dockerfile -t scribe-mcp:latest .
 
+export SCRIBE_TRANSPORT_AUTH_TOKEN="$(python - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+)"
+
 docker run -d \
   --name scribe-mcp \
   -p 8200:8200 \
+  -e SCRIBE_TRANSPORT_HOST=0.0.0.0 \
+  -e SCRIBE_TRANSPORT_AUTH_TOKEN="$SCRIBE_TRANSPORT_AUTH_TOKEN" \
   -v scribe_data:/app/.scribe \
   scribe-mcp:latest
 ```
@@ -51,7 +59,9 @@ docker compose \
 This merges both compose files, creating a unified stack where:
 - Council and Scribe share the `backend` network
 - Both use the same PostgreSQL instance
-- Council connects to Scribe via `http://scribe:8200/sse`
+- Council connects to Scribe via `http://scribe:8200/sse` with the shared transport auth token configured by the operator
+
+> **Release contract:** Scribe 1.0 does **not** support public unauthenticated or multi-tenant hosting. Keep SSE on loopback or a trusted internal network, and require `SCRIBE_TRANSPORT_AUTH_TOKEN` for every non-health HTTP route.
 
 ## Prerequisites
 
@@ -69,7 +79,8 @@ All configuration is done via environment variables. Defaults are set in the Doc
 |----------|---------|-------------|
 | `SCRIBE_TRANSPORT` | `sse` | Transport mode (use `sse` for Docker deployments) |
 | `SCRIBE_TRANSPORT_PORT` | `8200` | HTTP port for SSE endpoints |
-| `SCRIBE_TRANSPORT_HOST` | `0.0.0.0` | Network interface to bind (0.0.0.0 = all interfaces) |
+| `SCRIBE_TRANSPORT_HOST` | `127.0.0.1` | Safe default bind; set `0.0.0.0` only for trusted/internal exposure |
+| `SCRIBE_TRANSPORT_AUTH_TOKEN` | (required for SSE/REST) | Shared bearer token for `/sse`, `/messages/`, and `/api/v1/*` |
 | `SCRIBE_ROOT` | `/app` | Application root directory inside container |
 | `SCRIBE_STORAGE_BACKEND` | `sqlite` | Storage backend (`sqlite` or `postgres`) |
 | `SCRIBE_DB_URL` | (none) | PostgreSQL connection string (loaded from secret, see below) |
@@ -81,6 +92,7 @@ All configuration is done via environment variables. Defaults are set in the Doc
 | `SCRIBE_OBJECT_STORE_PROVIDER` | `corta` | Object store provider (`corta` or `s3`) |
 | `SCRIBE_OBJECT_STORE_PROJECT` | (none) | CortaStore project namespace |
 | `SCRIBE_OBJECT_STORE_KEY` | (none) | HMAC signing key (loaded from Docker secret) |
+| `SCRIBE_ALLOW_OUTSIDE_REPO_READS` | `false` | Explicitly re-enable trusted/local outside-repo reads when required |
 
 ### Docker Secrets
 
@@ -118,13 +130,16 @@ For production deployments, use Docker secrets instead of environment variables 
 
 ### SSE Transport Configuration
 
-Configure your MCP client (Claude Code, etc.) to connect via HTTP SSE instead of stdio:
+Configure only trusted clients that can attach the shared auth token on every SSE/REST request:
 
 ```json
 {
   "mcpServers": {
     "scribe": {
-      "url": "http://localhost:8200/sse"
+      "url": "http://localhost:8200/sse",
+      "headers": {
+        "Authorization": "Bearer ${SCRIBE_TRANSPORT_AUTH_TOKEN}"
+      }
     }
   }
 }
@@ -138,13 +153,14 @@ Configure your MCP client (Claude Code, etc.) to connect via HTTP SSE instead of
 | Transport | stdin/stdout pipes | Server-Sent Events + POST |
 | Endpoints | N/A | `/sse`, `/messages/`, `/health` |
 | Health checks | Process monitoring | HTTP health endpoint |
-| Scalability | Local only | Network-accessible, load-balanceable |
+| Exposure | Local process only | Trusted loopback/internal network only |
 
 ### Endpoints
 
 - **`/health`** - JSON health check for Docker HEALTHCHECK and monitoring tools
-- **`/sse`** - SSE stream endpoint where MCP clients connect
-- **`/messages/`** - POST endpoint where clients send MCP protocol messages
+- **`/sse`** - SSE stream endpoint where trusted MCP clients connect (auth required)
+- **`/messages/`** - POST endpoint where clients send MCP protocol messages (auth required)
+- **`/api/v1/backend/*`, `/api/v1/batch`** - internal REST helpers protected by the same auth boundary as SSE/MCP
 
 ## PostgreSQL Setup
 
@@ -208,7 +224,7 @@ docker compose \
 
 **Council-to-Scribe communication:**
 
-Council connects to Scribe via Docker DNS:
+Council connects to Scribe via Docker DNS and must present the same transport token:
 ```
 http://scribe:8200/sse
 ```
@@ -221,7 +237,7 @@ No host port mapping needed - services communicate over the internal `backend` n
 ┌─────────────────┐
 │  Claude Code    │ (external client)
 └────────┬────────┘
-         │ http://localhost:8200/sse (if Scribe port exposed)
+         │ http://localhost:8200/sse + Authorization header (if Scribe port exposed)
          │
 ┌────────▼─────────────────────────────────────┐
 │         Docker Host                          │
@@ -269,6 +285,7 @@ The Dockerfile uses a two-stage build to minimize image size:
 
 - **Non-root user:** Runs as `scribe` (UID 1001), not root
 - **Secrets:** Database credentials via Docker secrets, not environment variables
+- **Transport auth:** `/sse`, `/messages/`, and backend REST helpers reject unauthenticated requests
 - **Minimal attack surface:** Only necessary packages installed, no build tools in runtime image
 - **Health checks:** Automatic container restart on health check failure
 

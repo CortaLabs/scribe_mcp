@@ -339,52 +339,6 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         ],
         tags=["maintenance", "archive", "safety", "audit"]
     ),
-
-    "vector_search": ToolMetadata(
-        name="vector_search",
-        description="Search for semantically similar log entries using vector embeddings. Requires VectorIndexer plugin to be active.",
-        category="Search & Analysis",
-        parameters=[
-            ToolParameter(
-                name="query",
-                type="str",
-                required=True,
-                description="Search query text"
-            ),
-            ToolParameter(
-                name="k",
-                type="int",
-                description="Maximum number of results to return",
-                default=10
-            ),
-            ToolParameter(
-                name="min_similarity",
-                type="float",
-                description="Minimum similarity score threshold (0-1)",
-                example=0.8
-            ),
-            ToolParameter(
-                name="project_slug",
-                type="str",
-                description="Filter by project slug",
-                example="my-project"
-            ),
-        ],
-        examples=[
-            ToolExample(
-                name="Semantic search",
-                description="Find entries about authentication issues",
-                code='await vector_search(query="login problems and authentication failures", k=5)',
-                result="Returns semantically similar entries about auth issues"
-            ),
-        ],
-        notes=[
-            "Only available when VectorIndexer plugin is active",
-            "Uses advanced embeddings for semantic understanding",
-            "Supports similarity thresholds for quality control"
-        ],
-        tags=["search", "semantic", "ai", "plugin"]
-    ),
 }
 
 

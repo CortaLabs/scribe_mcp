@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import textwrap
 
-import pytest
-
 from scribe_mcp.config.repo_config import RepoConfig
 from scribe_mcp.plugins.registry import get_plugin_registry, initialize_plugins
-from scribe_mcp.plugins.vector_indexer import FAISS_AVAILABLE
 
 
-@pytest.mark.skipif(not FAISS_AVAILABLE, reason="Vector dependencies not available")
-def test_plugin_registry_loads_builtin_vector_indexer(tmp_path) -> None:
-    """Ensure plugin registry loads built-in vector indexer when enabled in repo config."""
+def test_plugin_registry_does_not_load_removed_builtin_vector_plugin(tmp_path) -> None:
+    """Ensure legacy vector settings do not restore a built-in core plugin."""
     config_dir = tmp_path / ".scribe" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -33,7 +29,7 @@ def test_plugin_registry_loads_builtin_vector_indexer(tmp_path) -> None:
     initialize_plugins(repo_config)
 
     registry = get_plugin_registry(tmp_path)
-    assert "vector_indexer" in registry.plugins
-    assert registry.plugins["vector_indexer"].initialized
+    assert "vector_indexer" not in registry.plugins
+    assert registry.plugins == {}
 
     registry.cleanup()

@@ -5,7 +5,7 @@ doc_type: global_deployment_guide
 category: engineering
 status: draft
 version: '0.1'
-last_updated: '2026-01-02'
+last_updated: '2026-03-21'
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners: []
@@ -41,7 +41,7 @@ Scribe automatically discovers repositories by looking for:
 Each repository can have its own configuration via `.scribe/config/scribe.yaml`:
 ```yaml
 repo_slug: my-project
-dev_plans_dir: docs/dev_plans
+dev_plans_dir: .scribe/docs/dev_plans  # Canonical default; keep docs/dev_plans only for legacy/back-compat repos
 progress_log_name: PROGRESS_LOG.md
 permissions:
   allow_rotate: true
@@ -121,13 +121,13 @@ For more control over repository setup:
 
 ```bash
 # Initialize in current directory
-python scripts/scribe_cli.py init
+python -m scribe_mcp.scripts.scribe_cli init
 
 # Initialize in specific directory
-python scripts/scribe_cli.py init --path /path/to/project
+python -m scribe_mcp.scripts.scribe_cli init --path /path/to/project
 
 # Force reinitialization
-python scripts/scribe_cli.py init --force
+python -m scribe_mcp.scripts.scribe_cli init --force
 ```
 
 ### Configuration Options
@@ -138,7 +138,7 @@ Create `.scribe/config/scribe.yaml` in your repository:
 repo_slug: my-project  # Auto-detected if not specified
 
 # Documentation structure
-dev_plans_dir: docs/dev_plans
+dev_plans_dir: .scribe/docs/dev_plans  # Canonical default; set docs/dev_plans only when preserving a legacy tree
 progress_log_name: PROGRESS_LOG.md
 
 # Template configuration
@@ -189,7 +189,7 @@ For monorepos with multiple subprojects:
 ```yaml
 # .scribe/config/scribe.yaml
 repo_slug: my-monorepo
-dev_plans_dir: docs/dev_plans
+dev_plans_dir: .scribe/docs/dev_plans
 permissions:
   allow_rotate: true
 ```
@@ -222,16 +222,16 @@ Command-line utility for managing Scribe repositories:
 
 ```bash
 # Initialize repository
-python scripts/scribe_cli.py init
+python -m scribe_mcp.scripts.scribe_cli init
 
 # Diagnose setup issues
-python scripts/scribe_cli.py doctor
+python -m scribe_mcp.scripts.scribe_cli doctor
 
 # Show current status
-python scripts/scribe_cli.py status
+python -m scribe_mcp.scripts.scribe_cli status
 
 # Switch to different repository
-python scripts/scribe_cli.py use /path/to/other/repo
+python -m scribe_mcp.scripts.scribe_cli use /path/to/other/repo
 ```
 
 ### Common Commands
@@ -239,7 +239,7 @@ python scripts/scribe_cli.py use /path/to/other/repo
 #### Doctor
 Run comprehensive diagnostics:
 ```bash
-python scripts/scribe_cli.py doctor
+python -m scribe_mcp.scripts.scribe_cli doctor
 ```
 Output:
 ```
@@ -250,11 +250,11 @@ Output:
 
 2. Configuration:
    ✅ Loaded configuration for repo: my-project
-   📁 Dev plans directory: /home/user/my-project/docs/dev_plans
+   📁 Dev plans directory: /home/user/my-project/.scribe/docs/dev_plans
    📄 Progress log name: PROGRESS_LOG.md
 
 3. Directory Structure:
-   ✅ /home/user/my-project/docs/dev_plans
+   ✅ /home/user/my-project/.scribe/docs/dev_plans
 
 4. Permissions:
    ✅ read
@@ -268,7 +268,7 @@ Output:
 #### Status
 Show current repository status:
 ```bash
-python scripts/scribe_cli.py status
+python -m scribe_mcp.scripts.scribe_cli status
 ```
 Output:
 ```
@@ -353,7 +353,7 @@ ls -la .scribe/config/scribe.yaml
 
 ```bash
 # Run doctor to diagnose
-python scripts/scribe_cli.py doctor
+python -m scribe_mcp.scripts.scribe_cli doctor
 ```
 
 ### Debug Mode
@@ -424,7 +424,7 @@ Repository-specific permissions control:
 ## Support
 
 ### Getting Help
-1. Run `python scripts/scribe_cli.py doctor` for diagnostics
+1. Run `python -m scribe_mcp.scripts.scribe_cli doctor` for diagnostics
 2. Check the demo scripts for working examples
 3. Review the troubleshooting section
 

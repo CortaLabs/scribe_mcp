@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 import asyncio
 
 from scribe_mcp import server as server_module
-from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import additive_local_tool
@@ -83,26 +82,6 @@ _PARALLEL_PROCESSOR = ParallelBulkProcessor()
 _PARAMETER_CORRECTOR = BulletproofParameterCorrector()
 _EXCEPTION_HEALER = ExceptionHealer()
 _PROJECT_REGISTRY = ProjectRegistry()
-
-
-def _get_vector_indexer():
-    try:
-        from scribe_mcp.plugins.registry import get_plugin_registry
-        registry = get_plugin_registry()
-        for plugin in registry.plugins.values():
-            if getattr(plugin, "name", None) == "vector_indexer" and getattr(plugin, "initialized", False):
-                return plugin
-    except Exception:
-        return None
-    return None
-
-
-def _vector_log_indexing_enabled(repo_root: Path) -> bool:
-    try:
-        config = RepoDiscovery.load_config(repo_root)
-    except Exception:
-        return False
-    return bool(config.vector_index_logs)
 
 
 def _sanitize_message(message: str) -> str:
@@ -679,23 +658,6 @@ async def _process_single_entry(
                 db_mirror["status"] = "error"
                 db_mirror["error"] = str(db_exc)
                 logger.warning("append_entry database mirror failed: %s", db_exc)
-
-        # Queue entry for vector indexing (non-blocking).
-        try:
-            if _vector_log_indexing_enabled(repo_root):
-                vector_indexer = _get_vector_indexer()
-                if vector_indexer:
-                    vector_indexer.post_append({
-                        "entry_id": entry_id,
-                        "project_name": project.get("name", ""),
-                        "message": message,
-                        "agent": resolved_agent,
-                        "timestamp": timestamp,
-                        "meta": meta_payload,
-                    })
-        except Exception:
-            # Vector indexing failures should never block logging.
-            pass
 
         # Update project state with exception handling
         try:

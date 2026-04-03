@@ -1,19 +1,9 @@
 # Scribe MCP Server - Production Dockerfile
 # Multi-stage build: builder (compile deps) -> runtime (minimal image)
 # Build context: scribe_mcp root (parent of deploy/)
-#
-# Usage:
-#   CPU (default, for Hetzner/servers without GPU):
-#     docker build -f deploy/Dockerfile -t scribe-mcp:latest .
-#
-#   GPU (CUDA, for machines with NVIDIA GPU):
-#     docker build -f deploy/Dockerfile --build-arg DEVICE=gpu -t scribe-mcp:gpu .
 
 # ===== STAGE 1: BUILDER =====
 FROM python:3.11-slim AS builder
-
-# DEVICE=cpu (default) pulls torch+cpu (~150MB). DEVICE=gpu pulls full CUDA torch (~900MB).
-ARG DEVICE=cpu
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev python3-dev \
@@ -23,15 +13,8 @@ WORKDIR /build
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-# Install scribe-mcp with ALL dependencies including sentence-transformers.
-# CPU mode uses PyTorch CPU-only wheels (~150MB vs ~900MB + 3GB CUDA libs).
-# GPU mode pulls full CUDA PyTorch for GPU-accelerated embeddings.
-# --no-cache-dir keeps the builder layer from doubling in size.
-RUN if [ "$DEVICE" = "cpu" ]; then \
-      pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu . ; \
-    else \
-      pip install --no-cache-dir . ; \
-    fi
+# Install the slim core package only.
+RUN pip install --no-cache-dir .
 
 # ===== STAGE 2: RUNTIME =====
 FROM python:3.11-slim AS runtime
@@ -71,8 +54,7 @@ ENV PYTHONPATH="/app/src" \
     SCRIBE_TRANSPORT="sse" \
     SCRIBE_TRANSPORT_PORT="8200" \
     SCRIBE_TRANSPORT_HOST="0.0.0.0" \
-    PYTHONUNBUFFERED="1" \
-    HF_HUB_DISABLE_PROGRESS_BARS="1"
+    PYTHONUNBUFFERED="1"
 
 EXPOSE 8200
 

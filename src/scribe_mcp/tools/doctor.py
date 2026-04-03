@@ -10,19 +10,15 @@ from scribe_mcp.server import app
 from scribe_mcp.config.settings import settings
 from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.tool_contracts import read_only_local_tool
+from scribe_mcp.plugins.registry import get_plugin_registry
 
 
-def _get_vector_indexer() -> Any:
+def _list_loaded_plugins() -> list[str]:
     try:
-        from scribe_mcp.plugins.registry import get_plugin_registry
-
         registry = get_plugin_registry()
-        for plugin in registry.plugins.values():
-            if getattr(plugin, "name", None) == "vector_indexer":
-                return plugin
     except Exception:
-        return None
-    return None
+        return []
+    return sorted(registry.plugins.keys())
 
 
 def _safe_bool(value: Any) -> bool:
@@ -47,24 +43,9 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
             config_error = str(exc)
 
     plugin_info: Dict[str, Any] = {}
-    vector_indexer = _get_vector_indexer()
-    plugin_info["vector_indexer_present"] = vector_indexer is not None
-    if vector_indexer is not None:
-        plugin_info["vector_indexer_initialized"] = _safe_bool(
-            getattr(vector_indexer, "initialized", False)
-        )
-        plugin_info["vector_indexer_enabled"] = _safe_bool(
-            getattr(vector_indexer, "enabled", False)
-        )
-        plugin_info["vector_indexer_repo_root"] = str(
-            getattr(vector_indexer, "repo_root", "") or ""
-        ) or None
-        plugin_info["vector_indexer_repo_slug"] = getattr(vector_indexer, "repo_slug", None)
-
-    try:
-        from scribe_mcp.plugins.vector_indexer import FAISS_AVAILABLE
-    except Exception:
-        FAISS_AVAILABLE = False
+    loaded_plugins = _list_loaded_plugins()
+    plugin_info["loaded"] = loaded_plugins
+    plugin_info["count"] = len(loaded_plugins)
 
     config_view = None
     if config is not None:
@@ -73,8 +54,6 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
             "repo_root": str(config.repo_root),
             "plugins_dir": str(config.plugins_dir) if config.plugins_dir else None,
             "plugin_config_enabled": _safe_bool((config.plugin_config or {}).get("enabled")),
-            "vector_index_docs": _safe_bool(getattr(config, "vector_index_docs", False)),
-            "vector_index_logs": _safe_bool(getattr(config, "vector_index_logs", False)),
         }
 
     return {
@@ -95,7 +74,6 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
         "config": config_view,
         "config_path": str(config_path) if config_path else None,
         "config_error": config_error,
-        "vector_deps_available": _safe_bool(FAISS_AVAILABLE),
         "plugins": plugin_info,
     }
 
