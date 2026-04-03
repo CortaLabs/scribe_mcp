@@ -2513,6 +2513,9 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     allow_append = bool(
         metadata.get("allow_append") or metadata.get("scaffold") or metadata.get("create_if_missing")
     )
+    apply_to_all = bool(
+        metadata.get("all_items") or metadata.get("apply_to_all") or metadata.get("section_wide")
+    )
 
     done_states = {"done", "completed", "complete", "true", "yes", "checked", "finished"}
     pending_states = {"pending", "todo", "not done", "open", "incomplete", "undone"}
@@ -2640,7 +2643,13 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
         else:
             target_indices = [checklist_indices[item_index - 1]]
     elif section_start_idx is not None:
-        target_indices = checklist_indices
+        if len(checklist_indices) <= 1 or apply_to_all:
+            target_indices = checklist_indices
+        else:
+            raise DocumentOperationError(
+                f"CHECKLIST_SECTION_AMBIGUOUS: section '{section}' contains {len(checklist_indices)} "
+                "checklist items; pass metadata.label, metadata.item_index, or metadata.all_items=true"
+            )
     else:
         target_indices = checklist_indices[:1]
 

@@ -131,6 +131,25 @@ async def test_list_checklist_items_case_insensitive(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_checklist_items_accepts_doc_alias_case_variants(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="list_checklist_items",
+            doc="CHECKLIST",
+            metadata={"text": "Item A"},
+            dry_run=True,
+        )
+        assert result.get("ok")
+        matches = result.get("matches", [])
+        assert len(matches) == 1
+        assert matches[0]["text"] == "Item A"
+
+
+@pytest.mark.asyncio
 async def test_list_checklist_items_requires_match(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")

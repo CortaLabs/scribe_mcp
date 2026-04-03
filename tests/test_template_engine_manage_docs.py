@@ -22,6 +22,7 @@ from scribe_mcp.state import StateManager
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.template_engine import Jinja2TemplateEngine
 from scribe_mcp.tools.manage_docs import manage_docs
+from scribe_mcp.utils.frontmatter import parse_frontmatter
 
 
 def test_template_engine_renders_builtin_and_custom_templates(tmp_path: Path) -> None:
@@ -620,6 +621,52 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         assert sections_result["ok"]
         assert any(section["id"] == "problem_statement" for section in sections_result["sections"])
 
+        architecture_path.write_text(
+            "line 1\nline 2\nline 3\nline 4\nline 5\n",
+            encoding="utf-8",
+        )
+
+        batch_ranges = await manage_docs(
+            agent="test_agent",
+            action="batch",
+            doc="architecture",
+            metadata={
+                "operations": [
+                    {
+                        "action": "replace_range",
+                        "doc": "architecture",
+                        "start_line": 2,
+                        "end_line": 2,
+                        "content": "line 2a\nline 2b",
+                        "metadata": {"line_reference": "body"},
+                        "dry_run": False,
+                    },
+                    {
+                        "action": "replace_range",
+                        "doc": "architecture",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "content": "line 4 updated",
+                        "metadata": {"line_reference": "body"},
+                        "dry_run": False,
+                    },
+                ]
+            },
+        )
+        assert batch_ranges["ok"]
+        assert batch_ranges["warnings"]
+
+        architecture_text = architecture_path.read_text(encoding="utf-8")
+        parsed_architecture = parse_frontmatter(architecture_text)
+        assert parsed_architecture.body.splitlines() == [
+            "line 1",
+            "line 2a",
+            "line 2b",
+            "line 3",
+            "line 4 updated",
+            "line 5",
+        ]
+
         # Create an agent report card and ensure storage captures metrics
         agent_metadata = {
             "agent_name": "Ai-Dev",
@@ -741,7 +788,28 @@ def test_toggle_checklist_status_updates_inline_section_anchor_without_appending
     assert "\n\n<!-- ID: p4_documents -->\n" not in updated
 
 
-def test_toggle_checklist_status_updates_all_items_in_section_by_default() -> None:
+def test_toggle_checklist_status_requires_explicit_scope_for_multi_item_section() -> None:
+    marker = SECTION_MARKER.format(section="phase_0")
+    original = (
+        f"{marker}\n"
+        "- [ ] Ship docs\n"
+        "- [ ] Ship API\n"
+        "- [x] Ship tests | proof=old\n"
+        "<!-- ID: phase_1 -->\n"
+        "- [ ] Later\n"
+    )
+
+    with pytest.raises(DocumentOperationError) as exc_info:
+        _toggle_checklist_status(
+            original,
+            "phase_0",
+            {"status": "done", "proof": "commit_xyz"},
+        )
+
+    assert "CHECKLIST_SECTION_AMBIGUOUS" in str(exc_info.value)
+
+
+def test_toggle_checklist_status_updates_all_items_when_explicitly_requested() -> None:
     marker = SECTION_MARKER.format(section="phase_0")
     original = (
         f"{marker}\n"
@@ -755,7 +823,7 @@ def test_toggle_checklist_status_updates_all_items_in_section_by_default() -> No
     updated = _toggle_checklist_status(
         original,
         "phase_0",
-        {"status": "done", "proof": "commit_xyz"},
+        {"status": "done", "proof": "commit_xyz", "all_items": True},
     )
 
     assert "- [x] Ship docs | proof=commit_xyz" in updated

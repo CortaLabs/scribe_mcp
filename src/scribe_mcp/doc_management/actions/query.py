@@ -16,6 +16,30 @@ _QUERY_TRANSFORM_ACTIONS = {"normalize_headers", "generate_toc", "validate_cross
 _HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+\S.*)$")
 
 
+def _resolve_registered_doc_name(project: Dict[str, Any], doc_name: str) -> Optional[str]:
+    docs_mapping = project.get("docs") or {}
+    if doc_name in docs_mapping:
+        return doc_name
+
+    requested = str(doc_name).strip()
+    if not requested:
+        return None
+
+    requested_lower = requested.lower()
+    requested_stem = Path(requested).stem.lower()
+
+    for registered_name, registered_path in docs_mapping.items():
+        name = str(registered_name).strip()
+        if name.lower() == requested_lower:
+            return registered_name
+
+        path_obj = Path(str(registered_path))
+        if path_obj.name.lower() == requested_lower or path_obj.stem.lower() == requested_stem:
+            return registered_name
+
+    return None
+
+
 def _normalize_heading_text(value: str) -> str:
     cleaned = value.strip()
     cleaned = re.sub(r"\s+#+$", "", cleaned).strip()
@@ -41,13 +65,13 @@ async def handle_query_actions(
         if not doc_name:
             response = {"ok": False, "error": "list_sections requires doc_name parameter"}
             return helper.apply_context_payload(response, context)
-        allowed_docs = set((project.get("docs") or {}).keys())
-        if doc_name not in allowed_docs:
+        resolved_doc_name = _resolve_registered_doc_name(project, doc_name)
+        if resolved_doc_name is None:
             response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
             return helper.apply_context_payload(response, context)
         return await _handle_list_sections(
             project,
-            doc_name=doc_name,
+            doc_name=resolved_doc_name,
             metadata=metadata,
             helper=helper,
             context=context,
@@ -57,13 +81,13 @@ async def handle_query_actions(
         if not doc_name:
             response = {"ok": False, "error": "list_checklist_items requires doc_name parameter"}
             return helper.apply_context_payload(response, context)
-        allowed_docs = set((project.get("docs") or {}).keys())
-        if doc_name not in allowed_docs:
+        resolved_doc_name = _resolve_registered_doc_name(project, doc_name)
+        if resolved_doc_name is None:
             response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
             return helper.apply_context_payload(response, context)
         return await _handle_list_checklist_items(
             project,
-            doc_name=doc_name,
+            doc_name=resolved_doc_name,
             metadata=metadata if isinstance(metadata, dict) else {},
             helper=helper,
             context=context,
@@ -236,7 +260,7 @@ async def _handle_list_checklist_items(
             context,
         )
 
-    if doc_name != "checklist":
+    if doc_name.strip().lower() != "checklist":
         return helper.apply_context_payload(
             helper.error_response("list_checklist_items is only supported for checklist documents."),
             context,

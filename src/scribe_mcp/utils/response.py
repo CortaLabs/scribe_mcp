@@ -588,6 +588,8 @@ class ResponseFormatter:
                 # Markdown headings
                 headings = structure.get('headings', [])
                 total_headings = structure.get('total_headings', len(headings))
+                section_anchors = structure.get('section_anchors', [])
+                total_section_anchors = structure.get('total_section_anchors', len(section_anchors))
 
                 parts.append(f"  Headings ({total_headings} total):")
                 for heading in headings[:20]:  # Show first 20
@@ -595,6 +597,15 @@ class ResponseFormatter:
                     parts.append(f"    {indent}{'#' * heading['level']} {heading['text']} (line {heading['line']})")
                 if total_headings > 20:
                     parts.append(f"    ... and {total_headings - 20} more headings")
+
+                if section_anchors:
+                    parts.append("")
+                    parts.append(f"  Section Anchors ({total_section_anchors} total):")
+                    for anchor in section_anchors[:20]:
+                        heading_suffix = f" -> {anchor['heading']}" if anchor.get('heading') else ""
+                        parts.append(f"    • {anchor['id']} (line {anchor['line']}){heading_suffix}")
+                    if total_section_anchors > 20:
+                        parts.append(f"    ... and {total_section_anchors - 20} more anchors")
 
                 if structure.get('truncated'):
                     parts.append("")

@@ -42,6 +42,7 @@ _CHUNK_MAX_BYTES = 131072
 _GLOB_CHARS = {"*", "?", "["}
 _DEFAULT_MAX_MATCHES = 200
 _FULL_MODE_TOKEN_LIMIT = 12000  # Max content tokens for mode='full' (formatted output ~80k chars)
+_SECTION_ID_PATTERN = re.compile(r"^<!--\s*ID:\s*(?P<section>[^>]+?)\s*-->$")
 
 # Lazy-load tiktoken encoder
 _tiktoken_encoder = None
@@ -1551,33 +1552,73 @@ def _extract_markdown_structure(path: Path, max_headings: int = 100) -> Dict[str
         return {"ok": False, "error": str(e), "type": "markdown"}
 
     headings = []
+    section_anchors = []
+    is_scribe_managed_doc = ".scribe" in path.parts and "docs" in path.parts
+    in_code_fence = False
+    last_heading: Optional[Dict[str, Any]] = None
     for line_num, line in enumerate(lines, start=1):
-        line = line.rstrip()
-        if line.startswith("#"):
+        stripped = line.rstrip()
+        compact = stripped.strip()
+
+        if compact.startswith("```") or compact.startswith("~~~"):
+            in_code_fence = not in_code_fence
+            continue
+
+        if in_code_fence:
+            continue
+
+        if stripped.startswith("#"):
             # Count leading #'s
             level = 0
-            for char in line:
+            for char in stripped:
                 if char == "#":
                     level += 1
                 else:
                     break
-            text = line[level:].strip()
+            text = stripped[level:].strip()
             if text:  # Only add if there's actual text
-                headings.append({
+                heading = {
                     "level": level,
                     "text": text,
                     "line": line_num,
-                })
+                }
+                headings.append(heading)
+                last_heading = heading
+            continue
+
+        if not is_scribe_managed_doc:
+            continue
+
+        anchor_match = _SECTION_ID_PATTERN.match(compact)
+        if not anchor_match:
+            continue
+
+        anchor = {
+            "id": anchor_match.group("section").strip(),
+            "line": line_num,
+        }
+        if last_heading is not None:
+            anchor["heading"] = last_heading["text"]
+            anchor["heading_line"] = last_heading["line"]
+        section_anchors.append(anchor)
 
     total_headings = len(headings)
+    total_section_anchors = len(section_anchors)
 
-    return {
+    structure = {
         "ok": True,
         "type": "markdown",
         "headings": headings[:max_headings],
         "total_headings": total_headings,
         "truncated": total_headings > max_headings,
     }
+
+    if section_anchors:
+        structure["section_anchors"] = section_anchors[:max_headings]
+        structure["total_section_anchors"] = total_section_anchors
+        structure["scribe_managed"] = True
+
+    return structure
 
 
 def _extract_javascript_structure(path: Path, file_type: str, max_items: int = 50) -> Dict[str, Any]:

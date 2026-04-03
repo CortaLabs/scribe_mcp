@@ -2,7 +2,78 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+
+def _extract_range_coordinates(operation: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    action = str(operation.get("action") or "").strip()
+    if action == "replace_range":
+        start_line = operation.get("start_line")
+        end_line = operation.get("end_line")
+    elif action == "apply_patch":
+        edit = operation.get("edit")
+        if not isinstance(edit, dict) or str(edit.get("type") or "").strip() != "replace_range":
+            return None
+        start_line = edit.get("start_line")
+        end_line = edit.get("end_line")
+    else:
+        return None
+
+    if not isinstance(start_line, int) or not isinstance(end_line, int):
+        return None
+    return start_line, end_line
+
+
+def _normalize_range_batches(
+    operations: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Reorder contiguous range-edit runs to keep later coordinates stable."""
+    normalized: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    index = 0
+
+    while index < len(operations):
+        current = operations[index]
+        current_range = _extract_range_coordinates(current) if isinstance(current, dict) else None
+        current_doc = current.get("doc") if isinstance(current, dict) else None
+        if current_range is None:
+            normalized.append(current)
+            index += 1
+            continue
+
+        block: List[Dict[str, Any]] = [current]
+        lookahead = index + 1
+        while lookahead < len(operations):
+            candidate = operations[lookahead]
+            if (
+                not isinstance(candidate, dict)
+                or candidate.get("doc") != current_doc
+                or _extract_range_coordinates(candidate) is None
+            ):
+                break
+            block.append(candidate)
+            lookahead += 1
+
+        if len(block) == 1:
+            normalized.extend(block)
+            index = lookahead
+            continue
+
+        ordered_block = sorted(
+            block,
+            key=lambda operation: _extract_range_coordinates(operation) or (0, 0),
+            reverse=True,
+        )
+        if ordered_block != block:
+            warnings.append(
+                f"Reordered {len(block)} range edits for doc '{current_doc}' into descending line order "
+                "to prevent later coordinates drifting after earlier replacements."
+            )
+
+        normalized.extend(ordered_block)
+        index = lookahead
+
+    return normalized, warnings
 
 
 async def handle_batch_action(
@@ -31,10 +102,12 @@ async def handle_batch_action(
             context,
         )
 
+    normalized_operations, warnings = _normalize_range_batches(operations)
+
     from scribe_mcp.tools.manage_docs import manage_docs
 
     results: List[Dict[str, Any]] = []
-    for index, operation in enumerate(operations):
+    for index, operation in enumerate(normalized_operations):
         if not isinstance(operation, dict):
             return helper.apply_context_payload(
                 helper.error_response(f"Batch operation at index {index} is not a valid object."),
@@ -60,6 +133,7 @@ async def handle_batch_action(
                     "ok": False,
                     "error": f"Batch operation {index} failed",
                     "results": results,
+                    "warnings": warnings,
                 },
                 context,
             )
@@ -68,6 +142,7 @@ async def handle_batch_action(
         {
             "ok": True,
             "results": results,
+            "warnings": warnings,
         },
         context,
     )

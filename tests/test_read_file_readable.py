@@ -137,6 +137,51 @@ async def test_line_range_readable(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_scan_only_structured_includes_scribe_section_anchors(tmp_path):
+    """Scribe-managed markdown docs should expose stable section anchors in scan_only."""
+    token = _install_execution_context(tmp_path)
+    try:
+        target = tmp_path / ".scribe" / "docs" / "dev_plans" / "demo" / "ARCHITECTURE_GUIDE.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "# Demo\n\n## Problem Statement\n<!-- ID: problem_statement -->\nBody\n",
+            encoding="utf-8",
+        )
+
+        result = await read_file(agent="test_agent", path=str(target), mode="scan_only", format="structured")
+
+        structure = result.get("structure", {})
+        anchors = structure.get("section_anchors", [])
+        assert structure.get("scribe_managed") is True
+        assert structure.get("total_section_anchors") == 1
+        assert anchors[0]["id"] == "problem_statement"
+        assert anchors[0]["line"] == 4
+        assert anchors[0]["heading"] == "Problem Statement"
+    finally:
+        server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_scan_only_structured_skips_section_anchors_for_non_scribe_markdown(tmp_path):
+    """Regular markdown files should not expose anchor metadata just because comments exist."""
+    token = _install_execution_context(tmp_path)
+    try:
+        target = tmp_path / "README.md"
+        target.write_text(
+            "# Demo\n\n## Problem Statement\n<!-- ID: problem_statement -->\nBody\n",
+            encoding="utf-8",
+        )
+
+        result = await read_file(agent="test_agent", path=str(target), mode="scan_only", format="structured")
+
+        structure = result.get("structure", {})
+        assert "section_anchors" not in structure
+        assert "total_section_anchors" not in structure
+    finally:
+        server_module.router_context_manager.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_page_readable(tmp_path):
     """Test page mode returns readable output."""
     token = _install_execution_context(tmp_path)

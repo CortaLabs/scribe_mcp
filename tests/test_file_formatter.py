@@ -462,6 +462,37 @@ class TestFormatReadableFileContentStructure:
         assert "## Installation" in result
         assert "## Usage" in result
 
+    def test_markdown_structure_with_section_anchors(self):
+        """Test Markdown structure renders Scribe section anchors."""
+        formatter = ResponseFormatter()
+        data = {
+            'ok': True,
+            'mode': 'scan_only',
+            'scan': {
+                'repo_relative_path': '.scribe/docs/dev_plans/demo/ARCHITECTURE_GUIDE.md',
+                'byte_size': 500,
+                'line_count': 50,
+                'sha256': 'mdhash',
+                'encoding': 'utf-8',
+            },
+            'structure': {
+                'ok': True,
+                'type': 'markdown',
+                'headings': [
+                    {'level': 2, 'text': 'Problem Statement', 'line': 10},
+                ],
+                'total_headings': 1,
+                'section_anchors': [
+                    {'id': 'problem_statement', 'line': 11, 'heading': 'Problem Statement'},
+                ],
+                'total_section_anchors': 1,
+            }
+        }
+        result = formatter.format_readable_file_content(data)
+
+        assert "Section Anchors (1 total)" in result
+        assert "problem_statement (line 11) -> Problem Statement" in result
+
     def test_javascript_structure(self):
         """Test JavaScript/TypeScript structure."""
         formatter = ResponseFormatter()
