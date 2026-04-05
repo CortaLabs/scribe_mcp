@@ -47,6 +47,18 @@ def live_backend() -> RemoteStorageBackend:
     return b
 
 
+@pytest.fixture
+def auth_live_backend() -> RemoteStorageBackend:
+    """Backend instance with auth configured and a mocked httpx client attached."""
+    b = RemoteStorageBackend(
+        "http://remote-server:8200",
+        timeout=5.0,
+        auth_token="client-token",
+    )
+    b._client = AsyncMock(spec=httpx.AsyncClient)
+    return b
+
+
 def _make_response(json_body: dict, status_code: int = 200) -> MagicMock:
     """Create a mock httpx.Response."""
     resp = MagicMock()
@@ -346,8 +358,54 @@ class TestRemoteMethods:
 
 
 # ===================================================================
-# 3. Error handling
+# 3. Auth + error handling
 # ===================================================================
+
+
+class TestRemoteAuth:
+    """Verify request auth headers are emitted on optional remote/client calls."""
+
+    @pytest.mark.asyncio
+    async def test_backend_requests_emit_auth_headers(
+        self,
+        auth_live_backend: RemoteStorageBackend,
+    ) -> None:
+        """Backend calls send the documented auth headers."""
+        auth_live_backend._client.post = AsyncMock(
+            return_value=_make_response({"result": _make_project_dict(name="secured_project")})
+        )
+
+        result = await auth_live_backend.fetch_project("secured_project")
+
+        assert result is not None
+        request = auth_live_backend._client.post.await_args
+        assert request.args[0] == "/api/v1/backend/fetch_project"
+        assert request.kwargs["headers"] == {
+            "Authorization": "Bearer client-token",
+            "x-scribe-auth": "client-token",
+        }
+
+    @pytest.mark.asyncio
+    async def test_execute_batch_emits_auth_headers(
+        self,
+        auth_live_backend: RemoteStorageBackend,
+    ) -> None:
+        """Batch calls send the documented auth headers."""
+        auth_live_backend._client.post = AsyncMock(
+            return_value=_make_response({"results": [{"ok": True, "result": 1}]})
+        )
+
+        results = await auth_live_backend.execute_batch(
+            [{"op": "count_entries", "args": {"project_id": 1}}]
+        )
+
+        assert results == [{"ok": True, "result": 1}]
+        request = auth_live_backend._client.post.await_args
+        assert request.args[0] == "/api/v1/batch"
+        assert request.kwargs["headers"] == {
+            "Authorization": "Bearer client-token",
+            "x-scribe-auth": "client-token",
+        }
 
 
 class TestErrorHandling:
@@ -385,6 +443,32 @@ class TestErrorHandling:
         )
         with pytest.raises(RuntimeError, match="something broke"):
             await live_backend.fetch_project("p")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status_code", "status_label"),
+        [(401, "Unauthorized"), (403, "Forbidden")],
+    )
+    async def test_auth_failures_surface_explicit_guidance(
+        self,
+        auth_live_backend: RemoteStorageBackend,
+        status_code: int,
+        status_label: str,
+    ) -> None:
+        """401/403 responses surface clear remote auth guidance."""
+        auth_live_backend._client.post = AsyncMock(
+            return_value=_make_response({"detail": "token rejected"}, status_code=status_code)
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Remote authentication failed for backend/fetch_project",
+        ) as excinfo:
+            await auth_live_backend.fetch_project("p")
+
+        message = str(excinfo.value)
+        assert f"HTTP {status_code} {status_label}" in message
+        assert "SCRIBE_REMOTE_AUTH_TOKEN" in message
 
     @pytest.mark.asyncio
     async def test_execute_batch_without_setup_raises(self, backend: RemoteStorageBackend) -> None:

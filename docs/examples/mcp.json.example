@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "scribe": {
+      "command": "scribe-server",
+      "env": {
+        "SCRIBE_ROOT": "/absolute/path/to/project",
+        "SCRIBE_STORAGE_BACKEND": "sqlite",
+        "SCRIBE_DB_PATH": "/absolute/path/to/project/.scribe/state/scribe.db"
+      }
+    }
+  }
+}

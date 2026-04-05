@@ -147,6 +147,7 @@ class BridgeManifest:
     version: str
     description: str
     author: str
+    plugin_factory: Optional[str] = None
     log_config: Dict[str, LogTypeConfig] = field(default_factory=dict)
     hooks: Dict[str, HookConfig] = field(default_factory=dict)
     project_config: BridgeProjectConfig = field(default_factory=BridgeProjectConfig)
@@ -176,6 +177,9 @@ class BridgeManifest:
         # Validate bridge_id format (alphanumeric, hyphens, underscores only)
         if self.bridge_id and not all(c.isalnum() or c in ("-", "_") for c in self.bridge_id):
             errors.append("bridge_id must contain only alphanumeric characters, hyphens, and underscores")
+
+        if self.plugin_factory and ":" not in self.plugin_factory:
+            errors.append("plugin_factory must use 'module:attribute' syntax")
 
         # Validate log_config
         for log_type, config in self.log_config.items():
@@ -227,6 +231,7 @@ class BridgeManifest:
             "version": self.version,
             "description": self.description,
             "author": self.author,
+            "plugin_factory": self.plugin_factory,
             "log_config": {k: v.to_dict() for k, v in self.log_config.items()},
             "hooks": {k: v.to_dict() for k, v in self.hooks.items()},
             "project_config": self.project_config.to_dict(),
@@ -267,6 +272,7 @@ class BridgeManifest:
             version=data["version"],
             description=data["description"],
             author=data["author"],
+            plugin_factory=data.get("plugin_factory"),
             log_config=log_config,
             hooks=hooks,
             project_config=project_config,

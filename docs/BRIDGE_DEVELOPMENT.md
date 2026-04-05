@@ -2,6 +2,14 @@
 
 This guide explains how to create bridges that integrate external MCPs with Scribe.
 
+## Release boundary
+
+- `scribe-mcp` owns the generic bridge runtime contract only.
+- `scribe-council` owns any shipped council/federation bridge assets that depend on council semantics.
+- `.scribe/config/bridges/` and `.council/` bridge overlays are local/operator-owned, not public release truth.
+
+Every manifest that Scribe registers must resolve to a real runtime plugin. Manifest-only inactive placeholders are not supported.
+
 ## Overview
 
 Bridges allow external MCP servers to:
@@ -23,6 +31,7 @@ name: My Bridge
 version: 1.0.0
 description: Description of what my bridge does
 author: Your Name
+plugin_factory: my_package.my_bridge:create_plugin
 
 permissions:
   - read:all_projects

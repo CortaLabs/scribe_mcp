@@ -461,10 +461,10 @@ class TestHelloWorldPlugin:
 
         assert plugin._append_count == 0
 
-        await plugin.post_append({"message": "test"}, {"ok": True})
+        await plugin.post_append({"message": "test"})
         assert plugin._append_count == 1
 
-        await plugin.post_append({"message": "test2"}, {"ok": True})
+        await plugin.post_append({"message": "test2"})
         assert plugin._append_count == 2
 
     @pytest.mark.asyncio
@@ -505,12 +505,12 @@ class TestBridgeIntegration:
             "version": "1.0.0",
             "description": "Test",
             "author": "Test",
-            "plugin_module": "examples.hello_world_plugin"
+            "plugin_factory": "scribe_mcp.bridges.examples.hello_world_plugin:create_plugin"
         }
         manifest = BridgeManifest.from_dict(manifest_data)
 
-        # Register bridge with HelloWorldBridgePlugin
-        bridge_id = await registry.register_bridge(manifest, HelloWorldBridgePlugin)
+        # Register bridge using the manifest-defined runtime path
+        bridge_id = await registry.register_bridge(manifest)
         assert bridge_id == "hello_world"
 
         # Activate bridge
@@ -524,7 +524,7 @@ class TestBridgeIntegration:
         modified_entry = await plugin.pre_append(entry)
         assert modified_entry["meta"]["hello_world_processed"] is True
 
-        await plugin.post_append(modified_entry, {"ok": True})
+        await plugin.post_append(modified_entry)
         assert plugin._append_count == 1
 
         # Check health

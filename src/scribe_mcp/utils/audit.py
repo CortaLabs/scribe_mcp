@@ -7,7 +7,6 @@ maintaining complete audit trails for log integrity verification.
 
 import json
 import logging
-import os
 import uuid
 from pathlib import Path
 
@@ -16,7 +15,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import threading
 
-from scribe_mcp.config.paths import repo_root
+from scribe_mcp.config.paths import runtime_state_dir
 
 
 class AuditTrailManager:
@@ -33,11 +32,10 @@ class AuditTrailManager:
 
         Args:
             state_dir: Directory for storing audit trail files
-                       (defaults to ../state relative to this file)
+                       (defaults to `.scribe/state/` under the repo root)
         """
-        # Determine state directory
         if state_dir is None:
-            state_dir = repo_root() / "state"
+            state_dir = runtime_state_dir()
 
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)

@@ -31,9 +31,6 @@ dev = [
 ]
 s3 = ["boto3>=1.28"]
 
-[project.entry-points."council.templates"]
-scribe-mcp = "scribe_mcp.council_templates:get_council_templates"
-
 [project.scripts]
 scribe = "scribe_mcp.cli.main:main"
 scribe-mcp = "scribe_mcp.__main__:main"
@@ -48,7 +45,7 @@ scribe-server-sse = "scribe_mcp.server_sse:main"
 scribe-migrate-objects = "scribe_mcp.scripts.migrate_to_object_store:main"
 
 [tool.setuptools]
-include-package-data = true
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -65,5 +62,17 @@ include = ["scribe_mcp*"]
   "plugins/*.json",
   "templates/*",
   "templates/**/*",
+]
+
+[tool.setuptools.exclude-package-data]
+"scribe_mcp" = [
+  "council_templates/*",
   "council_templates/**/*",
+]
+"scribe_mcp.council_templates" = [
+  "__pycache__/*",
+  "rules/*",
+  "rules/**/*",
+  "skills/*",
+  "skills/**/*",
 ]

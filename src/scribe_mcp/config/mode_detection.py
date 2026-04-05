@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import httpx
 
@@ -27,6 +27,36 @@ class OperatingMode(str, enum.Enum):
     STANDALONE = "standalone"
 
 
+class RemoteProbeStatus(str, enum.Enum):
+    """Connectivity/auth result for the remote health probe."""
+
+    REACHABLE = "reachable"
+    UNREACHABLE = "unreachable"
+    AUTH_FAILED = "auth_failed"
+
+
+def resolve_configured_mode(settings: Settings) -> OperatingMode:
+    """Resolve the configured storage contract without network probing."""
+    mode_setting = settings.mode
+    if mode_setting in (
+        OperatingMode.SERVER.value,
+        OperatingMode.CLIENT.value,
+        OperatingMode.STANDALONE.value,
+    ):
+        return OperatingMode(mode_setting)
+
+    if settings.remote_server_url:
+        return OperatingMode.CLIENT
+
+    if getattr(settings, "storage_backend", "sqlite") == "sqlite":
+        return OperatingMode.STANDALONE
+
+    if settings.db_url:
+        return OperatingMode.SERVER
+
+    return OperatingMode.STANDALONE
+
+
 async def detect_operating_mode(settings: Settings) -> OperatingMode:
     """Detect operating mode from settings and remote server availability.
 
@@ -36,29 +66,40 @@ async def detect_operating_mode(settings: Settings) -> OperatingMode:
        - Reachable + valid response → CLIENT
        - Unreachable + fallback enabled → STANDALONE (with warning)
        - Unreachable + fallback disabled → raise RuntimeError
-    3. SCRIBE_DB_URL set (no remote URL) → SERVER
-    4. Nothing set → STANDALONE (default)
+    3. Local runtime storage selection
+       - Explicit SQLite backend (or no DB URL) → STANDALONE
+       - Direct Postgres runtime configured → SERVER
     """
+    configured_mode = resolve_configured_mode(settings)
     mode_setting = settings.mode
 
     # 1. Explicit mode override
     if mode_setting in ("server", "client", "standalone"):
-        resolved = OperatingMode(mode_setting)
+        resolved = configured_mode
         logger.info("Operating mode: %s (explicit via SCRIBE_MODE)", resolved.value)
         return resolved
 
     # 2. Remote URL configured — probe it
-    if settings.remote_server_url:
-        reachable = await _probe_remote(
+    if configured_mode == OperatingMode.CLIENT and settings.remote_server_url:
+        probe_status = await _probe_remote(
             settings.remote_server_url,
             timeout=settings.remote_connect_timeout,
+            auth_token=getattr(settings, "remote_auth_token", None),
         )
-        if reachable:
+        if probe_status == RemoteProbeStatus.REACHABLE:
             logger.info(
                 "Operating mode: client (remote server at %s is reachable)",
                 settings.remote_server_url,
             )
             return OperatingMode.CLIENT
+
+        if probe_status == RemoteProbeStatus.AUTH_FAILED:
+            raise RuntimeError(
+                "Remote server at "
+                f"{settings.remote_server_url} rejected client authentication during health probing. "
+                "Configure SCRIBE_REMOTE_AUTH_TOKEN "
+                "(or compatibility aliases SCRIBE_TRANSPORT_AUTH_TOKEN / SCRIBE_AUTH_TOKEN)."
+            )
 
         # Remote unreachable
         if settings.remote_fallback:
@@ -75,39 +116,60 @@ async def detect_operating_mode(settings: Settings) -> OperatingMode:
         )
 
     # 3. DB URL set (direct database access) → server mode
-    if settings.db_url:
-        logger.info("Operating mode: server (SCRIBE_DB_URL configured, no remote URL)")
-        return OperatingMode.SERVER
+    if configured_mode == OperatingMode.SERVER:
+        logger.info("Operating mode: server (direct database runtime configured)")
+        return configured_mode
 
     # 4. Default → standalone
-    logger.info("Operating mode: standalone (no remote URL or DB URL configured)")
-    return OperatingMode.STANDALONE
+    logger.info("Operating mode: standalone (local SQLite runtime configured)")
+    return configured_mode
 
 
-async def _probe_remote(url: str, timeout: float = 3.0) -> bool:
+async def _probe_remote(
+    url: str,
+    timeout: float = 3.0,
+    auth_token: Optional[str] = None,
+) -> RemoteProbeStatus:
     """Probe the remote Scribe server's health endpoint.
 
-    Returns True if the server responds with a valid health check.
+    Returns a connectivity/auth status for the remote health endpoint.
     """
     health_url = url.rstrip("/") + "/health"
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(health_url)
+            resp = await client.get(health_url, headers=_remote_auth_headers(auth_token))
+            if resp.status_code in (401, 403):
+                logger.warning(
+                    "Health endpoint at %s rejected remote client auth with status %d",
+                    health_url,
+                    resp.status_code,
+                )
+                return RemoteProbeStatus.AUTH_FAILED
             if resp.status_code == 200:
                 data = resp.json()
                 # Verify it's actually a Scribe server
                 if data.get("service") == "scribe-mcp" or data.get("status") == "ok":
-                    return True
+                    return RemoteProbeStatus.REACHABLE
                 logger.warning(
                     "Health endpoint at %s responded but doesn't look like Scribe: %s",
                     health_url, data,
                 )
-                return False
+                return RemoteProbeStatus.UNREACHABLE
             logger.warning("Health endpoint at %s returned status %d", health_url, resp.status_code)
-            return False
+            return RemoteProbeStatus.UNREACHABLE
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         logger.debug("Remote probe failed for %s: %s", health_url, exc)
-        return False
+        return RemoteProbeStatus.UNREACHABLE
     except Exception as exc:
         logger.warning("Unexpected error probing %s: %s", health_url, exc)
-        return False
+        return RemoteProbeStatus.UNREACHABLE
+
+
+def _remote_auth_headers(auth_token: Optional[str]) -> dict[str, str]:
+    """Build auth headers for remote health probes."""
+    if not auth_token:
+        return {}
+    return {
+        "Authorization": f"Bearer {auth_token}",
+        "x-scribe-auth": auth_token,
+    }

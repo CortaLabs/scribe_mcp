@@ -23,22 +23,19 @@ class BridgePolicyPlugin:
         self._storage = storage_backend
 
     def can_append_entry(self, project_name: str, log_type: str = "progress") -> bool:
-        """Check if bridge can append to project/log_type."""
-        # Check write permission
+        """Static append permission check used before async ownership checks."""
         if "write:all_projects" in self.permissions:
             return self._can_use_log_type(log_type)
         if "write:own_projects" in self.permissions:
-            # TODO: Check if project is owned by this bridge (Phase 3)
             return self._can_use_log_type(log_type)
 
         return False
 
     def can_read_entries(self, project_name: str) -> bool:
-        """Check if bridge can read from project."""
+        """Static read permission check used before async ownership checks."""
         if "read:all_projects" in self.permissions:
             return True
         if "read:own_projects" in self.permissions:
-            # TODO: Check if project is owned by this bridge (Phase 3)
             return True
 
         return False
@@ -104,6 +101,41 @@ class BridgePolicyPlugin:
 
         # Owned by different bridge - need write:all_projects
         return "write:all_projects" in self.permissions
+
+    async def can_read_project(self, project_name: str) -> bool:
+        """
+        Check if bridge can read a project with ownership awareness.
+
+        Rules:
+        - read:all_projects can read anything
+        - read:own_projects can read its own bridge-managed projects
+        - non-bridge-managed projects are readable to bridges with read permission
+        """
+        if "read:all_projects" in self.permissions:
+            return True
+
+        if "read:own_projects" not in self.permissions:
+            return False
+
+        if self._storage is None:
+            return True
+
+        try:
+            project = await self._storage.fetch_project(project_name)
+        except Exception as e:
+            logger.warning(f"Failed to fetch project {project_name} for read ownership check: {e}")
+            return False
+
+        if project is None:
+            return False
+
+        bridge_managed = getattr(project, "bridge_managed", False)
+        owner_bridge = getattr(project, "bridge_id", None)
+
+        if not bridge_managed:
+            return True
+
+        return owner_bridge == self.bridge_id
 
     async def can_append_to_project(self, project_name: str, log_type: str = "progress") -> bool:
         """Check if bridge can append entries to project (Phase 3 access control)."""

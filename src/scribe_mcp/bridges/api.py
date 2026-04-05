@@ -52,7 +52,7 @@ class BridgeToScribeAPI:
             PermissionError: If bridge lacks permission
         """
         # Check permission
-        if not self._policy.can_append_entry(project_name, log_type):
+        if not await self._policy.can_append_to_project(project_name, log_type):
             raise PermissionError(
                 f"Bridge {self.bridge_id} cannot append to {project_name}/{log_type}"
             )
@@ -129,7 +129,7 @@ class BridgeToScribeAPI:
         Raises:
             PermissionError: If bridge lacks permission
         """
-        if not self._policy.can_read_entries(project_name):
+        if not await self._policy.can_read_project(project_name):
             raise PermissionError(
                 f"Bridge {self.bridge_id} cannot read from {project_name}"
             )

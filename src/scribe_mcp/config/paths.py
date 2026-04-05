@@ -12,6 +12,14 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _PACKAGE_NAME = "scribe_mcp"
+_SCRIBE_DIR_NAME = ".scribe"
+_CLI_RUNTIME_DIR_NAME = "cli"
+_STATE_RUNTIME_DIR_NAME = "state"
+_LOGS_RUNTIME_DIR_NAME = "logs"
+
+CLI_RUNTIME_RELATIVE_PREFIX = f"{_SCRIBE_DIR_NAME}/{_CLI_RUNTIME_DIR_NAME}/"
+STATE_RUNTIME_RELATIVE_PREFIX = f"{_SCRIBE_DIR_NAME}/{_STATE_RUNTIME_DIR_NAME}/"
+LOGS_RUNTIME_RELATIVE_PREFIX = f"{_SCRIBE_DIR_NAME}/{_LOGS_RUNTIME_DIR_NAME}/"
 
 
 def _env_path(name: str) -> Optional[Path]:
@@ -72,7 +80,7 @@ def repo_root() -> Path:
 
 def scribe_dir() -> Path:
     """Path to repository-scoped Scribe directory."""
-    return repo_root() / ".scribe"
+    return repo_root() / _SCRIBE_DIR_NAME
 
 
 def config_data_dir() -> Path:
@@ -127,7 +135,17 @@ def default_db_path() -> Path:
 
 def cli_session_dir() -> Path:
     """Directory for persistent CLI session state."""
-    return scribe_dir() / "cli"
+    return scribe_dir() / _CLI_RUNTIME_DIR_NAME
+
+
+def runtime_state_dir() -> Path:
+    """Directory for repo-local mutable runtime JSON state."""
+    return scribe_dir() / _STATE_RUNTIME_DIR_NAME
+
+
+def runtime_logs_dir() -> Path:
+    """Directory for repo-local runtime log output."""
+    return scribe_dir() / _LOGS_RUNTIME_DIR_NAME
 
 
 def cli_session_state_path(session_name: str = "default") -> Path:

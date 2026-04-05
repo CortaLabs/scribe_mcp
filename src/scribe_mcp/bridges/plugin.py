@@ -27,6 +27,9 @@ class BridgePlugin(ABC):
         self.bridge_id = manifest.bridge_id
         self.state = BridgeState.REGISTERED
         self._api = None  # Set by registry after construction
+        self._policy = None
+        self._owner_package: Optional[str] = None
+        self._plugin_reference: Optional[str] = None
 
     @abstractmethod
     async def on_activate(self) -> None:
@@ -182,6 +185,20 @@ class BridgePlugin(ABC):
 
     # API access helpers
 
+    def bind_runtime(
+        self,
+        *,
+        api,
+        policy=None,
+        owner_package: Optional[str] = None,
+        plugin_reference: Optional[str] = None,
+    ) -> None:
+        """Bind runtime services injected by the registry."""
+        self._api = api
+        self._policy = policy
+        self._owner_package = owner_package
+        self._plugin_reference = plugin_reference
+
     def set_api(self, api) -> None:
         """
         Set API instance for accessing Scribe functionality.
@@ -206,3 +223,19 @@ class BridgePlugin(ABC):
         if self._api is None:
             raise RuntimeError(f"Bridge {self.bridge_id} API not initialized - bridge not properly registered")
         return self._api
+
+    def get_policy(self):
+        """Get the bound BridgePolicyPlugin instance."""
+        if self._policy is None:
+            raise RuntimeError(f"Bridge {self.bridge_id} policy not initialized - bridge not properly registered")
+        return self._policy
+
+    @property
+    def owner_package(self) -> Optional[str]:
+        """Top-level package that owns this bridge runtime."""
+        return self._owner_package
+
+    @property
+    def plugin_reference(self) -> Optional[str]:
+        """Resolved manifest plugin reference when one was used."""
+        return self._plugin_reference

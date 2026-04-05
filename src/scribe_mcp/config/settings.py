@@ -53,6 +53,155 @@ def _optional_env(*names: str) -> Optional[str]:
 
 
 @dataclass(frozen=True)
+class SettingsContractEntry:
+    """Public classification for a supported Scribe environment variable."""
+
+    name: str
+    classification: str
+    scope: str
+    description: str
+    canonical_name: Optional[str] = None
+
+
+PUBLIC_STORAGE_MODES: tuple[str, ...] = ("sqlite", "postgres", "remote/client")
+
+PUBLIC_STORAGE_SETTINGS_CONTRACT: tuple[SettingsContractEntry, ...] = (
+    SettingsContractEntry(
+        name="SCRIBE_STORAGE_BACKEND",
+        classification="canonical",
+        scope="runtime",
+        description="Select `sqlite` for local standalone storage or `postgres` for direct database/server mode.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_DB_URL",
+        classification="canonical",
+        scope="runtime",
+        description="Direct Postgres connection string for the public server/runtime contract.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_DB_PATH",
+        classification="canonical",
+        scope="runtime",
+        description="Optional SQLite database path override. If unset, Scribe uses the portable default_db_path().",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_SQLITE_PATH",
+        classification="compatibility",
+        scope="runtime",
+        description="Compatibility alias for `SCRIBE_DB_PATH`.",
+        canonical_name="SCRIBE_DB_PATH",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_SCHEMA",
+        classification="canonical",
+        scope="runtime",
+        description="Schema namespace for direct Postgres/server mode.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_DB_SCHEMA",
+        classification="compatibility",
+        scope="runtime",
+        description="Compatibility alias for `SCRIBE_POSTGRES_SCHEMA`.",
+        canonical_name="SCRIBE_POSTGRES_SCHEMA",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_POOL_MIN_SIZE",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced Postgres pooling control for minimum open connections.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_POOL_MAX_SIZE",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced Postgres pooling control for maximum open connections.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_COMMAND_TIMEOUT_SECONDS",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced Postgres command timeout override.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_CONNECT_TIMEOUT_SECONDS",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced Postgres connection timeout override.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_CONNECT_RETRIES",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced Postgres retry count for transient connection failures.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_CONNECT_RETRY_BACKOFF_SECONDS",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced Postgres retry backoff between connection attempts.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_MAX_INACTIVE_SECONDS",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced Postgres pool setting for max inactive connection lifetime.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_MODE",
+        classification="canonical",
+        scope="runtime",
+        description="Operating mode selector. Use `client` to explicitly select the public remote/client contract.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_REMOTE_URL",
+        classification="canonical",
+        scope="runtime",
+        description="Remote Scribe server base URL for client mode.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_REMOTE_AUTH_TOKEN",
+        classification="canonical",
+        scope="runtime",
+        description="Client auth token for remote/client mode; falls back to the server-side transport token names for single-environment deployments.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_REMOTE_CONNECT_TIMEOUT",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced remote/client timeout override in seconds.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_REMOTE_FALLBACK",
+        classification="advanced/public",
+        scope="runtime",
+        description="Advanced remote/client toggle controlling fallback to standalone when the remote is unavailable.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_ADMIN_*",
+        classification="bootstrap-only",
+        scope="bootstrap-only",
+        description="Bootstrap convenience variables used by `scribe bootstrap` for admin/setup connections.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_APP_*",
+        classification="bootstrap-only",
+        scope="bootstrap-only",
+        description="Bootstrap convenience variables used by `scribe bootstrap` when provisioning the runtime app role/user.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_POSTGRES_SUPERUSER_*",
+        classification="bootstrap-only",
+        scope="bootstrap-only",
+        description="Bootstrap convenience variables used only when Postgres setup needs elevated/superuser access.",
+    ),
+)
+
+PUBLIC_STORAGE_SETTINGS_BY_NAME = {
+    entry.name: entry for entry in PUBLIC_STORAGE_SETTINGS_CONTRACT
+}
+
+
+@dataclass(frozen=True)
 class Settings:
     """Resolved configuration for the MCP server."""
 
@@ -113,6 +262,7 @@ class Settings:
     # Client/server mode detection
     mode: str  # "auto", "server", "client", "standalone"
     remote_server_url: Optional[str]
+    remote_auth_token: Optional[str]
     remote_connect_timeout: float
     remote_fallback: bool
 
@@ -169,6 +319,9 @@ class Settings:
         else:
             storage_backend = "postgres" if db_url else "sqlite"
 
+        # Backward-compatible SQLite path support:
+        # - SCRIBE_DB_PATH is canonical
+        # - SCRIBE_SQLITE_PATH is accepted for downstream compatibility
         sqlite_override = os.environ.get("SCRIBE_DB_PATH") or os.environ.get(
             "SCRIBE_SQLITE_PATH"
         )
@@ -292,6 +445,11 @@ class Settings:
         if mode not in ("auto", "server", "client", "standalone"):
             mode = "auto"
         remote_server_url = os.environ.get("SCRIBE_REMOTE_URL")  # standardized name per review
+        remote_auth_token = _optional_env(
+            "SCRIBE_REMOTE_AUTH_TOKEN",
+            "SCRIBE_TRANSPORT_AUTH_TOKEN",
+            "SCRIBE_AUTH_TOKEN",
+        )
         remote_connect_timeout = max(
             0.5,
             float(os.environ.get("SCRIBE_REMOTE_CONNECT_TIMEOUT", "3.0")),
@@ -354,6 +512,7 @@ class Settings:
             s3_region=s3_region,
             mode=mode,
             remote_server_url=remote_server_url,
+            remote_auth_token=remote_auth_token,
             remote_connect_timeout=remote_connect_timeout,
             remote_fallback=remote_fallback,
         )

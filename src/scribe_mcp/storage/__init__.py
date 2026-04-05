@@ -25,15 +25,12 @@ def create_storage_backend(
     """
     from scribe_mcp.config.settings import settings
 
-    # Auto-detect mode from settings if not explicitly provided.
-    # This handles the module-level call in server.py which passes no mode arg —
-    # without this, a SCRIBE_DB_URL in .env would wastefully spin up PostgresStorage
-    # only to be discarded by _startup() once CLIENT mode is detected.
+    # Resolve the documented three-mode contract before choosing a concrete
+    # backend so import-time setup and startup detection share one path.
     if mode is None:
-        mode_str = getattr(settings, "mode", None)
-        if mode_str == "client":
-            from scribe_mcp.config.mode_detection import OperatingMode
-            mode = OperatingMode.CLIENT
+        from scribe_mcp.config.mode_detection import resolve_configured_mode
+
+        mode = resolve_configured_mode(settings)
 
     # CLIENT mode: proxy all DB operations to the remote Scribe server
     if mode is not None:
@@ -44,8 +41,13 @@ def create_storage_backend(
 
             return RemoteStorageBackend(
                 server_url=settings.remote_server_url or "",
+                auth_token=getattr(settings, "remote_auth_token", None),
                 timeout=settings.remote_connect_timeout,
             )
+        if mode == _OM.STANDALONE:
+            from scribe_mcp.storage.sqlite import SQLiteStorage
+
+            return SQLiteStorage(settings.sqlite_path)
 
     backend_name = settings.storage_backend
     if backend_name == "postgres" and settings.db_url:

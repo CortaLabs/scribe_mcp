@@ -199,6 +199,22 @@ class TestPhase1CoreRegistry:
         assert bridge_id == "test_bridge"
         assert registry.get_manifest(bridge_id) is not None
 
+        plugin = registry.get_bridge(bridge_id)
+        assert plugin is not None
+        assert plugin.owner_package in {"tests", "test_bridge_registry"}
+        assert isinstance(plugin.get_api(), BridgeToScribeAPI)
+        assert isinstance(plugin.get_policy(), BridgePolicyPlugin)
+
+    @pytest.mark.asyncio
+    async def test_registry_register_bridge_requires_runtime_plugin(self, basic_manifest, temp_db_path):
+        """Manifest-only bridge registration is not supported."""
+        storage = SQLiteStorage(temp_db_path)
+        await storage._initialise()
+        registry = BridgeRegistry(storage)
+
+        with pytest.raises(ValueError, match="does not define a runtime plugin"):
+            await registry.register_bridge(basic_manifest)
+
     @pytest.mark.asyncio
     async def test_registry_activate_bridge(self, basic_manifest, temp_db_path):
         """Test bridge activation."""
@@ -372,6 +388,19 @@ class TestPhase2BridgeHooks:
 
         await manager.execute_post_rotate("progress", "/tmp/archive.md")
         assert bridge.post_rotate_called is True
+
+    @pytest.mark.asyncio
+    async def test_registry_uses_configured_hook_manager(self, full_manifest, temp_db_path):
+        """Runtime-bound bridges should register with the same hook manager they execute through."""
+        storage = SQLiteStorage(temp_db_path)
+        await storage._initialise()
+        hook_manager = BridgeHookManager()
+        registry = BridgeRegistry(storage, hook_manager=hook_manager)
+        await registry.register_bridge(full_manifest, DummyBridgePlugin)
+        await registry.activate_bridge(full_manifest.bridge_id)
+
+        result = await hook_manager.execute_pre_append({"message": "Hooked", "meta": {}})
+        assert result["meta"]["modified_by_bridge"] == full_manifest.bridge_id
 
     @pytest.mark.asyncio
     async def test_hook_manager_unregister(self, full_manifest):
@@ -696,6 +725,72 @@ class TestPhase3BridgeManagedProjects:
 
         can_append = await policy.can_append_to_project("app_appendable", "progress")
         assert can_append is True
+
+    @pytest.mark.asyncio
+    async def test_api_append_entry_respects_bridge_ownership(self, temp_db_path):
+        """Append API should enforce async ownership-aware policy checks."""
+        storage = SQLiteStorage(temp_db_path)
+        await storage._initialise()
+
+        owner_manifest = BridgeManifest(
+            bridge_id="owner_bridge",
+            name="Owner Bridge",
+            version="1.0.0",
+            description="Test",
+            author="Test",
+            permissions=["create:projects", "write:own_projects"],
+            project_config=BridgeProjectConfig(can_create_projects=True, project_prefix="own_"),
+        )
+        owner_policy = BridgePolicyPlugin(owner_manifest, storage)
+        owner_api = BridgeToScribeAPI(owner_manifest.bridge_id, owner_manifest, storage, owner_policy)
+        await owner_api.create_project("secured", description="Test")
+
+        other_manifest = BridgeManifest(
+            bridge_id="other_bridge",
+            name="Other Bridge",
+            version="1.0.0",
+            description="Test",
+            author="Test",
+            permissions=["write:own_projects"],
+        )
+        other_policy = BridgePolicyPlugin(other_manifest, storage)
+        other_api = BridgeToScribeAPI(other_manifest.bridge_id, other_manifest, storage, other_policy)
+
+        with pytest.raises(PermissionError, match="cannot append"):
+            await other_api.append_entry("own_secured", "blocked write")
+
+    @pytest.mark.asyncio
+    async def test_api_query_entries_respects_bridge_ownership(self, temp_db_path):
+        """Query API should enforce async ownership-aware read checks."""
+        storage = SQLiteStorage(temp_db_path)
+        await storage._initialise()
+
+        owner_manifest = BridgeManifest(
+            bridge_id="owner_bridge",
+            name="Owner Bridge",
+            version="1.0.0",
+            description="Test",
+            author="Test",
+            permissions=["create:projects", "write:own_projects", "read:own_projects"],
+            project_config=BridgeProjectConfig(can_create_projects=True, project_prefix="own_"),
+        )
+        owner_policy = BridgePolicyPlugin(owner_manifest, storage)
+        owner_api = BridgeToScribeAPI(owner_manifest.bridge_id, owner_manifest, storage, owner_policy)
+        await owner_api.create_project("secured", description="Test")
+
+        reader_manifest = BridgeManifest(
+            bridge_id="reader_bridge",
+            name="Reader Bridge",
+            version="1.0.0",
+            description="Test",
+            author="Test",
+            permissions=["read:own_projects"],
+        )
+        reader_policy = BridgePolicyPlugin(reader_manifest, storage)
+        reader_api = BridgeToScribeAPI(reader_manifest.bridge_id, reader_manifest, storage, reader_policy)
+
+        with pytest.raises(PermissionError, match="cannot read"):
+            await reader_api.query_entries("own_secured")
 
 
 # =============================================================================

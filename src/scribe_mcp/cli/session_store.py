@@ -1,4 +1,4 @@
-"""Persistent session state for the standalone Scribe CLI."""
+"""Persistent session state for the standalone Scribe CLI under `.scribe/cli/`."""
 
 from __future__ import annotations
 
@@ -104,10 +104,9 @@ def load_session_state(session_name: str, repo_root: Path, agent: str) -> CliSes
 
 
 def save_session_state(state: CliSessionState) -> Path:
-    """Persist session state to disk."""
+    """Persist session state to the repo-local `.scribe/cli/` runtime namespace."""
     session_path = cli_session_state_path(state.session_name)
     session_path.parent.mkdir(parents=True, exist_ok=True)
     state.updated_at = _utc_now_iso()
     session_path.write_text(json.dumps(state.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
     return session_path
-

@@ -16,7 +16,7 @@ from datetime import datetime
 import threading
 import time
 
-from scribe_mcp.config.paths import repo_root
+from scribe_mcp.config.paths import runtime_state_dir
 
 
 class RotationStateManager:
@@ -35,9 +35,8 @@ class RotationStateManager:
             state_dir: Directory for storing state files
             state_file: Name of the state file
         """
-        # Determine state directory
         if state_dir is None:
-            state_dir = repo_root() / "state"
+            state_dir = runtime_state_dir()
 
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)

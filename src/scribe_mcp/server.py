@@ -127,6 +127,16 @@ _journal_replay_complete = False  # Tracks background journal replay status
 background_tasks: set[asyncio.Task] = set()
 
 
+def _rebind_storage_backend_for_mode(mode: OperatingMode):
+    """Recreate the process storage backend from the resolved operating mode."""
+    global storage_backend
+
+    storage_backend = create_storage_backend(mode=mode)
+    state_manager._storage_backend = storage_backend
+    router_context_manager._storage_backend = storage_backend
+    return storage_backend
+
+
 @dataclass
 class BackgroundServiceStatus:
     name: str
@@ -795,10 +805,12 @@ async def _init_bridges_background() -> None:
     try:
         from scribe_mcp.bridges.registry import BridgeRegistry
         from scribe_mcp.bridges.health import BridgeHealthMonitor, set_health_monitor
+        from scribe_mcp.bridges.hooks import get_hook_manager
 
         bridge_registry = BridgeRegistry(
             storage_backend=storage_backend,
             config_dir=Path(".scribe/config/bridges"),
+            hook_manager=get_hook_manager(),
         )
         logger.info("BridgeRegistry initialized")
 
@@ -811,14 +823,6 @@ async def _init_bridges_background() -> None:
             try:
                 manifest = bridge_registry.load_manifest(manifest_path)
                 await bridge_registry.register_bridge(manifest)
-
-                # Manifests without a loaded plugin class stay registered/inactive.
-                if bridge_registry.get_bridge(manifest.bridge_id) is None:
-                    logger.info(
-                        "  Registered bridge manifest (inactive, no plugin): %s",
-                        manifest.bridge_id,
-                    )
-                    continue
 
                 await bridge_registry.activate_bridge(manifest.bridge_id)
                 logger.info("  Registered & activated bridge: %s", manifest.bridge_id)
@@ -892,22 +896,12 @@ async def _startup() -> None:
     # --- Mode detection (client/server/standalone) ---
     mode = await detect_operating_mode(settings)
     logger.info("Operating mode: %s", mode.value)
-
-    if mode == OperatingMode.CLIENT:
-        # Replace module-level storage_backend with RemoteStorageBackend
-        from scribe_mcp.storage.remote import RemoteStorageBackend
-
-        storage_backend = RemoteStorageBackend(
-            server_url=settings.remote_server_url or "",
-            timeout=settings.remote_connect_timeout,
-        )
-        # Update references held by state_manager and router_context_manager
-        state_manager._storage_backend = storage_backend
-        router_context_manager._storage_backend = storage_backend
-        logger.info(
-            "CLIENT mode: storage_backend replaced with RemoteStorageBackend → %s",
-            settings.remote_server_url,
-        )
+    rebound_backend = _rebind_storage_backend_for_mode(mode)
+    logger.info(
+        "Storage backend rebound for %s mode → %s",
+        mode.value,
+        type(rebound_backend).__name__ if rebound_backend is not None else "None",
+    )
 
     if storage_backend:
         storage_setup_started = perf_counter()

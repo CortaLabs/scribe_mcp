@@ -30,9 +30,15 @@ class RemoteStorageBackend(StorageBackend):
     server via ``POST /api/v1/backend/{operation}`` or ``POST /api/v1/batch``.
     """
 
-    def __init__(self, server_url: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        server_url: str,
+        timeout: float = 30.0,
+        auth_token: Optional[str] = None,
+    ) -> None:
         self._server_url = server_url.rstrip("/")
         self._timeout = timeout
+        self._auth_token = auth_token.strip() if auth_token else None
         self._client: Optional[httpx.AsyncClient] = None
 
         # In-memory session cache (zero network for middleware)
@@ -58,6 +64,7 @@ class RemoteStorageBackend(StorageBackend):
             base_url=self._server_url,
             timeout=self._timeout,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            headers=self._auth_headers(),
         )
         logger.info("RemoteStorageBackend connected to %s", self._server_url)
 
@@ -71,6 +78,66 @@ class RemoteStorageBackend(StorageBackend):
     # HTTP helpers
     # ------------------------------------------------------------------
 
+    def _auth_headers(self) -> Dict[str, str]:
+        """Build auth headers for remote backend calls."""
+        if not self._auth_token:
+            return {}
+        return {
+            "Authorization": f"Bearer {self._auth_token}",
+            "x-scribe-auth": self._auth_token,
+        }
+
+    def _auth_failure_message(self, context: str, response: httpx.Response) -> str:
+        """Build a clear auth-failure message for 401/403 responses."""
+        detail = ""
+        try:
+            data = response.json()
+            detail = (
+                str(
+                    data.get("error")
+                    or data.get("detail")
+                    or data.get("message")
+                    or data.get("type")
+                    or ""
+                )
+                .strip()
+            )
+        except ValueError:
+            detail = response.text.strip()
+
+        status_label = "Unauthorized" if response.status_code == 401 else "Forbidden"
+        message = (
+            f"Remote authentication failed for {context}: "
+            f"HTTP {response.status_code} {status_label}."
+        )
+        if detail:
+            message += f" {detail}"
+        message += (
+            " Configure SCRIBE_REMOTE_AUTH_TOKEN "
+            "(or compatibility aliases SCRIBE_TRANSPORT_AUTH_TOKEN / SCRIBE_AUTH_TOKEN)."
+        )
+        return message
+
+    async def _post_json(self, path: str, payload: Dict[str, Any], *, context: str) -> Dict[str, Any]:
+        """POST JSON to the remote backend with consistent auth/error handling."""
+        if not self._client:
+            raise RemoteUnavailableError("RemoteStorageBackend not initialized (call setup() first)")
+
+        try:
+            request_kwargs: Dict[str, Any] = {"json": payload}
+            headers = self._auth_headers()
+            if headers:
+                request_kwargs["headers"] = headers
+            resp = await self._client.post(path, **request_kwargs)
+            if resp.status_code in (401, 403):
+                raise RuntimeError(self._auth_failure_message(context, resp))
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.ConnectError as exc:
+            raise RemoteUnavailableError(f"Cannot reach remote server: {exc}") from exc
+        except httpx.TimeoutException as exc:
+            raise RemoteUnavailableError(f"Remote server timeout: {exc}") from exc
+
     async def _call(self, operation: str, **kwargs: Any) -> Any:
         """Call a single operation on the remote server.
 
@@ -78,22 +145,14 @@ class RemoteStorageBackend(StorageBackend):
         ``POST /api/v1/backend/{operation}``.  The server unpacks them
         directly as ``method(**body)``.
         """
-        if not self._client:
-            raise RemoteUnavailableError("RemoteStorageBackend not initialized (call setup() first)")
-        try:
-            resp = await self._client.post(
-                f"/api/v1/backend/{operation}",
-                json=kwargs if kwargs else {},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if "error" in data:
-                raise RuntimeError(f"Remote operation {operation} failed: {data['error']}")
-            return data.get("result")
-        except httpx.ConnectError as exc:
-            raise RemoteUnavailableError(f"Cannot reach remote server: {exc}") from exc
-        except httpx.TimeoutException as exc:
-            raise RemoteUnavailableError(f"Remote server timeout: {exc}") from exc
+        data = await self._post_json(
+            f"/api/v1/backend/{operation}",
+            kwargs if kwargs else {},
+            context=f"backend/{operation}",
+        )
+        if "error" in data:
+            raise RuntimeError(f"Remote operation {operation} failed: {data['error']}")
+        return data.get("result")
 
     async def execute_batch(self, operations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Execute multiple operations in a single HTTP request.
@@ -101,20 +160,12 @@ class RemoteStorageBackend(StorageBackend):
         Each item in *operations* must have ``{"op": "<name>", "args": {...}}``.
         Returns a list of ``{"ok": bool, "result"|"error": ...}`` dicts.
         """
-        if not self._client:
-            raise RemoteUnavailableError("RemoteStorageBackend not initialized")
-        try:
-            resp = await self._client.post(
-                "/api/v1/batch",
-                json={"operations": operations},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("results", [])
-        except httpx.ConnectError as exc:
-            raise RemoteUnavailableError(f"Cannot reach remote server: {exc}") from exc
-        except httpx.TimeoutException as exc:
-            raise RemoteUnavailableError(f"Remote server timeout: {exc}") from exc
+        data = await self._post_json(
+            "/api/v1/batch",
+            {"operations": operations},
+            context="batch",
+        )
+        return data.get("results", [])
 
     # ------------------------------------------------------------------
     # ProjectRecord deserialization

@@ -10,8 +10,12 @@ __pycache__/
 *.pyo
 *.pyd
 *.egg-info/
+.eggs/
 .venv/
 *.lock
+build/
+dist/
+pip-wheel-metadata/
 
 # -----------------------------------------------------
 # Environment & Secrets
@@ -26,9 +30,9 @@ config.toml
 *.db-shm
 *.db-wal
 *.journal
-state/*.json
 .scribe/state.json
-MCP_SPINE/scribe_mcp/state/*.json
+.scribe/state/
+.scribe/cli/*.json
 
 # -----------------------------------------------------
 # Vector / Embedding Artifacts
@@ -45,6 +49,7 @@ data/*.db
 data/backups/
 data/snapshots/
 reports/
+benchmarks/artifacts/
 
 # -----------------------------------------------------
 # Temporary / Test Directories
@@ -85,7 +90,6 @@ docs/bugs/
 # -----------------------------------------------------
 .scribe/logs/
 .scribe/sentinel/
-.scribe/cli/default.json
 .scribe/docs/
 tool_calls.jsonl
 
@@ -135,6 +139,7 @@ docs/agent_report_cards/
 # Council / MCP integration (local-only)
 # -----------------------------------------------------
 .mcp.json
+opencode.json
 
 # -----------------------------------------------------
 # Example / Local-Only Code

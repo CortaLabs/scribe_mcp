@@ -4,10 +4,11 @@ import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Type, Any
 import logging
-from datetime import datetime, timezone
 
 from .manifest import BridgeManifest, BridgeState
+from .hooks import BridgeHookManager
 from .plugin import BridgePlugin
+from .runtime import bind_bridge_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,12 @@ class BridgeRegistry:
     health monitoring, and discovery.
     """
 
-    def __init__(self, storage_backend, config_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        storage_backend,
+        config_dir: Optional[Path] = None,
+        hook_manager: Optional[BridgeHookManager] = None,
+    ):
         """
         Initialize bridge registry.
 
@@ -33,6 +39,7 @@ class BridgeRegistry:
         self._config_dir = config_dir or Path(".scribe/config/bridges")
         self._bridges: Dict[str, BridgePlugin] = {}
         self._manifests: Dict[str, BridgeManifest] = {}
+        self._hook_manager = hook_manager or BridgeHookManager()
 
     def load_manifest(self, path: Path) -> BridgeManifest:
         """
@@ -99,6 +106,12 @@ class BridgeRegistry:
         if errors:
             raise ValueError(f"Invalid manifest: {'; '.join(errors)}")
 
+        binding = bind_bridge_runtime(
+            manifest=manifest,
+            storage_backend=self._storage,
+            plugin_class=plugin_class,
+        )
+
         # Persist to database
         await self._storage.insert_bridge(
             bridge_id=manifest.bridge_id,
@@ -108,16 +121,17 @@ class BridgeRegistry:
             state=BridgeState.REGISTERED.value
         )
 
-        # Create plugin instance if class provided
-        if plugin_class:
-            plugin = plugin_class(manifest)
-            # TODO: Set API instance once API layer is implemented (Phase 2)
-            # plugin.set_api(self._api)
-            self._bridges[manifest.bridge_id] = plugin
+        self._bridges[manifest.bridge_id] = binding.plugin
+        self._hook_manager.register_bridge(binding.plugin)
 
         self._manifests[manifest.bridge_id] = manifest
 
-        logger.info(f"Registered bridge: {manifest.bridge_id} v{manifest.version}")
+        logger.info(
+            "Registered bridge: %s v%s (runtime owner=%s)",
+            manifest.bridge_id,
+            manifest.version,
+            binding.owner_package,
+        )
         return manifest.bridge_id
 
     async def activate_bridge(self, bridge_id: str) -> None:
@@ -179,12 +193,7 @@ class BridgeRegistry:
         """
         bridge = self._bridges.get(bridge_id)
         if not bridge:
-            # Bridge exists in manifest but has no plugin - just update state
-            if bridge_id in self._manifests:
-                await self._storage.update_bridge_state(bridge_id, BridgeState.INACTIVE.value)
-                logger.info(f"Deactivated bridge (no plugin): {bridge_id}")
-                return
-            raise ValueError(f"Bridge {bridge_id} not registered")
+            raise ValueError(f"Bridge {bridge_id} has no loaded runtime plugin")
 
         # Check current state
         if bridge.state == BridgeState.INACTIVE:
@@ -223,6 +232,7 @@ class BridgeRegistry:
             bridge = self._bridges[bridge_id]
             if bridge.state == BridgeState.ACTIVE:
                 await self.deactivate_bridge(bridge_id)
+            self._hook_manager.unregister_bridge(bridge_id)
             del self._bridges[bridge_id]
 
         # Remove from manifests

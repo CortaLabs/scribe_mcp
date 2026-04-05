@@ -8,6 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 
+from scribe_mcp.config.paths import (
+    CLI_RUNTIME_RELATIVE_PREFIX,
+    LOGS_RUNTIME_RELATIVE_PREFIX,
+    STATE_RUNTIME_RELATIVE_PREFIX,
+)
+
 # Prefixes (relative to repo root) whose documents should be synced.
 _SYNC_PREFIXES: tuple[str, ...] = (
     ".scribe/docs/dev_plans/",
@@ -22,8 +28,9 @@ _SYNC_SUFFIXES: tuple[str, ...] = (".md",)
 _DENY_PREFIXES: tuple[str, ...] = (
     ".scribe/sentinel/",
     ".scribe/config/",
-    ".scribe/logs/",
-    ".scribe/cli/",
+    LOGS_RUNTIME_RELATIVE_PREFIX,
+    CLI_RUNTIME_RELATIVE_PREFIX,
+    STATE_RUNTIME_RELATIVE_PREFIX,
     ".scribe/templates/",  # Jinja2 source files
 )
 
