@@ -1,111 +1,105 @@
 # Scribe MCP
 
-Scribe MCP is Corta Labs' documentation and audit subsystem for agent-driven development. It provides structured logs, governed planning documents, checklist/progress workflows, release-safe examples, and file-reading/search/editing tools for operators and agents.
+Scribe MCP is a production documentation and audit platform for agent-driven software work.
+It gives teams a durable execution record, governed planning artifacts, and tool contracts that
+make multi-agent development observable, reviewable, and reproducible.
 
-> **Release note — 2026-04-05:** this README reflects the frozen **2.5 compatibility-release** documentation wave. The artifact-backed package matrix for this wave is `scribe-mcp 2.2`, optional `scribe-council 2.2`, and synchronized `council_mcp 2.0.0`. **`v3` is explicitly deferred** to the later structural/refinement release.
+If your system depends on agents making changes over time, Scribe is the layer that preserves truth.
 
-## Table of contents
+## Overview
 
-- [What Scribe is](#what-scribe-is)
-- [Supported install profiles](#supported-install-profiles)
-- [Quickstart](#quickstart)
-- [Supported runtime postures](#supported-runtime-postures)
-- [What `scribe-council` is](#what-scribe-council-is)
-- [Release docs and navigation](#release-docs-and-navigation)
-- [Deployment](#deployment)
-- [License](#license)
+Scribe is designed to solve four hard problems in one package:
 
-## What Scribe is
+- persistent audit logging for agent and operator actions
+- governed document workflows for architecture, planning, and execution tracking
+- consistent file/search/edit tool contracts for automation-safe operations
+- portable runtime modes for local usage and authenticated remote access
 
-Scribe is the persistent documentation and audit layer that sits beside agent runtimes:
+This repository ships the public package, public docs, and public plugin bundles needed to run Scribe in real projects.
 
-- **Local/core by default** for normal usage
-- **Tracked docs and examples** for release-safe guidance
-- **Governed planning surfaces** for architecture, phase plans, checklists, and progress logs
-- **Optional authenticated remote/client access** for operators who intentionally deploy Scribe as a managed service
+## Core capabilities
 
-If you are deciding what is public contract versus workstation-local state, start with:
+- **Structured audit trail:** project-aware entries with queryable history
+- **Governed docs engine:** architecture/phase/checklist/progress workflows with managed updates
+- **Operator tooling:** file read/search/edit helpers and diagnostics for day-to-day execution
+- **Storage flexibility:** local-first operation with optional remote-backed posture
+- **Plugin bundles:** ready-to-use Codex and Claude plugin surfaces under `plugins/`
 
-- [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md)
-- [`docs/RELEASE_SURFACE.md`](docs/RELEASE_SURFACE.md)
-- [`docs/RELEASE_FILE_MAP.md`](docs/RELEASE_FILE_MAP.md)
+## Install and start
 
-## Supported install profiles
-
-| Use case | Install | Notes |
-| --- | --- | --- |
-| Standard Scribe usage | `pip install scribe-mcp` | Default local/core posture. Installs CLI entry points including `scribe` and `scribe-server`. |
-| Optional council/template assets | `pip install scribe-mcp scribe-council` | Add only when you also need Scribe's optional `council.templates` provider and template payload. |
-| Council ↔ Scribe compatibility review | See [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md) | The frozen compatibility set for this wave is `scribe-mcp 2.2`, optional `scribe-council 2.2`, and `council_mcp 2.0.0`. |
-
-## Quickstart
-
-Minimal local/core setup:
+Install from PyPI:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
 pip install scribe-mcp
+```
 
+Quick sanity check:
+
+```bash
 scribe --help
 scribe-server --help
 ```
 
-Optional extension install when you need council/template assets:
+Minimal local run:
 
 ```bash
-pip install scribe-council
+scribe-server
 ```
 
-## Supported runtime postures
+## Runtime postures
 
-| Posture | Status | Notes |
+| Posture | Status | Usage |
 | --- | --- | --- |
-| Local/core stdio or loopback-local usage | **Default / supported** | This is the primary public story for Scribe. |
-| Authenticated remote/client usage on a managed private mesh or Tailscale-style network | **Supported optional posture** | Use only as an intentional operator choice with auth in place. |
-| Casual public exposure | **Unsupported** | Do not present open or casually internet-reachable Scribe as the normal deployment model. |
+| Local/core runtime | Default and recommended | Day-to-day usage, local development, and most integrations |
+| Authenticated remote/client runtime | Supported | Managed/private deployments that require centralized access |
+| Open unauthenticated internet exposure | Unsupported | Not a supported security posture |
 
-Client-side remote/client configuration is optional and authenticated:
+For authenticated remote clients:
 
 ```bash
-export SCRIBE_REMOTE_URL="https://your-private-scribe.example"
-export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-client-token"
+export SCRIBE_REMOTE_URL="https://your-scribe-endpoint.example"
+export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-token"
 ```
 
-Public docs should prefer the canonical client token name `SCRIBE_REMOTE_AUTH_TOKEN`. See [`docs/REMOTE_CLIENT.md`](docs/REMOTE_CLIENT.md) for the full posture and auth contract.
+## Documentation index
 
-## What `scribe-council` is
+Start here for product truth and boundaries:
 
-`scribe-council` is a separate, optional package. It is **not** the core Scribe runtime.
+- [Compatibility matrix](docs/COMPATIBILITY_MATRIX.md)
+- [Release surface](docs/RELEASE_SURFACE.md)
+- [Release file map](docs/RELEASE_FILE_MAP.md)
 
-Use it only when you also need Scribe's council/template assets:
+Usage and operator references:
 
-- it owns the optional `council.templates` provider for this frozen wave
-- it depends on `scribe-mcp==2.2`
-- it is additive, not required, for standard local/core Scribe usage
+- [Scribe usage guide](docs/Scribe_Usage.md)
+- [MCP server guide](docs/mcp_server_guide.md)
+- [Remote client contract](docs/REMOTE_CLIENT.md)
+- [Bridge development](docs/BRIDGE_DEVELOPMENT.md)
+- [Template variables reference](docs/TEMPLATE_VARIABLES.md)
 
-The compatibility matrix explains where it fits in the synchronized release set: [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md).
+Deployment and environment setup:
 
-## Release docs and navigation
+- [Global deployment guide](docs/GLOBAL_DEPLOYMENT_GUIDE.md)
+- [Deployment README](deploy/README.md)
 
-Start here, then follow the tracked docs that match your task:
+Examples:
 
-- **Compatibility and release framing:** [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md)
-- **Repo truth vs runtime/local overlays:** [`docs/RELEASE_SURFACE.md`](docs/RELEASE_SURFACE.md)
-- **Detailed repo/package/runtime boundary:** [`docs/RELEASE_FILE_MAP.md`](docs/RELEASE_FILE_MAP.md)
-- **Remote/client auth posture:** [`docs/REMOTE_CLIENT.md`](docs/REMOTE_CLIENT.md)
-- **Release-safe client examples:** [`docs/examples/mcp.json.example`](docs/examples/mcp.json.example), [`docs/examples/opencode.json.example`](docs/examples/opencode.json.example)
+- [mcp.json example](docs/examples/mcp.json.example)
+- [opencode.json example](docs/examples/opencode.json.example)
 
-## Deployment
+Background and context:
 
-Container and compose guidance lives in [`deploy/README.md`](deploy/README.md).
+- [Scribe MCP whitepaper](docs/whitepapers/scribe_mcp_whitepaper.md)
 
-That guide keeps the same frozen contract:
+## Plugins and integrations
 
-- local/core remains the default public posture
-- authenticated SSE/remote is optional, not default
-- `0.0.0.0` guidance is limited to operator-managed deployments
+Public plugin bundles are included in this repository:
+
+- `plugins/codex/`
+- `plugins/claude/`
+
+These are packaged as public integration surfaces for downstream users.
 
 ## License
 
-See [`LICENSE`](LICENSE).
+See [LICENSE](LICENSE).
