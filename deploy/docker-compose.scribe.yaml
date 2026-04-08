@@ -82,6 +82,7 @@ services:
     secrets:
       - scribe_db_url
       - store_hmac_key
+      - scribe_transport_auth_token
 
     # --- Startup order ---
     # Wait for Postgres to be healthy before starting Scribe.
@@ -165,13 +166,17 @@ networks:
 #   mkdir -p secrets/
 #   echo -n "postgresql://council:password@postgres:5432/agentkit?options=-c%20search_path%3Dscribe" \
 #     > secrets/scribe_db_url.txt
+#   echo -n "replace-with-random-bearer-token" > secrets/scribe_transport_auth_token.txt
 #   chmod 600 secrets/scribe_db_url.txt
+#   chmod 600 secrets/scribe_transport_auth_token.txt
 #
-# Path is relative to this compose file (deploy/), so ../secrets/ points
+# Paths are relative to this compose file (deploy/), so ../secrets/ points
 # to the repo root secrets/ directory.
 # =============================================================================
 secrets:
   scribe_db_url:
-    file: ../../secrets/scribe_db_url.txt
+    file: ../secrets/scribe_db_url.txt
   store_hmac_key:
-    file: ../../secrets/store_hmac_key.txt
+    file: ../secrets/store_hmac_key.txt
+  scribe_transport_auth_token:
+    file: ../secrets/scribe_transport_auth_token.txt

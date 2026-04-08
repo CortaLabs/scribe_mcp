@@ -48,6 +48,12 @@ if [ -z "${SCRIBE_OBJECT_STORE_KEY:-}" ] && [ -f /run/secrets/store_hmac_key ]; 
     echo "[scribe-entrypoint] Loaded SCRIBE_OBJECT_STORE_KEY from Docker secret"
 fi
 
+if [ -z "${SCRIBE_TRANSPORT_AUTH_TOKEN:-}" ] && [ -f /run/secrets/scribe_transport_auth_token ]; then
+    SCRIBE_TRANSPORT_AUTH_TOKEN="$(cat /run/secrets/scribe_transport_auth_token)"
+    export SCRIBE_TRANSPORT_AUTH_TOKEN
+    echo "[scribe-entrypoint] Loaded SCRIBE_TRANSPORT_AUTH_TOKEN from Docker secret"
+fi
+
 # ---------------------------------------------------------------------------
 # Log startup configuration
 # ---------------------------------------------------------------------------

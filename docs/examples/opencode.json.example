@@ -1,8 +1,5 @@
 {
-  "instructions": [
-    "docs/RELEASE_SURFACE.md",
-    "docs/Scribe_Usage.md"
-  ],
+  "instructions": [],
   "mcp": {
     "scribe": {
       "command": [
