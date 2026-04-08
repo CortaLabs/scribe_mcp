@@ -7,6 +7,7 @@ from scribe_mcp.scripts.postgres_backup import (
     BackupFile,
     _backup_filename,
     _redact_dsn,
+    _sanitize_command,
     _select_retained_backups,
 )
 
@@ -20,6 +21,20 @@ def test_redact_dsn_hides_password() -> None:
     redacted = _redact_dsn(dsn)
     assert "secret" not in redacted
     assert "scribe:***@" in redacted
+
+
+def test_sanitize_command_redacts_dbname_dsn() -> None:
+    command = [
+        "pg_dump",
+        "--format=custom",
+        "--dbname=postgresql://scribe:secret@127.0.0.1:5432/scribe",
+    ]
+
+    sanitized = _sanitize_command(command)
+
+    assert sanitized[:2] == command[:2]
+    assert "secret" not in sanitized[2]
+    assert sanitized[2] == "--dbname=postgresql://scribe:***@127.0.0.1:5432/scribe"
 
 
 def test_backup_filename_contains_schema_and_timestamp() -> None:
@@ -45,4 +60,3 @@ def test_select_retained_backups_keeps_daily_and_weekly_windows() -> None:
     assert Path("d.dump") in retained
     assert Path("e.dump") in retained
     assert Path("f.dump") not in retained
-

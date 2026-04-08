@@ -37,6 +37,17 @@ def _redact_dsn(dsn: str) -> str:
     return urlunsplit((parts.scheme, safe_netloc, parts.path, parts.query, parts.fragment))
 
 
+def _sanitize_command(command: Iterable[str]) -> list[str]:
+    sanitized: list[str] = []
+    for arg in command:
+        if arg.startswith("--dbname="):
+            _, dsn = arg.split("=", 1)
+            sanitized.append(f"--dbname={_redact_dsn(dsn)}")
+            continue
+        sanitized.append(arg)
+    return sanitized
+
+
 def _backup_filename(*, schema: str, now: datetime | None = None) -> str:
     ts = (now or _utc_now()).strftime("%Y%m%dT%H%M%SZ")
     return f"scribe_{schema}_{ts}.dump"
@@ -129,7 +140,7 @@ def _write_manifest(
         "schema": schema,
         "dsn": _redact_dsn(dsn),
         "backup_file": str(backup_path),
-        "pg_dump_command": command,
+        "pg_dump_command": _sanitize_command(command),
         "pruned_files": pruned_files,
         "dry_run": dry_run,
     }
@@ -227,4 +238,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -33,6 +33,7 @@ config.toml
 .scribe/state.json
 .scribe/state/
 .scribe/cli/*.json
+.scribe/backups/
 
 # -----------------------------------------------------
 # Vector / Embedding Artifacts
