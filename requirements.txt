@@ -1,0 +1,3 @@
+# Legacy contributor convenience wrapper.
+# Release install truth lives in pyproject.toml.
+-e .[dev]

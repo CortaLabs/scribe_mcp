@@ -1,0 +1,106 @@
+# =====================================================
+# Scribe MCP public baseline
+# Local host state stays on disk but never enters git.
+# =====================================================
+
+# Python caches / test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs / local workspaces
+.venv/
+venv/
+workspaces/
+
+# Build / packaging artifacts
+build/
+dist/
+pip-wheel-metadata/
+*.egg-info/
+.eggs/
+src/scribe_mcp.egg-info/
+packages/scribe_council/build/
+packages/scribe_council/src/scribe_council.egg-info/
+
+# Local env / operator config
+.env
+.env.*
+config.toml
+.mcp.json
+opencode.json
+.opencode/
+.agents/
+
+# Root council host surfaces - keep local only
+.council/
+.codex/
+.claude/
+AGENTS.md
+CLAUDE.md
+src/scribe_mcp/config/CLAUDE.md
+src/scribe_mcp/council_templates/
+
+# Scribe runtime / operator state
+.scribe/
+.scribe_vectors/
+state/
+tool_calls.jsonl
+data/backups/
+data/snapshots/
+data/*.db
+*.db
+*.db-shm
+*.db-wal
+*.journal
+
+# Docs we do not ship publicly
+architecture/
+docs/archived_projects/
+docs/archived_global_logs/
+docs/dev_plans/
+docs/bugs/
+docs/security/
+docs/GLOBAL_PROGRESS_LOG.md
+docs/historical/
+docs/test-fail-logs/
+research/
+
+# Council package sources do not ship in public scribe baseline
+packages/scribe_council/
+
+# Generated / local output
+reports/
+benchmarks/artifacts/
+demo/
+tmp_tests/
+tmp_manual*/
+tmp_state*.json
+*.journal
+*.journal.lock
+*.lock
+*_fullcode.txt
+scribe_fullcode.txt
+fullcode.txt
+*.bak
+*.preflight-*.bak
+None
+None.*
+
+# Coverage / HTML reports
+.coverage
+htmlcov/
+
+# Internal-only project config samples / temp state
+data/reminder_cooldowns.json
+tests/tmp_state/
+src/scribe_mcp/config/projects/manual_demo.json
+src/scribe_mcp/config/projects/tool_audit_1112025.json
+docs/guides/CODEX_APPROVAL_ALIGNMENT_HANDOFF_2026-03-30.md
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*:Zone.Identifier

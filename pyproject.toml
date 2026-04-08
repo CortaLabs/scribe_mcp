@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scribe-mcp"
+version = "2.2"
+description = "Scribe MCP server, tooling, and universal CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Scribe MCP Contributors" }]
+dependencies = [
+  "httpx~=0.27",
+  "jinja2~=3.1",
+  "mcp==1.26.0",
+  "portalocker~=2.0",
+  "python-dotenv~=1.0",
+  "psutil~=7.1",
+  "pyyaml~=6.0",
+  "rich~=13.7",
+  "tiktoken~=0.5",
+  "watchdog~=3.0",
+]
+
+[project.optional-dependencies]
+postgres = ["asyncpg~=0.29"]
+dev = [
+  "pytest~=7.4",
+  "pytest-asyncio~=0.23",
+]
+s3 = ["boto3>=1.28"]
+
+[project.scripts]
+scribe = "scribe_mcp.cli.main:main"
+scribe-mcp = "scribe_mcp.__main__:main"
+scribe-server = "scribe_mcp.__main__:main"
+scribe-migrate = "scribe_mcp.scripts.migrate_state:main"
+scribe-migrate-postgres = "scribe_mcp.scripts.migrate_sqlite_to_postgres:main"
+scribe-backup-postgres = "scribe_mcp.scripts.postgres_backup:main"
+scribe-bootstrap-postgres = "scribe_mcp.scripts.bootstrap_postgres:main"
+scribe-metrics-postgres = "scribe_mcp.scripts.postgres_metrics:main"
+scribe-soak-postgres = "scribe_mcp.scripts.postgres_soak_test:main"
+scribe-server-sse = "scribe_mcp.server_sse:main"
+scribe-migrate-objects = "scribe_mcp.scripts.migrate_to_object_store:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["scribe_mcp*"]
+
+[tool.setuptools.package-data]
+"scribe_mcp" = [
+  "py.typed",
+  "config/*.json",
+  "config/*.yaml",
+  "config/*.yml",
+  "db/*.sql",
+  "db/postgres_migrations/*.sql",
+  "plugins/*.json",
+  "templates/*",
+  "templates/**/*",
+]
+
+[tool.setuptools.exclude-package-data]
+"scribe_mcp" = [
+  "council_templates/*",
+  "council_templates/**/*",
+]
+"scribe_mcp.council_templates" = [
+  "__pycache__/*",
+  "rules/*",
+  "rules/**/*",
+  "skills/*",
+  "skills/**/*",
+]

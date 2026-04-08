@@ -1,0 +1,35 @@
+{
+  "name": "scribe-mcp",
+  "version": "2.2.0",
+  "description": "Scribe MCP plugin bundle for Codex with native MCP access, the core Scribe skill, and projection-ready public-safe Scribe specialists.",
+  "author": {
+    "name": "Scribe MCP Contributors"
+  },
+  "homepage": "https://github.com/corta-labs/scribe_mcp",
+  "repository": "https://github.com/corta-labs/scribe_mcp",
+  "license": "MIT",
+  "keywords": [
+    "scribe",
+    "mcp",
+    "documentation",
+    "agents",
+    "workflow"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Scribe MCP",
+    "shortDescription": "Governed Scribe workflows and subagents for Codex",
+    "longDescription": "Bundle the core Scribe MCP server, the Scribe MCP usage skill, and projection-ready public-safe Scribe specialists for Codex-native workflows.",
+    "developerName": "Scribe MCP Contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Scribe MCP to manage governed docs, logs, and project workflows in this repository."
+    ],
+    "brandColor": "#2ECC71"
+  }
+}

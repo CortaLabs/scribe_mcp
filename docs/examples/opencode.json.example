@@ -1,0 +1,21 @@
+{
+  "instructions": [],
+  "mcp": {
+    "scribe": {
+      "command": [
+        "scribe-server"
+      ],
+      "environment": {
+        "SCRIBE_ROOT": "/absolute/path/to/project",
+        "SCRIBE_STORAGE_BACKEND": "sqlite",
+        "SCRIBE_DB_PATH": "/absolute/path/to/project/.scribe/state/scribe.db"
+      },
+      "type": "local"
+    }
+  },
+  "permission": {
+    "external_directory": "ask",
+    "skill": "ask",
+    "task": "ask"
+  }
+}

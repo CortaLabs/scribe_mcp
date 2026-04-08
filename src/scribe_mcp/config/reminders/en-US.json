@@ -1,0 +1,310 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "language": "en-US",
+    "description": "Scribe MCP reminder templates - English",
+    "last_updated": "2025-10-28"
+  },
+  "reminders": {
+    "logging": {
+      "no_logs_yet": {
+        "level": "info",
+        "emoji": "📝",
+        "template": "No progress logs yet. Use append_entry to start the audit trail.",
+        "short_template": "No logs yet. Use append_entry to start.",
+        "context": "Start your development audit trail with append_entry.",
+        "category": "logging",
+        "tools_suppressed": ["append_entry"]
+      },
+      "logging_stale_urgent": {
+        "level": "urgent",
+        "emoji": "🚨",
+        "template": "Last log was {minutes} minutes ago—scribe your progress immediately.",
+        "short_template": "Log gap: {minutes} minutes. Log your progress now!",
+        "context": "Keep logs flowing to retain full observability.",
+        "category": "logging",
+        "tools_suppressed": ["append_entry"]
+      },
+      "logging_stale_warning": {
+        "level": "warning",
+        "emoji": "⏰",
+        "template": "It's been {minutes} minutes since the last log entry.",
+        "short_template": "Log gap: {minutes} minutes.",
+        "context": "Use append_entry to capture what changed.",
+        "category": "logging",
+        "tools_suppressed": ["append_entry"]
+      }
+    },
+    "documentation": {
+      "missing_docs": {
+        "level": "urgent",
+        "emoji": "📋",
+        "template": "Missing documentation: {missing_docs}.",
+        "short_template": "Missing docs: {missing_docs}",
+        "context": "Run generate_doc_templates or create docs before coding.",
+        "category": "docs"
+      },
+      "architecture_incomplete": {
+        "level": "warning",
+        "emoji": "🏗️",
+        "template": "Architecture guide still reads like a template—fill it in before coding.",
+        "short_template": "Architecture guide needs completion.",
+        "context": "Document your system design before implementation.",
+        "category": "docs"
+      },
+      "phase_plan_incomplete": {
+        "level": "warning",
+        "emoji": "🗓️",
+        "template": "Phase plan incomplete. Break the architecture into executable phases.",
+        "short_template": "Phase plan needs completion.",
+        "context": "Convert architecture into actionable development phases.",
+        "category": "docs"
+      },
+      "checklist_incomplete": {
+        "level": "info",
+        "emoji": "✅",
+        "template": "Checklist needs attention—turn the phase plan into actionable boxes.",
+        "short_template": "Checklist needs attention.",
+        "context": "Create trackable tasks from your phase plan.",
+        "category": "docs"
+      },
+      "docs_changed": {
+        "level": "info",
+        "emoji": "🧭",
+        "template": "Docs changed since last audit: {changed_docs}.",
+        "short_template": "Docs updated: {changed_docs}",
+        "context": "Review and cross-check implementation to keep docs aligned.",
+        "category": "docs"
+      },
+      "doc_stale": {
+        "level": "info",
+        "emoji": "📆",
+        "template": "{doc_name} hasn't been updated in {days}+ days.",
+        "short_template": "{doc_name} stale ({days} days)",
+        "context": "Review the doc and confirm it still matches implementation.",
+        "category": "docs"
+      }
+    },
+    "workflow": {
+      "dev_without_docs": {
+        "level": "urgent",
+        "emoji": "⛔",
+        "template": "Architecture guide incomplete but development is underway. Pause and document first.",
+        "short_template": "Stop: Document before coding.",
+        "context": "Architecture must precede implementation.",
+        "category": "workflow"
+      },
+      "architecture_ready": {
+        "level": "warning",
+        "emoji": "📊",
+        "template": "Architecture is set—draft the phase plan next.",
+        "short_template": "Next: Create phase plan.",
+        "context": "Break architecture into development phases.",
+        "category": "workflow"
+      },
+      "phase_plan_ready": {
+        "level": "info",
+        "emoji": "🗒️",
+        "template": "Phase plan done—convert it into a checklist to track progress.",
+        "short_template": "Next: Create checklist.",
+        "context": "Turn phases into trackable tasks.",
+        "category": "workflow"
+      }
+    },
+    "context": {
+      "project_context": {
+        "level": "info",
+        "emoji": "🎯",
+        "template": "Project: {project_name}{phase_info}",
+        "short_template": "{project_name}{phase_suffix}",
+        "context": "Entries: {total_entries} | Last: {last_log}{session_info}",
+        "category": "context"
+      }
+    },
+    "teaching": {
+      "manage_docs_precision_preferred": {
+        "level": "info",
+        "emoji": "🧩",
+        "template": "For edits, prefer manage_docs apply_patch (unified diff format) or replace_range. replace_section is best reserved for scaffolding templates.",
+        "short_template": "Prefer apply_patch (unified diff) or replace_range; use replace_section only for scaffolding.",
+        "context": "apply_patch uses unified diff format by default, replace_range for explicit line edits.",
+        "category": "teaching"
+      },
+      "manage_docs_scaffold_mode": {
+        "level": "info",
+        "emoji": "🧱",
+        "template": "Scaffolding detected: replace_section is OK for template setup. After scaffolding, switch to apply_patch (unified diff) or replace_range for precise edits.",
+        "short_template": "Scaffold: replace_section OK now; switch to apply_patch/replace_range after.",
+        "context": "Use replace_section only for scaffolding; prefer apply_patch/replace_range for ongoing edits.",
+        "category": "teaching"
+      },
+      "manage_docs_normalize_headers": {
+        "level": "info",
+        "emoji": "🔢",
+        "template": "normalize_headers runs before TOC generation and outputs numbered ATX headers. It is body-only and skips fenced code blocks.",
+        "short_template": "normalize_headers: body-only ATX numbering; skip code fences.",
+        "context": "Run normalize_headers before generate_toc to stabilize structure.",
+        "category": "teaching"
+      },
+      "manage_docs_generate_toc": {
+        "level": "info",
+        "emoji": "📚",
+        "template": "generate_toc inserts or replaces TOC markers (<!-- TOC:start --> / <!-- TOC:end -->) using deterministic anchors.",
+        "short_template": "generate_toc: insert/replace TOC markers; deterministic anchors.",
+        "context": "Body-only, skips fenced code; rerun after headers change.",
+        "category": "teaching"
+      },
+      "manage_docs_create_doc": {
+        "level": "info",
+        "emoji": "🧾",
+        "template": "create_doc builds docs from content/body/snippets/sections. Users do not supply Jinja. Set register_doc=true only when you want registry updates.",
+        "short_template": "create_doc: content/snippets only; register_doc optional.",
+        "context": "Use metadata.doc_name/target_dir/frontmatter for custom docs; default is one-off.",
+        "category": "teaching"
+      },
+      "manage_docs_validate_crosslinks": {
+        "level": "info",
+        "emoji": "🔗",
+        "template": "validate_crosslinks is read-only diagnostics for related_docs. It performs optional anchor checks and does not write or log doc_updates.",
+        "short_template": "validate_crosslinks: read-only diagnostics.",
+        "context": "Use metadata.check_anchors=true to verify anchors.",
+        "category": "teaching"
+      },
+      "new_project_welcome": {
+        "level": "info",
+        "emoji": "🎉",
+        "template": "🎉 Welcome to your new project! Here's how to get started with Scribe:",
+        "short_template": "🎉 New project! Quick Scribe guide:",
+        "context": "Start with append_entry, use metadata, and check docs",
+        "category": "teaching",
+        "conditions": {
+          "new_project": true,
+          "tool": "set_project"
+        }
+      },
+      "scribe_workflow_tip": {
+        "level": "info",
+        "emoji": "📝",
+        "template": "📝 Workflow: Use append_entry after every action to maintain an audit trail of decisions and progress.",
+        "short_template": "📝 Log actions with append_entry.",
+        "context": "append_entry creates your development audit trail",
+        "category": "teaching",
+        "conditions": {
+          "new_project": true,
+          "tool": "set_project"
+        }
+      },
+      "metadata_tip": {
+        "level": "info",
+        "emoji": "🏷️",
+        "template": "🏷️ Add metadata for better tracking: meta={{'phase': 'development', 'component': 'auth'}}",
+        "short_template": "🏷️ Use metadata for better tracking.",
+        "context": "meta={'phase': 'dev'} helps organize and search logs",
+        "category": "teaching",
+        "conditions": {
+          "new_project": true,
+          "tool": "set_project"
+        }
+      },
+      "documentation_tip": {
+        "level": "info",
+        "emoji": "📚",
+        "template": "📚 Your ARCHITECTURE_GUIDE.md, PHASE_PLAN.md, and CHECKLIST.md are ready - update them as you develop!",
+        "short_template": "📚 Update your docs as you develop.",
+        "context": "Docs are auto-generated in docs/dev_plans/project_name/",
+        "category": "teaching",
+        "conditions": {
+          "new_project": true,
+          "tool": "set_project"
+        }
+      },
+      "how_to_use": {
+        "level": "info",
+        "emoji": "💡",
+        "template": "💡 Pro tip: Use compact=true and fields=['name'] to reduce token usage in list_projects.",
+        "short_template": "💡 Use compact mode to save tokens.",
+        "context": "compact=true, fields=['name'] reduces response size",
+        "category": "teaching",
+        "conditions": {
+          "tool": "list_projects",
+          "not_compact": true,
+          "shown_recently": false
+        }
+      },
+      "pagination_tip": {
+        "level": "info",
+        "emoji": "📄",
+        "template": "💡 Use page=2, page_size=10 for large datasets or page_size=20 for faster browsing.",
+        "short_template": "💡 Use pagination for large results.",
+        "context": "page_size=10 for detailed, page_size=20 for fast",
+        "category": "teaching",
+        "conditions": {
+          "tool": "list_projects",
+          "has_pagination": false,
+          "total_items_gt": 5
+        }
+      },
+      "filter_tip": {
+        "level": "info",
+        "emoji": "🔍",
+        "template": "💡 Use filter='keyword' to quickly find specific projects.",
+        "short_template": "💡 Use filter to find projects faster.",
+        "context": "filter='keyword' narrows results",
+        "category": "teaching",
+        "conditions": {
+          "tool": "list_projects",
+          "no_filter": true,
+          "total_items_gt": 3
+        }
+      },
+      "set_project_tip": {
+        "level": "info",
+        "emoji": "🎯",
+        "template": "💡 Use set_project(name='your-project') to establish context before logging.",
+        "short_template": "💡 Set project context first.",
+        "context": "set_project establishes working context",
+        "category": "teaching",
+        "conditions": {
+          "no_project": true,
+          "shown_recently": false
+        }
+      },
+      "meta_logging_tip": {
+        "level": "info",
+        "emoji": "🏷️",
+        "template": "💡 Add metadata: meta={{'phase': 'coding', 'component': 'auth'}} for better tracking.",
+        "short_template": "💡 Add metadata for better tracking.",
+        "context": "meta={'phase': 'coding'} helps organization",
+        "category": "teaching",
+        "conditions": {
+          "tool": "append_entry",
+          "no_meta": true,
+          "shown_recently": false
+        }
+      }
+    }
+  },
+  "variables": {
+    "time_units": {
+      "minutes": "{minutes} minute{s}",
+      "hours": "{hours} hour{s}",
+      "days": "{days} day{s}"
+    },
+    "plurals": {
+      "minute": {"singular": "", "plural": "s"},
+      "hour": {"singular": "", "plural": "s"},
+      "day": {"singular": "", "plural": "s"}
+    },
+    "doc_names": {
+      "architecture": "Architecture Guide",
+      "phase_plan": "Phase Plan",
+      "checklist": "Checklist"
+    }
+  },
+  "formatting": {
+    "date_format": "%Y-%m-%d %H:%M UTC",
+    "number_format": "integer",
+    "list_separator": ", ",
+    "max_list_items": 3
+  }
+}

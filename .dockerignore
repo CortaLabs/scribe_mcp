@@ -1,0 +1,49 @@
+# Scribe MCP - Docker build context filter
+# Reduces build context by excluding non-essential files
+# NOTE: deploy/ is NOT excluded -- Dockerfile copies entrypoint from there
+
+# Version control
+.git/
+.github/
+
+# Scribe data and state (runtime creates its own)
+.scribe/
+data/
+
+# Python caches and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+tmp_tests/
+tests/
+
+# Databases (runtime creates its own)
+*.db
+*.db-journal
+
+# IDE and editor config
+.codex/
+.claude/
+.vscode/
+.idea/
+
+# Documentation (not needed in image)
+*.md
+!README.md
+
+# Environment and secrets (never bake into image)
+.env
+.env.*
+secrets/
+
+# OS artifacts
+node_modules/
+.mypy_cache/

@@ -1,0 +1,182 @@
+# =============================================================================
+# Scribe MCP - Docker Compose Service Definition
+# =============================================================================
+#
+# COMPOSABLE OVERLAY for use with Council's docker-compose.yaml.
+#
+# Usage (with Council's base compose):
+#   docker compose \
+#     -f /path/to/council_mcp/deploy/docker-compose.yaml \
+#     -f /path/to/scribe_mcp/deploy/docker-compose.scribe.yaml \
+#     up -d
+#
+# This file defines the Scribe MCP service as a composable overlay.
+# When merged with Council's compose, the shared infrastructure (postgres,
+# backend network) definitions are unified by Docker Compose.
+#
+# Standalone validation:
+#   docker compose -f deploy/docker-compose.scribe.yaml config
+#
+# Scribe communicates with Council over the Docker backend network.
+# Council connects to Scribe via http://scribe:8200/sse (Docker DNS).
+# No host ports are exposed -- Scribe is internal-only.
+#
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Scribe MCP Server
+  # ---------------------------------------------------------------------------
+  # Documentation governance server providing project logging, managed docs,
+  # and audit trail capabilities over SSE transport.
+  #
+  # Council connects via http://scribe:8200/sse on the backend network.
+  # No host port mapping needed -- internal service only.
+  # ---------------------------------------------------------------------------
+  scribe:
+    build:
+      context: ..            # scribe_mcp root (one level up from deploy/)
+      dockerfile: deploy/Dockerfile
+    image: scribe-mcp:latest
+    container_name: scribe-mcp
+
+    restart: unless-stopped
+
+    # --- Networking ---
+    # Shared backend network with Council and Postgres.
+    # Council reaches Scribe via Docker DNS: http://scribe:8200/sse
+    networks:
+      - backend
+
+    # No ports exposed to host -- internal Docker network only.
+    # Council connects via http://scribe:8200/sse
+
+    # --- Persistent storage ---
+    # .scribe/ directory contains project logs, managed docs, and state.
+    # Must survive container restarts and rebuilds.
+    volumes:
+      - scribe_data:/app/.scribe
+
+    # --- Environment variables ---
+    # SCRIBE_DB_URL is NOT set here -- it comes from Docker secrets via
+    # the entrypoint script (deploy/docker-entrypoint.sh).
+    environment:
+      SCRIBE_ROOT: /app
+      SCRIBE_TRANSPORT: sse
+      SCRIBE_TRANSPORT_PORT: "8200"
+      SCRIBE_STORAGE_BACKEND: postgres
+      SCRIBE_POSTGRES_SCHEMA: scribe
+      SCRIBE_POSTGRES_POOL_MIN_SIZE: "2"
+      SCRIBE_POSTGRES_POOL_MAX_SIZE: "10"
+      SCRIBE_LOG_LEVEL: INFO
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+      # Object store (CortaStore on Hetzner)
+      SCRIBE_OBJECT_STORE_URL: "http://corta-store:8201"
+      SCRIBE_OBJECT_STORE_PROVIDER: corta
+      SCRIBE_OBJECT_STORE_PROJECT: "${COMPOSE_PROJECT_NAME:-council}"
+
+    # --- Secrets ---
+    # Docker secrets mounted at /run/secrets/<name> inside the container.
+    # The entrypoint script reads these files and exports environment variables.
+    secrets:
+      - scribe_db_url
+      - store_hmac_key
+      - scribe_transport_auth_token
+
+    # --- Startup order ---
+    # Wait for Postgres to be healthy before starting Scribe.
+    # The postgres service is defined in Council's base compose file;
+    # this reference is resolved when both compose files are merged.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # --- Resource limits ---
+    # 1GB RAM based on research (512MB typical, 1GB headroom).
+    # 0.5 CPU is sufficient for a documentation/logging service.
+    # Reservations ensure minimum resources are always available.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+
+    # --- Graceful shutdown ---
+    # 30 seconds for tini to propagate SIGTERM, cancel background tasks,
+    # flush database connections, and complete in-flight requests.
+    stop_grace_period: 30s
+
+    # --- Health check ---
+    # The /health endpoint returns JSON with status, service name, version,
+    # transport mode, and uptime. curl exit code 0 = healthy.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8200/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL (stub for standalone validation)
+  # ---------------------------------------------------------------------------
+  # This minimal definition allows `docker compose config` to validate
+  # this file independently. When merged with Council's compose file,
+  # Council's full postgres definition takes precedence.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    networks:
+      - backend
+
+
+# =============================================================================
+# Volumes
+# =============================================================================
+# scribe_data persists the .scribe/ directory (logs, docs, project state).
+# "docker compose down" keeps volumes; "docker compose down -v" removes them.
+# =============================================================================
+volumes:
+  scribe_data:
+    name: scribe_data
+
+
+# =============================================================================
+# Networks
+# =============================================================================
+# The backend network is shared with Council's compose. When both files are
+# merged, Docker Compose unifies the network definitions.
+# =============================================================================
+networks:
+  backend:
+    driver: bridge
+
+
+# =============================================================================
+# Secrets
+# =============================================================================
+# File-based secret for the Scribe PostgreSQL connection string.
+# More secure than environment variables -- not visible in docker inspect,
+# process listings, or container logs.
+#
+# Setup:
+#   mkdir -p secrets/
+#   echo -n "postgresql://council:password@postgres:5432/agentkit?options=-c%20search_path%3Dscribe" \
+#     > secrets/scribe_db_url.txt
+#   echo -n "replace-with-random-bearer-token" > secrets/scribe_transport_auth_token.txt
+#   chmod 600 secrets/scribe_db_url.txt
+#   chmod 600 secrets/scribe_transport_auth_token.txt
+#
+# Paths are relative to this compose file (deploy/), so ../secrets/ points
+# to the repo root secrets/ directory.
+# =============================================================================
+secrets:
+  scribe_db_url:
+    file: ../secrets/scribe_db_url.txt
+  store_hmac_key:
+    file: ../secrets/store_hmac_key.txt
+  scribe_transport_auth_token:
+    file: ../secrets/scribe_transport_auth_token.txt

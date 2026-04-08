@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "scribe": {
+      "command": "scribe-server",
+      "env": {
+        "SCRIBE_STORAGE_BACKEND": "sqlite"
+      }
+    }
+  }
+}

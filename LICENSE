@@ -1,0 +1,46 @@
+## Scribe MCP License (Community + Small Business License)
+
+**Version 1.0 — December 2025**
+Copyright © 2025 CortaLabs
+
+### 1. **Permissions**
+
+You are free to:
+
+* Use, modify, and distribute this software for **personal**, **research**, **educational**, **open-source**, or **non-commercial** purposes.
+* Use this software **commercially** if your organization meets **all** the following:
+
+  * Fewer than **25 employees**, and
+  * Less than **$1,000,000 USD annual revenue**, and
+  * Your use does **not** involve selling, hosting, or packaging Scribe MCP or derivative works as part of a paid product or service.
+
+### 2. **Restrictions**
+
+You **may not**:
+
+* Use this software as part of a **commercial service or product** if your organization exceeds the employee or revenue limits listed above.
+* Sell, license, or otherwise monetize any version of Scribe MCP or derivative works without a separate commercial agreement.
+* Remove or alter licensing notices.
+
+### 3. **Enterprise Licensing**
+
+If your organization:
+
+* exceeds the small-business limits, or
+* intends to use Scribe MCP in a paid SaaS/product, or
+* requires redistribution rights, proprietary embedding, or long-term support,
+
+then you must obtain a **commercial license** from:
+
+```
+CortaLabs — licensing@cortalabs.com
+```
+
+### 4. **No Warranty**
+
+The software is provided “as-is” without warranty of any kind.
+
+### 5. **License Compatibility**
+
+This license is **source-available** but **not OSI-open-source**.
+You may **fork**, **modify**, and **extend** Scribe MCP, but you may not remove the noncommercial restrictions for others.

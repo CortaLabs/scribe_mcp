@@ -1,0 +1,10 @@
+{
+  "name": "scribe_mcp",
+  "root": ".",
+  "progress_log": "docs/dev_plans/scribe_mcp/PROGRESS_LOG.md",
+  "defaults": {
+    "emoji": "\u2139\ufe0f",
+    "agent": "Scribe"
+  },
+  "docs_dir": "docs/dev_plans/scribe_mcp"
+}

@@ -1,0 +1,22 @@
+{
+  "name": "scribe-mcp",
+  "version": "2.2.0",
+  "description": "Scribe MCP workflow bundle for Claude Code with shared MCP access, governed subagents, and the core Scribe skill.",
+  "author": {
+    "name": "Scribe MCP Contributors"
+  },
+  "homepage": "https://github.com/corta-labs/scribe_mcp",
+  "repository": "https://github.com/corta-labs/scribe_mcp",
+  "license": "MIT",
+  "keywords": [
+    "scribe",
+    "mcp",
+    "documentation",
+    "agents",
+    "workflow"
+  ],
+  "agents": "./agents/",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}

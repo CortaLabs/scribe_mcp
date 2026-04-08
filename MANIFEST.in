@@ -1,0 +1,19 @@
+# Keep the rebuilt sdist aligned with tracked release truth only.
+prune build
+prune dist
+prune .council
+prune .claude
+prune .codex
+prune .scribe
+prune logs
+prune state
+exclude .mcp.json
+exclude opencode.json
+exclude AGENTS.md
+exclude CLAUDE.md
+exclude tool_calls.jsonl
+global-exclude __pycache__
+global-exclude *.py[cod]
+
+# Historical release-surface exclusion retained from Phase 5.
+exclude tests/test_phase2_vector_core_removal.py
