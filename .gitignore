@@ -46,7 +46,7 @@ src/scribe_mcp/council_templates/
 # Scribe runtime / operator state
 .scribe/
 .scribe_vectors/
-state/
+/state/
 tool_calls.jsonl
 data/backups/
 data/snapshots/
@@ -99,6 +99,7 @@ tests/tmp_state/
 src/scribe_mcp/config/projects/manual_demo.json
 src/scribe_mcp/config/projects/tool_audit_1112025.json
 docs/guides/CODEX_APPROVAL_ALIGNMENT_HANDOFF_2026-03-30.md
+src/scribe_mcp/state/*.json
 
 # OS / editor junk
 .DS_Store
