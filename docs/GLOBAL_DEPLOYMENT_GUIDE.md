@@ -75,14 +75,15 @@ pip install -r requirements.txt
 Add Scribe to your MCP client configuration:
 
 #### Claude Desktop/Code
-```json
+```jsonc
 {
   "mcpServers": {
     "scribe": {
-      "command": "python",
-      "args": ["-m", "scribe_mcp.server"],
+      "command": "scribe-server",
       "env": {
-        "SCRIBE_ROOT": "/path/to/scribe-mcp",
+        // SQLite / standalone (default): keep sqlite or omit it entirely.
+        // Postgres / server: add SCRIBE_DB_URL (+ optional SCRIBE_POSTGRES_SCHEMA).
+        // Remote / client: set SCRIBE_MODE=client + SCRIBE_REMOTE_URL.
         "SCRIBE_STORAGE_BACKEND": "sqlite"
       }
     }
@@ -92,11 +93,29 @@ Add Scribe to your MCP client configuration:
 
 #### Codex CLI
 ```bash
+# SQLite / standalone (default)
 codex mcp add scribe \
   --env SCRIBE_ROOT=/path/to/scribe-mcp \
   --env SCRIBE_STORAGE_BACKEND=sqlite \
-  -- python -m scribe_mcp.server
+  -- scribe-server
+
+# Postgres / server
+codex mcp add scribe \
+  --env SCRIBE_ROOT=/path/to/scribe-mcp \
+  --env SCRIBE_STORAGE_BACKEND=postgres \
+  --env SCRIBE_DB_URL='postgresql://scribe_app:<password>@db.example.internal:5432/scribe' \
+  --env SCRIBE_POSTGRES_SCHEMA=scribe \
+  -- scribe-server
+
+# Remote / client
+codex mcp add scribe \
+  --env SCRIBE_ROOT=/path/to/scribe-mcp \
+  --env SCRIBE_MODE=client \
+  --env SCRIBE_REMOTE_URL='https://scribe.example.internal' \
+  -- scribe-server
 ```
+
+`scribe bootstrap` may also write `SCRIBE_POSTGRES_ADMIN_*`, `SCRIBE_POSTGRES_APP_*`, and `SCRIBE_POSTGRES_SUPERUSER_*` keys while provisioning Postgres. Treat those as bootstrap-only conveniences, not runtime requirements for the steady-state MCP server.
 
 ### 3. Verify Installation
 ```bash

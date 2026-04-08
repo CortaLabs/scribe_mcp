@@ -8,18 +8,24 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from scribe_mcp.config.mode_detection import OperatingMode, detect_operating_mode, _probe_remote
+from scribe_mcp.config.mode_detection import (
+    OperatingMode,
+    _probe_remote,
+    detect_operating_mode,
+    resolve_configured_mode,
+)
 
 
 class FakeSettings:
     """Minimal settings stub for testing."""
     def __init__(self, mode="auto", remote_server_url=None, remote_connect_timeout=3.0,
-                 remote_fallback=True, db_url=None):
+                 remote_fallback=True, db_url=None, storage_backend=None):
         self.mode = mode
         self.remote_server_url = remote_server_url
         self.remote_connect_timeout = remote_connect_timeout
         self.remote_fallback = remote_fallback
         self.db_url = db_url
+        self.storage_backend = storage_backend or ("postgres" if db_url else "sqlite")
 
 
 @pytest.mark.asyncio
@@ -82,3 +88,24 @@ async def test_auto_mode_with_remote_url_probes():
         result = await detect_operating_mode(s)
         assert result == OperatingMode.CLIENT
         mock_probe.assert_called_once_with("http://example.com:8200", timeout=3.0)
+
+
+def test_resolve_configured_mode_prefers_remote_url_for_auto_mode():
+    s = FakeSettings(
+        mode="auto",
+        remote_server_url="http://remote.example:8200",
+        db_url="postgresql://localhost/scribe",
+        storage_backend="postgres",
+    )
+
+    assert resolve_configured_mode(s) == OperatingMode.CLIENT
+
+
+def test_resolve_configured_mode_keeps_sqlite_standalone_when_db_url_is_present():
+    s = FakeSettings(
+        mode="auto",
+        db_url="postgresql://localhost/scribe",
+        storage_backend="sqlite",
+    )
+
+    assert resolve_configured_mode(s) == OperatingMode.STANDALONE

@@ -241,28 +241,6 @@ async def handle_edit_action(
     if index_warning:
         response["index_warning"] = index_warning
 
-    if change.success:
-        repo_root = project.get("root")
-        if isinstance(repo_root, str):
-            repo_root = Path(repo_root)
-        if not vector_indexing_enabled(repo_root):
-            reminders = list(context.reminders)
-            reminders.append(
-                {
-                    "level": "warn",
-                    "score": 8,
-                    "emoji": "🧭",
-                    "message": (
-                        "Semantic doc indexing is disabled (vector_index_docs=false). "
-                        "Enable it in .scribe/config/scribe.yaml and run "
-                        "scripts/reindex_vector.py --docs to build embeddings for managed docs."
-                    ),
-                    "category": "vector_index_docs",
-                    "tone": "strict",
-                }
-            )
-            response["reminders"] = reminders
-
     if action == "create_doc" and change.success and isinstance(metadata, dict):
         register_doc = metadata.get("register_doc")
         if register_doc is None:

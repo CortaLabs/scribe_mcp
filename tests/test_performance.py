@@ -9,11 +9,15 @@ Tests performance with log files to validate acceptance criteria:
 - Rotation history query performance
 
 Note: Performance tests are skipped by default. Run with: pytest -m performance
+
+Generated JSON output defaults to `benchmarks/artifacts/` and can be
+overridden with `SCRIBE_PERFORMANCE_OUTPUT_DIR`.
 """
 
 import pytest
 import asyncio
 import os
+import sys
 import time
 import tempfile
 import shutil
@@ -38,6 +42,11 @@ def run(coro):
 
 # Skip performance tests by default (use pytest -m performance to enable)
 pytestmark = [pytest.mark.slow, pytest.mark.performance]
+
+PERFORMANCE_OUTPUT_DIR_ENV = "SCRIBE_PERFORMANCE_OUTPUT_DIR"
+DEFAULT_PERFORMANCE_OUTPUT_DIR = (
+    Path(__file__).resolve().parents[1] / "benchmarks" / "artifacts"
+)
 
 
 class PerformanceTestSuite:
@@ -91,6 +100,17 @@ class PerformanceTestSuite:
         if self.temp_dir and os.path.exists(self.temp_dir):
             print(f"🧹 Cleaning up temp directory: {self.temp_dir}")
             shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _resolve_results_output_dir(self) -> Path:
+        """Resolve the portable destination for generated performance output."""
+        configured_output_dir = os.environ.get(PERFORMANCE_OUTPUT_DIR_ENV)
+        if configured_output_dir:
+            output_dir = Path(configured_output_dir).expanduser()
+            if not output_dir.is_absolute():
+                output_dir = (Path.cwd() / output_dir).resolve()
+            return output_dir
+
+        return DEFAULT_PERFORMANCE_OUTPUT_DIR
 
     def _measure_memory_usage(self) -> float:
         """Get current memory usage in MB."""
@@ -394,12 +414,40 @@ class PerformanceTestSuite:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             filename = f"performance_results_{timestamp}.json"
 
-        results_file = Path(__file__).parent / filename
-        with open(results_file, 'w') as f:
+        results_dir = self._resolve_results_output_dir()
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        results_file = results_dir / filename
+        with open(results_file, "w", encoding="utf-8") as f:
             json.dump(self.results, f, indent=2)
 
         print(f"\n💾 Results saved to: {results_file}")
         return results_file
+
+
+def test_results_output_dir_defaults_to_gitignored_benchmarks_artifacts(monkeypatch):
+    """Default performance output goes to the portable gitignored benchmark path."""
+    monkeypatch.delenv(PERFORMANCE_OUTPUT_DIR_ENV, raising=False)
+
+    suite = PerformanceTestSuite()
+
+    assert suite._resolve_results_output_dir() == DEFAULT_PERFORMANCE_OUTPUT_DIR
+    assert suite._resolve_results_output_dir().parts[-2:] == ("benchmarks", "artifacts")
+
+
+def test_save_results_honors_env_output_dir_override(tmp_path, monkeypatch):
+    """Env configuration can redirect generated performance output outside tests/."""
+    output_dir = tmp_path / "perf-artifacts"
+    monkeypatch.setenv(PERFORMANCE_OUTPUT_DIR_ENV, str(output_dir))
+
+    suite = PerformanceTestSuite()
+    suite.results = {"status": "ok"}
+
+    results_file = suite.save_results(filename="performance_results_test.json")
+
+    assert results_file == output_dir / "performance_results_test.json"
+    assert results_file.exists()
+    assert json.loads(results_file.read_text(encoding="utf-8")) == {"status": "ok"}
 
 
 @pytest.mark.performance

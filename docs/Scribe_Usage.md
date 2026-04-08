@@ -158,6 +158,27 @@ If you skip step 1, most tools will error because no active project context exis
 
 ---
 
+## Public Storage / Settings Contract (1.0)
+
+`src/scribe_mcp/config/settings.py` remains a public surface. The module now publishes `PUBLIC_STORAGE_MODES`, `PUBLIC_STORAGE_SETTINGS_CONTRACT`, and `PUBLIC_STORAGE_SETTINGS_BY_NAME` so docs/tests can inspect the shipped storage/settings contract directly instead of guessing from inline comments.
+
+| Mode | Canonical runtime envs | Notes |
+|------|-------------------------|-------|
+| SQLite / standalone | `SCRIBE_STORAGE_BACKEND=sqlite` (or omit it), optional `SCRIBE_DB_PATH` | `SCRIBE_SQLITE_PATH` remains a compatibility alias. Use a portable relative override such as `./data/scribe_projects.db` if you need an explicit path. |
+| Postgres / server | `SCRIBE_STORAGE_BACKEND=postgres`, `SCRIBE_DB_URL`, optional `SCRIBE_POSTGRES_SCHEMA` | `SCRIBE_DB_SCHEMA` remains a compatibility alias. Postgres pool/timeouts stay public advanced tuning knobs. |
+| Remote / client | `SCRIBE_MODE=client`, `SCRIBE_REMOTE_URL` | `SCRIBE_REMOTE_CONNECT_TIMEOUT` and `SCRIBE_REMOTE_FALLBACK` stay public advanced tuning knobs. This mode is remote backend access only. |
+
+**Runtime envs**
+- Canonical runtime names lead the docs: `SCRIBE_STORAGE_BACKEND`, `SCRIBE_DB_URL`, `SCRIBE_DB_PATH`, `SCRIBE_POSTGRES_SCHEMA`, `SCRIBE_MODE`, and `SCRIBE_REMOTE_URL`.
+- Compatibility aliases remain visible for 1.0: `SCRIBE_SQLITE_PATH` → `SCRIBE_DB_PATH`, `SCRIBE_DB_SCHEMA` → `SCRIBE_POSTGRES_SCHEMA`.
+- Advanced/public runtime knobs remain public rather than hidden: `SCRIBE_POSTGRES_POOL_MIN_SIZE`, `SCRIBE_POSTGRES_POOL_MAX_SIZE`, `SCRIBE_POSTGRES_CONNECT_TIMEOUT_SECONDS`, `SCRIBE_POSTGRES_COMMAND_TIMEOUT_SECONDS`, `SCRIBE_POSTGRES_CONNECT_RETRIES`, `SCRIBE_POSTGRES_CONNECT_RETRY_BACKOFF_SECONDS`, `SCRIBE_POSTGRES_MAX_INACTIVE_SECONDS`, `SCRIBE_REMOTE_CONNECT_TIMEOUT`, `SCRIBE_REMOTE_FALLBACK`.
+
+**Bootstrap-only convenience envs**
+- `SCRIBE_POSTGRES_ADMIN_*`, `SCRIBE_POSTGRES_APP_*`, and `SCRIBE_POSTGRES_SUPERUSER_*` are bootstrap conveniences emitted by `scribe bootstrap`.
+- They are intentionally documented separately from runtime envs because they help provision Postgres but are not required by the steady-state server once `SCRIBE_DB_URL` and the runtime storage settings are configured.
+
+---
+
 ## Concurrent Agent Naming (Session Isolation)
 
 **MCP Transport Limitation:** Session identity is `{repo_root}:{transport}:{agent_name}`. When multiple agents with the **same name** work on **different Scribe projects** within the **same repository** concurrently, sessions collide and logs may route incorrectly.
@@ -633,7 +654,7 @@ await list_projects(agent="Codex", limit=10, page=1)
 await list_projects(agent="Codex", filter="my-project", limit=3)
 
 # Filtered by repo root (for bridge workspace resolution)
-await list_projects(agent="Codex", root="/home/austin/projects/MCP_SPINE/council_mcp")
+await list_projects(agent="Codex", root="/path/to/council_mcp")
 ```
 
 **Returns:**

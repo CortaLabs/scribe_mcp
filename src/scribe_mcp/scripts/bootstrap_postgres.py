@@ -225,7 +225,7 @@ def _print_bootstrap_intro() -> None:
     print("  1) Create or update admin and app roles")
     print("  2) Create or update the app database (where Scribe data lives)")
     print("  3) Create or update the Scribe schema and grants")
-    print("  4) Enable pg_trgm (and vector when available)")
+    print("  4) Enable pg_trgm")
     print("  5) Write runtime keys to your .env file")
     print("")
     print("Press Enter to accept defaults.")
@@ -312,11 +312,6 @@ async def _ensure_schema_and_privileges(cfg: BootstrapConfig) -> None:
     conn = await asyncpg.connect(superuser_app_dsn)
     try:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-        try:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-        except Exception:
-            # pgvector is optional and may not be installed on all hosts.
-            pass
         await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_sql};")
         await conn.execute(f"ALTER SCHEMA {schema_sql} OWNER TO {admin_sql};")
         await conn.execute(f"GRANT ALL PRIVILEGES ON DATABASE {db_sql} TO {app_sql};")

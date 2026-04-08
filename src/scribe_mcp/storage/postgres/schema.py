@@ -15,7 +15,6 @@ from scribe_mcp.config.paths import db_init_sql, postgres_migrations_dir
 SCHEMA_PATH = db_init_sql()
 MIGRATIONS_PATH = postgres_migrations_dir()
 PG_TRGM_EXTENSION_SQL = "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-PGVECTOR_EXTENSION_SQL = "CREATE EXTENSION IF NOT EXISTS vector;"
 
 LOGGER = logging.getLogger(__name__)
 
@@ -113,11 +112,6 @@ async def ensure_schema(
         async with pool.acquire() as conn:
             await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema};")
             await conn.execute(PG_TRGM_EXTENSION_SQL)
-            try:
-                # Optional: only available where pgvector is installed.
-                await conn.execute(PGVECTOR_EXTENSION_SQL)
-            except Exception:
-                LOGGER.debug("pgvector extension unavailable; continuing without it")
             await conn.execute(f"SET search_path TO {quoted_schema}, public;")
 
             for statement in statements:

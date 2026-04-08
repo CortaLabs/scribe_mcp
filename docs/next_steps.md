@@ -91,11 +91,11 @@
 
   Files to Update:
 
-  - .claude/agents/scribe-research-analyst.md
-  - .claude/agents/scribe-architect.md
-  - .claude/agents/scribe-coder.md
-  - .claude/agents/scribe-review-agent.md
-  - .claude/agents/scribe-bug-hunter.md
+  - .council/roster.yaml
+  - .council/templates/claude/council_member.md.j2
+  - .council/templates/claude/_scribe_required_reading.j2
+  - .council/templates/claude/_session_protocol.j2
+  - Regenerate local `.claude/agents/*` only after the source lanes above are corrected
 
   Key Fixes Needed:
 

@@ -21,7 +21,7 @@ Example Usage:
 from typing import Any, Dict, Optional
 import logging
 
-from bridges.plugin import BridgePlugin
+from scribe_mcp.bridges.plugin import BridgePlugin
 
 logger = logging.getLogger(__name__)
 
@@ -133,11 +133,7 @@ class HelloWorldBridgePlugin(BridgePlugin):
 
         return entry_data
 
-    async def post_append(
-        self,
-        entry_data: Dict[str, Any],
-        result: Dict[str, Any]
-    ) -> None:
+    async def post_append(self, entry_data: Dict[str, Any]) -> None:
         """
         Called after an entry is successfully appended.
 
@@ -151,13 +147,12 @@ class HelloWorldBridgePlugin(BridgePlugin):
 
         Args:
             entry_data: The entry that was appended
-            result: The result from the append operation
         """
         self._append_count += 1
 
         logger.debug(
             f"HelloWorldBridge post_append #{self._append_count}: "
-            f"success={result.get('ok')}"
+            f"message={entry_data.get('message', '')[:50]}"
         )
 
 

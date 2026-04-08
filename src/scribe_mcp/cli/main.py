@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
@@ -18,7 +19,7 @@ from scribe_mcp.cli.session_store import (
 from scribe_mcp.config.paths import cli_session_state_path
 
 
-_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap"}
+_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap", "plugins"}
 
 
 def _discover_repo_root(start: Path) -> Path:
@@ -146,6 +147,45 @@ def _build_parser() -> argparse.ArgumentParser:
         "bootstrap_args",
         nargs=argparse.REMAINDER,
         help="Optional passthrough args for bootstrap-postgres.",
+    )
+
+    plugins_parser = subparsers.add_parser(
+        "plugins",
+        help="Project or validate first-party Scribe plugin bundles.",
+    )
+    plugins_subparsers = plugins_parser.add_subparsers(dest="plugins_action", required=True)
+
+    project_codex_parser = plugins_subparsers.add_parser(
+        "project-codex",
+        help="Project the bundled Codex plugin into native Codex config/agent surfaces.",
+    )
+    project_codex_parser.add_argument(
+        "--repo-root",
+        dest="repo_root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root or any path inside the target repository.",
+    )
+    project_codex_parser.add_argument(
+        "--plugin-root",
+        dest="plugin_root",
+        type=Path,
+        default=None,
+        help="Optional Codex plugin root override. Defaults to <repo-root>/plugins/codex.",
+    )
+    project_codex_parser.add_argument(
+        "--codex-home",
+        dest="codex_home",
+        type=Path,
+        default=None,
+        help="Target CODEX_HOME directory. Defaults to $CODEX_HOME or ~/.codex.",
+    )
+    project_codex_parser.add_argument(
+        "--config-path",
+        dest="config_path",
+        type=Path,
+        default=None,
+        help="Optional config.toml target. Defaults to <codex-home>/config.toml.",
     )
 
     call_parser = subparsers.add_parser("call", help="Invoke a tool by name", allow_abbrev=False)
@@ -459,6 +499,30 @@ def _run_bootstrap_command(args: argparse.Namespace) -> int:
     return int(bootstrap_main(bootstrap_args))
 
 
+def _run_plugins_command(args: argparse.Namespace) -> int:
+    repo_root = _discover_repo_root(args.repo_root)
+    _prepare_environment(repo_root)
+
+    if args.plugins_action != "project-codex":
+        raise ValueError(f"Unsupported plugins action: {args.plugins_action}")
+
+    from scribe_mcp.scripts.project_codex_plugin import project_codex_plugin, render_codex_projection_error
+
+    plugin_root = args.plugin_root or (repo_root / "plugins" / "codex")
+    try:
+        result = project_codex_plugin(
+            plugin_root=plugin_root,
+            codex_home=args.codex_home,
+            config_path=args.config_path,
+        )
+    except (FileNotFoundError, OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
+        print(f"error: {render_codex_projection_error(exc)}", file=sys.stderr)
+        return 1
+
+    _json_print(result, pretty=True)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     normalized_argv = _normalize_argv(argv or sys.argv[1:])
     parser = _build_parser()
@@ -481,6 +545,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "bootstrap":
         return _run_bootstrap_command(args)
+
+    if args.command == "plugins":
+        return _run_plugins_command(args)
 
     return asyncio.run(_run_call_command(args, passthrough_options))
 

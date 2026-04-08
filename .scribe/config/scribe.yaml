@@ -1,11 +1,11 @@
 # Scribe Configuration Template
-# Place this file as .scribe/scribe.yaml in your repository root
+# Place this file as .scribe/config/scribe.yaml in your repository root
 
 # Repository identification
 repo_slug: my-project  # Auto-detected from directory name if not specified
 
 # Documentation structure
-dev_plans_dir: docs/dev_plans  # Where project docs will be stored
+dev_plans_dir: .scribe/docs/dev_plans  # Canonical default; legacy docs/dev_plans trees remain supported when explicitly configured
 progress_log_name: PROGRESS_LOG.md  # Name of the main progress log file
 
 # Template configuration

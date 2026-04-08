@@ -1,13 +1,13 @@
 """Validation helpers expected by manage_docs enhancement tests.
 
-This module intentionally provides a small, stable surface area used by tests:
+This module intentionally provides a small, stable import surface used by tests:
   - ParameterValidationError
   - _validate_inputs
   - _validate_comparison_symbols
   - create_manage_docs_validator
 
-It also registers these names into Python builtins to preserve backwards
-compatibility with test modules that reference them without importing.
+Callers should import these helpers from this module directly; no Python
+builtins are mutated at import time.
 """
 
 from __future__ import annotations
@@ -272,16 +272,3 @@ def _validate_inputs(
         meta_dict = validator.validate_metadata(metadata, "metadata")
         for k, v in meta_dict.items():
             validator.validate_comparison_operators(v, f"metadata.{k}")
-
-
-# --- Backwards compatibility for tests that don't import these symbols ---
-def _register_test_globals() -> None:
-    import builtins
-
-    builtins.ParameterValidationError = ParameterValidationError  # type: ignore[attr-defined]
-    builtins._validate_inputs = _validate_inputs  # type: ignore[attr-defined]
-    builtins._validate_comparison_symbols = _validate_comparison_symbols  # type: ignore[attr-defined]
-    builtins.create_manage_docs_validator = create_manage_docs_validator  # type: ignore[attr-defined]
-
-
-_register_test_globals()

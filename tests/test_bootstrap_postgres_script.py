@@ -17,6 +17,7 @@ from scribe_mcp.scripts.bootstrap_postgres import (
     _redact_dsn,
     _write_env_file,
 )
+from scribe_mcp.storage.postgres.schema import ensure_schema
 
 
 def _sample_cfg(tmp_path: Path, *, persist_superuser_env: bool = False) -> BootstrapConfig:
@@ -42,6 +43,37 @@ def _sample_cfg(tmp_path: Path, *, persist_superuser_env: bool = False) -> Boots
         persist_superuser_env=persist_superuser_env,
         dry_run=False,
     )
+
+
+class _FakeSchemaConn:
+    def __init__(self) -> None:
+        self.queries: list[tuple[str, tuple[object, ...]]] = []
+        self.closed = False
+
+    async def execute(self, query: str, *args: object) -> None:
+        self.queries.append((query, args))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeAcquire:
+    def __init__(self, conn: _FakeSchemaConn) -> None:
+        self._conn = conn
+
+    async def __aenter__(self) -> _FakeSchemaConn:
+        return self._conn
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _FakePool:
+    def __init__(self, conn: _FakeSchemaConn) -> None:
+        self._conn = conn
+
+    def acquire(self) -> _FakeAcquire:
+        return _FakeAcquire(self._conn)
 
 
 def test_build_dsn_escapes_credentials() -> None:
@@ -157,6 +189,65 @@ def test_interactive_prompts_fill_config(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert cfg.admin_password == "admin-pass"
     assert cfg.app_password == "app-pass"
     assert cfg.schema_name == "scribe"
+
+
+def test_print_bootstrap_intro_omits_vector(capsys: pytest.CaptureFixture[str]) -> None:
+    bootstrap_module._print_bootstrap_intro()
+
+    captured = capsys.readouterr()
+    assert "Enable pg_trgm" in captured.out
+    assert "vector" not in captured.out.lower()
+
+
+def test_ensure_schema_and_privileges_enables_pg_trgm_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg = _sample_cfg(tmp_path)
+    conn = _FakeSchemaConn()
+
+    async def _connect(_dsn: str) -> _FakeSchemaConn:
+        return conn
+
+    monkeypatch.setattr(bootstrap_module.asyncpg, "connect", _connect)
+
+    asyncio.run(bootstrap_module._ensure_schema_and_privileges(cfg))
+
+    queries = [query for query, _args in conn.queries]
+    assert queries[0] == "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+    assert any(query == 'CREATE SCHEMA IF NOT EXISTS "scribe";' for query in queries)
+    assert all("vector" not in query.lower() for query in queries)
+
+
+def test_ensure_schema_applies_pg_trgm_without_vector(tmp_path: Path) -> None:
+    schema_path = tmp_path / "init.sql"
+    schema_path.write_text(
+        "CREATE TABLE IF NOT EXISTS example (id INTEGER);",
+        encoding="utf-8",
+    )
+    conn = _FakeSchemaConn()
+    pool = _FakePool(conn)
+
+    async def _pool_provider() -> _FakePool:
+        return pool
+
+    result = asyncio.run(
+        ensure_schema(
+            pool_provider=_pool_provider,
+            schema_lock=asyncio.Lock(),
+            schema_ready=False,
+            schema_name="scribe",
+            schema_path=schema_path,
+            migrations_path=tmp_path / "missing-migrations",
+        )
+    )
+
+    queries = [query for query, _args in conn.queries]
+    assert result is True
+    assert "CREATE EXTENSION IF NOT EXISTS pg_trgm;" in queries
+    assert any(query == 'SET search_path TO "scribe", public;' for query in queries)
+    assert any("CREATE TABLE IF NOT EXISTS example (id INTEGER)" in query for query in queries)
+    assert all("vector" not in query.lower() for query in queries)
 
 
 def test_quote_literal_escapes_single_quotes() -> None:

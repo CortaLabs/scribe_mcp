@@ -34,6 +34,7 @@ config.toml
 .scribe/state/
 .scribe/cli/*.json
 .scribe/backups/
+state/
 
 # -----------------------------------------------------
 # Vector / Embedding Artifacts
@@ -85,6 +86,8 @@ docs/archived_projects/
 docs/archived_global_logs/
 docs/dev_plans/
 docs/bugs/
+docs/security/
+research/
 
 # -----------------------------------------------------
 # Scribe runtime / operator state (local-only)
@@ -92,6 +95,7 @@ docs/bugs/
 .scribe/logs/
 .scribe/sentinel/
 .scribe/docs/
+.scribe/data/
 tool_calls.jsonl
 
 
@@ -141,6 +145,13 @@ docs/agent_report_cards/
 # -----------------------------------------------------
 .mcp.json
 opencode.json
+.opencode/
+.agents/
+
+# -----------------------------------------------------
+# Generated packaging artifacts
+# -----------------------------------------------------
+src/scribe_mcp.egg-info/
 
 # -----------------------------------------------------
 # Example / Local-Only Code

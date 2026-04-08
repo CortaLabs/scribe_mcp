@@ -175,36 +175,3 @@ class AgentReportCardRecord:
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-
-# Vector Index Models
-
-@dataclass
-class VectorIndexRecord:
-    id: int
-    entry_id: str  # Deterministic UUID for the log entry
-    project_slug: str  # Project identifier
-    repo_slug: str  # Repository identifier
-    vector_rowid: int  # Row ID in the FAISS index
-    text_content: str  # Original message text
-    agent_name: Optional[str]  # Entry author
-    timestamp_utc: str  # Entry timestamp
-    metadata_json: Optional[str]  # Entry metadata as JSON
-    embedding_model: str  # Model used for embedding
-    vector_dimension: int  # Vector dimension
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-@dataclass
-class VectorShardMetadata:
-    repo_slug: str  # Repository identifier
-    dimension: int  # Vector dimension
-    model: str  # Embedding model name
-    scope: str  # Always 'repo-local' for isolation
-    created_at: datetime  # When the shard was created
-    backend: str  # Always 'faiss' for now
-    index_type: str  # FAISS index type (e.g., 'IndexFlatIP')
-    total_entries: int  # Number of entries in the index
-    last_updated: Optional[datetime] = None  # Last index update
-    embedding_model_version: Optional[str] = None  # Model version info
-    index_size_bytes: Optional[int] = None  # Size of index file on disk

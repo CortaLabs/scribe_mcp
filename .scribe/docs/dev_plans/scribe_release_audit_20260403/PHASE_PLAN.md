@@ -6,7 +6,7 @@ doc_name: PHASE_PLAN
 category: engineering
 status: draft
 version: '0.1'
-last_updated: 2026-04-05 09:30:40 UTC
+last_updated: 2026-04-05 10:21:54 UTC
 maintained_by: Corta Labs
 created_by: Corta Labs
 owners:
@@ -1262,9 +1262,11 @@ Release-doc alignment remains owned by Package 1.1 checklist item `p1-topology-d
 4. Keep README/file-map work deferred until the compatibility matrix is final.
 
 **Verification:**
-- [ ] Compatibility matrix published in dedicated docs.
-- [ ] One signoff bundle inspects built artifacts and docs from both repos.
-- [ ] The `v3` decision is explicit, evidence-backed, and no longer blocked on packaging/doc ambiguity.
+- [x] Compatibility matrix published in dedicated docs.
+- [x] One signoff bundle inspects built artifacts and docs from both repos.
+- [x] The `v3` decision is explicit, evidence-backed, and no longer blocked on packaging/doc ambiguity.
+
+**Evidence (2026-04-05):** Fresh git-archived builds at `/tmp/scribe_release_audit_20260403_6_4_a_git_20260405T094408Z` produced `scribe_mcp-2.2` wheel/sdist, `scribe_council-2.2` wheel/sdist, and `council_mcp-2.0.0` wheel/sdist without relying on repo-local `build/` / `dist/` trees. The resulting inspection proved that `scribe-mcp` ships the public core console-script surface but no `council.templates` entry point, `scribe-council` owns the optional `[council.templates] scribe-council = ...` provider and depends on `scribe-mcp==2.2`, `council_mcp` aligns to the installed `scribe-server` contract while keeping local/core as the default posture and authenticated SSE as optional, and none of the built artifacts expose repo-root overlays or `.scribe/` runtime paths as release truth. This package published `docs/COMPATIBILITY_MATRIX.md`, added `council_mcp/docs/SCRIBE_COMPATIBILITY.md`, and captured the full inspection bundle in `.scribe/docs/dev_plans/scribe_release_audit_20260403/COMPATIBILITY_SIGNOFF_6_4_A.md`. The compatibility recommendation is explicit: ship this wave as the synchronized compatibility release, not `v3`, and reserve `v3` for the later removal of the deprecated `scribe_mcp.council_templates` shim.
 
 **Out of Scope:** final README/file-map publication.
 
@@ -1291,9 +1293,12 @@ Release-doc alignment remains owned by Package 1.1 checklist item `p1-topology-d
 4. Link the compatibility matrix, release-surface doc, remote-client doc, and final file map from the final README pass.
 
 **Verification:**
-- [ ] README/file-map updates happen only after structural packages are complete.
-- [ ] `docs/RELEASE_FILE_MAP.md` matches the final shipped/repo/runtime boundary.
-- [ ] README no longer acts as a stale interim tree during the restructure.
+- [x] README/file-map updates happened only after `6.4-A` froze the compatibility and release-truth decision.
+- [x] `docs/RELEASE_FILE_MAP.md` now matches the shipped/repo/runtime boundary and explicitly classifies `.scribe/cli/*.json`, `.scribe/state/**`, `.scribe/logs/**`, repo-root overlays, and generated trees as non-release-truth.
+- [x] README no longer acts as a stale interim tree during the restructure; it is now a concise entry point that links to the compatibility matrix, release-surface doc, remote-client doc, deploy guide, and final file map.
+
+**Evidence (2026-04-05):** Replaced the legacy 1,000-line README with a concise 2.5 compatibility-wave overview, published `docs/RELEASE_FILE_MAP.md` as the authoritative repo/package/runtime map, and rewrote `deploy/README.md` to keep authenticated SSE/remote deployment optional rather than default. Re-read the changed docs against `docs/COMPATIBILITY_MATRIX.md`, `docs/RELEASE_SURFACE.md`, `docs/REMOTE_CLIENT.md`, and `council_mcp/docs/SCRIBE_COMPATIBILITY.md`, then verified the frozen phrases with focused `rg -n` checks over the updated docs and the package manifests. Results confirmed that the new docs explicitly defer `v3`, keep local/core as the default posture, keep `scribe-council` optional, point public guidance to tracked docs/examples instead of repo-root overlays, and align the README/deploy/file-map text with the installed-package `scribe-mcp 2.2` / optional `scribe-council 2.2` / `council_mcp 2.0.0` compatibility set.
+
 **Out of Scope:** further structural/package/runtime changes after the file map is published.
 | Milestone | Status | Evidence |
 |---|---|---|
@@ -1302,7 +1307,7 @@ Release-doc alignment remains owned by Package 1.1 checklist item `p1-topology-d
 | `6.1` public/core vs extension split + runtime path policy | Complete | `6.1-A`, `6.1-B`, and `6.1-C` are complete: fresh clean wheels show `scribe-mcp` no longer publishes `council.templates` and now carries only the deprecated `src/scribe_mcp/council_templates/__init__.py` shim under `council_templates/`, while `scribe-council` owns the provider entry point and template payload; `6.1-B` published `docs/RELEASE_SURFACE.md` plus tracked `docs/examples/mcp.json.example` and `docs/examples/opencode.json.example`, demoted repo-root overlay files in `.gitignore`, and pruned overlay/build/runtime trees from `MANIFEST.in`; and `6.1-C` centralized the `.scribe/{cli,state,logs}` runtime namespace in `src/scribe_mcp/config/paths.py`, moved the last repo-root `state/*.json` writers under `.scribe/state/`, aligned object-store deny prefixes with that runtime policy, and verified the boundary with the focused runtime-path test shard. |
 | `6.2` optional public remote/client auth completion | Complete | `6.2-A` and `6.2-B` are complete: the public settings contract now resolves canonical `SCRIBE_REMOTE_AUTH_TOKEN` plus single-env alias fallbacks, `create_storage_backend()` passes the token into `RemoteStorageBackend`, remote backend/batch calls emit `Authorization` + compatibility `x-scribe-auth` headers and surface explicit `401`/`403` auth failures, and `detect_operating_mode()` now distinguishes remote auth rejection from true unavailability so `SCRIBE_REMOTE_FALLBACK` only applies to unavailable remotes. The follow-up freeze package added focused regressions in `tests/test_runtime_mode_resolution.py` and `tests/test_remote_backend.py` for token loading, auth header emission, and explicit unauthorized guidance, and published `docs/REMOTE_CLIENT.md` so local/standard remains the default public posture, remote/client is explicitly optional/authenticated, loopback-local and managed private-mesh/Tailscale are the only supported release postures, casual public exposure is unsupported, and any `0.0.0.0` guidance is limited to managed/private-mesh deployments with auth. Verification passed via `python -m compileall -q src/scribe_mcp/config/settings.py src/scribe_mcp/storage/__init__.py src/scribe_mcp/storage/remote.py src/scribe_mcp/config/mode_detection.py`, `pytest -q tests/test_remote_backend.py tests/test_runtime_mode_resolution.py` (`54 passed in 0.26s`), and targeted `rg -n` proof over `docs/REMOTE_CLIENT.md`. |
 | `6.3` bridge/runtime unification + lockstep `council_mcp` compatibility/deploy/export update | Complete | `6.3-A` through `6.3-D` are complete: core bridge registration now requires a real runtime path, downstream runtime clients now consume the final authenticated Scribe transport contract, `council_mcp` no longer publishes sibling-checkout `scribe_mcp` assumptions or direct `scribe_mcp` internal imports as export truth, and deploy/scaffold/docs/tests now carry the same installed-package `scribe-server` plus authenticated private-mesh/Tailscale contract end to end. Verification includes the bounded `council_mcp` regression lane `pytest -q tests/test_multi_repo_scribe.py tests/bridges/test_scribe_mcp_client.py tests/test_connect_serve.py tests/test_connect_serve_config.py` (`147 passed in 24.95s`). |
-| `6.4` release-truth freeze + final README/file-map publication | Pending | Owned by Packages `6.4-A` and `6.4-B`. |
+| `6.4` release-truth freeze + final README/file-map publication | Complete | `6.4-A` remains the built-artifact freeze package: `docs/COMPATIBILITY_MATRIX.md`, `council_mcp/docs/SCRIBE_COMPATIBILITY.md`, and `.scribe/docs/dev_plans/scribe_release_audit_20260403/COMPATIBILITY_SIGNOFF_6_4_A.md` lock the compatibility-wave decision and explicitly defer `v3`. `6.4-B` is now complete: `README.md` was reduced to a concise 2.5 compatibility-wave entry point, `deploy/README.md` now carries the same optional authenticated remote posture, and new `docs/RELEASE_FILE_MAP.md` freezes the detailed tracked-package/docs/examples vs runtime/local-overlay boundary. Final verification re-read the updated docs against `docs/COMPATIBILITY_MATRIX.md`, `docs/RELEASE_SURFACE.md`, `docs/REMOTE_CLIENT.md`, and `council_mcp/docs/SCRIBE_COMPATIBILITY.md`, then confirmed the required phrases and package-manifest anchors with focused `rg -n` checks over the docs plus `pyproject.toml` and `packages/scribe_council/pyproject.toml`. |
 <!-- ID: retro_notes -->
 ### Explicit defer list (not part of the 2.2 ship history or the next synchronized release wave)
 - Repo-scoped lease/shared-host coordinator patterned after `knowledge_mcp`
