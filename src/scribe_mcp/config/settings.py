@@ -315,7 +315,7 @@ class Settings:
         db_url = os.environ.get("SCRIBE_DB_URL")
         storage_backend = os.environ.get("SCRIBE_STORAGE_BACKEND")
         if storage_backend:
-            storage_backend = storage_backend.lower()
+            storage_backend = storage_backend.lower().strip()
         else:
             storage_backend = "postgres" if db_url else "sqlite"
 
