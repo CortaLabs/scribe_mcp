@@ -13,7 +13,7 @@ WORKDIR /build
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-# Install the slim core package only.
+# Install package runtime deps (including PostgreSQL driver from core deps).
 RUN pip install --no-cache-dir .
 
 # ===== STAGE 2: RUNTIME =====
