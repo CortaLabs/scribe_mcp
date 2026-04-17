@@ -1,133 +1,210 @@
-#!/usr/bin/env python3
-"""Production integration test for auto-registration with real set_project() setup.
+from __future__ import annotations
 
-This test validates that auto-registration works correctly when used with
-actual production project setup via set_project(), not just with test mocks.
-"""
-
-import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-from scribe_mcp.tools.set_project import set_project
-from scribe_mcp.tools.get_project import get_project
+
+from scribe_mcp import server as server_module
+from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
-from scribe_mcp.tools.delete_project import delete_project
-from scribe_mcp.storage.sqlite import SQLiteStorage
-from scribe_mcp.config.settings import settings
+from scribe_mcp.utils.slug import normalize_project_input
 
 
-@pytest.mark.asyncio
-async def test_auto_registration_with_real_set_project():
-    """Test auto-registration works with real set_project() setup.
+@dataclass
+class _StorageProjectRecord:
+    name: str
+    docs_json: str = "{}"
+    repo_root: str = ""
+    progress_log_path: str = ""
 
-    This is the critical test that validates the line 2121 bug fix.
-    Before fix: Auto-registration fails because it uses hardcoded 'docs/dev_plans'
-    After fix: Auto-registration succeeds because it uses project['docs_dir']
-    """
-    # Create a real project using set_project
-    project_name = f"integration_test_{uuid.uuid4().hex[:8]}"
+
+class _FakeBackend:
+    def __init__(self) -> None:
+        self.docs_by_project: dict[str, dict[str, str]] = {}
+        self.project_records: dict[str, _StorageProjectRecord] = {}
+
+    async def update_project_docs(self, project_name: str, docs_json: str) -> None:
+        self.docs_by_project[project_name] = json.loads(docs_json or "{}")
+
+    async def fetch_project(self, name: str):
+        record = self.project_records.get(name)
+        if record is not None:
+            record.docs_json = json.dumps(self.docs_by_project.get(name, {}))
+            return record
+        return _StorageProjectRecord(name=name, docs_json=json.dumps(self.docs_by_project.get(name, {})))
+
+    async def upsert_project(self, name: str, repo_root: str, progress_log_path: str):
+        record = _StorageProjectRecord(
+            name=name,
+            docs_json=json.dumps(self.docs_by_project.get(name, {})),
+            repo_root=repo_root,
+            progress_log_path=progress_log_path,
+        )
+        self.project_records[name] = record
+        return record
+
+    async def record_doc_change(self, *args, **kwargs) -> None:
+        return None
+
+
+def _seed_backend_project(backend: _FakeBackend, project: dict) -> None:
+    record = _StorageProjectRecord(
+        name=project["name"],
+        docs_json=json.dumps(backend.docs_by_project.get(project["name"], {})),
+        repo_root=project["root"],
+        progress_log_path=project["progress_log"],
+    )
+    backend.project_records[project["name"]] = record
+    normalized = normalize_project_input(project["name"])
+    if normalized and normalized != project["name"]:
+        backend.project_records[normalized] = record
+
+
+@contextmanager
+def _isolated_server(state_manager: StateManager, backend: _FakeBackend, project_root: str):
+    originals = {
+        "state_manager": server_module.state_manager,
+        "storage_backend": server_module.storage_backend,
+    }
+    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
+    orig_agent_id = getattr(server_module, "get_agent_identity", None)
+
+    server_module.state_manager = state_manager
+    server_module.storage_backend = backend
+    server_module.get_execution_context = lambda: None
+    server_module.get_agent_identity = lambda: None
+
+    fake_root = Path(project_root).resolve()
+    from scribe_mcp.config.repo_config import RepoConfig
+
+    fake_config = RepoConfig(repo_slug="test", repo_root=fake_root)
 
     try:
-        # Step 1: Create project with set_project (creates .scribe/docs/dev_plans/ structure)
-        result = await set_project(name=project_name, root=str(settings.project_root))
-        assert "error" not in result, f"set_project failed: {result.get('error')}"
-
-        # Step 2: Verify project has docs_dir configured correctly
-        result = await get_project()
-        assert result is not None, "get_project returned None"
-        assert "project" in result, "get_project result missing project key"
-
-        project = result["project"]
-        assert "docs_dir" in project, "Project missing docs_dir configuration"
-
-        docs_dir = Path(project["docs_dir"])
-        assert docs_dir.exists(), f"docs_dir does not exist: {docs_dir}"
-
-        # Should be in .scribe/docs/dev_plans/ structure
-        assert ".scribe" in str(docs_dir), f"Expected .scribe path, got: {docs_dir}"
-        assert "dev_plans" in str(docs_dir), f"Expected dev_plans in path, got: {docs_dir}"
-
-        # Step 3: Verify ARCHITECTURE_GUIDE exists (created by set_project)
-        arch_path = docs_dir / "ARCHITECTURE_GUIDE.md"
-        assert arch_path.exists(), f"ARCHITECTURE_GUIDE.md not found at {arch_path}"
-
-        # Step 4: Test auto-registration with list_sections
-        # This is where the bug was - it would fail because it looked in wrong directory
-        result = await manage_docs(action="list_sections", doc="architecture")
-
-        # Should succeed (auto-registration triggered)
-        assert result is not None, "list_sections returned None"
-        assert "error" not in result, f"list_sections failed: {result.get('error')}"
-
-        # Result should contain sections or be a list
-        assert "sections" in result or isinstance(result, list), \
-            f"Expected sections in result, got: {result}"
-
-        # Step 5: Verify doc was auto-registered in database
-        result_after = await get_project()
-        project_after = result_after["project"]
-        assert "docs" in project_after, "Project missing docs registry"
-        assert "architecture" in project_after.get("docs", {}), \
-            "Architecture doc not auto-registered in database"
-
-        # Doc entry is the path string itself
-        doc_entry = project_after["docs"]["architecture"]
-        assert isinstance(doc_entry, str), f"Expected doc_entry to be string path, got {type(doc_entry)}"
-
-        # Path should match the actual file location
-        registered_path = Path(doc_entry)
-        assert registered_path == arch_path, \
-            f"Registered path {registered_path} doesn't match actual {arch_path}"
-
-        print(f"✅ Production test passed: Auto-registration works with real set_project()")
-        print(f"   Project: {project_name}")
-        print(f"   Docs dir: {docs_dir}")
-        print(f"   Registered doc: {registered_path}")
-
+        with patch(
+            "scribe_mcp.config.repo_config.get_current_repo_config",
+            return_value=(fake_root, fake_config),
+        ):
+            yield
     finally:
-        # Cleanup: Delete test project
-        try:
-            await delete_project(name=project_name, mode="permanent", confirm=True)
-        except Exception as e:
-            print(f"Warning: Failed to cleanup test project {project_name}: {e}")
+        server_module.state_manager = originals["state_manager"]
+        server_module.storage_backend = originals["storage_backend"]
+        if orig_exec_ctx is not None:
+            server_module.get_execution_context = orig_exec_ctx
+        if orig_agent_id is not None:
+            server_module.get_agent_identity = orig_agent_id
+
+
+async def _setup_project(tmp_path: Path) -> dict:
+    project_root = tmp_path / "auto_registration_prod_repo"
+    docs_dir = (
+        project_root
+        / ".scribe"
+        / "docs"
+        / "dev_plans"
+        / "auto_registration_production_project"
+    )
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    (docs_dir / "ARCHITECTURE_GUIDE.md").write_text("# Architecture\n", encoding="utf-8")
+    (docs_dir / "PHASE_PLAN.md").write_text("# Phase\n", encoding="utf-8")
+    (docs_dir / "CHECKLIST.md").write_text("# Checklist\n", encoding="utf-8")
+    (docs_dir / "PROGRESS_LOG.md").write_text("# Log\n", encoding="utf-8")
+
+    return {
+        "name": "Auto Registration Production Project",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+        "docs": {
+            "architecture": str(docs_dir / "ARCHITECTURE_GUIDE.md"),
+            "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
+            "checklist": str(docs_dir / "CHECKLIST.md"),
+            "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+        },
+        "defaults": {"agent": "QA Bot"},
+    }
 
 
 @pytest.mark.asyncio
-async def test_auto_registration_fallback_path():
-    """Test fallback path construction when docs_dir is missing.
+async def test_read_only_actions_do_not_auto_register_missing_docs(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    backend = _FakeBackend()
+    _seed_backend_project(backend, project)
+    await state_manager.set_current_project(project["name"], project)
 
-    This validates the safety fallback added in the fix.
-    """
-    from scribe_mcp.tools.manage_docs import _handle_special_document_creation
+    docs_dir = Path(project["docs_dir"])
+    missing_name = "UNREGISTERED_READONLY"
+    (docs_dir / f"{missing_name}.md").write_text("# Detached\n", encoding="utf-8")
 
-    # Create a mock project without docs_dir
-    project = {
-        "name": "test_fallback",
-        "root": "/tmp/test_project",
-        # Intentionally missing docs_dir
-    }
+    with _isolated_server(state_manager, backend, project_root=project["root"]):
+        list_sections = await manage_docs(
+            action="list_sections",
+            doc=missing_name,
+            project=project["name"],
+        )
+        assert list_sections["ok"] is False
+        assert "DOC_NOT_FOUND" in list_sections["error"]
 
-    # The function should construct fallback path
-    # We'll just verify the logic doesn't crash
-    # (Full integration test above validates the normal path)
+        list_checklist = await manage_docs(
+            action="list_checklist_items",
+            doc=missing_name,
+            project=project["name"],
+        )
+        assert list_checklist["ok"] is False
+        assert "DOC_NOT_FOUND" in list_checklist["error"]
 
-    # This would be called internally, but we can verify the pattern
-    project_root = Path(project.get("root", ""))
-    docs_dir_str = project.get("docs_dir", "")
-    docs_dir = Path(docs_dir_str) if docs_dir_str else Path("")
+        search_result = await manage_docs(
+            action="search",
+            doc=missing_name,
+            metadata={"query": "Detached"},
+            project=project["name"],
+        )
+        assert search_result["ok"] is False
+        assert "DOC_NOT_FOUND" in search_result["error"]
 
-    # Check if docs_dir is empty or just "."
-    if not docs_dir or str(docs_dir) == "" or str(docs_dir) == ".":
-        docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / project.get("name", "")
-
-    # Should construct the fallback path
-    assert ".scribe" in str(docs_dir)
-    assert "dev_plans" in str(docs_dir)
-    assert "test_fallback" in str(docs_dir)
-
-    print(f"✅ Fallback path test passed: {docs_dir}")
+        state = await state_manager.load()
+        stored_project = state.get_project(project["name"])
+        assert stored_project is not None
+        assert missing_name not in stored_project.get("docs", {})
+        assert project["name"] not in backend.docs_by_project
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+@pytest.mark.asyncio
+async def test_mutation_fails_explicitly_when_file_cannot_be_resolved_or_missing(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    backend = _FakeBackend()
+    _seed_backend_project(backend, project)
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_server(state_manager, backend, project_root=project["root"]):
+        unresolved = await manage_docs(
+            action="replace_text",
+            doc="definitely/nonexistent/path",
+            metadata={"old_text": "x", "new_text": "y"},
+            project=project["name"],
+            dry_run=False,
+        )
+        assert unresolved["ok"] is False
+        assert "Auto-registration failed" in unresolved["error"]
+
+        missing = await manage_docs(
+            action="replace_text",
+            doc="MISSING_AFTER_RESOLVE",
+            metadata={"old_text": "x", "new_text": "y"},
+            project=project["name"],
+            dry_run=False,
+        )
+        assert missing["ok"] is False
+        assert "Auto-registration failed" in missing["error"]
+        auto_registration_error = str(missing.get("auto_registration_error", ""))
+        assert (
+            "does not exist" in auto_registration_error
+            or "Invalid document identifier" in auto_registration_error
+            or "outside project root" in auto_registration_error
+        )

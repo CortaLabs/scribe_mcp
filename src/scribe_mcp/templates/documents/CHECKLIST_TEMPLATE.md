@@ -16,38 +16,21 @@
   {% endfor %}
 {% else %}
 {% call section("Documentation Hygiene", "documentation_hygiene") %}
-- [x] Architecture guide updated after each code or plan change (proof: ARCHITECTURE_GUIDE.md with comprehensive Document Management 2.0 design).
-- [x] Phase plan reflects current scope (proof: PHASE_PLAN.md with 3 detailed implementation phases).
-- [x] Checklist cross-referenced in progress logs (proof: All bootstrap tasks logged with checklist references).
+- [ ] Confirm planning docs exist and use current project scope (proof: list the exact doc references).
+- [ ] Confirm each checklist item maps to a phase package or milestone (proof: include section/item IDs).
 {% endcall %}
 
-{% call section("Phase 0 — Foundation Fixes & Database Enhancement", "phase_0") %}
-- [ ] Fix async/await bug in manager.py by adding async_atomic_write function (proof: commit showing files.py and manager.py changes).
-- [ ] Extend database schema with document_sections, custom_templates, document_changes tables (proof: migration script and updated models.py).
-- [ ] Implement database migration system for backwards compatibility (proof: migration tests and existing project compatibility).
-- [ ] Add comprehensive error handling and validation to manage_docs operations (proof: enhanced error messages in logs).
-- [ ] Create post-write verification to eliminate silent failures (proof: test suite showing 100% operation success).
-- [ ] Add structured logging for all document operations (proof: JSON log entries with operation context).
+{% call section("Phase 0", "phase_0") %}
+- [ ] Add package-specific acceptance item with expected verification command (proof: test output or artifact path).
+- [ ] Add package-specific regression guard (proof: targeted test or inspection evidence).
 {% endcall %}
 
-{% call section("Phase 1 — Jinja2 Template Engine & Custom Templates", "phase_1") %}
-- [ ] Integrate Jinja2 template engine with security sandboxing (proof: Jinja2 environment setup with security constraints).
-- [ ] Replace simple {{'{{variable}}'}} substitution with Jinja2 rendering (proof: template rendering tests passing).
-- [ ] Implement template inheritance and block system (proof: template tests with inheritance scenarios).
-- [ ] Create custom template discovery system (.scribe/templates/) (proof: custom template loading and usage).
-- [ ] Add JSON-based custom variable definitions (proof: variable resolution tests).
-- [ ] Implement template validation and error reporting (proof: template error handling tests).
+{% call section("Phase 1", "phase_1") %}
+- [ ] Add phase-1 acceptance item with explicit proof format.
 {% endcall %}
 
-{% call section("Phase 2 — Bidirectional Sync & Change Tracking", "phase_2") %}
-- [ ] Implement file system watcher for manual edit detection (proof: watcher tests detecting file changes).
-- [ ] Create bidirectional sync manager with conflict resolution (proof: sync tests with conflict scenarios).
-- [ ] Add git-level change tracking with commit messages (proof: change history logs with git-style messages).
-- [ ] Implement change diff visualization and history (proof: diff display in change logs).
-- [ ] Create conflict resolution system with manual override (proof: conflict resolution tests).
-- [ ] Add file system integrity verification (proof: integrity check tests).
-- [ ] Implement database change logging and rollback (proof: database rollback tests).
-- [ ] Add performance monitoring and metrics collection (proof: performance metrics in logs).
+{% call section("Phase 2", "phase_2") %}
+- [ ] Add phase-2 acceptance item with explicit proof format.
 {% endcall %}
 {% endif %}
 

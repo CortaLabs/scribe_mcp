@@ -14,9 +14,8 @@
 | {{ phase.name | default("Phase " ~ loop.index0) }} | {{ phase.goal | default("State the objective for this phase.") }} | {{ (phase.deliverables or []) | join(", ") | default("List the tangible outputs.") }} | {{ "%.2f"|format(phase.confidence | default(0.7)) }} |
   {% endfor %}
 {% else %}
-| Phase 0 | Define real goals & constraints | Async bug fix, database schema, basic reliability | 0.90 |
-| Phase 1 | Template Engine | Jinja2 integration, custom templates, enhanced rendering | 0.80 |
-| Phase 2 | Sync & Change Tracking | Bidirectional sync, file watcher, git-level history | 0.75 |
+| Phase N | Define scoped objective | List the concrete deliverables for this phase | 0.70 |
+| Next Phase | Define scoped objective | List the concrete deliverables for this phase | 0.70 |
 {% endif %}
 Update this table as the project evolves. Confidence values should change as knowledge increases.
 {% endcall %}
@@ -42,36 +41,28 @@ Update this table as the project evolves. Confidence values should change as kno
     {% endcall %}
   {% endfor %}
 {% else %}
-{% call section("Phase 0 — Foundation Fixes & Database Enhancement", "phase_0") %}
-**Objective:** Fix critical silent failures and establish a reliable storage foundation.
+{% call section("Phase 0 — Define First Implementation Slice", "phase_0") %}
+**Objective:** Describe the first bounded outcome this project must deliver.
 
 **Key Tasks:**
-- [ ] Fix async/await bug in manager.py (add async_atomic_write function)
-- [ ] Extend database schema with document_sections, custom_templates, document_changes tables
-- [ ] Implement database migration system for new schema
-- [ ] Add comprehensive error handling and validation to manage_docs operations
-- [ ] Create post-write verification to eliminate silent failures
-- [ ] Add structured logging for all document operations
+- [ ] Add concrete task 1 with a measurable result.
+- [ ] Add concrete task 2 with a measurable result.
+- [ ] Add concrete task 3 with a measurable result.
 
 **Deliverables:**
-- Working manage_docs tool with 100% reliable file operations
-- Enhanced SQLite database with document content mirroring
-- Database migration system for backwards compatibility
-- Comprehensive test coverage for document operations
+- Artifact or behavior shipped for this phase.
+- Verification evidence linked to tests/logs/commits.
 
 **Acceptance Criteria:**
-- [ ] All manage_docs operations succeed or raise appropriate errors (no silent failures)
-- [ ] File content always matches expected result after operations
-- [ ] Database properly mirrors document content after each operation
-- [ ] All existing projects continue to work without manual intervention
-- [ ] Test suite demonstrates 100% reliability of document operations
+- [ ] Criteria 1 states how success is proven.
+- [ ] Criteria 2 states what evidence is required.
 
-**Dependencies:** SQLite database access, Jinja2 library (for later phases)  
-**Notes:** This phase fixes the critical bug that prevents document editing and establishes the foundation for all follow-up phases.
+**Dependencies:** List any upstream constraints or prerequisites.  
+**Notes:** Capture decisions, assumptions, or risks for this phase.
 {% endcall %}
 
-{% call section("Phase 1 — Jinja2 Template Engine & Custom Templates", "phase_1") %}
-Reuse the structure above for each additional phase. Ensure tasks are actionable and tied to checklist entries.
+{% call section("Phase 1 — Next Bounded Slice", "phase_1") %}
+Reuse the structure above for additional phases. Keep each phase independently verifiable.
 {% endcall %}
 {% endif %}
 
@@ -83,9 +74,7 @@ Reuse the structure above for each additional phase. Ensure tasks are actionable
 | {{ m.name | default("Milestone") }} | {{ m.target | default("YYYY-MM-DD") }} | {{ m.owner | default("Owner") }} | {{ m.status | default("⏳ Planned") }} | {{ m.evidence | default("Link to PROGRESS_LOG entry or commit") }} |
   {% endfor %}
 {% else %}
-| Phase 0 Complete | 2025-10-29 | DevTeam | 🚧 In Progress | PROGRESS_LOG.md entries |
-| Phase 1 Complete | 2025-11-02 | DevTeam | ⏳ Planned | Phase 1 tasks |
-| Phase 2 Complete | 2025-11-07 | DevTeam | ⏳ Planned | Phase 2 tasks |
+| Milestone name | YYYY-MM-DD | Owner | ⏳ Planned | Link to proof artifact |
 {% endif %}
 Update status and evidence as work progresses. Always link to PROGRESS_LOG entries or commits.
 {% endcall %}

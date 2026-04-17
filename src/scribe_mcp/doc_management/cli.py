@@ -83,6 +83,7 @@ Examples:
             "replace_range",
             "list_sections",
             "list_checklist_items",
+            "preview_reconciliation",
             "batch",
             "create_research_doc",
             "create_bug_report",
@@ -180,7 +181,23 @@ Examples:
         return 1
 
     if (
-        args.action not in ["apply_patch", "replace_range", "create_doc", "validate_crosslinks", "normalize_headers", "generate_toc"]
+        args.action
+        not in [
+            "apply_patch",
+            "replace_range",
+            "create_doc",
+            "validate_crosslinks",
+            "normalize_headers",
+            "generate_toc",
+            "preview_reconciliation",
+            "list_sections",
+            "list_checklist_items",
+            "batch",
+            "create_research_doc",
+            "create_bug_report",
+            "create_review_report",
+            "create_agent_report_card",
+        ]
         and not args.content
         and not args.template
     ):

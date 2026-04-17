@@ -178,6 +178,7 @@ def _map_explicit_doc_type(value: Optional[str]) -> Optional[tuple[str, str]]:
 
     mapping = {
         "research": ("dev_plan", "research"),
+        "spec": ("dev_plan", "spec"),
         "architecture": ("dev_plan", "architecture_guide"),
         "architecture_guide": ("dev_plan", "architecture_guide"),
         "phase": ("dev_plan", "phase_plan"),

@@ -22,6 +22,21 @@ _ALLOWED_DOC_ACTIONS = {
 }
 
 
+def _with_session_provenance(metadata: Optional[Dict[str, Any]], context: Any) -> Dict[str, Any]:
+    enriched = dict(metadata or {})
+    resolved_scope = getattr(context, "resolved_scope", None)
+    provenance = {
+        "session_id": str(getattr(context, "session_id", "") or ""),
+        "stable_session_id": str(getattr(context, "stable_session_id", "") or ""),
+        "transport_session_id": str(getattr(context, "transport_session_id", "") or ""),
+        "agent_session_id": str(getattr(resolved_scope, "agent_session_id", "") or ""),
+        "resolution_source": str(getattr(resolved_scope, "resolution_source", "") or ""),
+        "trust_level": str(getattr(resolved_scope, "trust_level", "") or ""),
+    }
+    enriched["session_provenance"] = provenance
+    return enriched
+
+
 async def handle_edit_action(
     *,
     action: str,
@@ -138,6 +153,8 @@ async def handle_edit_action(
     except Exception as exc:
         return helper.apply_context_payload({"ok": False, "error": str(exc)}, context)
 
+    doc_change_metadata = _with_session_provenance(metadata, context)
+
     if backend and not dry_run and action != "validate_crosslinks":
         try:
             storage_record = await get_or_create_storage_project(backend, project)
@@ -147,7 +164,7 @@ async def handle_edit_action(
                 section=section,
                 action=action,
                 agent=agent_id,
-                metadata=metadata,
+                metadata=doc_change_metadata,
                 sha_before=change.before_hash,
                 sha_after=change.after_hash,
             )

@@ -84,3 +84,10 @@ def validate_and_repair_index(index_path: Path, doc_dir: Path) -> bool:
     except Exception as exc:
         logger.debug("Error validating index %s: %s, will repair", index_path.name, exc)
         return False
+
+
+def write_index_with_policy(index_path: Path, content: str, doc_dir: Path | None = None) -> bool:
+    """Apply shared index preflight policy, then write atomically."""
+    if doc_dir is not None:
+        validate_and_repair_index(index_path, doc_dir)
+    return write_file_atomically(index_path, content)

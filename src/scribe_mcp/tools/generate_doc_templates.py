@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, Iterable, List, Tuple
 import hashlib
 
 from scribe_mcp import server as server_module
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.config.settings import settings
 from scribe_mcp.tools.project_utils import slugify_project_name
 from scribe_mcp.server import app
@@ -40,7 +40,7 @@ class _GenerateDocTemplatesHelper(LoggingToolMixin):
 
 
 _GENERATE_DOC_TEMPLATES_HELPER = _GenerateDocTemplatesHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 
 
 @app.tool(**additive_local_tool(title="Generate Document Templates", tags=("docs", "templates", "write")))
@@ -541,74 +541,15 @@ def _architecture_metadata(project_name: str, context: Dict[str, str]) -> Dict[s
 def _phase_plan_metadata(project_name: str, context: Dict[str, str]) -> Dict[str, Any]:
     return {
         "summary": f"Execution roadmap for {project_name}.",
-        "phases": [
-            {
-                "name": "Phase 0 — Foundation",
-                "anchor": "phase_0",
-                "goal": "Stabilize document writes and storage.",
-                "deliverables": ["Async atomic write", "SQLite mirror"],
-                "confidence": 0.9,
-                "tasks": ["Fix async bug", "Add verification"],
-                "acceptance": [
-                    {"label": "No silent failures", "proof": "tests"},
-                ],
-                "dependencies": "Existing storage layer",
-                "notes": "Must complete before template overhaul.",
-            },
-            {
-                "name": "Phase 1 — Templates",
-                "anchor": "phase_1",
-                "goal": "Introduce advanced Jinja2 template system.",
-                "deliverables": ["Base templates", "Custom template discovery"],
-                "confidence": 0.8,
-                "tasks": ["Add inheritance", "Add sandboxing"],
-                "acceptance": [
-                    {"label": "All built-in templates render", "proof": "pytest"},
-                ],
-                "dependencies": "Phase 0",
-                "notes": "Focus on template authoring UX.",
-            },
-        ],
-        "milestones": [
-            {
-                "name": "Foundation Complete",
-                "target": "2025-10-29",
-                "owner": "DevTeam",
-                "status": "🚧 In Progress",
-                "evidence": "PROGRESS_LOG.md",
-            },
-            {
-                "name": "Template Engine Ship",
-                "target": "2025-11-02",
-                "owner": "DevTeam",
-                "status": "⏳ Planned",
-                "evidence": "Phase 1 tasks",
-            },
-        ],
+        "phases": [],
+        "milestones": [],
     }
 
 
 def _checklist_metadata(project_name: str, context: Dict[str, str]) -> Dict[str, Any]:
     return {
         "summary": f"Acceptance checklist for {project_name}.",
-        "sections": [
-            {
-                "title": "Documentation Hygiene",
-                "anchor": "documentation_hygiene",
-                "items": [
-                    {"label": "Architecture guide updated", "proof": "ARCHITECTURE_GUIDE.md"},
-                    {"label": "Phase plan current", "proof": "PHASE_PLAN.md"},
-                ],
-            },
-            {
-                "title": "Phase 0",
-                "anchor": "phase_0",
-                "items": [
-                    {"label": "Async write fix merged", "proof": "commit"},
-                    {"label": "Verification enabled", "proof": "tests"},
-                ],
-            },
-        ],
+        "sections": [],
     }
 
 

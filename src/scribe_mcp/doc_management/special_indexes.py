@@ -27,21 +27,26 @@ def _current_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def _write_file_atomically(file_path: Path, content: str) -> bool:
-    return preflight_shared.write_file_atomically(file_path, content)
+async def _persist_index(
+    *,
+    index_path: Path,
+    content: str,
+    doc_dir: Path,
+    repo_root: Path | None,
+) -> None:
+    _ = preflight_shared.write_index_with_policy(index_path, content, doc_dir)
+    _sync_root = repo_root or _infer_repo_root(index_path)
+    if _sync_root:
+        try:
+            from scribe_mcp.object_store import sync_file_to_store
 
-
-def _validate_and_repair_index(index_path: Path, doc_dir: Path) -> bool:
-    return preflight_shared.validate_and_repair_index(index_path, doc_dir)
+            await sync_file_to_store(index_path, content, _sync_root)
+        except Exception:
+            pass
 
 
 async def update_research_index(research_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
     index_path = research_dir / "INDEX.md"
-
-    if not _validate_and_repair_index(index_path, research_dir):
-        import logging
-
-        logging.getLogger(__name__).debug("Auto-repairing research index for %s", research_dir.name)
 
     research_docs = []
     if research_dir.exists():
@@ -86,63 +91,72 @@ This directory contains research documents generated during the development proc
 
 *This index is automatically updated when research documents are created or modified.*"""
 
-    if not _write_file_atomically(index_path, content):
-        import logging
+    await _persist_index(
+        index_path=index_path,
+        content=content,
+        doc_dir=research_dir,
+        repo_root=repo_root,
+    )
 
-        logging.getLogger(__name__).warning("Failed to update research index at %s", index_path)
 
+async def _update_case_report_index(
+    reports_dir: Path,
+    agent_id: str,
+    *,
+    heading: str,
+    singular_label: str,
+    repo_root: Path | None = None,
+) -> None:
+    index_path = reports_dir / "INDEX.md"
 
-async def update_bug_index(bugs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
-    index_path = bugs_dir / "INDEX.md"
-
-    bug_reports = []
-    if bugs_dir.exists():
-        for category_dir in bugs_dir.iterdir():
+    reports = []
+    if reports_dir.exists():
+        for category_dir in reports_dir.iterdir():
             if category_dir.is_dir() and category_dir.name != "archived":
                 for bug_dir in category_dir.iterdir():
                     if bug_dir.is_dir():
                         report_path = bug_dir / "report.md"
                         if report_path.exists():
                             stat = report_path.stat()
-                            bug_reports.append(
+                            reports.append(
                                 {
                                     "category": category_dir.name,
                                     "slug": bug_dir.name,
-                                    "path": str(report_path.relative_to(bugs_dir)),
+                                    "path": str(report_path.relative_to(reports_dir)),
                                     "size": stat.st_size,
                                     "modified": stat.st_mtime,
                                 }
                             )
 
-    content = f"""# Bug Reports Index
+    content = f"""# {heading} Index
 
 *Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
 
-This directory contains bug reports generated during development and testing.
+This directory contains {heading.lower()} generated during development and testing.
 
-## Bug Statistics
+## {singular_label} Statistics
 
-- **Total Reports:** {len(bug_reports)}
-- **Categories:** {len(set(report['category'] for report in bug_reports))}
+- **Total Reports:** {len(reports)}
+- **Categories:** {len(set(report['category'] for report in reports))}
 
-## Recent Bug Reports
+## Recent {heading}
 
 """
 
-    if bug_reports:
-        bug_reports.sort(key=lambda x: x["modified"], reverse=True)
-        for bug in bug_reports[:20]:
+    if reports:
+        reports.sort(key=lambda x: x["modified"], reverse=True)
+        for bug in reports[:20]:
             modified_time = datetime.fromtimestamp(bug["modified"]).strftime("%Y-%m-%d %H:%M")
             content += f"- **[{bug['category']}/{bug['slug']}]({bug['path']})** - {modified_time}\n"
-        if len(bug_reports) > 20:
-            content += f"\n*... and {len(bug_reports) - 20} older reports*\n"
+        if len(reports) > 20:
+            content += f"\n*... and {len(reports) - 20} older reports*\n"
     else:
-        content += "*No bug reports found.*\n"
+        content += f"*No {heading.lower()} found.*\n"
 
     content += "\n## Browse by Category\n\n"
 
     categories: Dict[str, list] = {}
-    for bug in bug_reports:
+    for bug in reports:
         categories.setdefault(bug["category"], []).append(bug)
 
     for category, bugs in sorted(categories.items()):
@@ -163,19 +177,34 @@ This directory contains bug reports generated during development and testing.
 
 ---
 
-*This index is automatically updated when bug reports are created or modified.*"""
+*This index is automatically updated when {heading.lower()} are created or modified.*"""
 
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(index_path, "w", encoding="utf-8") as handle:
-        handle.write(content)
+    await _persist_index(
+        index_path=index_path,
+        content=content,
+        doc_dir=reports_dir,
+        repo_root=repo_root,
+    )
 
-    _sync_root = repo_root or _infer_repo_root(index_path)
-    if _sync_root:
-        try:
-            from scribe_mcp.object_store import sync_file_to_store
-            await sync_file_to_store(index_path, content, _sync_root)
-        except Exception:
-            pass
+
+async def update_bug_index(bugs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    await _update_case_report_index(
+        bugs_dir,
+        agent_id,
+        heading="Bug Reports",
+        singular_label="Bug",
+        repo_root=repo_root,
+    )
+
+
+async def update_security_index(security_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    await _update_case_report_index(
+        security_dir,
+        agent_id,
+        heading="Security Reports",
+        singular_label="Security",
+        repo_root=repo_root,
+    )
 
 
 async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
@@ -248,17 +277,12 @@ This directory contains review reports generated during the development quality 
 
 *This index is automatically updated when review reports are created or modified.*"""
 
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(index_path, "w", encoding="utf-8") as handle:
-        handle.write(content)
-
-    _sync_root = repo_root or _infer_repo_root(index_path)
-    if _sync_root:
-        try:
-            from scribe_mcp.object_store import sync_file_to_store
-            await sync_file_to_store(index_path, content, _sync_root)
-        except Exception:
-            pass
+    await _persist_index(
+        index_path=index_path,
+        content=content,
+        doc_dir=docs_dir,
+        repo_root=repo_root,
+    )
 
 
 async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
@@ -337,17 +361,72 @@ This directory contains agent performance evaluation reports generated during th
 
 *This index is automatically updated when agent report cards are created or modified.*"""
 
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(index_path, "w", encoding="utf-8") as handle:
-        handle.write(content)
+    await _persist_index(
+        index_path=index_path,
+        content=content,
+        doc_dir=docs_dir,
+        repo_root=repo_root,
+    )
 
-    _sync_root = repo_root or _infer_repo_root(index_path)
-    if _sync_root:
-        try:
-            from scribe_mcp.object_store import sync_file_to_store
-            await sync_file_to_store(index_path, content, _sync_root)
-        except Exception:
-            pass
+
+async def refresh_special_indexes_from_roots(
+    *,
+    project_docs_dir: Path,
+    project_root: Path,
+    agent_id: str,
+    repo_root: Path | None = None,
+) -> Dict[str, str]:
+    """Refresh all known derived special indexes from existing filesystem roots.
+
+    This performs backfill/repair style index generation only; source markdown is
+    discovered from existing paths and never rewritten.
+    """
+    refreshed: Dict[str, str] = {}
+    effective_repo_root = repo_root or project_root
+
+    research_dir = project_docs_dir / "research"
+    if research_dir.exists():
+        await update_research_index(
+            research_dir=research_dir,
+            agent_id=agent_id,
+            repo_root=effective_repo_root,
+        )
+        refreshed["research"] = str(research_dir / "INDEX.md")
+
+    bugs_dir = project_root / "docs" / "bugs"
+    if bugs_dir.exists():
+        await update_bug_index(
+            bugs_dir=bugs_dir,
+            agent_id=agent_id,
+            repo_root=effective_repo_root,
+        )
+        refreshed["bug"] = str(bugs_dir / "INDEX.md")
+
+    security_dir = project_root / "docs" / "security"
+    if security_dir.exists():
+        await update_security_index(
+            security_dir=security_dir,
+            agent_id=agent_id,
+            repo_root=effective_repo_root,
+        )
+        refreshed["security"] = str(security_dir / "INDEX.md")
+
+    if project_docs_dir.exists():
+        await update_review_index(
+            docs_dir=project_docs_dir,
+            agent_id=agent_id,
+            repo_root=effective_repo_root,
+        )
+        refreshed["review"] = str(project_docs_dir / "REVIEW_INDEX.md")
+
+        await update_agent_card_index(
+            docs_dir=project_docs_dir,
+            agent_id=agent_id,
+            repo_root=effective_repo_root,
+        )
+        refreshed["agent_card"] = str(project_docs_dir / "AGENT_CARDS_INDEX.md")
+
+    return refreshed
 
 
 async def render_review_report_template(

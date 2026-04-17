@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from scribe_mcp.storage.base import StorageBackend
 from scribe_mcp.utils.time import utcnow
+from scribe_mcp.utils.error_handler import sanitize_error_message
 
 
 class IntegrityStatus(Enum):
@@ -92,7 +93,8 @@ class IntegrityVerifier:
             return check_result
 
         except Exception as e:
-            self._logger.error(f"Failed to verify integrity for {file_path}: {e}")
+            safe_error = sanitize_error_message(str(e))
+            self._logger.error(f"Failed to verify integrity for {file_path}: {safe_error}")
             return IntegrityCheck(
                 file_path=file_path,
                 status=IntegrityStatus.ACCESS_DENIED,
@@ -101,7 +103,7 @@ class IntegrityVerifier:
                 file_size=0,
                 last_modified=0,
                 database_timestamp=None,
-                error_message=str(e)
+                error_message=safe_error
             )
 
     async def verify_project_integrity(
@@ -130,14 +132,15 @@ class IntegrityVerifier:
                 return report
 
             except Exception as e:
-                self._logger.error(f"Failed to verify project integrity: {e}")
+                safe_error = sanitize_error_message(str(e))
+                self._logger.error(f"Failed to verify project integrity: {safe_error}")
                 return IntegrityReport(
                     timestamp=utcnow().isoformat(),
                     total_files_checked=0,
                     status_counts={},
                     files_with_issues=[],
                     check_duration=time.time() - start_time,
-                    recommendations=[f"Integrity verification failed: {e}"]
+                    recommendations=[f"Integrity verification failed: {safe_error}"]
                 )
 
     async def _get_database_record(self, file_path: Path) -> Optional[Dict[str, Any]]:
@@ -182,7 +185,11 @@ class IntegrityVerifier:
             return None
 
         except Exception as e:
-            self._logger.debug(f"Failed to get database record for {file_path}: {e}")
+            self._logger.debug(
+                "Failed to get database record for %s: %s",
+                file_path,
+                sanitize_error_message(str(e)),
+            )
             return None
 
     async def _get_file_info(self, file_path: Path) -> Optional[Dict[str, Any]]:
@@ -205,14 +212,15 @@ class IntegrityVerifier:
             }
 
         except (OSError, PermissionError) as e:
-            self._logger.debug(f"Cannot access file {file_path}: {e}")
+            safe_error = sanitize_error_message(str(e))
+            self._logger.debug(f"Cannot access file {file_path}: {safe_error}")
             return {
                 'hash': None,
                 'size': 0,
                 'modified': 0,
                 'exists': file_path.exists(),
                 'accessible': False,
-                'error': str(e)
+                'error': safe_error
             }
 
     async def _perform_integrity_check(
@@ -340,7 +348,8 @@ class IntegrityVerifier:
                 files.add(Path(result['file_path']))
 
         except Exception as e:
-            self._logger.warning(f"Failed to get tracked files from database: {e}")
+            safe_error = sanitize_error_message(e)
+            self._logger.warning(f"Failed to get tracked files from database: {safe_error}")
 
         # Add untracked files if requested
         if include_untracked:
@@ -351,7 +360,8 @@ class IntegrityVerifier:
                         if file_path.is_file():
                             files.add(file_path)
                 except Exception as e:
-                    self._logger.warning(f"Failed to glob pattern {pattern}: {e}")
+                    safe_error = sanitize_error_message(e)
+                    self._logger.warning(f"Failed to glob pattern {pattern}: {safe_error}")
 
         return list(files)
 
@@ -490,7 +500,8 @@ class IntegrityVerifier:
             return False
 
         except Exception as e:
-            self._logger.error(f"Failed to repair {file_path}: {e}")
+            safe_error = sanitize_error_message(e)
+            self._logger.error(f"Failed to repair {file_path}: {safe_error}")
             return False
 
     async def clear_cache(self):

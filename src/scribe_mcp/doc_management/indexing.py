@@ -76,6 +76,7 @@ def get_index_updater_for_path(
     agent_id: str,
     update_research_index: Callable[[Path, str], Awaitable[None]],
     update_bug_index: Callable[[Path, str], Awaitable[None]],
+    update_security_index: Callable[[Path, str], Awaitable[None]],
     update_review_index: Callable[[Path, str], Awaitable[None]],
     update_agent_card_index: Callable[[Path, str], Awaitable[None]],
 ) -> Optional[Callable[[], Awaitable[None]]]:
@@ -99,7 +100,8 @@ def get_index_updater_for_path(
                 "security" if classification.doc_type == "security_report" else "bugs"
             )
             if case_root.exists():
-                return lambda: update_bug_index(case_root, agent_id)
+                updater = update_security_index if classification.doc_type == "security_report" else update_bug_index
+                return lambda: updater(case_root, agent_id)
 
         if file_path.parent == docs_dir and file_path.name.startswith("REVIEW_REPORT_"):
             return lambda: update_review_index(docs_dir, agent_id)
