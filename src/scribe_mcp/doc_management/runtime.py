@@ -125,6 +125,30 @@ def _is_manage_docs_write_intent(action: str) -> bool:
     return action in {"create", "rehome_doc"} or action in _MUTATION_ACTIONS
 
 
+async def _resolve_manage_docs_actor_id(
+    *,
+    caller_agent: Optional[str],
+    execution_context: Any,
+    server_module: Any,
+) -> str:
+    """Prefer caller-facing identity for attribution, fall back to runtime internal identity."""
+    if isinstance(caller_agent, str) and caller_agent.strip():
+        return caller_agent.strip()
+
+    runtime_identity = getattr(execution_context, "agent_identity", None)
+    display_name = getattr(runtime_identity, "display_name", None)
+    if isinstance(display_name, str) and display_name.strip():
+        return display_name.strip()
+
+    agent_identity = server_module.get_agent_identity()
+    if agent_identity:
+        resolved = await agent_identity.get_or_create_agent_id()
+        if isinstance(resolved, str) and resolved.strip():
+            return resolved.strip()
+
+    return "Scribe"
+
+
 def _attach_manage_docs_project_context(
     response: Dict[str, Any],
     *,
@@ -763,6 +787,7 @@ async def handle_manage_docs_request(
     auto_register_document: Callable[[Dict[str, Any], str], Awaitable[bool]],
     valid_actions: set[str] = VALID_ACTIONS,
     action_router: Dict[str, str] = ACTION_ROUTER,
+    caller_agent: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute manage_docs runtime flow after thin-router argument collection."""
     try:
@@ -900,11 +925,6 @@ async def handle_manage_docs_request(
     if original_doc_name and doc_name and original_doc_name != doc_name:
         logger.info("Canonicalized doc reference '%s' -> '%s'", original_doc_name, doc_name)
 
-    agent_identity = server_module.get_agent_identity()
-    agent_id = "Scribe"
-    if agent_identity:
-        agent_id = await agent_identity.get_or_create_agent_id()
-
     backend = server_module.storage_backend
 
     runtime_warnings: list[str] = []
@@ -914,6 +934,12 @@ async def handle_manage_docs_request(
             execution_context = server_module.get_execution_context()
         except Exception:
             execution_context = None
+
+    agent_id = await _resolve_manage_docs_actor_id(
+        caller_agent=caller_agent,
+        execution_context=execution_context,
+        server_module=server_module,
+    )
 
     if (
         _is_manage_docs_write_intent(action)

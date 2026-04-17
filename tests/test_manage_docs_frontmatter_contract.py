@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 import pytest
 
 from scribe_mcp.doc_management.manager import apply_doc_change
@@ -136,3 +135,40 @@ async def test_edit_ignores_raw_edit_trace_and_created_by_override(tmp_path: Pat
     assert "created_by_edit_override_ignored" in hint_codes
     assert "edit_trace_ignored" in hint_codes
     assert "legacy_created_by_placeholder_preserved" in hint_codes
+
+
+@pytest.mark.asyncio
+async def test_explicit_metadata_actor_id_is_not_overridden_by_internal_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = await _setup_project(tmp_path)
+
+    class _InternalIdentity:
+        async def get_or_create_agent_id(self) -> str:
+            return "agent-20260417-deadbeef"
+
+    monkeypatch.setattr(
+        "scribe_mcp.server.get_agent_identity",
+        lambda: _InternalIdentity(),
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="# Title\n\nBody updated\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={"agent_id": "ReviewAgent"},
+        dry_run=False,
+    )
+
+    assert change.success
+    assert change.extra.get("attribution", {}).get("actor_id") == "ReviewAgent"
+
+    parsed = parse_frontmatter(Path(project["docs"]["architecture"]).read_text(encoding="utf-8"))
+    assert parsed.frontmatter_data.get("maintained_by") == "ReviewAgent"

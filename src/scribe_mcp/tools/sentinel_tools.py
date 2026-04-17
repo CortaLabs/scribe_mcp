@@ -359,6 +359,39 @@ def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[st
     return event_type
 
 
+def _validate_link_fix_execution_id(context: Any, execution_id: str) -> Optional[str]:
+    """Validate link_fix execution provenance against active execution context.
+
+    Returns:
+        None when valid; otherwise an error string.
+    """
+    if not isinstance(execution_id, str) or not execution_id.strip():
+        return "execution_id is required"
+
+    provided_id = execution_id.strip()
+    allowed_ids: set[str] = set()
+
+    current_execution_id = getattr(context, "execution_id", None)
+    if isinstance(current_execution_id, str) and current_execution_id.strip():
+        allowed_ids.add(current_execution_id.strip())
+
+    parent_execution_id = getattr(context, "parent_execution_id", None)
+    if isinstance(parent_execution_id, str) and parent_execution_id.strip():
+        allowed_ids.add(parent_execution_id.strip())
+
+    # When execution context does not expose IDs (e.g., legacy tests), avoid false negatives.
+    if not allowed_ids:
+        return None
+
+    if provided_id not in allowed_ids:
+        return (
+            "execution_id does not match active execution context "
+            "(must be current or parent execution_id)"
+        )
+
+    return None
+
+
 @app.tool(**additive_local_tool(title="Append Sentinel Event", tags=("sentinel", "logs", "write")))
 async def append_event(
     agent: str,
@@ -532,11 +565,6 @@ async def open_bug(
         from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
         from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
 
-        # Generate case ID first so we can use it in the document
-        # We'll use a temporary result to get paths, then generate ID
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        case_id_prefix = f"BUG-{today}-"
-
         message = f"[BUG] {title}: {symptoms}"
         meta = {
             "case_type": "bug",
@@ -564,6 +592,31 @@ async def open_bug(
             return {
                 "ok": False,
                 "error": f"Failed to allocate BUG case ID: {exc}",
+                "entry_id": str(result.get("id", "")),
+                "path": str(result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            }
+
+        # Ensure fresh case IDs are immediately queryable by bare ID.
+        # The initial append_entry is written before case-id allocation, so we emit
+        # a scoped registration entry containing case_id in both message and metadata.
+        registration_result = await append_entry_tool(
+            message=f"[CASE REGISTERED] {case_id}",
+            status="bug",
+            agent=agent,
+            meta={
+                "case_type": "bug",
+                "case_id": case_id,
+                "registration_event": "case_opened",
+                "title": title,
+            },
+            format="structured",
+        )
+        if not registration_result.get("ok"):
+            return {
+                "ok": False,
+                "error": str(registration_result.get("error", "case registration append_entry failed")),
+                "case_id": str(case_id),
                 "entry_id": str(result.get("id", "")),
                 "path": str(result.get("path", "")),
                 "project_name": str(result.get("project_name", "")),
@@ -726,8 +779,6 @@ async def open_security(
         from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
         from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
         message = f"[SECURITY] {title}: {symptoms}"
         meta = {
             "case_type": "security",
@@ -756,6 +807,30 @@ async def open_security(
             return {
                 "ok": False,
                 "error": f"Failed to allocate SEC case ID: {exc}",
+                "entry_id": str(result.get("id", "")),
+                "path": str(result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            }
+
+        # Ensure fresh case IDs are immediately queryable by bare ID.
+        registration_result = await append_entry_tool(
+            message=f"[CASE REGISTERED] {case_id}",
+            status="warn",
+            agent=agent,
+            meta={
+                "case_type": "security",
+                "security_event": "1",
+                "case_id": case_id,
+                "registration_event": "case_opened",
+                "title": title,
+            },
+            format="structured",
+        )
+        if not registration_result.get("ok"):
+            return {
+                "ok": False,
+                "error": str(registration_result.get("error", "case registration append_entry failed")),
+                "case_id": str(case_id),
                 "entry_id": str(result.get("id", "")),
                 "path": str(result.get("path", "")),
                 "project_name": str(result.get("project_name", "")),
@@ -876,6 +951,10 @@ async def link_fix(
 ) -> Dict[str, Any]:
     """Link a fix artifact to a BUG/SEC case."""
     context = _get_context()
+
+    execution_id_error = _validate_link_fix_execution_id(context, execution_id)
+    if execution_id_error:
+        return {"ok": False, "error": execution_id_error}
 
     case_id_upper = case_id.upper()
     if case_id_upper.startswith("BUG-"):

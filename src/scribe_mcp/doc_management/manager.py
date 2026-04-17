@@ -691,15 +691,17 @@ async def apply_doc_change(
 
         date_str = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         actor_id = "Scribe"
+        has_explicit_metadata_actor = False
         if isinstance(metadata, dict):
             metadata_actor = metadata.get("agent_id")
             if isinstance(metadata_actor, str) and metadata_actor.strip():
                 actor_id = metadata_actor.strip()
+                has_explicit_metadata_actor = True
         try:
             from scribe_mcp import server as server_module
 
             agent_identity = server_module.get_agent_identity()
-            if agent_identity:
+            if agent_identity and not has_explicit_metadata_actor:
                 resolved_actor = await agent_identity.get_or_create_agent_id()
                 if isinstance(resolved_actor, str) and resolved_actor.strip():
                     actor_id = resolved_actor.strip()

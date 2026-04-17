@@ -109,7 +109,6 @@ async def manage_docs(
     Responses include compact frontmatter summaries by default; set
     `metadata.include_frontmatter_extra=true` to include the full merged payload.
     """
-    _ = agent  # reserved for audit metadata consistency in tool signature
     state_snapshot = await server_module.state_manager.record_tool("manage_docs")
     if doc_name is None and doc is not None:
         doc_name = doc
@@ -137,6 +136,7 @@ async def manage_docs(
         append_entry=append_entry,
         project_registry=_PROJECT_REGISTRY,
         logger=logger,
+        caller_agent=agent,
         handle_special_document_creation=_handle_special_document_creation,
         get_or_create_storage_project=_get_or_create_storage_project,
         get_index_updater_for_path=_get_index_updater_for_path,

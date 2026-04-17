@@ -82,8 +82,36 @@ async def test_open_bug_happy_path_creates_entry_and_document() -> None:
     # manage_docs should have been called once (to create the doc)
     mock_manage.assert_called_once()
     create_call_kwargs = mock_manage.call_args.kwargs
+    assert create_call_kwargs.get("agent") == "test-agent"
     assert create_call_kwargs.get("action") == "create"
     assert create_call_kwargs.get("metadata", {}).get("doc_type") == "bug"
+
+
+@pytest.mark.asyncio
+async def test_open_bug_registers_case_id_for_immediate_queryability() -> None:
+    """open_bug should emit a case registration log entry containing case_id."""
+    ctx = _make_execution_context("project")
+
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value=_make_manage_docs_result())
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools._next_case_id_for_project", return_value="BUG-2026-03-15-0009"), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+        result = await open_bug(
+            agent="test-agent",
+            title="Missing case-id query hit",
+            symptoms="query_entries by bare BUG-* misses fresh create",
+            category="runtime",
+        )
+
+    assert result["ok"] is True
+    assert mock_append.await_count >= 2
+    registration_call = mock_append.await_args_list[1].kwargs
+    assert registration_call["message"] == "[CASE REGISTERED] BUG-2026-03-15-0009"
+    assert registration_call["meta"]["case_id"] == "BUG-2026-03-15-0009"
+    assert registration_call["meta"]["registration_event"] == "case_opened"
 
 
 @pytest.mark.asyncio
@@ -161,10 +189,40 @@ async def test_open_security_happy_path_uses_security_doc_type() -> None:
 
     # Verify doc_type is 'security', NOT 'bug'
     mock_manage.assert_called_once()
-    create_metadata = mock_manage.call_args.kwargs.get("metadata", {})
+    create_call_kwargs = mock_manage.call_args.kwargs
+    assert create_call_kwargs.get("agent") == "test-agent"
+    create_metadata = create_call_kwargs.get("metadata", {})
     assert create_metadata.get("doc_type") == "security", (
         f"open_security must use doc_type='security', got: {create_metadata.get('doc_type')!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_open_security_registers_case_id_for_immediate_queryability() -> None:
+    """open_security should emit a case registration log entry containing case_id."""
+    ctx = _make_execution_context("project")
+
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value=_make_manage_docs_result())
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools._next_case_id_for_project", return_value="SEC-2026-03-15-0006"), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+        result = await open_security(
+            agent="test-agent",
+            title="Missing case-id query hit",
+            symptoms="query_entries by bare SEC-* misses fresh create",
+            category="auth",
+        )
+
+    assert result["ok"] is True
+    assert mock_append.await_count >= 2
+    registration_call = mock_append.await_args_list[1].kwargs
+    assert registration_call["message"] == "[CASE REGISTERED] SEC-2026-03-15-0006"
+    assert registration_call["meta"]["case_id"] == "SEC-2026-03-15-0006"
+    assert registration_call["meta"]["registration_event"] == "case_opened"
+    assert registration_call["meta"]["security_event"] == "1"
 
 
 @pytest.mark.asyncio
@@ -411,3 +469,48 @@ async def test_link_fix_meta_contains_queryable_fix_link() -> None:
     # Verify case_id is top-level in meta for query_entries meta_filters
     assert "case_id" in captured_meta
     assert captured_meta["case_id"] == "BUG-2026-03-15-0001"
+
+
+@pytest.mark.asyncio
+async def test_link_fix_rejects_execution_id_not_in_active_context() -> None:
+    """link_fix should reject execution IDs that do not match current/parent context IDs."""
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.parent_execution_id = "exec-parent-456"
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="exec-unrelated-999",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is False
+    assert "execution_id" in result.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_link_fix_accepts_parent_execution_id() -> None:
+    """link_fix should allow parent execution IDs for chained execution provenance."""
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.parent_execution_id = "exec-parent-456"
+
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value={"ok": True})
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="exec-parent-456",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is True
