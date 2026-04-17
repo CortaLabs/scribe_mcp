@@ -82,7 +82,11 @@ except ImportError:
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.state import StateManager
-from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.shared.execution_context import (
+    RouterContextManager,
+    get_current_execution_context,
+    resolve_bootstrap_execution_context,
+)
 from scribe_mcp.shared.tool_runtime import execute_tool_call
 from scribe_mcp.utils.sentinel_logs import log_scope_violation
 from scribe_mcp.state.agent_manager import init_agent_context_manager
@@ -171,6 +175,7 @@ _SENTINEL_ALLOWED_TOOLS = _SENTINEL_ONLY_TOOLS | {
     "read_file",
     "query_entries",
     "read_recent",
+    "scribe_doctor",
     "set_project",
     "append_entry",
     "list_projects",
@@ -1051,12 +1056,27 @@ def get_agent_identity():
     return agent_identity
 
 
-def get_execution_context():
-    """Return the active ExecutionContext for the current request."""
-    current = router_context_manager.get_current()
+def get_execution_context(*, recovery_mode: str | None = None, include_metadata: bool = False):
+    """Return the active ExecutionContext for the current request.
+
+    Default behavior is fail-closed and only consults request-local contextvars.
+    Legacy app-state fallback remains available only through explicit recovery_mode.
+    """
+    current = get_current_execution_context()
     if current is not None:
-        return current
-    return getattr(getattr(app, "state", None), "execution_context", None)
+        metadata = {
+            "resolution_source": "runtime_context",
+            "trust_level": "verified",
+            "fallback_used": False,
+            "fallback_chain": [],
+        }
+        return (current, metadata) if include_metadata else current
+
+    recovered, metadata = resolve_bootstrap_execution_context(
+        getattr(app, "state", None),
+        recovery_mode=recovery_mode,
+    )
+    return (recovered, metadata) if include_metadata else recovered
 
 
 def list_registered_tools() -> list[str]:

@@ -161,13 +161,81 @@ class TestSessionMethods:
 
     @pytest.mark.asyncio
     async def test_get_or_create_agent_session_idempotent(self, backend: RemoteStorageBackend) -> None:
-        """get_or_create_agent_session returns same session_id for same identity_key."""
-        sid1 = await backend.get_or_create_agent_session(identity_key="key1", agent_name="a1")
-        sid2 = await backend.get_or_create_agent_session(identity_key="key1", agent_name="a1")
+        """get_or_create_agent_session returns same session_id for same scoped identity."""
+        sid1 = await backend.get_or_create_agent_session(
+            identity_key="key1",
+            agent_name="a1",
+            repo_root="/tmp/repo",
+            mode="project",
+            scope_key="project-a",
+        )
+        sid2 = await backend.get_or_create_agent_session(
+            identity_key="key1",
+            agent_name="a1",
+            repo_root="/tmp/repo",
+            mode="project",
+            scope_key="project-a",
+        )
         assert sid1 == sid2
+        allocation = await backend.get_last_agent_session_allocation("key1")
+        assert allocation is not None
+        assert allocation["status"] == "reused"
+        assert allocation["session_id"] == sid1
+        assert allocation["scoped_reuse_key"] == "/tmp/repo:project-a"
+        assert allocation["repo_root"] == "/tmp/repo"
+        assert allocation["scope_key"] == "project-a"
+        assert allocation["mode"] == "project"
         # Different key gets different session
         sid3 = await backend.get_or_create_agent_session(identity_key="key2", agent_name="a2")
         assert sid3 != sid1
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_agent_session_allocates_new_on_scope_change(
+        self, backend: RemoteStorageBackend
+    ) -> None:
+        sid_a = await backend.get_or_create_agent_session(
+            identity_key="key1",
+            agent_name="a1",
+            repo_root="/tmp/repo",
+            mode="project",
+            scope_key="project-a",
+        )
+        sid_b = await backend.get_or_create_agent_session(
+            identity_key="key1",
+            agent_name="a1",
+            repo_root="/tmp/repo",
+            mode="project",
+            scope_key="project-b",
+        )
+        assert sid_a != sid_b
+        allocation = await backend.get_last_agent_session_allocation("key1")
+        assert allocation is not None
+        assert allocation["status"] == "allocated"
+        assert allocation["session_id"] == sid_b
+        assert allocation["scoped_reuse_key"] == "/tmp/repo:project-b"
+        assert allocation["repo_root"] == "/tmp/repo"
+        assert allocation["scope_key"] == "project-b"
+        assert allocation["mode"] == "project"
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_agent_session_does_not_collide_on_repo_root(
+        self, backend: RemoteStorageBackend
+    ) -> None:
+        sid_a = await backend.get_or_create_agent_session(
+            identity_key="shared-key",
+            agent_name="a1",
+            repo_root="/tmp/repo-a",
+            mode="project",
+            scope_key="project-a",
+        )
+        sid_b = await backend.get_or_create_agent_session(
+            identity_key="shared-key",
+            agent_name="a1",
+            repo_root="/tmp/repo-b",
+            mode="project",
+            scope_key="project-a",
+        )
+        assert sid_a != sid_b
 
     @pytest.mark.asyncio
     async def test_heartbeat_and_end_session(self, backend: RemoteStorageBackend) -> None:
@@ -497,6 +565,26 @@ class TestErrorHandling:
         )
         assert await live_backend.get_reminder_history() == []
         assert await live_backend.clear_reminder_history() == 0
+
+
+def test_remote_backend_rejects_public_release_profile(monkeypatch) -> None:
+    monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "public")
+    monkeypatch.delenv("SCRIBE_PUBLIC_RELEASE", raising=False)
+    with pytest.raises(
+        ValueError,
+        match="RemoteStorageBackend is internal-only and unavailable in public release profile.",
+    ):
+        RemoteStorageBackend("http://remote-server:8200", timeout=5.0)
+
+
+def test_remote_backend_rejects_explicit_public_release_flag(monkeypatch) -> None:
+    monkeypatch.setenv("SCRIBE_PUBLIC_RELEASE", "true")
+    monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "internal")
+    with pytest.raises(
+        ValueError,
+        match="RemoteStorageBackend is internal-only and unavailable in public release profile.",
+    ):
+        RemoteStorageBackend("http://remote-server:8200", timeout=5.0)
 
 
 # ===================================================================

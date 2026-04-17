@@ -290,6 +290,9 @@ async def test_resolve_logging_context_explicit_project_uses_storage_backend() -
     assert context.project["root"] == "/tmp/council_mcp_v2"
     assert context.project["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"
     assert context.project["docs"]["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"
+    assert context.resolution_source == "explicit_project"
+    assert context.fallback_used is False
+    assert context.fallback_chain == []
 
 
 @pytest.mark.asyncio
@@ -353,7 +356,68 @@ async def test_resolve_logging_context_explicit_project_missing_fails_hard(monke
 
 
 @pytest.mark.asyncio
-async def test_resolve_logging_context_allows_nested_project_root_within_repo(
+async def test_resolve_logging_context_fails_closed_without_explicit_recovery_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nested_project = {
+        "name": "tmp_nested_project",
+        "root": "/workspace/repo/tmp_tests/manage_docs_special_123",
+        "progress_log": "/workspace/repo/tmp_tests/manage_docs_special_123/.scribe/docs/dev_plans/TestProject/PROGRESS_LOG.md",
+        "docs": {
+            "progress_log": "/workspace/repo/tmp_tests/manage_docs_special_123/.scribe/docs/dev_plans/TestProject/PROGRESS_LOG.md",
+        },
+    }
+
+    class DummyState:
+        current_project = "tmp_nested_project"
+        recent_projects = ["tmp_nested_project"]
+
+        def get_session_project(self, session_key: Optional[str]) -> Optional[Dict[str, Any]]:
+            return None
+
+        def get_project(self, name: Optional[str]) -> Optional[Dict[str, Any]]:
+            if name == "tmp_nested_project":
+                return nested_project
+            return None
+
+    class DummyStateManager:
+        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
+            return {"tool": tool_name}
+
+        async def load(self) -> Any:
+            return DummyState()
+
+    class DummyServerModule:
+        state_manager = DummyStateManager()
+        storage_backend = None
+
+        @staticmethod
+        def get_execution_context() -> Any:
+            return None
+
+    project_module = types.ModuleType("scribe_mcp.tools.project_utils")
+
+    async def fake_load_active_project(_state_manager):
+        return nested_project, "tmp_nested_project", ("tmp_nested_project",)
+
+    def fake_load_project_config(_name=None, allow_fallback=True):
+        return None
+
+    project_module.load_active_project = fake_load_active_project  # type: ignore[attr-defined]
+    project_module.load_project_config = fake_load_project_config  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "scribe_mcp.tools.project_utils", project_module)
+    monkeypatch.setattr(repo_config_module, "get_current_repo_config", lambda: (Path("/workspace/repo"), {}))
+
+    with pytest.raises(ProjectResolutionError, match="No project configured"):
+        await resolve_logging_context(
+            tool_name="manage_docs",
+            server_module=DummyServerModule(),
+            require_project=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolve_logging_context_allows_explicit_compat_active_project_recovery_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     nested_project = {
@@ -409,7 +473,11 @@ async def test_resolve_logging_context_allows_nested_project_root_within_repo(
         tool_name="manage_docs",
         server_module=DummyServerModule(),
         require_project=True,
+        recovery_mode="compat_active_project",
     )
 
     assert context.project is not None
     assert context.project["name"] == "tmp_nested_project"
+    assert context.resolution_source == "compat_active_project"
+    assert context.fallback_used is True
+    assert "compat_active_project" in (context.fallback_chain or [])

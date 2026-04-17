@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS scribe_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS session_projects (
-    session_id TEXT PRIMARY KEY,
+    session_id TEXT PRIMARY KEY REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
     project_name TEXT REFERENCES scribe_projects(name) ON DELETE SET NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -420,7 +420,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_projects_updated_at ON agent_projects(updat
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_agent_id ON agent_project_events(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_created_at ON agent_project_events(created_at);
 
-CREATE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id);
+WITH ranked AS (
+    SELECT
+        ctid,
+        ROW_NUMBER() OVER (
+            PARTITION BY transport_session_id
+            ORDER BY last_active_at DESC NULLS LAST, started_at DESC NULLS LAST, session_id DESC
+        ) AS rn
+    FROM scribe_sessions
+    WHERE transport_session_id IS NOT NULL
+)
+UPDATE scribe_sessions AS s
+SET transport_session_id = NULL
+FROM ranked
+WHERE s.ctid = ranked.ctid
+  AND ranked.rn > 1;
+
+DROP INDEX IF EXISTS idx_scribe_sessions_transport;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id) WHERE transport_session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_agent ON scribe_sessions(agent_id);
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_last_active ON scribe_sessions(last_active_at DESC);
 

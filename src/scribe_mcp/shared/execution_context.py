@@ -6,11 +6,13 @@ import asyncio
 import contextvars
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Mapping, Optional, Set
+
+from scribe_mcp.shared.session_scope import ResolvedScope, ScopeProvenance, build_resolved_scope
 
 
 _CURRENT_CONTEXT: contextvars.ContextVar["ExecutionContext | None"] = contextvars.ContextVar(
@@ -45,6 +47,9 @@ class ExecutionContext:
     sentinel_day: Optional[str] = None
     transport_session_id: Optional[str] = None
     stable_session_id: Optional[str] = None  # NEW - from agent_sessions table
+    resolved_scope: Optional[ResolvedScope] = None
+    session_reuse_status: Optional[str] = None
+    session_reuse_scope: Optional[str] = None
     bug_id: Optional[str] = None
     security_id: Optional[str] = None
     parent_execution_id: Optional[str] = None
@@ -115,6 +120,12 @@ class RouterContextManager:
 
             return session_id
 
+    @staticmethod
+    def derive_scoped_reuse_key(repo_root: str, project_name: Optional[str]) -> str:
+        normalized_repo_root = str(Path(repo_root).resolve())
+        normalized_project = (project_name or "").strip() or "__prebinding__"
+        return f"{normalized_repo_root}:{normalized_project}"
+
     async def cache_project_binding(self, session_id: str, project_name: str) -> None:
         """Cache project binding for this session.
 
@@ -171,10 +182,25 @@ class RouterContextManager:
 
     async def cleanup_session(self, session_id: str) -> None:
         """Remove session from all caches. Called by session cleanup task."""
+        if not session_id:
+            return
         async with self._lock:
-            self._transport_sessions.pop(session_id, None)
+            stale_transport_ids = [
+                transport_id
+                for transport_id, stable_id in self._transport_sessions.items()
+                if stable_id == session_id or transport_id == session_id
+            ]
+            for transport_id in stale_transport_ids:
+                self._transport_sessions.pop(transport_id, None)
             self._session_projects.pop(session_id, None)
             self._files_read_in_session.pop(session_id, None)
+            stale_identity_keys = [
+                identity_key
+                for identity_key, stable_id in self._stable_agent_sessions.items()
+                if stable_id == session_id
+            ]
+            for identity_key in stale_identity_keys:
+                self._stable_agent_sessions.pop(identity_key, None)
 
     def _build_agent_identity(self, payload: Dict[str, Any]) -> AgentIdentity:
         agent_kind = os.environ.get("SCRIBE_AGENT_KIND", "other")
@@ -198,6 +224,7 @@ class RouterContextManager:
         mode = payload.get("mode")
         intent = payload.get("intent") or ""
         affected = payload.get("affected_dev_projects") or []
+        public_release = bool(payload.get("public_release"))
 
         if not repo_root or not isinstance(repo_root, str):
             raise ValueError("ExecutionContext missing required field: repo_root")
@@ -220,12 +247,19 @@ class RouterContextManager:
         session_id = payload.get("session_id")
         if session_id is not None and not isinstance(session_id, str):
             raise ValueError("ExecutionContext session_id must be a string")
+        trusted_session_id = bool(payload.get("_server_derived_session_id"))
+        if public_release and session_id and not trusted_session_id:
+            raise ValueError("ExecutionContext session_id is server-owned in public_release")
         if not session_id:
             transport_session_id = payload.get("transport_session_id")
             if transport_session_id is not None and not isinstance(transport_session_id, str):
                 raise ValueError("ExecutionContext transport_session_id must be a string")
             if not transport_session_id:
                 raise ValueError("ExecutionContext requires transport_session_id or session_id")
+            if public_release and not str(transport_session_id).startswith("process:"):
+                raise ValueError(
+                    "ExecutionContext requires trusted runtime-derived transport_session_id in public_release"
+                )
             session_id = await self.get_or_create_session_id(transport_session_id)
         else:
             transport_session_id = payload.get("transport_session_id")
@@ -250,6 +284,11 @@ class RouterContextManager:
             sentinel_day=sentinel_day,
             transport_session_id=transport_session_id,
             stable_session_id=payload.get("stable_session_id"),  # NEW - pass through stable session
+            resolved_scope=build_resolved_scope(payload),
+            session_reuse_status=payload.get("session_reuse_status"),
+            session_reuse_scope=payload.get("session_reuse_scope")
+            or payload.get("scoped_reuse_key")
+            or self.derive_scoped_reuse_key(repo_root, payload.get("project_name")),
             bug_id=payload.get("bug_id"),
             security_id=payload.get("security_id"),
             parent_execution_id=payload.get("parent_execution_id"),
@@ -264,3 +303,77 @@ class RouterContextManager:
 
     def get_current(self) -> Optional[ExecutionContext]:
         return _CURRENT_CONTEXT.get()
+
+
+def get_current_execution_context() -> Optional[ExecutionContext]:
+    """Return the request-local execution context bound via contextvar."""
+    return _CURRENT_CONTEXT.get()
+
+
+def resolve_bootstrap_execution_context(
+    app_state: Any,
+    *,
+    recovery_mode: Optional[str] = None,
+) -> tuple[Optional[ExecutionContext], Mapping[str, Any]]:
+    """Resolve legacy app-state context only when explicitly requested.
+
+    Ordinary runtime behavior must fail closed and avoid app-state fallback.
+    """
+    selected_mode = str(recovery_mode or "none").strip().lower()
+    if selected_mode not in {"bootstrap_app_state", "compat_all"}:
+        return None, {
+            "resolution_source": "unresolved",
+            "trust_level": "anonymous",
+            "fallback_used": False,
+            "fallback_chain": [],
+        }
+
+    candidate = getattr(app_state, "execution_context", None)
+    if not isinstance(candidate, ExecutionContext):
+        return None, {
+            "resolution_source": "unresolved",
+            "trust_level": "anonymous",
+            "fallback_used": False,
+            "fallback_chain": [],
+        }
+
+    fallback_chain = ["bootstrap_app_state"]
+    downgraded_scope = candidate.resolved_scope
+    if downgraded_scope is None:
+        downgraded_scope = ResolvedScope(
+            transport_session_id=candidate.transport_session_id,
+            stable_session_id=candidate.session_id,
+            agent_session_id=candidate.stable_session_id,
+            repo_root=candidate.repo_root,
+            project_name=None,
+            scoped_reuse_key=None,
+            resolution_source="bootstrap_app_state",
+            trust_level="inferred",
+            provenance=ScopeProvenance(
+                transport_session_id="inferred",
+                stable_session_id="inferred",
+                agent_session_id="inferred",
+                repo_root="inferred",
+                project_name="anonymous",
+            ),
+        )
+    else:
+        downgraded_scope = replace(
+            downgraded_scope,
+            resolution_source="bootstrap_app_state",
+            trust_level="inferred",
+            provenance=ScopeProvenance(
+                transport_session_id="inferred",
+                stable_session_id="inferred",
+                agent_session_id="inferred",
+                repo_root="inferred",
+                project_name="anonymous",
+            ),
+        )
+
+    return replace(candidate, resolved_scope=downgraded_scope), {
+        "resolution_source": "bootstrap_app_state",
+        "trust_level": "inferred",
+        "fallback_used": True,
+        "fallback_chain": fallback_chain,
+    }

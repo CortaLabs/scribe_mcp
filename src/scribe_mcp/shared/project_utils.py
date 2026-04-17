@@ -5,6 +5,7 @@ This module provides functions to determine project state based on document hash
 comparison, solving BUG-001 where post-rotation projects were incorrectly flagged as NEW.
 """
 
+from datetime import datetime
 from typing import Dict, Tuple, Any, Optional
 
 
@@ -151,3 +152,75 @@ def _extract_modified_docs(flags: Dict[str, Any]) -> list:
             doc_name = flag_name.replace("_modified", "")
             modified.append(doc_name)
     return modified
+
+
+def merge_project_inventory_authority(
+    canonical: Dict[str, Any],
+    *,
+    state_overlay: Optional[Dict[str, Any]] = None,
+    registry_info: Any = None,
+    backend_available: bool = True,
+) -> Dict[str, Any]:
+    """Merge project inventory/status fields with canonical-first authority.
+
+    Canonical authority:
+    - backend/state values for root/progress/docs/status/entry counts/activity
+
+    Derived enrichment only:
+    - ProjectRegistry description/tags/meta/totals/doc flags/recovery timestamps
+    """
+
+    merged: Dict[str, Any] = dict(canonical)
+    overlay = state_overlay or {}
+
+    for key in (
+        "root",
+        "progress_log",
+        "docs",
+        "defaults",
+        "status",
+        "entry_count",
+        "total_entries",
+        "per_log_counts",
+        "last_entry_at",
+    ):
+        value = overlay.get(key)
+        if value is None:
+            continue
+        merged[key] = value
+
+    lifecycle_status = overlay.get("lifecycle_status")
+    if lifecycle_status and not merged.get("status"):
+        merged["status"] = lifecycle_status
+
+    if not registry_info:
+        return merged
+
+    def _iso(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
+
+    merged.setdefault("description", getattr(registry_info, "description", None))
+    registry_tags = getattr(registry_info, "tags", None)
+    if registry_tags and "tags" not in merged:
+        merged["tags"] = registry_tags
+    registry_meta = getattr(registry_info, "meta", None)
+    if registry_meta and "meta" not in merged:
+        merged["meta"] = registry_meta
+
+    merged.setdefault("created_at", _iso(getattr(registry_info, "created_at", None)))
+    merged.setdefault("last_access_at", _iso(getattr(registry_info, "last_access_at", None)))
+    merged.setdefault("last_status_change", _iso(getattr(registry_info, "last_status_change", None)))
+    merged.setdefault("total_files", getattr(registry_info, "total_files", None))
+    merged.setdefault("total_phases", getattr(registry_info, "total_phases", None))
+
+    # Registry totals/status remain fallback-only when backend authority is absent.
+    if not backend_available:
+        merged.setdefault("status", getattr(registry_info, "status", None))
+        merged.setdefault("total_entries", getattr(registry_info, "total_entries", None))
+        merged.setdefault("last_entry_at", _iso(getattr(registry_info, "last_entry_at", None)))
+
+    return merged

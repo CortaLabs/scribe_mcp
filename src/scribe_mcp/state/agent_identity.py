@@ -190,12 +190,23 @@ class AgentIdentity:
         try:
             # Check if agent has an existing project
             agent_project = await agent_context_manager.get_current_project(agent_id)
+            project_name = (
+                str(agent_project.get("project_name"))
+                if agent_project and agent_project.get("project_name")
+                else None
+            )
+            scoped_reuse_key = self._derive_scoped_reuse_key(
+                repo_root=self._derive_repo_root(agent_project),
+                project_name=project_name,
+            )
             if agent_project and agent_project.get("project_name"):
                 # Create new session for the agent with stable session if provided
                 session_metadata = {
                     "resumed": True,
                     "resumed_at": utcnow().isoformat(),
                     "previous_project": agent_project["project_name"],
+                    "session_reuse_status": "reused" if stable_session_id else "allocated",
+                    "session_reuse_scope": scoped_reuse_key,
                 }
                 if metadata:
                     session_metadata.update(metadata)
@@ -214,6 +225,8 @@ class AgentIdentity:
                 session_metadata = {
                     "fresh_session": True,
                     "created_at": utcnow().isoformat(),
+                    "session_reuse_status": "allocated",
+                    "session_reuse_scope": scoped_reuse_key,
                 }
                 if metadata:
                     session_metadata.update(metadata)
@@ -230,6 +243,19 @@ class AgentIdentity:
         except Exception as e:
             logger.warning("Failed to resume session for agent '%s': %s", agent_id, e)
             return None
+
+    @staticmethod
+    def _derive_repo_root(agent_project: Optional[Dict[str, Any]]) -> str:
+        if not agent_project:
+            return ""
+        repo_root = agent_project.get("repo_root")
+        return str(repo_root) if repo_root else ""
+
+    @staticmethod
+    def _derive_scoped_reuse_key(repo_root: str, project_name: Optional[str]) -> str:
+        normalized_repo_root = repo_root.strip() if repo_root else ""
+        normalized_project = (project_name or "").strip() or "__prebinding__"
+        return f"{normalized_repo_root}:{normalized_project}"
 
     async def update_agent_activity(self, agent_id: str, activity_type: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """

@@ -12,13 +12,40 @@ from scribe_mcp.config.paths import default_db_path, repo_root
 
 try:  # Prefer optional dotenv loading to keep env setup simple outside the repo
     from dotenv import load_dotenv  # type: ignore
-
-    # Load defaults from repo root .env regardless of working directory, but
-    # never override explicitly exported environment variables.
-    _dotenv_path = repo_root() / ".env"
-    load_dotenv(_dotenv_path, override=False)
 except Exception:
-    pass
+    load_dotenv = None  # type: ignore[assignment]
+
+
+def _should_load_repo_dotenv(env: Optional[Dict[str, str]] = None) -> bool:
+    """Allow repo-root dotenv loading only outside public release unless explicitly enabled."""
+    effective_env = env or os.environ
+    explicit_opt_in = str(effective_env.get("SCRIBE_LOAD_REPO_DOTENV", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    release_profile = str(effective_env.get("SCRIBE_RELEASE_PROFILE", "internal")).strip().lower()
+    public_release = release_profile == "public"
+    return explicit_opt_in or not public_release
+
+
+def _load_repo_root_dotenv(load_dotenv_fn: Optional[Any] = None) -> bool:
+    """Best-effort repo-root dotenv load honoring release-safety policy."""
+    if not _should_load_repo_dotenv():
+        return False
+    loader = load_dotenv_fn or load_dotenv
+    if loader is None:
+        return False
+    try:
+        dotenv_path = repo_root() / ".env"
+        loader(dotenv_path, override=False)
+        return True
+    except Exception:
+        return False
+
+
+_load_repo_root_dotenv()
 
 
 def _load_env_json(name: str) -> Dict[str, Any]:
@@ -63,7 +90,8 @@ class SettingsContractEntry:
     canonical_name: Optional[str] = None
 
 
-PUBLIC_STORAGE_MODES: tuple[str, ...] = ("sqlite", "postgres", "remote/client")
+PUBLIC_STORAGE_MODES: tuple[str, ...] = ("sqlite", "postgres")
+NON_RELEASE_STORAGE_MODES: tuple[str, ...] = ("remote/client",)
 
 PUBLIC_STORAGE_SETTINGS_CONTRACT: tuple[SettingsContractEntry, ...] = (
     SettingsContractEntry(
@@ -150,13 +178,13 @@ PUBLIC_STORAGE_SETTINGS_CONTRACT: tuple[SettingsContractEntry, ...] = (
         name="SCRIBE_MODE",
         classification="canonical",
         scope="runtime",
-        description="Operating mode selector. Use `client` to explicitly select the public remote/client contract.",
+        description="Operating mode selector. In `SCRIBE_RELEASE_PROFILE=public`, `client` mode is rejected.",
     ),
     SettingsContractEntry(
         name="SCRIBE_REMOTE_URL",
         classification="canonical",
         scope="runtime",
-        description="Remote Scribe server base URL for client mode.",
+        description="Remote Scribe server base URL for client mode. Unsupported in `SCRIBE_RELEASE_PROFILE=public`.",
     ),
     SettingsContractEntry(
         name="SCRIBE_REMOTE_AUTH_TOKEN",
@@ -172,9 +200,15 @@ PUBLIC_STORAGE_SETTINGS_CONTRACT: tuple[SettingsContractEntry, ...] = (
     ),
     SettingsContractEntry(
         name="SCRIBE_REMOTE_FALLBACK",
-        classification="advanced/public",
+        classification="advanced/non-release",
         scope="runtime",
-        description="Advanced remote/client toggle controlling fallback to standalone when the remote is unavailable.",
+        description="Advanced non-release toggle controlling fallback to standalone when the remote is unavailable.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_RELEASE_PROFILE",
+        classification="canonical",
+        scope="runtime",
+        description="Release profile selector (`public` or `internal`). `public` fail-closes remote/client mode.",
     ),
     SettingsContractEntry(
         name="SCRIBE_POSTGRES_ADMIN_*",
@@ -265,6 +299,8 @@ class Settings:
     remote_auth_token: Optional[str]
     remote_connect_timeout: float
     remote_fallback: bool
+    release_profile: str
+    public_release: bool
 
     def resolve_outside_repo_read_policy(
         self,
@@ -317,7 +353,7 @@ class Settings:
         if storage_backend:
             storage_backend = storage_backend.lower().strip()
         else:
-            storage_backend = "postgres" if db_url else "sqlite"
+            storage_backend = "postgres"
 
         # Backward-compatible SQLite path support:
         # - SCRIBE_DB_PATH is canonical
@@ -444,17 +480,26 @@ class Settings:
         mode = os.environ.get("SCRIBE_MODE", "auto").lower().strip()
         if mode not in ("auto", "server", "client", "standalone"):
             mode = "auto"
+        release_profile_raw = os.environ.get("SCRIBE_RELEASE_PROFILE", "internal").strip().lower()
+        release_profile = "public" if release_profile_raw == "public" else "internal"
+        public_release = release_profile == "public"
+
         remote_server_url = os.environ.get("SCRIBE_REMOTE_URL")  # standardized name per review
-        remote_auth_token = _optional_env(
-            "SCRIBE_REMOTE_AUTH_TOKEN",
-            "SCRIBE_TRANSPORT_AUTH_TOKEN",
-            "SCRIBE_AUTH_TOKEN",
-        )
+        if public_release:
+            # Public release keeps client and server credential channels split.
+            remote_auth_token = _optional_env("SCRIBE_REMOTE_AUTH_TOKEN")
+        else:
+            remote_auth_token = _optional_env(
+                "SCRIBE_REMOTE_AUTH_TOKEN",
+                "SCRIBE_TRANSPORT_AUTH_TOKEN",
+                "SCRIBE_AUTH_TOKEN",
+            )
         remote_connect_timeout = max(
             0.5,
             float(os.environ.get("SCRIBE_REMOTE_CONNECT_TIMEOUT", "3.0")),
         )
-        remote_fallback = os.environ.get("SCRIBE_REMOTE_FALLBACK", "true").lower() in {
+        remote_fallback_default = "false" if public_release else "true"
+        remote_fallback = os.environ.get("SCRIBE_REMOTE_FALLBACK", remote_fallback_default).lower() in {
             "1", "true", "yes"
         }
 
@@ -515,6 +560,8 @@ class Settings:
             remote_auth_token=remote_auth_token,
             remote_connect_timeout=remote_connect_timeout,
             remote_fallback=remote_fallback,
+            release_profile=release_profile,
+            public_release=public_release,
         )
 
 

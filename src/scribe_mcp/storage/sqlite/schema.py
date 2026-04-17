@@ -107,8 +107,27 @@ SESSION_TABLE_STATEMENTS = [
         session_id TEXT PRIMARY KEY,
         project_name TEXT,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
         FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE SET NULL
     );
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_session_projects_requires_session_insert
+    BEFORE INSERT ON session_projects
+    FOR EACH ROW
+    WHEN (SELECT 1 FROM scribe_sessions WHERE session_id = NEW.session_id) IS NULL
+    BEGIN
+        SELECT RAISE(ABORT, 'session_projects.session_id requires a live scribe_sessions row');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_session_projects_requires_session_update
+    BEFORE UPDATE OF session_id ON session_projects
+    FOR EACH ROW
+    WHEN (SELECT 1 FROM scribe_sessions WHERE session_id = NEW.session_id) IS NULL
+    BEGIN
+        SELECT RAISE(ABORT, 'session_projects.session_id requires a live scribe_sessions row');
+    END;
     """,
     """
     CREATE TABLE IF NOT EXISTS agent_recent_projects (
@@ -412,7 +431,27 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_agent_projects_updated_at ON agent_projects(updated_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_agent_project_events_agent_id ON agent_project_events(agent_id);",
     "CREATE INDEX IF NOT EXISTS idx_agent_project_events_created_at ON agent_project_events(created_at);",
-    "CREATE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id);",
+    """
+    WITH ranked AS (
+        SELECT
+            rowid,
+            ROW_NUMBER() OVER (
+                PARTITION BY transport_session_id
+                ORDER BY last_active_at DESC, started_at DESC, session_id DESC
+            ) AS rn
+        FROM scribe_sessions
+        WHERE transport_session_id IS NOT NULL
+    )
+    UPDATE scribe_sessions
+    SET transport_session_id = NULL
+    WHERE rowid IN (SELECT rowid FROM ranked WHERE rn > 1);
+    """,
+    "DROP INDEX IF EXISTS idx_scribe_sessions_transport;",
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_sessions_transport
+        ON scribe_sessions(transport_session_id)
+        WHERE transport_session_id IS NOT NULL;
+    """,
     "CREATE INDEX IF NOT EXISTS idx_scribe_sessions_agent ON scribe_sessions(agent_id);",
     "CREATE INDEX IF NOT EXISTS idx_doc_changes_project ON doc_changes(project_id, created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON scribe_entries(project_id, ts_iso DESC);",

@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+import scribe_mcp.shared.project_registry as project_registry_module
 from scribe_mcp.utils.error_handler import ErrorHandler
 from scribe_mcp.shared.logging_utils import ProjectResolutionError
 from scribe_mcp.shared.project_registry import ProjectRegistry
@@ -81,9 +82,14 @@ class TestErrorHandler:
         assert result["suggestion"] == "Test suggestion"
         assert result["recent_projects"] == ["project1", "project2"]
 
-    def test_create_project_resolution_error_includes_last_known_hint(self):
+    def test_create_project_resolution_error_includes_last_known_hint(self, tmp_path, monkeypatch):
         """Regression: missing-project errors should include last-known project hint when available."""
-        registry = ProjectRegistry()
+        registry = ProjectRegistry(db_path=tmp_path / "registry.db")
+        monkeypatch.setattr(
+            project_registry_module,
+            "_RUNTIME_REGISTRY",
+            project_registry_module.RuntimeProjectRegistry(registry),
+        )
         now = datetime.now(timezone.utc)
         last_access = now - timedelta(minutes=4)
 

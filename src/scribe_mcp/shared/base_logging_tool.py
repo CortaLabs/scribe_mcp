@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from scribe_mcp.utils.response import default_formatter
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 
 from .logging_utils import (
     LoggingContext,
@@ -35,6 +35,7 @@ class LoggingToolMixin:
         require_project: bool = True,
         state_snapshot: Optional[Dict[str, Any]] = None,
         reminder_variables: Optional[Dict[str, Any]] = None,
+        recovery_mode: Optional[str] = None,
     ) -> LoggingContext:
         """Resolve project, reminders, and state snapshot for a logging tool."""
         if not getattr(self, "server_module", None):
@@ -48,6 +49,7 @@ class LoggingToolMixin:
             require_project=require_project,
             state_snapshot=state_snapshot,
             reminder_variables=reminder_variables,
+            recovery_mode=recovery_mode,
         )
 
     @staticmethod
@@ -122,7 +124,7 @@ class LoggingToolMixin:
 
         # Best-effort hint: show last known project + recency without auto-restoring.
         try:
-            registry = ProjectRegistry()
+            registry = get_runtime_project_registry()
             last_known = registry.get_last_known_project(candidates=list(error.recent_projects))
             if last_known and last_known.last_access_at:
                 minutes_ago = int(

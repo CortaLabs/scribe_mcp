@@ -51,9 +51,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends gosu \
 # Environment defaults
 ENV PYTHONPATH="/app/src" \
     SCRIBE_ROOT="/app" \
+    SCRIBE_RELEASE_PROFILE="public" \
     SCRIBE_TRANSPORT="sse" \
     SCRIBE_TRANSPORT_PORT="8200" \
-    SCRIBE_TRANSPORT_HOST="0.0.0.0" \
+    SCRIBE_TRANSPORT_HOST="127.0.0.1" \
+    SCRIBE_REMOTE_FALLBACK="false" \
     PYTHONUNBUFFERED="1"
 
 EXPOSE 8200

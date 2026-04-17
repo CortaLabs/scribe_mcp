@@ -50,8 +50,8 @@ hooks:
 
 # MCP server configuration
 mcp_server_name: "scribe.mcp"
-storage_backend: "sqlite"  # sqlite or postgres
-# db_path: .scribe/scribe.db  # Custom SQLite path (relative to repo root)
+storage_backend: "postgres"  # postgres default; sqlite is explicit standalone override
+# db_path: .scribe/scribe.db  # Optional SQLite path when using standalone sqlite mode
 doc_snapshots: false  # Enable preflight backups for doc edits
 
 # Output formatting (Phase 1.5 - Issue #9962 fix)

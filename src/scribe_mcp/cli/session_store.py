@@ -16,9 +16,24 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def build_transport_session_id(repo_root: Path, session_name: str, agent: str) -> str:
+def build_scoped_reuse_key(repo_root: Path, project_name: str | None) -> str:
+    """Build deterministic repo/project scoped key for session reuse boundaries."""
+    normalized_repo_root = str(repo_root.resolve())
+    normalized_project = (project_name or "").strip() or "__prebinding__"
+    source = f"{normalized_repo_root}:{normalized_project}"
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    return f"scope:{digest}"
+
+
+def build_transport_session_id(
+    repo_root: Path,
+    session_name: str,
+    agent: str,
+    project_name: str | None = None,
+) -> str:
     """Build deterministic transport session ID for repeatable CLI sessions."""
-    source = f"{repo_root.resolve()}:{session_name}:{agent}"
+    scope_key = build_scoped_reuse_key(repo_root, project_name)
+    source = f"{repo_root.resolve()}:{session_name}:{agent}:{scope_key}"
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
     return f"cli:{digest}"
 
@@ -47,9 +62,24 @@ class CliSessionState:
         if not isinstance(context, dict):
             context = {}
 
+        project_name_raw = context.get("project_name")
+        project_name = str(project_name_raw) if isinstance(project_name_raw, str) else None
         transport_session_id = payload.get("transport_session_id")
+        expected_transport_session_id = build_transport_session_id(
+            repo_root,
+            session_name,
+            agent,
+            project_name=project_name,
+        )
         if not isinstance(transport_session_id, str) or not transport_session_id:
-            transport_session_id = build_transport_session_id(repo_root, session_name, agent)
+            transport_session_id = expected_transport_session_id
+        elif transport_session_id != expected_transport_session_id:
+            transport_session_id = expected_transport_session_id
+
+        scoped_reuse_key = build_scoped_reuse_key(repo_root, project_name)
+        context["scoped_reuse_key"] = scoped_reuse_key
+        context["session_reuse_scope"] = scoped_reuse_key
+        context["session_scope_state"] = "project_bound" if project_name else "pre_binding"
 
         context.setdefault("repo_root", str(repo_root.resolve()))
         context.setdefault("transport_session_id", transport_session_id)
@@ -91,6 +121,7 @@ def load_session_state(session_name: str, repo_root: Path, agent: str) -> CliSes
             pass
 
     transport_session_id = build_transport_session_id(repo_root, session_name, agent)
+    scoped_reuse_key = build_scoped_reuse_key(repo_root, None)
     return CliSessionState(
         session_name=session_name,
         repo_root=str(repo_root.resolve()),
@@ -99,6 +130,9 @@ def load_session_state(session_name: str, repo_root: Path, agent: str) -> CliSes
         context={
             "repo_root": str(repo_root.resolve()),
             "transport_session_id": transport_session_id,
+            "scoped_reuse_key": scoped_reuse_key,
+            "session_reuse_scope": scoped_reuse_key,
+            "session_scope_state": "pre_binding",
         },
     )
 

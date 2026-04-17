@@ -15,8 +15,8 @@ from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.context_safety import ContextManager
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
-from scribe_mcp.shared.project_registry import ProjectRegistry
-from scribe_mcp.shared.project_utils import detect_project_state
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
+from scribe_mcp.shared.project_utils import detect_project_state, merge_project_inventory_authority
 from scribe_mcp.config.repo_config import get_current_repo_config
 
 
@@ -95,7 +95,7 @@ class _ListProjectsHelper(LoggingToolMixin):
 
 
 _LIST_PROJECTS_HELPER = _ListProjectsHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 
 
 async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
@@ -205,6 +205,7 @@ async def list_projects(
     order_by: Optional[str] = None,
     direction: str = "desc",
     format: str = "readable",  # New parameter for output format
+    recovery_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return projects registered in the database or state cache with intelligent filtering.
 
@@ -226,6 +227,8 @@ async def list_projects(
         order_by: Optional sort field: created_at|last_entry_at|last_access_at|total_entries
         direction: Sort direction ('asc' or 'desc') when order_by is provided
         format: Output format ('readable', 'structured', 'compact') (default: 'structured')
+        recovery_mode: Optional explicit compatibility recovery branch.
+            Supported values: "compat_active_project".
 
     Returns:
         Projects list with intelligent filtering, pagination, and context safety.
@@ -251,6 +254,33 @@ async def list_projects(
 
     state = await server_module.state_manager.load()
     projects_map: Dict[str, Dict[str, Any]] = {}
+    allowed_recovery_modes = {"compat_active_project"}
+    compatibility_mode = recovery_mode in allowed_recovery_modes
+
+    def _resolution_payload(active_name: Optional[str]) -> Dict[str, Any]:
+        source = context.resolution_source
+        fallback_used = bool(context.fallback_used)
+        fallback_chain = list(context.fallback_chain or [])
+        if compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
+            fallback_chain.append(recovery_mode)
+            fallback_used = True
+        effective_source = source if source != "unresolved" else "project_index"
+        summary = (
+            f"Listed projects from '{effective_source}' scope"
+            if not fallback_used
+            else f"Listed projects from '{effective_source}' with recovery chain: {', '.join(fallback_chain)}"
+        )
+        return {
+            "resolution_source": effective_source,
+            "fallback_used": fallback_used,
+            "fallback_chain": fallback_chain,
+            "resolution_summary": summary,
+            "active_project": (
+                active_name
+                if active_name
+                else (context.project.get("name") if context.project else None)
+            ),
+        }
 
     # Determine repo scope for query
     # Priority: explicit root > auto-detect current repo > global if global_mode=True
@@ -285,31 +315,29 @@ async def list_projects(
     for name, data in state.projects.items():
         # Keep state cache merge global for backward compatibility with direct tool invocation.
         existing = projects_map.get(name, {"name": name})
-        if data.get("root"):
-            existing["root"] = data["root"]
-        if data.get("progress_log"):
-            existing["progress_log"] = data["progress_log"]
-        if data.get("docs"):
-            existing["docs"] = data["docs"]
-        if data.get("defaults"):
-            existing["defaults"] = data["defaults"]
-        if data.get("description"):
-            existing["description"] = data["description"]
-        if data.get("tags"):
-            existing["tags"] = data["tags"]
-        projects_map[name] = existing
+        projects_map[name] = merge_project_inventory_authority(
+            existing,
+            state_overlay=data,
+            backend_available=bool(backend),
+        )
 
-    active_project, current_name, recent = await load_active_project(server_module.state_manager)
-    if active_project and active_project["name"] not in projects_map:
-        projects_map[active_project["name"]] = {
-            "name": active_project["name"],
-            "root": active_project.get("root"),
-            "progress_log": active_project.get("progress_log"),
-            "docs": active_project.get("docs"),
-            "defaults": active_project.get("defaults"),
-            "description": active_project.get("description"),
-            "tags": active_project.get("tags"),
-        }
+    current_name = context.project.get("name") if context.project else None
+    recent = list(context.recent_projects)
+    if compatibility_mode and recovery_mode == "compat_active_project":
+        active_project, recovered_name, recovered_recent = await load_active_project(server_module.state_manager)
+        if active_project:
+            current_name = recovered_name or active_project.get("name")
+            recent = list(recovered_recent)
+            if active_project["name"] not in projects_map:
+                projects_map[active_project["name"]] = {
+                    "name": active_project["name"],
+                    "root": active_project.get("root"),
+                    "progress_log": active_project.get("progress_log"),
+                    "docs": active_project.get("docs"),
+                    "defaults": active_project.get("defaults"),
+                    "description": active_project.get("description"),
+                    "tags": active_project.get("tags"),
+                }
 
     # Enrich with Project Registry information (best-effort).
     for name, data in list(projects_map.items()):
@@ -320,23 +348,11 @@ async def list_projects(
         if not info:
             continue
 
-        # Only set fields that aren't already present from state.
-        data.setdefault("description", info.description)
-        data.setdefault("status", info.status)
-        data.setdefault("created_at", info.created_at.isoformat() if info.created_at else None)
-        data.setdefault("last_entry_at", info.last_entry_at.isoformat() if info.last_entry_at else None)
-        data.setdefault("last_access_at", info.last_access_at.isoformat() if info.last_access_at else None)
-        data.setdefault(
-            "last_status_change",
-            info.last_status_change.isoformat() if info.last_status_change else None,
+        projects_map[name] = merge_project_inventory_authority(
+            data,
+            registry_info=info,
+            backend_available=bool(backend),
         )
-        data.setdefault("total_entries", info.total_entries)
-        data.setdefault("total_files", info.total_files)
-        data.setdefault("total_phases", info.total_phases)
-        if info.meta and "meta" not in data:
-            data["meta"] = info.meta
-        if info.tags and "tags" not in data:
-            data["tags"] = info.tags
 
     # Integrate state detection for all projects (Phase 4.3)
     for name, data in projects_map.items():
@@ -516,8 +532,8 @@ async def list_projects(
                 "projects": [],
                 "count": 0,
                 "readable_content": readable_content,
-                "active_project": current_name
             }
+            response.update(_resolution_payload(current_name))
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
@@ -544,8 +560,8 @@ async def list_projects(
                 "projects": formatted_projects,
                 "count": 1,
                 "readable_content": readable_content,
-                "active_project": current_name
             }
+            response.update(_resolution_payload(current_name))
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
@@ -587,8 +603,8 @@ async def list_projects(
                 "count": filtered_count,
                 "pagination": pagination_info,
                 "readable_content": readable_content,
-                "active_project": current_name
             }
+            response.update(_resolution_payload(current_name))
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
@@ -627,6 +643,7 @@ async def list_projects(
             "projects": compact_projects,
             "count": len(compact_projects),
             "compact": True,
+            **_resolution_payload(current_name),
             "pagination": {
                 "page": pagination_info["page"],
                 "page_size": pagination_info["page_size"],
@@ -655,12 +672,8 @@ async def list_projects(
             },
             "summary": summary_stats,
             "recent_projects": list(recent),
-            "active_project": (
-                current_name
-                if current_name
-                else (context.project.get("name") if context.project else None)
-            ),
         }
+        response.update(_resolution_payload(current_name))
         return _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
 
     # Legacy fallback for backward compatibility (compact parameter, not format)
@@ -687,14 +700,10 @@ async def list_projects(
         "total_available": total_available,
         "filtered": filtered_flag,
         "recent_projects": list(recent),
-        "active_project": (
-            current_name
-            if current_name
-            else (context.project.get("name") if context.project else None)
-        ),
         "context_safety": context_safety,
         "summary": summary_stats,  # Phase 4.3: State breakdown statistics
     }
+    response.update(_resolution_payload(current_name))
 
     if token_check.get("warning"):
         response["token_warning"] = {

@@ -11,6 +11,7 @@ from scribe_mcp import server as server_module
 from scribe_mcp.server import app
 from scribe_mcp.config.settings import settings
 from scribe_mcp.config.repo_config import RepoDiscovery
+from scribe_mcp.config.mode_detection import resolve_configured_mode
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.plugins.registry import get_plugin_registry
 
@@ -47,6 +48,35 @@ def _backend_name(value: Any) -> str | None:
     return type(value).__name__
 
 
+def _storage_diagnostics() -> dict[str, Any]:
+    backend = str(getattr(settings, "storage_backend", "")).strip().lower()
+    has_db_url = bool(getattr(settings, "db_url", None))
+    mode = str(getattr(settings, "mode", "auto")).strip().lower()
+    warnings: list[str] = []
+
+    if backend == "postgres" and not has_db_url and mode != "standalone":
+        warnings.append(
+            "Postgres is selected but SCRIBE_DB_URL is missing. Server-class runtime will fail closed."
+        )
+    if backend == "sqlite" and has_db_url:
+        warnings.append(
+            "SQLite selected while SCRIBE_DB_URL is set. SCRIBE_ALLOW_SQLITE_WITH_DB_URL is diagnostic-only."
+        )
+
+    resolved_mode = None
+    resolve_error = None
+    try:
+        resolved_mode = resolve_configured_mode(settings).value
+    except Exception as exc:
+        resolve_error = str(exc)
+
+    return {
+        "resolved_mode": resolved_mode,
+        "resolve_error": resolve_error,
+        "warnings": warnings,
+    }
+
+
 @app.tool(**read_only_local_tool(title="Scribe Doctor", tags=("diagnostics", "runtime", "read-only")))
 async def scribe_doctor(agent: str) -> Dict[str, Any]:
     """Return runtime diagnostics for the current MCP server instance."""
@@ -77,6 +107,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
         runtime_exec_context = server_module.get_execution_context()
     except Exception:
         runtime_exec_context = None
+    storage_diagnostics = _storage_diagnostics()
 
     config_view = None
     if config is not None:
@@ -137,6 +168,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
                 "stable_session_id": getattr(runtime_exec_context, "stable_session_id", None),
                 "transport_session_id": getattr(runtime_exec_context, "transport_session_id", None),
             } if runtime_exec_context else None,
+            "storage_diagnostics": storage_diagnostics,
         },
         "config": config_view,
         "config_path": str(config_path) if config_path else None,

@@ -1053,25 +1053,32 @@ class PostgresStorage(StorageBackend):
     ) -> None:
         mode_value = mode if mode in ("sentinel", "project") else "sentinel"
         normalized_repo = _normalize_repo_root(repo_root) if repo_root else None
-        await self._execute(
-            """
-            INSERT INTO scribe_sessions (
-                session_id, transport_session_id, agent_id, repo_root, mode, started_at, last_active_at
+        try:
+            await self._execute(
+                """
+                INSERT INTO scribe_sessions (
+                    session_id, transport_session_id, agent_id, repo_root, mode, started_at, last_active_at
+                )
+                VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+                ON CONFLICT(session_id) DO UPDATE SET
+                    transport_session_id = COALESCE(EXCLUDED.transport_session_id, scribe_sessions.transport_session_id),
+                    agent_id = COALESCE(EXCLUDED.agent_id, scribe_sessions.agent_id),
+                    repo_root = COALESCE(EXCLUDED.repo_root, scribe_sessions.repo_root),
+                    mode = EXCLUDED.mode,
+                    last_active_at = NOW();
+                """,
+                session_id,
+                transport_session_id,
+                agent_id,
+                normalized_repo,
+                mode_value,
             )
-            VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-            ON CONFLICT(session_id) DO UPDATE SET
-                transport_session_id = COALESCE(EXCLUDED.transport_session_id, scribe_sessions.transport_session_id),
-                agent_id = COALESCE(EXCLUDED.agent_id, scribe_sessions.agent_id),
-                repo_root = COALESCE(EXCLUDED.repo_root, scribe_sessions.repo_root),
-                mode = EXCLUDED.mode,
-                last_active_at = NOW();
-            """,
-            session_id,
-            transport_session_id,
-            agent_id,
-            normalized_repo,
-            mode_value,
-        )
+        except asyncpg.UniqueViolationError as exc:
+            if "idx_scribe_sessions_transport" in str(exc) or "transport_session_id" in str(exc):
+                raise ConflictError(
+                    "transport_session_id collision detected; refusing ambiguous session binding"
+                ) from exc
+            raise
 
     async def set_session_mode(self, session_id: str, mode: str) -> None:
         if mode not in ("sentinel", "project"):
@@ -1094,6 +1101,14 @@ class PostgresStorage(StorageBackend):
         return str(value) if value else None
 
     async def set_session_project(self, session_id: str, project_name: Optional[str]) -> None:
+        exists = await self._fetchval(
+            "SELECT 1 FROM scribe_sessions WHERE session_id = $1;",
+            session_id,
+        )
+        if not exists:
+            raise ConflictError(
+                f"Cannot bind project for unknown session_id={session_id!r}"
+            )
         await self._execute(
             """
             INSERT INTO session_projects (session_id, project_name, updated_at)
@@ -1116,10 +1131,22 @@ class PostgresStorage(StorageBackend):
     async def get_session_by_transport(self, transport_session_id: str) -> Optional[Dict[str, Any]]:
         row = await self._fetchrow(
             """
+            WITH matches AS (
+                SELECT session_id, transport_session_id, agent_id, repo_root, mode
+                FROM scribe_sessions
+                WHERE transport_session_id = $1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM agent_sessions
+                      WHERE agent_sessions.session_id = scribe_sessions.session_id
+                        AND (agent_sessions.expires_at IS NULL OR agent_sessions.expires_at > NOW())
+                  )
+                ORDER BY last_active_at DESC
+                LIMIT 2
+            )
             SELECT session_id, transport_session_id, agent_id, repo_root, mode
-            FROM scribe_sessions
-            WHERE transport_session_id = $1
-            ORDER BY last_active_at DESC
+            FROM matches
+            WHERE (SELECT COUNT(*) FROM matches) = 1
             LIMIT 1;
             """,
             transport_session_id,
@@ -1161,6 +1188,14 @@ class PostgresStorage(StorageBackend):
             """
             UPDATE agent_sessions
             SET expires_at = NOW(), last_active_at = NOW()
+            WHERE session_id = $1;
+            """,
+            session_id,
+        )
+        await self._execute(
+            """
+            UPDATE scribe_sessions
+            SET transport_session_id = NULL, last_active_at = NOW()
             WHERE session_id = $1;
             """,
             session_id,

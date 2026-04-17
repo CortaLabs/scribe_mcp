@@ -4,13 +4,13 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
 PYTHON_BIN="${PYTHON_BIN:-python3.11}"
-PROFILE="${1:-sqlite}"
+PROFILE="${1:-postgres}"
 PIP_INSTALL_ARGS=()
 
 case "${PROFILE}" in
   sqlite)
     INSTALL_TARGET="${PROJECT_ROOT}"
-    PROFILE_SUMMARY="SQLite / default stdio profile"
+    PROFILE_SUMMARY="SQLite standalone profile (explicit local override)"
     ;;
   postgres)
     INSTALL_TARGET="${PROJECT_ROOT}[postgres]"

@@ -22,7 +22,7 @@ This repository ships the public package, public docs, and public plugin bundles
 - **Structured audit trail:** project-aware entries with queryable history
 - **Governed docs engine:** architecture/phase/checklist/progress workflows with managed updates
 - **Operator tooling:** file read/search/edit helpers and diagnostics for day-to-day execution
-- **Storage flexibility:** local-first operation with optional remote-backed posture
+- **Storage posture:** Postgres-first server/runtime contract with explicit standalone SQLite support
 - **Plugin bundles:** ready-to-use Codex and Claude plugin surfaces under `plugins/`
 
 ## Install and start
@@ -40,9 +40,19 @@ scribe --help
 scribe-server --help
 ```
 
-Minimal local run:
+Minimal local run (Postgres server/runtime):
 
 ```bash
+export SCRIBE_STORAGE_BACKEND=postgres
+export SCRIBE_DB_URL="postgresql://scribe_app:pass@127.0.0.1:5432/scribe"
+scribe-server
+```
+
+Explicit standalone SQLite run (local-only):
+
+```bash
+export SCRIBE_MODE=standalone
+export SCRIBE_STORAGE_BACKEND=sqlite
 scribe-server
 ```
 
@@ -50,7 +60,8 @@ scribe-server
 
 | Posture | Status | Usage |
 | --- | --- | --- |
-| Local/core runtime | Default and recommended | Day-to-day usage, local development, and most integrations |
+| Postgres server/runtime | Default, recommended, and required for public-release/server usage | Day-to-day usage, local development, managed deployments, and all server/public-release runtime postures |
+| Explicit standalone SQLite | Supported (opt-in local fallback) | Standalone local-only usage when `SCRIBE_MODE=standalone` and `SCRIBE_STORAGE_BACKEND=sqlite` are set |
 | Authenticated remote/client runtime | Supported | Managed/private deployments that require centralized access |
 | Open unauthenticated internet exposure | Unsupported | Not a supported security posture |
 

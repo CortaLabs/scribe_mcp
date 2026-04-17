@@ -17,6 +17,7 @@ By providing direct JSONL + SQL logging without any tool invocation.
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -28,6 +29,28 @@ from typing import Any, Dict, Optional
 # CRITICAL: Import settings only (no other utils imports to avoid response.py)
 from scribe_mcp.config.settings import settings
 _TOOL_LOG_FSYNC = os.environ.get("SCRIBE_TOOL_LOG_FSYNC", "").lower() in {"1", "true", "yes", "on"}
+
+_TOOL_LOG_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?i)\b(authorization)\b\s*[:=]\s*bearer\s+[^\s,;]+"),
+        r"\1=Bearer [REDACTED]",
+    ),
+    (
+        re.compile(
+            r"(?i)\b(api[_-]?key|token|secret|password|authorization|auth[_-]?token|access[_-]?token)\b\s*[:=]\s*([^\s,;]+)"
+        ),
+        r"\1=[REDACTED]",
+    ),
+    (re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9\-._~+/]+=*"), r"\1 [REDACTED]"),
+    (re.compile(r"\bsk-[A-Za-z0-9]{8,}\b"), "[REDACTED]"),
+)
+
+
+def _sanitize_error_message(message: str) -> str:
+    text = message
+    for pattern, replacement in _TOOL_LOG_SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 # Minimal JSONL append function (inlined to avoid importing utils.files)
@@ -148,7 +171,7 @@ def log_tool_call(
     if agent_id:
         entry["agent_id"] = agent_id
     if error_message:
-        entry["error_message"] = error_message
+        entry["error_message"] = _sanitize_error_message(error_message)
     if response_size_bytes is not None:
         entry["response_size_bytes"] = response_size_bytes
     if repo_root:
@@ -164,7 +187,7 @@ def log_tool_call(
 
     except Exception as e:
         # Log to stderr but don't raise - JSONL write failure shouldn't break tools
-        message = f"Failed to write tool log to JSONL: {e}"
+        message = _sanitize_error_message(f"Failed to write tool log to JSONL: {e}")
         logger.warning(message)
         # Emit once on root as well so caplog/root-handler capture sees this warning
         # even when runtime logger wiring is customized.

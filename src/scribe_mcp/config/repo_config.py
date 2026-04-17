@@ -68,7 +68,7 @@ class RepoConfig:
 
     # Scribe MCP specific settings
     mcp_server_name: str = "scribe.mcp"
-    storage_backend: str = "sqlite"  # sqlite or postgres
+    storage_backend: str = "postgres"  # postgres by default; sqlite is explicit standalone
     db_path: Optional[Path] = None  # for sqlite
     doc_snapshots: bool = True
 
@@ -135,7 +135,7 @@ class RepoConfig:
             reminder_config=data.get("reminder_config", {}),
             hooks=data.get("hooks", {}),
             mcp_server_name=data.get("mcp_server_name", "scribe.mcp"),
-            storage_backend=data.get("storage_backend", "sqlite"),
+            storage_backend=data.get("storage_backend", "postgres"),
             db_path=db_path,
             doc_snapshots=bool(data.get("doc_snapshots", True)),
             use_ansi_colors=bool(data.get("use_ansi_colors", True)),  # Colors ON by default

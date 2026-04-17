@@ -121,7 +121,7 @@ def user_data_dir() -> Path:
 
 
 def default_db_path() -> Path:
-    """Resolve default SQLite DB path with env overrides."""
+    """Resolve the default explicit-standalone SQLite DB path with env overrides."""
     db_override = _env_path("SCRIBE_DB_PATH")
     if db_override:
         return db_override

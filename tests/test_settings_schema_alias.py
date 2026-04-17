@@ -15,6 +15,25 @@ def test_settings_load_accepts_scribe_db_schema_alias(monkeypatch, tmp_path) -> 
     assert loaded.postgres_schema == "scribe_alias"
 
 
+def test_settings_load_defaults_to_postgres_backend(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("SCRIBE_ROOT", str(tmp_path))
+    monkeypatch.delenv("SCRIBE_STORAGE_BACKEND", raising=False)
+    monkeypatch.delenv("SCRIBE_DB_URL", raising=False)
+
+    loaded = settings_module.Settings.load()
+
+    assert loaded.storage_backend == "postgres"
+
+
+def test_settings_load_allows_explicit_sqlite_backend(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("SCRIBE_ROOT", str(tmp_path))
+    monkeypatch.setenv("SCRIBE_STORAGE_BACKEND", "sqlite")
+
+    loaded = settings_module.Settings.load()
+
+    assert loaded.storage_backend == "sqlite"
+
+
 def test_settings_load_prefers_canonical_postgres_schema_env(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SCRIBE_ROOT", str(tmp_path))
     monkeypatch.setenv("SCRIBE_STORAGE_BACKEND", "postgres")

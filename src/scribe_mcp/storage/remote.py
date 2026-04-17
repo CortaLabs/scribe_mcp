@@ -8,6 +8,7 @@ for zero-latency middleware operations.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from datetime import datetime
@@ -19,6 +20,13 @@ from scribe_mcp.storage.base import ConflictError, RemoteUnavailableError, Stora
 from scribe_mcp.storage.models import ProjectRecord
 
 logger = logging.getLogger(__name__)
+
+
+def _is_public_release_profile() -> bool:
+    if os.environ.get("SCRIBE_PUBLIC_RELEASE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    release_profile = os.environ.get("SCRIBE_RELEASE_PROFILE", "internal").strip().lower()
+    return release_profile == "public"
 
 
 class RemoteStorageBackend(StorageBackend):
@@ -36,6 +44,10 @@ class RemoteStorageBackend(StorageBackend):
         timeout: float = 30.0,
         auth_token: Optional[str] = None,
     ) -> None:
+        if _is_public_release_profile():
+            raise ValueError(
+                "RemoteStorageBackend is internal-only and unavailable in public release profile."
+            )
         self._server_url = server_url.rstrip("/")
         self._timeout = timeout
         self._auth_token = auth_token.strip() if auth_token else None
@@ -46,7 +58,8 @@ class RemoteStorageBackend(StorageBackend):
         self._session_projects: Dict[str, str] = {}         # session_id -> project_name
         self._session_modes: Dict[str, str] = {}            # session_id -> mode
         self._transport_sessions: Dict[str, str] = {}       # transport_session_id -> session_id
-        self._agent_sessions: Dict[str, str] = {}           # identity_key -> session_id
+        self._agent_sessions: Dict[str, Dict[str, str]] = {}  # identity_key -> allocation record
+        self._last_agent_session_allocation: Dict[str, Dict[str, Any]] = {}
         self._agent_recent_projects: Dict[str, str] = {}    # agent_id -> project_name
         self._agent_projects: Dict[str, dict] = {}          # agent_id -> {project_name, version, ...}
 
@@ -322,19 +335,64 @@ class RemoteStorageBackend(StorageBackend):
         mode: str = "",
         scope_key: str = "",
     ) -> str:
-        if identity_key in self._agent_sessions:
-            return self._agent_sessions[identity_key]
+        scoped_reuse_key = self._derive_scoped_reuse_key(repo_root=repo_root, scope_key=scope_key)
+        existing = self._agent_sessions.get(identity_key)
+        if (
+            existing
+            and existing.get("scoped_reuse_key") == scoped_reuse_key
+            and existing.get("mode") == mode
+        ):
+            self._last_agent_session_allocation[identity_key] = {
+                "status": "reused",
+                "session_id": existing["session_id"],
+                "scoped_reuse_key": scoped_reuse_key,
+                "repo_root": existing.get("repo_root", ""),
+                "scope_key": existing.get("scope_key", ""),
+                "mode": existing.get("mode", ""),
+            }
+            return existing["session_id"]
         session_id = str(uuid.uuid4())
-        self._agent_sessions[identity_key] = session_id
+        normalized_repo_root = os.path.realpath(repo_root) if repo_root else ""
+        normalized_scope_key = scope_key or "__prebinding__"
+        self._agent_sessions[identity_key] = {
+            "session_id": session_id,
+            "scoped_reuse_key": scoped_reuse_key,
+            "scope_key": normalized_scope_key,
+            "repo_root": normalized_repo_root,
+            "mode": mode,
+        }
+        self._last_agent_session_allocation[identity_key] = {
+            "status": "allocated",
+            "session_id": session_id,
+            "scoped_reuse_key": scoped_reuse_key,
+            "repo_root": normalized_repo_root,
+            "scope_key": normalized_scope_key,
+            "mode": mode,
+        }
         self._sessions[session_id] = {
             "session_id": session_id,
             "identity_key": identity_key,
             "agent_name": agent_name,
+            "agent_key": agent_key,
+            "repo_root": normalized_repo_root,
+            "mode": mode,
+            "scope_key": normalized_scope_key,
+            "scoped_reuse_key": scoped_reuse_key,
+            "session_reuse_status": "allocated",
             "created_at": datetime.utcnow().isoformat(),
             "last_active_at": datetime.utcnow().isoformat(),
             "state": "active",
         }
         return session_id
+
+    async def get_last_agent_session_allocation(self, identity_key: str) -> Optional[Dict[str, Any]]:
+        return self._last_agent_session_allocation.get(identity_key)
+
+    @staticmethod
+    def _derive_scoped_reuse_key(*, repo_root: str, scope_key: str) -> str:
+        normalized_repo_root = os.path.realpath(repo_root) if repo_root else ""
+        normalized_scope_key = scope_key or "__prebinding__"
+        return f"{normalized_repo_root}:{normalized_scope_key}"
 
     async def upsert_agent_recent_project(
         self, agent_id: str, project_name: str

@@ -7,8 +7,8 @@ def test_public_storage_modes_publish_the_three_release_modes() -> None:
     assert settings_module.PUBLIC_STORAGE_MODES == (
         "sqlite",
         "postgres",
-        "remote/client",
     )
+    assert settings_module.NON_RELEASE_STORAGE_MODES == ("remote/client",)
 
 
 def test_public_storage_contract_labels_runtime_aliases_and_bootstrap_envs() -> None:
@@ -22,7 +22,8 @@ def test_public_storage_contract_labels_runtime_aliases_and_bootstrap_envs() -> 
 
     assert contract["SCRIBE_POSTGRES_POOL_MAX_SIZE"].classification == "advanced/public"
     assert contract["SCRIBE_REMOTE_URL"].classification == "canonical"
-    assert contract["SCRIBE_REMOTE_FALLBACK"].classification == "advanced/public"
+    assert contract["SCRIBE_REMOTE_FALLBACK"].classification == "advanced/non-release"
+    assert contract["SCRIBE_RELEASE_PROFILE"].classification == "canonical"
 
     assert contract["SCRIBE_POSTGRES_ADMIN_*"].scope == "bootstrap-only"
     assert contract["SCRIBE_POSTGRES_APP_*"].scope == "bootstrap-only"

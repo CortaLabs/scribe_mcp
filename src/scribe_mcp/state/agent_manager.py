@@ -230,8 +230,34 @@ class AgentContextManager:
         except Exception:
             pass
 
-        # Mark session as expired in database
+        # Mark session as expired in database.
         await self.storage.end_session(session_id)
+
+        # Revoke persisted session-to-project bindings so reconnect cannot inherit context.
+        try:
+            if hasattr(self.storage, "set_session_project"):
+                await self.storage.set_session_project(session_id, None)
+        except Exception:
+            logger.debug("Failed clearing session project binding for %s", session_id, exc_info=True)
+
+        # Clear agent->project binding only when this session owns the persisted row.
+        try:
+            if hasattr(self.storage, "get_agent_project") and hasattr(self.storage, "set_agent_project"):
+                agent_project = await self.storage.get_agent_project(agent_id)
+                if (
+                    isinstance(agent_project, dict)
+                    and str(agent_project.get("session_id") or "") == str(session_id)
+                    and agent_project.get("project_name")
+                ):
+                    await self.storage.set_agent_project(
+                        agent_id,
+                        None,
+                        agent_project.get("version"),
+                        "session_teardown",
+                        session_id,
+                    )
+        except Exception:
+            logger.debug("Failed clearing agent project binding for %s", agent_id, exc_info=True)
 
         # Log session end
         await self.log_agent_event(
@@ -248,6 +274,16 @@ class AgentContextManager:
                 cached_session_id, _ = self._session_leases[agent_id]
                 if cached_session_id == session_id:
                     del self._session_leases[agent_id]
+
+        # Remove stale runtime caches tied to this session.
+        try:
+            from scribe_mcp import server as server_module
+
+            router_ctx = getattr(server_module, "router_context_manager", None)
+            if router_ctx and hasattr(router_ctx, "cleanup_session"):
+                await router_ctx.cleanup_session(session_id)
+        except Exception:
+            logger.debug("Failed clearing runtime session cache for %s", session_id, exc_info=True)
 
     async def cleanup_expired_sessions(self) -> int:
         """

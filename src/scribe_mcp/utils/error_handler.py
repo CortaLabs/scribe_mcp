@@ -13,6 +13,38 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from scribe_mcp.shared.logging_utils import ProjectResolutionError
 
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?i)\b(authorization)\b\s*[:=]\s*bearer\s+[^\s,;]+"),
+        r"\1=Bearer [REDACTED]",
+    ),
+    (
+        re.compile(
+            r"(?i)\b(api[_-]?key|token|secret|password|passwd|pwd|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret)\b\s*[:=]\s*([^\s,;]+)"
+        ),
+        r"\1=[REDACTED]",
+    ),
+    (re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9\-._~+/]+=*"), r"\1 [REDACTED]"),
+    (re.compile(r"(?i)://([^/\s:@]+):([^@\s]+)@"), r"://\1:[REDACTED]@"),
+    (re.compile(r"\bsk-[A-Za-z0-9]{8,}\b"), "[REDACTED]"),
+)
+
+
+def sanitize_error_message(message: Any) -> str:
+    """Redact secret-bearing values from error text while preserving context."""
+    text = str(message)
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _safe_sanitize_error_message(message: Any) -> str:
+    """Best-effort sanitizer for error handling paths that must not raise."""
+    try:
+        return sanitize_error_message(message)
+    except Exception:
+        return "[REDACTED]"
+
 
 class ErrorHandler:
     """Centralized error handling utilities for MCP tools.
@@ -43,9 +75,10 @@ class ErrorHandler:
         Returns:
             Standardized error response dictionary
         """
+        sanitized_error = sanitize_error_message(error_message)
         response: Dict[str, Any] = {
             "ok": False,
-            "error": error_message,
+            "error": sanitized_error,
         }
 
         if suggestion:
@@ -80,16 +113,16 @@ class ErrorHandler:
         """
         response: Dict[str, Any] = {
             "ok": False,
-            "error": str(error),
+            "error": sanitize_error_message(str(error)),
             "suggestion": suggestion or f"Invoke set_project before using {tool_name}",
             "recent_projects": list(error.recent_projects),
         }
 
         # Best-effort "last known project" hint (QoL for post-reboot / missing context).
         try:
-            from scribe_mcp.shared.project_registry import ProjectRegistry
+            from scribe_mcp.shared.project_registry import get_runtime_project_registry
 
-            registry = ProjectRegistry()
+            registry = get_runtime_project_registry()
             last_known = registry.get_last_known_project(candidates=list(error.recent_projects))
             if last_known and last_known.last_access_at:
                 minutes_ago = int(
@@ -273,7 +306,7 @@ class ErrorHandler:
         Returns:
             Standardized file operation error response
         """
-        error_message = f"Unable to {operation}: {error}"
+        error_message = sanitize_error_message(f"Unable to {operation}: {error}")
         suggestion = "Verify file permissions and that the path is accessible"
 
         if "not found" in str(error).lower():
@@ -305,7 +338,7 @@ class ErrorHandler:
         Returns:
             Standardized storage error response
         """
-        error_message = f"Failed to {operation}: {error}"
+        error_message = sanitize_error_message(f"Failed to {operation}: {error}")
 
         if suggestion is None:
             suggestion = "Check database connection and try again"
@@ -406,7 +439,7 @@ class ErrorHandler:
             # Log error but don't fail the entire operation
             if error_context:
                 error_context["operation"] = operation_name
-                error_context["error"] = str(error)
+                error_context["error"] = _safe_sanitize_error_message(error)
             return False, fallback_result
 
     @staticmethod
@@ -539,7 +572,7 @@ class HealingErrorHandler:
             try:
                 result = operation_func(**healing_info["original_params"])
                 healing_info["fallback_used"] = True
-                healing_info["healing_failed"] = str(error)
+                healing_info["healing_failed"] = _safe_sanitize_error_message(error)
                 return True, result, healing_info
             except Exception:
                 # Final fallback with minimal parameters
@@ -547,10 +580,10 @@ class HealingErrorHandler:
                 try:
                     result = operation_func(**minimal_params)
                     healing_info["minimal_fallback_used"] = True
-                    healing_info["healing_failed"] = str(error)
+                    healing_info["healing_failed"] = _safe_sanitize_error_message(error)
                     return True, result, healing_info
                 except Exception as final_error:
-                    healing_info["final_error"] = str(final_error)
+                    healing_info["final_error"] = _safe_sanitize_error_message(final_error)
                     return False, None, healing_info
 
     @staticmethod
@@ -872,6 +905,7 @@ class ExceptionHealer:
             Dictionary with success status and healing results
         """
         try:
+            safe_exception = _safe_sanitize_error_message(exception)
             # Only apply operation-specific healing for specific, known scenarios
             # For general exceptions or test cases, return failure to allow fallback behavior
             exception_message = str(exception).lower()
@@ -886,7 +920,7 @@ class ExceptionHealer:
                     "success": False,
                     "ok": False,
                     "healing_type": "operation_specific",
-                    "original_exception": str(exception),
+                    "original_exception": safe_exception,
                     "exception_type": type(exception).__name__,
                     "operation_context": operation_context,
                     "fallback_strategy": fallback_strategy,
@@ -901,7 +935,7 @@ class ExceptionHealer:
                 "success": True,
                 "ok": True,
                 "healing_type": "operation_specific",
-                "original_exception": str(exception),
+                "original_exception": safe_exception,
                 "exception_type": type(exception).__name__,
                 "operation_context": operation_context,
                 "fallback_strategy": fallback_strategy,
@@ -910,6 +944,8 @@ class ExceptionHealer:
                 # Backwards-compatible interface: callers may expect `healed_values`.
                 "healed_values": {},
             }
+
+            safe_operation_context = _safe_sanitize_error_message(operation_context)
 
             # Apply operation-specific healing strategies
             if operation_context == "append_entry":
@@ -946,13 +982,14 @@ class ExceptionHealer:
             else:
                 healing_result["result"] = {
                     "fallback_operation": True,
-                    "message": f"Generic fallback applied for {operation_context}"
+                    "message": f"Generic fallback applied for {safe_operation_context}"
                 }
 
             # Add strategy-specific information
+            safe_original_exception = _safe_sanitize_error_message(exception)
             healing_result["healing_messages"] = [
-                f"Healed {operation_context} error using {fallback_strategy} strategy",
-                f"Original exception: {str(exception)}",
+                f"Healed {safe_operation_context} error using {fallback_strategy} strategy",
+                f"Original exception: {safe_original_exception}",
                 "Operation completed with fallback behavior"
             ]
 
@@ -960,16 +997,19 @@ class ExceptionHealer:
 
         except Exception as e:
             # Return failure result if healing itself fails
+            safe_exception = _safe_sanitize_error_message(exception)
+            safe_error = _safe_sanitize_error_message(e)
+            safe_operation_context = _safe_sanitize_error_message(operation_context)
             return {
                 "success": False,
                 "ok": False,
-                "error": str(e),
+                "error": safe_error,
                 "healing_type": "operation_specific",
-                "original_exception": str(exception),
-                "operation_context": operation_context,
+                "original_exception": safe_exception,
+                "operation_context": safe_operation_context,
                 "fallback_strategy": fallback_strategy,
                 "healing_applied": False,
-                "healing_messages": [f"Failed to heal {operation_context} error: {str(e)}"]
+                "healing_messages": [f"Failed to heal {safe_operation_context} error: {safe_error}"]
             }
 
     @staticmethod

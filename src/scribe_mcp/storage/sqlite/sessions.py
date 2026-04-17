@@ -56,26 +56,33 @@ async def upsert_session(
     await initialise_fn()
     mode_value = mode if mode in ("sentinel", "project") else "sentinel"
     async with write_lock:
-        await execute_fn(
-            """
-            INSERT INTO scribe_sessions (
-                session_id,
-                transport_session_id,
-                agent_id,
-                repo_root,
-                mode,
-                started_at,
-                last_active_at
-            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT(session_id) DO UPDATE SET
-                transport_session_id = COALESCE(excluded.transport_session_id, scribe_sessions.transport_session_id),
-                agent_id = COALESCE(excluded.agent_id, scribe_sessions.agent_id),
-                repo_root = COALESCE(excluded.repo_root, scribe_sessions.repo_root),
-                mode = excluded.mode,
-                last_active_at = CURRENT_TIMESTAMP;
-            """,
-            (session_id, transport_session_id, agent_id, repo_root, mode_value),
-        )
+        try:
+            await execute_fn(
+                """
+                INSERT INTO scribe_sessions (
+                    session_id,
+                    transport_session_id,
+                    agent_id,
+                    repo_root,
+                    mode,
+                    started_at,
+                    last_active_at
+                ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    transport_session_id = COALESCE(excluded.transport_session_id, scribe_sessions.transport_session_id),
+                    agent_id = COALESCE(excluded.agent_id, scribe_sessions.agent_id),
+                    repo_root = COALESCE(excluded.repo_root, scribe_sessions.repo_root),
+                    mode = excluded.mode,
+                    last_active_at = CURRENT_TIMESTAMP;
+                """,
+                (session_id, transport_session_id, agent_id, repo_root, mode_value),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "idx_scribe_sessions_transport" in str(exc) or "transport_session_id" in str(exc):
+                raise ConflictError(
+                    "transport_session_id collision detected; refusing ambiguous session binding"
+                ) from exc
+            raise
 
 
 async def set_session_mode(
@@ -122,16 +129,23 @@ async def set_session_project(
 ) -> None:
     await initialise_fn()
     async with write_lock:
-        await execute_fn(
-            """
-            INSERT INTO session_projects (session_id, project_name, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(session_id) DO UPDATE SET
-                project_name = excluded.project_name,
-                updated_at = CURRENT_TIMESTAMP;
-            """,
-            (session_id, project_name),
-        )
+        try:
+            await execute_fn(
+                """
+                INSERT INTO session_projects (session_id, project_name, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    project_name = excluded.project_name,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (session_id, project_name),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "session_projects.session_id requires a live scribe_sessions row" in str(exc):
+                raise ConflictError(
+                    f"Cannot bind project for unknown session_id={session_id!r}"
+                ) from exc
+            raise
 
 
 async def get_session_project(
@@ -159,10 +173,22 @@ async def get_session_by_transport(
     await initialise_fn()
     row = await fetchone_fn(
         """
+        WITH matches AS (
+            SELECT session_id, transport_session_id, agent_id, repo_root, mode
+            FROM scribe_sessions
+            WHERE transport_session_id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM agent_sessions
+                  WHERE agent_sessions.session_id = scribe_sessions.session_id
+                    AND (agent_sessions.expires_at IS NULL OR agent_sessions.expires_at > CURRENT_TIMESTAMP)
+              )
+            ORDER BY last_active_at DESC
+            LIMIT 2
+        )
         SELECT session_id, transport_session_id, agent_id, repo_root, mode
-        FROM scribe_sessions
-        WHERE transport_session_id = ?
-        ORDER BY last_active_at DESC
+        FROM matches
+        WHERE (SELECT COUNT(*) FROM matches) = 1
         LIMIT 1;
         """,
         (transport_session_id,),
@@ -231,6 +257,14 @@ async def end_session(
             """
             UPDATE agent_sessions
             SET expires_at = CURRENT_TIMESTAMP, last_active_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?;
+            """,
+            (session_id,),
+        )
+        await execute_fn(
+            """
+            UPDATE scribe_sessions
+            SET transport_session_id = NULL, last_active_at = CURRENT_TIMESTAMP
             WHERE session_id = ?;
             """,
             (session_id,),

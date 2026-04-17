@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from scribe_mcp.config.settings import settings
 from scribe_mcp.storage import create_storage_backend
 from scribe_mcp.storage.sqlite import SQLiteStorage
+from scribe_mcp.shared.session_scope import ResolvedScope
 from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.time import utcnow
 
@@ -233,6 +234,7 @@ class StateManager:
         project_data: Optional[Dict[str, Any]] = None,
         agent_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        resolved_scope: Optional[ResolvedScope] = None,
         mirror_global: bool = True,
         skip_upsert: bool = False,
     ) -> State:
@@ -243,7 +245,10 @@ class StateManager:
 
             resolved_name = self._resolve_project_name(project_data) or name
             resolved_payload = dict(project_data or {})
-            resolved_session_id = str(session_id) if session_id else self._resolve_session_id_from_context()
+            resolved_session_id = self._resolve_write_session_id(
+                session_id=session_id,
+                resolved_scope=resolved_scope,
+            )
             if resolved_name:
                 resolved_payload.setdefault("name", resolved_name)
                 if not skip_upsert:
@@ -340,7 +345,11 @@ class StateManager:
         backend = create_storage_backend()
         if backend is not None:
             return backend
-        return SQLiteStorage(settings.sqlite_path)
+        raise RuntimeError(
+            "Failed to build default storage backend for StateManager. "
+            "Server/public-release runtime requires valid Postgres configuration unless "
+            "standalone SQLite is explicitly selected."
+        )
 
     async def _ensure_backend_ready(self) -> None:
         if self._backend_ready:
@@ -401,14 +410,9 @@ class StateManager:
                 except Exception:
                     repo_root_filter = None
 
-                if repo_root_filter and hasattr(self._storage_backend, "list_projects_by_repo"):
-                    records = await self._storage_backend.list_projects_by_repo(repo_root_filter)
-                    # Compatibility fallback: if the scoped list is empty, retain legacy
-                    # global visibility so tools can still resolve recent projects.
-                    if not records and hasattr(self._storage_backend, "list_projects"):
-                        records = await self._storage_backend.list_projects()
-                else:
-                    records = await self._storage_backend.list_projects()
+                if not repo_root_filter or not hasattr(self._storage_backend, "list_projects_by_repo"):
+                    return projects
+                records = await self._storage_backend.list_projects_by_repo(repo_root_filter)
             except Exception as exc:
                 logger.warning("Failed to load projects from backend: %s", exc)
                 return projects
@@ -455,14 +459,6 @@ class StateManager:
             if project_name:
                 current_project = project_name
                 session_projects[session_id] = dict(cached)
-
-        if not current_project and hasattr(self._storage_backend, "get_agent_project"):
-            try:
-                agent_project = await self._storage_backend.get_agent_project(_GLOBAL_AGENT_ID)
-            except Exception:
-                agent_project = None
-            if agent_project:
-                current_project = agent_project.get("project_name")
 
         return current_project, session_projects
 
@@ -644,6 +640,24 @@ class StateManager:
             return None
         except Exception:
             return None
+
+    def _resolve_write_session_id(
+        self,
+        *,
+        session_id: Optional[str],
+        resolved_scope: Optional[ResolvedScope],
+    ) -> Optional[str]:
+        if session_id:
+            return str(session_id)
+        if resolved_scope:
+            for candidate in (
+                resolved_scope.stable_session_id,
+                resolved_scope.agent_session_id,
+                resolved_scope.transport_session_id,
+            ):
+                if candidate:
+                    return str(candidate)
+        return self._resolve_session_id_from_context()
 
     def _remember_recent_project(self, project_name: str) -> None:
         self._recent_projects_cache = [

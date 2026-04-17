@@ -4,11 +4,13 @@
 import asyncio
 import tempfile
 from pathlib import Path
+from datetime import timedelta
 import pytest
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.state.manager import StateManager
 from scribe_mcp.state.agent_manager import AgentContextManager, SessionLeaseExpired
+from scribe_mcp.state import agent_manager as agent_manager_module
 
 
 @pytest.mark.asyncio
@@ -240,6 +242,110 @@ async def test_get_agent_events_uses_postgres_fetch_api(tmp_path):
     assert rows and rows[0]["agent_id"] == "agent-1"
     assert "LIMIT $3" in storage.last_query
     assert storage.last_params == ("agent-1", "project_set", 5)
+
+
+@pytest.mark.asyncio
+async def test_session_lifecycle_roundtrip_with_explicit_session_id(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    state_path = tmp_path / "state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
+
+    project_name = "LifecycleProject"
+    await storage.upsert_project(
+        name=project_name,
+        repo_root=str(tmp_path),
+        progress_log_path=str(tmp_path / "PROGRESS_LOG.md"),
+    )
+
+    session_id = await manager.start_session(
+        "LifecycleAgent",
+        session_id="stable-session-001",
+        metadata={"source": "unit-test"},
+    )
+    assert session_id == "stable-session-001"
+    assert manager._session_leases["LifecycleAgent"][0] == "stable-session-001"
+
+    await manager.set_current_project("LifecycleAgent", project_name, session_id)
+    await manager.heartbeat_session(session_id)
+
+    await manager.end_session("LifecycleAgent", session_id)
+    assert "LifecycleAgent" not in manager._session_leases
+
+    with pytest.raises(SessionLeaseExpired, match="No active session"):
+        await manager.set_current_project("LifecycleAgent", project_name, session_id)
+
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_sessions_only_expires_stale_leases(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    state_path = tmp_path / "state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
+
+    stale_session_id = await manager.start_session("StaleAgent")
+    active_session_id = await manager.start_session("ActiveAgent")
+    now = agent_manager_module.utcnow()
+    manager._session_leases["StaleAgent"] = (stale_session_id, now - timedelta(minutes=1))
+    manager._session_leases["ActiveAgent"] = (active_session_id, now + timedelta(minutes=5))
+
+    cleaned = await manager.cleanup_expired_sessions()
+    assert cleaned == 1
+    assert "StaleAgent" not in manager._session_leases
+    assert manager._session_leases["ActiveAgent"][0] == active_session_id
+
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_session_binding_keeps_agent_session_ids_isolated(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    state_path = tmp_path / "state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
+
+    await storage.upsert_project(
+        name="SharedProject",
+        repo_root=str(tmp_path / "repo"),
+        progress_log_path=str(tmp_path / "repo" / "PROGRESS_LOG.md"),
+    )
+
+    # Metadata is accepted for compatibility, but this test verifies binding via
+    # authoritative session IDs and lease ownership boundaries.
+    session_cli = await manager.start_session(
+        "CoderAgent-cli",
+        session_id="sess-cli-001",
+        metadata={"client": "codex-cli", "workspace": "/workspace/a", "transport_session_id": "transport-cli"},
+    )
+    session_api = await manager.start_session(
+        "CoderAgent-api",
+        session_id="sess-api-001",
+        metadata={"client": "sdk-api", "workspace": "/workspace/b", "transport_session_id": "transport-api"},
+    )
+
+    cli_result = await manager.set_current_project("CoderAgent-cli", "SharedProject", session_cli)
+    api_result = await manager.set_current_project("CoderAgent-api", "SharedProject", session_api)
+    cli_current = await manager.get_current_project("CoderAgent-cli")
+    api_current = await manager.get_current_project("CoderAgent-api")
+
+    assert cli_result["session_id"] == "sess-cli-001"
+    assert api_result["session_id"] == "sess-api-001"
+    assert cli_current is not None and cli_current["session_id"] == "sess-cli-001"
+    assert api_current is not None and api_current["session_id"] == "sess-api-001"
+    assert cli_current["updated_by"] == "CoderAgent-cli"
+    assert api_current["updated_by"] == "CoderAgent-api"
+    assert manager._session_leases["CoderAgent-cli"][0] == "sess-cli-001"
+    assert manager._session_leases["CoderAgent-api"][0] == "sess-api-001"
+
+    with pytest.raises(SessionLeaseExpired, match="Session ID mismatch"):
+        await manager.set_current_project("CoderAgent-api", "SharedProject", "sess-cli-001")
+
+    await storage.close()
 
 
 async def main():

@@ -1,13 +1,19 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+import scribe_mcp.shared.project_registry as project_registry_module
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import ProjectResolutionError
 from scribe_mcp.shared.project_registry import ProjectRegistry
 
 
-def test_translate_project_error_includes_last_known_project_hint(tmp_path):
-    registry = ProjectRegistry()
+def test_translate_project_error_includes_last_known_project_hint(tmp_path, monkeypatch):
+    registry = ProjectRegistry(db_path=tmp_path / "registry.db")
+    monkeypatch.setattr(
+        project_registry_module,
+        "_RUNTIME_REGISTRY",
+        project_registry_module.RuntimeProjectRegistry(registry),
+    )
 
     now = datetime.now(timezone.utc)
     last_access = now - timedelta(minutes=7)

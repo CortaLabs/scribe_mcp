@@ -7,6 +7,7 @@ import pytest
 import json
 from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime, timezone
+from scribe_mcp.shared.logging_utils import LoggingContext
 
 from scribe_mcp.tools.list_projects import list_projects, _gather_doc_info
 
@@ -317,6 +318,89 @@ class TestListProjectsIntegration:
                 assert "compact" in result
                 assert result["compact"] is True
                 assert "readable_content" not in result
+
+    @pytest.mark.asyncio
+    async def test_structured_format_fail_closed_active_project_lookup(self, mock_state_manager, mock_storage_backend):
+        """Default list_projects should not consult implicit active-project fallback."""
+        with patch('scribe_mcp.tools.list_projects.server_module') as mock_server:
+            mock_server.state_manager = mock_state_manager
+            mock_server.storage_backend = mock_storage_backend
+            mock_server.get_agent_identity.return_value = None
+
+            with patch(
+                "scribe_mcp.tools.list_projects._LIST_PROJECTS_HELPER.prepare_context",
+                AsyncMock(
+                    return_value=LoggingContext(
+                        tool_name="list_projects",
+                        project=None,
+                        recent_projects=[],
+                        state_snapshot={},
+                        reminders=[],
+                        resolution_source="unresolved",
+                        fallback_used=False,
+                        fallback_chain=[],
+                    )
+                ),
+            ):
+                with patch(
+                    "scribe_mcp.tools.list_projects.load_active_project",
+                    AsyncMock(side_effect=AssertionError("hidden fallback should not run")),
+                ):
+                    result = await list_projects(format="structured")
+
+        assert result["ok"] is True
+        assert result["active_project"] is None
+        assert result["resolution_source"] == "project_index"
+        assert result["fallback_used"] is False
+        assert result["fallback_chain"] == []
+        assert "project_index" in result["resolution_summary"]
+
+    @pytest.mark.asyncio
+    async def test_structured_format_explicit_recovery_mode_active_project(self, mock_state_manager, mock_storage_backend):
+        """Named compatibility mode may opt into active-project recovery."""
+        with patch('scribe_mcp.tools.list_projects.server_module') as mock_server:
+            mock_server.state_manager = mock_state_manager
+            mock_server.storage_backend = mock_storage_backend
+            mock_server.get_agent_identity.return_value = None
+
+            with patch(
+                "scribe_mcp.tools.list_projects._LIST_PROJECTS_HELPER.prepare_context",
+                AsyncMock(
+                    return_value=LoggingContext(
+                        tool_name="list_projects",
+                        project=None,
+                        recent_projects=[],
+                        state_snapshot={},
+                        reminders=[],
+                        resolution_source="unresolved",
+                        fallback_used=False,
+                        fallback_chain=[],
+                    )
+                ),
+            ):
+                with patch(
+                    "scribe_mcp.tools.list_projects.load_active_project",
+                    AsyncMock(
+                        return_value=(
+                            {
+                                "name": "compat_project",
+                                "root": "/tmp/compat",
+                                "progress_log": "/tmp/compat/PROGRESS_LOG.md",
+                                "docs": {},
+                                "defaults": {},
+                            },
+                            "compat_project",
+                            ["compat_project"],
+                        )
+                    ),
+                ):
+                    result = await list_projects(format="structured", recovery_mode="compat_active_project")
+
+        assert result["ok"] is True
+        assert result["active_project"] == "compat_project"
+        assert result["fallback_used"] is True
+        assert "compat_active_project" in result["fallback_chain"]
+        assert "recovery chain" in result["resolution_summary"].lower()
 
 
 class TestListProjectsPagination:

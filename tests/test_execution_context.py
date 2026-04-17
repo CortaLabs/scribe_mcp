@@ -15,6 +15,7 @@ from scribe_mcp.cli.main import (
     _result_is_success,
 )
 from scribe_mcp.config.paths import templates_dir
+from scribe_mcp.cli.session_store import build_transport_session_id
 from scribe_mcp.shared.execution_context import RouterContextManager
 from scribe_mcp.shared.tool_runtime import execute_tool_call
 from scribe_mcp.template_engine import Jinja2TemplateEngine
@@ -50,6 +51,63 @@ async def test_execution_context_transport_session_id_is_stable():
 
 
 @pytest.mark.asyncio
+async def test_execution_context_transport_scope_changes_with_project_binding():
+    router = RouterContextManager()
+    repo_root = Path("/tmp/repo")
+    transport_project_a = build_transport_session_id(
+        repo_root,
+        "session-main",
+        "codex",
+        project_name="project-a",
+    )
+    transport_project_b = build_transport_session_id(
+        repo_root,
+        "session-main",
+        "codex",
+        project_name="project-b",
+    )
+
+    assert transport_project_a != transport_project_b
+
+    payload_a = {
+        "repo_root": str(repo_root),
+        "mode": "project",
+        "intent": "tool:test",
+        "affected_dev_projects": [],
+        "transport_session_id": transport_project_a,
+    }
+    payload_b = {
+        "repo_root": str(repo_root),
+        "mode": "project",
+        "intent": "tool:test",
+        "affected_dev_projects": [],
+        "transport_session_id": transport_project_b,
+    }
+    first = await router.build_execution_context(payload_a)
+    second = await router.build_execution_context(payload_b)
+    assert first.session_id != second.session_id
+
+
+@pytest.mark.asyncio
+async def test_execution_context_transport_scope_includes_repo_root_boundary():
+    router = RouterContextManager()
+    transport_repo_one = build_transport_session_id(
+        Path("/tmp/repo-one"),
+        "session-main",
+        "codex",
+        project_name="project-a",
+    )
+    transport_repo_two = build_transport_session_id(
+        Path("/tmp/repo-two"),
+        "session-main",
+        "codex",
+        project_name="project-a",
+    )
+
+    assert transport_repo_one != transport_repo_two
+
+
+@pytest.mark.asyncio
 async def test_execution_context_accepts_explicit_session_id():
     router = RouterContextManager()
     payload = {
@@ -61,6 +119,41 @@ async def test_execution_context_accepts_explicit_session_id():
     }
     ctx = await router.build_execution_context(payload)
     assert ctx.session_id == "session-explicit"
+
+
+@pytest.mark.asyncio
+async def test_execution_context_exposes_resolved_scope_provenance():
+    router = RouterContextManager()
+    payload = {
+        "repo_root": "/tmp/repo",
+        "mode": "project",
+        "intent": "tool:test",
+        "affected_dev_projects": [],
+        "session_id": "stable-session-123",
+        "transport_session_id": "transport-abc",
+        "stable_session_id": "agent-session-999",
+        "project_name": "demo-project",
+        "scoped_reuse_key": "reuse-key-1",
+        "resolution_source": "runtime_context",
+        "trust_level": "verified",
+        "scope_provenance": {
+            "transport_session_id": "claimed",
+            "stable_session_id": "verified",
+            "agent_session_id": "verified",
+            "repo_root": "verified",
+            "project_name": "claimed",
+        },
+    }
+    ctx = await router.build_execution_context(payload)
+
+    assert ctx.resolved_scope is not None
+    assert ctx.resolved_scope.transport_session_id == "transport-abc"
+    assert ctx.resolved_scope.stable_session_id == "stable-session-123"
+    assert ctx.resolved_scope.agent_session_id == "agent-session-999"
+    assert ctx.resolved_scope.scoped_reuse_key == "reuse-key-1"
+    assert ctx.resolved_scope.provenance.transport_session_id == "claimed"
+    assert ctx.resolved_scope.provenance.stable_session_id == "verified"
+    assert ctx.resolved_scope.provenance.agent_session_id == "verified"
 
 
 class _DummyRuntimeRouter:
@@ -113,6 +206,32 @@ class _CountingStorageBackend:
         return "stable-1"
 
 
+class _ScopeBoundaryStorageBackend:
+    async def get_session_by_transport(self, _transport_session_id: str) -> dict[str, str]:
+        return {"session_id": "stable-session-42", "repo_root": "/tmp"}
+
+    async def upsert_session(self, **_kwargs) -> None:
+        return None
+
+    async def get_or_create_agent_session(self, **_kwargs) -> str:
+        return "agent-session-77"
+
+    async def get_last_agent_session_allocation(self, _identity_key: str) -> dict[str, str]:
+        return {
+            "status": "allocated",
+            "scoped_reuse_key": "/tmp:__prebinding__",
+        }
+
+    async def get_session_mode(self, _session_id: str) -> str:
+        return "project"
+
+    async def fetch_project(self, _project_name: str):
+        return None
+
+    async def get_session_project(self, _session_id: str):
+        return None
+
+
 @pytest.mark.asyncio
 async def test_execute_tool_call_does_not_inject_project_to_set_project():
     def set_project_stub(agent: str, name: str, root: str) -> dict[str, str]:
@@ -160,25 +279,71 @@ async def test_execute_tool_call_injects_project_for_project_aware_tool():
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_call_allows_scribe_doctor_in_sentinel_mode():
+    def scribe_doctor_stub(agent: str) -> dict[str, str]:
+        return {"agent": agent, "status": "ok"}
+
+    result = await execute_tool_call(
+        name="scribe_doctor",
+        arguments={"agent": "codex"},
+        kwargs={"context": {"repo_root": "/tmp", "mode": "sentinel", "session_id": "session-1"}},
+        registry={"scribe_doctor": scribe_doctor_stub},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=None,
+        settings=SimpleNamespace(project_root=Path("/tmp")),
+        state_manager=_DummyStateManager(),
+        router_context_manager=_DummyRuntimeRouter(),
+        sentinel_only=set(),
+        sentinel_allowed={"scribe_doctor"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == {"agent": "codex", "status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_reports_helpful_error_for_blocked_sentinel_tool():
+    def manage_docs_stub(agent: str) -> dict[str, str]:
+        return {"agent": agent}
+
+    with pytest.raises(
+        ValueError,
+        match=r"Tool 'manage_docs' requires an active Scribe project\. "
+        r"No project is active in sentinel mode; run set_project first\.",
+    ):
+        await execute_tool_call(
+            name="manage_docs",
+            arguments={"agent": "codex"},
+            kwargs={"context": {"repo_root": "/tmp", "mode": "sentinel", "session_id": "session-1"}},
+            registry={"manage_docs": manage_docs_stub},
+            app=SimpleNamespace(request_context=None),
+            storage_backend=None,
+            settings=SimpleNamespace(project_root=Path("/tmp")),
+            state_manager=_DummyStateManager(),
+            router_context_manager=_DummyRuntimeRouter(),
+            sentinel_only=set(),
+            sentinel_allowed={"scribe_doctor"},
+            log_scope_violation_cb=lambda *_args, **_kwargs: None,
+        )
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_call_reuses_cached_stable_session_id():
+    observed_statuses: list[str | None] = []
+
     def noop_stub(agent: str) -> str:
+        current = router.get_current()
+        assert current is not None
+        observed_statuses.append(current.session_reuse_status)
         return agent
 
-    router = _CachingRuntimeRouter()
+    router = RouterContextManager()
     backend = _CountingStorageBackend()
-
-    kwargs = {
-        "context": {
-            "repo_root": "/tmp",
-            "mode": "project",
-            "session_id": "session-1",
-        }
-    }
 
     result_one = await execute_tool_call(
         name="noop",
         arguments={"agent": "codex"},
-        kwargs=kwargs,
+        kwargs={"context": {"repo_root": "/tmp", "mode": "project", "session_id": "session-1"}},
         registry={"noop": noop_stub},
         app=SimpleNamespace(request_context=None),
         storage_backend=backend,
@@ -193,7 +358,7 @@ async def test_execute_tool_call_reuses_cached_stable_session_id():
     result_two = await execute_tool_call(
         name="noop",
         arguments={"agent": "codex"},
-        kwargs=kwargs,
+        kwargs={"context": {"repo_root": "/tmp", "mode": "project", "session_id": "session-1"}},
         registry={"noop": noop_stub},
         app=SimpleNamespace(request_context=None),
         storage_backend=backend,
@@ -208,6 +373,209 @@ async def test_execute_tool_call_reuses_cached_stable_session_id():
     assert result_one == "codex"
     assert result_two == "codex"
     assert backend.calls == 1
+    assert observed_statuses == ["allocated", "cache_hit_unverified"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_boundary_reports_distinct_session_id_surfaces():
+    router = RouterContextManager(storage_backend=_ScopeBoundaryStorageBackend())
+    observed = {}
+
+    def capture_scope_stub(agent: str) -> str:
+        current = router.get_current()
+        assert current is not None
+        observed["transport_session_id"] = current.resolved_scope.transport_session_id
+        observed["stable_session_id"] = current.resolved_scope.stable_session_id
+        observed["agent_session_id"] = current.resolved_scope.agent_session_id
+        observed["scoped_reuse_key"] = current.resolved_scope.scoped_reuse_key
+        observed["resolution_source"] = current.resolved_scope.resolution_source
+        observed["trust_level"] = current.resolved_scope.trust_level
+        observed["agent_session_provenance"] = current.resolved_scope.provenance.agent_session_id
+        observed["session_reuse_status"] = current.session_reuse_status
+        observed["session_reuse_scope"] = current.session_reuse_scope
+        return agent
+
+    result = await execute_tool_call(
+        name="capture_scope",
+        arguments={"agent": "codex"},
+        kwargs={
+            "context": {
+                "repo_root": "/tmp",
+                "mode": "project",
+                "transport_session_id": "transport-req-1",
+            }
+        },
+        registry={"capture_scope": capture_scope_stub},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=_ScopeBoundaryStorageBackend(),
+        settings=SimpleNamespace(project_root=Path("/tmp")),
+        state_manager=_DummyStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"capture_scope"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == "codex"
+    assert observed["transport_session_id"] == "transport-req-1"
+    assert observed["stable_session_id"] == "stable-session-42"
+    assert observed["agent_session_id"] == "agent-session-77"
+    assert observed["scoped_reuse_key"] == "/tmp:__prebinding__"
+    assert observed["resolution_source"] == "runtime_context"
+    assert observed["trust_level"] == "verified"
+    assert observed["agent_session_provenance"] == "verified"
+    assert observed["session_reuse_status"] == "allocated"
+    assert observed["session_reuse_scope"] == "/tmp:__prebinding__"
+
+
+class _ProjectBoundReuseStorageBackend:
+    def __init__(self) -> None:
+        self._sessions_by_reuse_scope: dict[str, str] = {}
+        self._last_allocation: dict[str, dict[str, str]] = {}
+        self._counter = 0
+
+    async def get_session_by_transport(self, _transport_session_id: str) -> dict[str, str]:
+        return {"session_id": "stable-transport-session", "repo_root": "/tmp"}
+
+    async def upsert_session(self, **_kwargs) -> None:
+        return None
+
+    async def get_or_create_agent_session(self, *, identity_key: str, repo_root: str, scope_key: str, **_kwargs) -> str:
+        scoped_reuse_key = f"{repo_root}:{scope_key or '__prebinding__'}"
+        existing = self._sessions_by_reuse_scope.get(scoped_reuse_key)
+        if existing:
+            self._last_allocation[identity_key] = {
+                "status": "reused",
+                "scoped_reuse_key": scoped_reuse_key,
+            }
+            return existing
+        self._counter += 1
+        session_id = f"agent-session-{self._counter}"
+        self._sessions_by_reuse_scope[scoped_reuse_key] = session_id
+        self._last_allocation[identity_key] = {
+            "status": "allocated",
+            "scoped_reuse_key": scoped_reuse_key,
+        }
+        return session_id
+
+    async def get_last_agent_session_allocation(self, identity_key: str) -> dict[str, str] | None:
+        return self._last_allocation.get(identity_key)
+
+    async def get_session_mode(self, _session_id: str) -> str:
+        return "project"
+
+    async def fetch_project(self, _project_name: str):
+        return None
+
+    async def get_session_project(self, _session_id: str):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_project_binding_change_reallocates_with_same_transport_session():
+    backend = _ProjectBoundReuseStorageBackend()
+    router = RouterContextManager(storage_backend=backend)
+    observed: dict[str, list[tuple[str | None, str | None, str | None]]] = {"calls": []}
+
+    def capture_scope_stub(agent: str, project: str) -> str:
+        current = router.get_current()
+        assert current is not None
+        observed["calls"].append(
+            (
+                current.resolved_scope.agent_session_id,
+                current.session_reuse_status,
+                current.session_reuse_scope,
+            )
+        )
+        return agent
+
+    common = {
+        "name": "capture_scope",
+        "registry": {"capture_scope": capture_scope_stub},
+        "app": SimpleNamespace(request_context=None),
+        "storage_backend": backend,
+        "settings": SimpleNamespace(project_root=Path("/tmp")),
+        "state_manager": _DummyStateManager(),
+        "router_context_manager": router,
+        "sentinel_only": set(),
+        "sentinel_allowed": {"capture_scope"},
+        "log_scope_violation_cb": lambda *_args, **_kwargs: None,
+    }
+
+    result_one = await execute_tool_call(
+        **common,
+        arguments={"agent": "codex", "project": "project-a"},
+        kwargs={"context": {"repo_root": "/tmp", "mode": "project", "transport_session_id": "transport-stable"}},
+    )
+    result_two = await execute_tool_call(
+        **common,
+        arguments={"agent": "codex", "project": "project-b"},
+        kwargs={"context": {"repo_root": "/tmp", "mode": "project", "transport_session_id": "transport-stable"}},
+    )
+
+    assert result_one == "codex"
+    assert result_two == "codex"
+    assert observed["calls"] == [
+        ("agent-session-1", "allocated", "/tmp:project-a"),
+        ("agent-session-2", "allocated", "/tmp:project-b"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_project_binding_same_scope_reuses_session() -> None:
+    backend = _ProjectBoundReuseStorageBackend()
+    router = RouterContextManager(storage_backend=backend)
+    observed: list[tuple[str | None, str | None, str | None]] = []
+
+    def capture_scope_stub(agent: str, project: str) -> str:
+        current = router.get_current()
+        assert current is not None
+        observed.append(
+            (
+                current.resolved_scope.agent_session_id,
+                current.session_reuse_status,
+                current.session_reuse_scope,
+            )
+        )
+        return agent
+
+    common = {
+        "name": "capture_scope",
+        "registry": {"capture_scope": capture_scope_stub},
+        "app": SimpleNamespace(request_context=None),
+        "storage_backend": backend,
+        "settings": SimpleNamespace(project_root=Path("/tmp")),
+        "state_manager": _DummyStateManager(),
+        "router_context_manager": router,
+        "sentinel_only": set(),
+        "sentinel_allowed": {"capture_scope"},
+        "log_scope_violation_cb": lambda *_args, **_kwargs: None,
+    }
+
+    first = await execute_tool_call(
+        **common,
+        arguments={"agent": "codex", "project": "project-a"},
+        kwargs={"context": {"repo_root": "/tmp", "mode": "project", "transport_session_id": "transport-stable"}},
+    )
+    second = await execute_tool_call(
+        **common,
+        arguments={"agent": "codex", "project": "project-a"},
+        kwargs={"context": {"repo_root": "/tmp", "mode": "project", "transport_session_id": "transport-stable"}},
+    )
+    third = await execute_tool_call(
+        **common,
+        arguments={"agent": "codex", "project": "project-b"},
+        kwargs={"context": {"repo_root": "/tmp", "mode": "project", "transport_session_id": "transport-stable"}},
+    )
+
+    assert first == "codex"
+    assert second == "codex"
+    assert third == "codex"
+    assert observed[0] == ("agent-session-1", "allocated", "/tmp:project-a")
+    assert observed[1][0] == "agent-session-1"
+    assert observed[1][1] in {"allocated", "reused"}
+    assert observed[1][2] == "/tmp:project-a"
+    assert observed[2] == ("agent-session-2", "allocated", "/tmp:project-b")
 
 
 def test_templates_dir_contains_builtin_documents():
@@ -365,3 +733,97 @@ async def test_cli_rehydrate_file_reads_replays_paths() -> None:
         ("session-123", "/tmp/a.py"),
         ("session-123", "/tmp/b.py"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_execution_context_fails_closed_without_recovery_mode() -> None:
+    from scribe_mcp import server as server_module
+
+    original = getattr(server_module.app.state, "execution_context", None)
+    server_module.app.state.execution_context = SimpleNamespace(session_id="bootstrap-session")
+    try:
+        # No request-local context + no explicit recovery mode must fail closed.
+        resolved, metadata = server_module.get_execution_context(include_metadata=True)
+        assert resolved is None
+        assert metadata["resolution_source"] == "unresolved"
+        assert metadata["trust_level"] == "anonymous"
+        assert metadata["fallback_used"] is False
+        assert metadata["fallback_chain"] == []
+    finally:
+        server_module.app.state.execution_context = original
+
+
+@pytest.mark.asyncio
+async def test_get_execution_context_explicit_bootstrap_recovery_is_downgraded() -> None:
+    from scribe_mcp import server as server_module
+
+    router = RouterContextManager()
+    candidate = await router.build_execution_context(
+        {
+            "repo_root": "/tmp/repo",
+            "mode": "project",
+            "intent": "tool:test",
+            "affected_dev_projects": [],
+            "session_id": "bootstrap-session-1",
+            "transport_session_id": "bootstrap-transport-1",
+            "stable_session_id": "bootstrap-agent-session-1",
+            "resolution_source": "runtime_context",
+            "trust_level": "verified",
+            "scope_provenance": {
+                "transport_session_id": "verified",
+                "stable_session_id": "verified",
+                "agent_session_id": "verified",
+                "repo_root": "verified",
+                "project_name": "verified",
+            },
+        }
+    )
+
+    original = getattr(server_module.app.state, "execution_context", None)
+    server_module.app.state.execution_context = candidate
+    try:
+        resolved, metadata = server_module.get_execution_context(
+            recovery_mode="bootstrap_app_state",
+            include_metadata=True,
+        )
+        assert resolved is not None
+        assert resolved is not candidate
+        assert resolved.resolved_scope is not None
+        assert resolved.resolved_scope.resolution_source == "bootstrap_app_state"
+        assert resolved.resolved_scope.trust_level == "inferred"
+        assert metadata["resolution_source"] == "bootstrap_app_state"
+        assert metadata["trust_level"] == "inferred"
+        assert metadata["fallback_used"] is True
+        assert metadata["fallback_chain"] == ["bootstrap_app_state"]
+    finally:
+        server_module.app.state.execution_context = original
+
+
+@pytest.mark.asyncio
+async def test_get_execution_context_prefers_runtime_context_over_bootstrap_state() -> None:
+    from scribe_mcp import server as server_module
+
+    router = RouterContextManager()
+    runtime_ctx = await router.build_execution_context(
+        {
+            "repo_root": "/tmp/repo",
+            "mode": "project",
+            "intent": "tool:test",
+            "affected_dev_projects": [],
+            "session_id": "runtime-session-1",
+            "transport_session_id": "runtime-transport-1",
+        }
+    )
+    token = router.set_current(runtime_ctx)
+    original = getattr(server_module.app.state, "execution_context", None)
+    server_module.app.state.execution_context = SimpleNamespace(session_id="bootstrap-session")
+    try:
+        resolved, metadata = server_module.get_execution_context(include_metadata=True)
+        assert resolved is runtime_ctx
+        assert metadata["resolution_source"] == "runtime_context"
+        assert metadata["trust_level"] == "verified"
+        assert metadata["fallback_used"] is False
+        assert metadata["fallback_chain"] == []
+    finally:
+        router.reset(token)
+        server_module.app.state.execution_context = original

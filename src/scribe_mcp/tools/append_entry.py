@@ -63,7 +63,7 @@ except ImportError:
 # Import validation helpers for backwards-compatible test globals.
 from . import manage_docs_validation as _manage_docs_validation  # noqa: F401
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 
 _RATE_TRACKER: Dict[str, deque[float]] = defaultdict(deque)
 _RATE_LOCKS: Dict[str, asyncio.Lock] = {}
@@ -81,7 +81,7 @@ _PARALLEL_PROCESSOR = ParallelBulkProcessor()
 # Phase 3 Enhanced utilities integration
 _PARAMETER_CORRECTOR = BulletproofParameterCorrector()
 _EXCEPTION_HEALER = ExceptionHealer()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 
 
 def _sanitize_message(message: str) -> str:

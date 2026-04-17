@@ -128,9 +128,9 @@ class TransportAuthMiddleware(BaseHTTPMiddleware):
 # REST API: operation allowlist
 # ---------------------------------------------------------------------------
 
-#: Explicit allowlist of StorageBackend methods exposed via REST.
+#: Legacy allowlist of StorageBackend methods exposed via REST for non-public profiles.
 #: Operations NOT in this set are rejected with HTTP 403 Forbidden.
-OPERATION_ALLOWLIST: frozenset[str] = frozenset({
+_LEGACY_OPERATION_ALLOWLIST: frozenset[str] = frozenset({
     # Project operations
     "fetch_project",
     "upsert_project",
@@ -173,6 +173,45 @@ OPERATION_ALLOWLIST: frozenset[str] = frozenset({
     # Maintenance
     "cleanup_old_entries",
 })
+
+#: Explicit denied operations for public-release transport hardening.
+PUBLIC_RELEASE_DENIED_OPERATIONS: frozenset[str] = frozenset({
+    "delete_project",
+    "upsert_project",
+    "upsert_session",
+    "set_session_mode",
+    "set_session_project",
+    "get_or_create_agent_session",
+    "end_session",
+    "record_doc_change",
+    "clear_reminder_history",
+    "cleanup_old_entries",
+})
+
+#: Minimal allowlist for public-release transport.
+PUBLIC_RELEASE_ALLOWED_OPERATIONS: frozenset[str] = frozenset({
+    "health",
+    "resolve_project_context",
+    "list_projects",
+    "query_entries",
+    "read_recent",
+})
+
+# Backwards-compatible symbol used in existing tests/import sites.
+OPERATION_ALLOWLIST: frozenset[str] = _LEGACY_OPERATION_ALLOWLIST
+
+
+def _is_public_release_transport() -> bool:
+    settings = Settings.load()
+    return bool(getattr(settings, "public_release", False))
+
+
+def _operation_is_permitted(operation: str, *, public_release: bool) -> bool:
+    if public_release:
+        if operation in PUBLIC_RELEASE_DENIED_OPERATIONS:
+            return False
+        return operation in PUBLIC_RELEASE_ALLOWED_OPERATIONS
+    return operation in _LEGACY_OPERATION_ALLOWLIST
 
 
 # ---------------------------------------------------------------------------
@@ -262,9 +301,10 @@ async def handle_backend_operation(request: Request) -> JSONResponse:
         {"error": "<message>", "type": "<ExceptionClassName>"}
     """
     operation: str = request.path_params["operation"]
+    public_release_transport = _is_public_release_transport()
 
     # Guard: allowlist check
-    if operation not in OPERATION_ALLOWLIST:
+    if not _operation_is_permitted(operation, public_release=public_release_transport):
         return JSONResponse(
             {"error": f"Operation '{operation}' is not permitted", "type": "ForbiddenOperation"},
             status_code=403,
@@ -348,6 +388,26 @@ async def handle_batch(request: Request) -> JSONResponse:
             {"error": "'operations' must be a list", "type": "ValidationError"},
             status_code=400,
         )
+    public_release_transport = _is_public_release_transport()
+    if public_release_transport:
+        batch_ops = [
+            item.get("op")
+            for item in operations
+            if isinstance(item, dict) and isinstance(item.get("op"), str)
+        ]
+        denied_in_batch = sorted({op for op in batch_ops if op in PUBLIC_RELEASE_DENIED_OPERATIONS})
+        if denied_in_batch:
+            denied_text = ", ".join(denied_in_batch)
+            return JSONResponse(
+                {
+                    "error": (
+                        "Batch rejected: contains denied operation(s): "
+                        f"{denied_text}. Public release fails closed with no partial execution."
+                    ),
+                    "type": "ForbiddenOperation",
+                },
+                status_code=403,
+            )
 
     backend = getattr(server_module, "storage_backend", None)
     if backend is None:
@@ -369,7 +429,7 @@ async def handle_batch(request: Request) -> JSONResponse:
             args = {}
 
         # Allowlist check per operation
-        if op_name not in OPERATION_ALLOWLIST:
+        if not _operation_is_permitted(op_name, public_release=public_release_transport):
             results.append({
                 "ok": False,
                 "error": f"Operation '{op_name}' is not permitted",

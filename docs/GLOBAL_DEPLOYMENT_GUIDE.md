@@ -1,457 +1,117 @@
----
-id: scribe_sentinel_concurrency_v1-global_deployment_guide
-title: Global Scribe Deployment Guide
-doc_type: global_deployment_guide
-category: engineering
-status: draft
-version: '0.1'
-last_updated: '2026-03-21'
-maintained_by: Corta Labs
-created_by: Corta Labs
-owners: []
-related_docs: []
-tags: []
-summary: ''
----
-# Global Scribe Deployment Guide
+# Global Deployment Guide
 
-This guide covers deploying Scribe as a **global MCP server** that can automatically discover and work with any repository without requiring per-repository installation.
+Last updated: **2026-04-08**  
+Baseline: **v2.5 compatibility baseline**
 
-## Overview
+## What This Guide Is For
 
-Scribe can now operate in two deployment modes:
+This guide explains how to deploy **one shared Scribe MCP installation** that multiple repositories can use.
 
-1. **Global Mode (Recommended)**: Single Scribe installation that automatically detects and adapts to any repository
-2. **Embedded Mode**: Scribe embedded within each repository (legacy approach)
+Use this guide when you are setting up Scribe as a reusable service endpoint (local/shared host or managed private network), not when doing a single-repo local quickstart.
 
-This guide focuses on **Global Mode** deployment.
+For local-only first run, start with [README.md](../README.md).
 
-## Architecture
+## Deployment Posture
 
-### Repository Discovery
-Scribe automatically discovers repositories by looking for:
-- `.git` directory (Git repositories)
-- `.scribe` directory (Scribe-specific marker)
-- `pyproject.toml` (Python projects)
-- `package.json` (Node.js projects)
-- `Cargo.toml` (Rust projects)
-- `go.mod` (Go projects)
+Scribe supports these runtime postures:
 
-### Per-Repository Configuration
-Each repository can have its own configuration via `.scribe/config/scribe.yaml`:
-```yaml
-repo_slug: my-project
-dev_plans_dir: .scribe/docs/dev_plans  # Canonical default; keep docs/dev_plans only for legacy/back-compat repos
-progress_log_name: PROGRESS_LOG.md
-permissions:
-  allow_rotate: true
-  allow_generate_docs: true
-default_emoji: "📋"
-default_agent: "Agent"
-```
+| Posture | Status | Use case |
+| --- | --- | --- |
+| Local/core runtime | Default and recommended | Local development and most day-to-day MCP usage |
+| Authenticated remote/client runtime | Internal-only compatibility posture | Not part of the initial public release profile |
+| Open unauthenticated internet exposure | Unsupported | Not a supported security posture |
 
-### Security and Isolation
-- **Path Sandboxing**: Operations are restricted to repository boundaries
-- **Permission Checks**: Repository-specific permissions control allowed operations
-- **Plugin Isolation**: Plugins are loaded per-repository with proper isolation
+Remote/client mode is excluded from the initial public release profile. It remains internal compatibility only via `SCRIBE_RELEASE_PROFILE=internal`.
 
-## Installation
+## Install Once (Package-First)
 
-### 1. Install Scribe Once
+Install from PyPI on the host that will run Scribe:
+
 ```bash
-# Clone Scribe repository
-git clone <scribe-repo-url> scribe-mcp
-cd scribe-mcp
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+pip install scribe-mcp
 ```
 
-### 2. Configure MCP Client
-Add Scribe to your MCP client configuration:
+Verify binaries:
 
-#### Claude Desktop/Code
-```jsonc
+```bash
+scribe --help
+scribe-server --help
+```
+
+## Run the Server
+
+Minimal local/core run:
+
+```bash
+scribe-server
+```
+
+This starts the MCP server with the default local/core behavior.
+
+## Configure MCP Clients
+
+Use `scribe-server` as the command in your MCP client config.
+
+Example (`mcp.json` style):
+
+```json
 {
   "mcpServers": {
     "scribe": {
       "command": "scribe-server",
       "env": {
-        // SQLite / standalone (default): keep sqlite or omit it entirely.
-        // Postgres / server: add SCRIBE_DB_URL (+ optional SCRIBE_POSTGRES_SCHEMA).
-        // Remote / client: set SCRIBE_MODE=client + SCRIBE_REMOTE_URL.
-        "SCRIBE_STORAGE_BACKEND": "sqlite"
+        "SCRIBE_ROOT": "/absolute/path/to/project",
+        "SCRIBE_STORAGE_BACKEND": "sqlite",
+        "SCRIBE_DB_PATH": "/absolute/path/to/project/.scribe/state/scribe.db"
       }
     }
   }
 }
 ```
 
-#### Codex CLI
-```bash
-# SQLite / standalone (default)
-codex mcp add scribe \
-  --env SCRIBE_ROOT=/path/to/scribe-mcp \
-  --env SCRIBE_STORAGE_BACKEND=sqlite \
-  -- scribe-server
+See full examples:
+- [docs/examples/mcp.json.example](examples/mcp.json.example)
+- [docs/examples/opencode.json.example](examples/opencode.json.example)
 
-# Postgres / server
-codex mcp add scribe \
-  --env SCRIBE_ROOT=/path/to/scribe-mcp \
-  --env SCRIBE_STORAGE_BACKEND=postgres \
-  --env SCRIBE_DB_URL='postgresql://scribe_app:<password>@db.example.internal:5432/scribe' \
-  --env SCRIBE_POSTGRES_SCHEMA=scribe \
-  -- scribe-server
+## Internal-Only Remote/Client Compatibility
 
-# Remote / client
-codex mcp add scribe \
-  --env SCRIBE_ROOT=/path/to/scribe-mcp \
-  --env SCRIBE_MODE=client \
-  --env SCRIBE_REMOTE_URL='https://scribe.example.internal' \
-  -- scribe-server
-```
-
-`scribe bootstrap` may also write `SCRIBE_POSTGRES_ADMIN_*`, `SCRIBE_POSTGRES_APP_*`, and `SCRIBE_POSTGRES_SUPERUSER_*` keys while provisioning Postgres. Treat those as bootstrap-only conveniences, not runtime requirements for the steady-state MCP server.
-
-### 3. Verify Installation
-```bash
-# Test the server
-python demo/demo_global_scribe.py
-
-# Run health check
-python demo/test_global_scribe.py
-```
-
-## Repository Setup
-
-### Automatic Initialization
-When Scribe is used in a new repository, it will:
-1. Automatically detect the repository
-2. Create default configuration if needed
-3. Set up basic directory structure
-4. Initialize security sandbox
-
-### Manual Initialization
-For more control over repository setup:
+Remote/client mode is not supported in `SCRIBE_RELEASE_PROFILE=public`. For internal compatibility testing only, set:
 
 ```bash
-# Initialize in current directory
-python -m scribe_mcp.scripts.scribe_cli init
-
-# Initialize in specific directory
-python -m scribe_mcp.scripts.scribe_cli init --path /path/to/project
-
-# Force reinitialization
-python -m scribe_mcp.scripts.scribe_cli init --force
+export SCRIBE_REMOTE_URL="https://your-scribe-endpoint.example"
+export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-token"
 ```
 
-### Configuration Options
-Create `.scribe/config/scribe.yaml` in your repository:
+Server-side deployments validate tokens using transport auth settings (see [REMOTE_CLIENT.md](REMOTE_CLIENT.md)).
 
-```yaml
-# Repository identification
-repo_slug: my-project  # Auto-detected if not specified
+Important boundaries:
+- Remote mode is opt-in.
+- Broad bind/public exposure without strong auth and private network controls is not supported.
+- Reachability alone does not make a deployment supported.
 
-# Documentation structure
-dev_plans_dir: .scribe/docs/dev_plans  # Canonical default; set docs/dev_plans only when preserving a legacy tree
-progress_log_name: PROGRESS_LOG.md
+## Storage Choices
 
-# Template configuration
-templates_pack: default
-custom_templates_dir: .scribe/templates
+Use the backend that matches your runtime:
 
-# Permissions
-permissions:
-  allow_rotate: true
-  allow_generate_docs: true
-  require_project: true
+- `sqlite`: default, local-first, lowest setup cost
+- `postgres`: optional for shared/centralized persistence
 
-# Plugin configuration
-plugins_dir: .scribe/plugins
+If you choose Postgres, provide a valid `SCRIBE_DB_URL` in your server environment.
 
-# Default values
-default_emoji: "📋"
-default_agent: "Agent"
+## Operational Checklist
 
-# Reminder configuration
-reminder_config:
-  tone: "friendly"
-  log_warning_minutes: 15
-  log_urgent_minutes: 30
+Before sharing a deployment with teams:
 
-# Storage backend (overrides global setting)
-storage_backend: "sqlite"
-```
+1. Confirm package install uses `scribe-mcp` from PyPI.
+2. Confirm `scribe-server` starts cleanly.
+3. Confirm client can connect with your selected env vars.
+4. If remote mode is enabled, verify auth token enforcement.
+5. Confirm posture matches supported boundary (local/core or authenticated private remote).
 
-## Multi-Repository Usage
+## Related Documentation
 
-### Scenario 1: Different Projects
-Scribe automatically maintains separate contexts for each repository:
-
-```bash
-# In project-a
-cd ~/projects/project-a
-# Scribe automatically detects and uses project-a configuration
-
-# In project-b
-cd ~/projects/project-b
-# Scribe automatically switches to project-b configuration
-```
-
-### Scenario 2: Monorepo Structure
-For monorepos with multiple subprojects:
-
-```yaml
-# .scribe/config/scribe.yaml
-repo_slug: my-monorepo
-dev_plans_dir: .scribe/docs/dev_plans
-permissions:
-  allow_rotate: true
-```
-
-### Scenario 3: Mixed Repositories
-Different repositories can have completely different configurations:
-
-**Frontend Project** (`.scribe/config/scribe.yaml`):
-```yaml
-repo_slug: frontend-app
-default_emoji: "🎨"
-dev_plans_dir: documentation
-permissions:
-  allow_rotate: true
-```
-
-**Backend Project** (`.scribe/config/scribe.yaml`):
-```yaml
-repo_slug: backend-api
-default_emoji: "⚙️"
-dev_plans_dir: docs
-permissions:
-  allow_rotate: false
-```
-
-## CLI Utilities
-
-### scribe-cli
-Command-line utility for managing Scribe repositories:
-
-```bash
-# Initialize repository
-python -m scribe_mcp.scripts.scribe_cli init
-
-# Diagnose setup issues
-python -m scribe_mcp.scripts.scribe_cli doctor
-
-# Show current status
-python -m scribe_mcp.scripts.scribe_cli status
-
-# Switch to different repository
-python -m scribe_mcp.scripts.scribe_cli use /path/to/other/repo
-```
-
-### Common Commands
-
-#### Doctor
-Run comprehensive diagnostics:
-```bash
-python -m scribe_mcp.scripts.scribe_cli doctor
-```
-Output:
-```
-🔍 Scribe Doctor - Diagnosing your setup...
-
-1. Repository Discovery:
-   ✅ Found repository root: /home/user/my-project
-
-2. Configuration:
-   ✅ Loaded configuration for repo: my-project
-   📁 Dev plans directory: /home/user/my-project/.scribe/docs/dev_plans
-   📄 Progress log name: PROGRESS_LOG.md
-
-3. Directory Structure:
-   ✅ /home/user/my-project/.scribe/docs/dev_plans
-
-4. Permissions:
-   ✅ read
-   ✅ append
-   ✅ rotate
-   ✅ generate_docs
-
-🎉 Diagnosis complete!
-```
-
-#### Status
-Show current repository status:
-```bash
-python -m scribe_mcp.scripts.scribe_cli status
-```
-Output:
-```
-📊 Scribe Status
-   Repository: my-project
-   Root: /home/user/my-project
-   Storage: sqlite
-   Plugins: 2 plugin(s)
-   Last entry: 🔧 Fixed authentication bug...
-```
-
-## Plugin System
-
-### Creating Plugins
-Add custom functionality via repository-specific plugins:
-
-1. Create `.scribe/plugins/` directory
-2. Add Python files with plugin classes
-
-Example plugin (`.scribe/plugins/custom_policy.py`):
-```python
-from scribe_mcp.plugins.registry import PolicyPlugin
-
-class CustomPolicyPlugin(PolicyPlugin):
-    name = "custom-policy"
-    version = "1.0.0"
-    description = "Custom validation rules"
-
-    def initialize(self, config):
-        self.config = config
-
-    def check_permission(self, operation, context):
-        # Custom permission logic
-        if operation == "rotate" and context.get("is_friday"):
-            return False
-        return True
-
-    def validate_entry(self, entry_data):
-        # Custom validation
-        if not entry_data.get("component"):
-            return "Component field is required"
-        return None
-```
-
-### Plugin Types
-- **TemplatePlugin**: Custom document templates
-- **PolicyPlugin**: Validation rules and permissions
-- **FormatterPlugin**: Custom entry formatting
-- **HookPlugin**: Custom workflow hooks
-
-## Troubleshooting
-
-### Common Issues
-
-#### Repository Not Found
-**Error**: `Could not find repository root`
-**Solution**: Ensure your directory has a `.git` directory or `.scribe` marker
-
-```bash
-# Initialize git repository
-git init
-
-# Or add Scribe marker
-mkdir .scribe
-```
-
-#### Configuration Not Loading
-**Error**: `Failed to load configuration`
-**Solution**: Check YAML syntax and file permissions
-
-```bash
-# Validate YAML
-python -c "import yaml; yaml.safe_load(open('.scribe/config/scribe.yaml'))"
-
-# Check permissions
-ls -la .scribe/config/scribe.yaml
-```
-
-#### Permission Denied
-**Error**: `PermissionError: Operation not allowed`
-**Solution**: Check repository permissions in configuration
-
-```bash
-# Run doctor to diagnose
-python -m scribe_mcp.scripts.scribe_cli doctor
-```
-
-### Debug Mode
-Enable debug logging:
-
-```bash
-export SCRIBE_DEBUG=true
-python -m scribe_mcp.server
-```
-
-### Log Files
-Scribe logs to:
-- Console output (server startup/errors)
-- Repository-specific progress logs
-- Optional external logging if configured
-
-## Migration from Embedded Mode
-
-### From Embedded to Global
-1. Install Scribe globally once
-2. Remove embedded Scribe from repositories
-3. Add `.scribe/config/scribe.yaml` to repositories that need custom configuration
-4. Update MCP client configuration to point to global installation
-
-### Preserving Data
-Migrate existing data:
-1. Export existing progress logs
-2. Back up database files
-3. Import into global Scribe installation
-
-## Security Considerations
-
-### Path Sandboxing
-Scribe restricts operations to repository boundaries:
-- Cannot access files outside repository
-- Cannot traverse to parent directories
-- Cannot access system files
-
-### Permission System
-Repository-specific permissions control:
-- `allow_rotate`: Log rotation permissions
-- `allow_generate_docs`: Document generation permissions
-- `require_project`: Whether project selection is required
-- Custom permissions via plugins
-
-### Plugin Security
-- Plugins run in repository context
-- No access to other repositories
-- Plugin validation and error handling
-
-## Performance
-
-### Startup Time
-- Repository discovery: <100ms
-- Configuration loading: <50ms
-- Plugin initialization: <200ms per plugin
-
-### Memory Usage
-- Base memory: ~50MB
-- Per-repository cache: ~10MB
-- Plugin memory: Variable
-
-### Storage
-- SQLite: Single database file
-- PostgreSQL: Shared database instance
-- Config files: <10KB per repository
-
-## Support
-
-### Getting Help
-1. Run `python -m scribe_mcp.scripts.scribe_cli doctor` for diagnostics
-2. Check the demo scripts for working examples
-3. Review the troubleshooting section
-
-### Contributing
-1. Test changes with `python demo/test_global_scribe.py`
-2. Update documentation
-3. Ensure backward compatibility
-
----
-
-**Scribe Global Deployment** provides a seamless, secure, and scalable way to manage project documentation across multiple repositories with automatic discovery and per-repository customization.
+- [README.md](../README.md)
+- [MCP server guide](mcp_server_guide.md)
+- [Remote client contract](REMOTE_CLIENT.md)
+- [Compatibility matrix](COMPATIBILITY_MATRIX.md)
+- [Release surface](RELEASE_SURFACE.md)

@@ -38,23 +38,50 @@ class RemoteProbeStatus(str, enum.Enum):
 def resolve_configured_mode(settings: Settings) -> OperatingMode:
     """Resolve the configured storage contract without network probing."""
     mode_setting = settings.mode
+    configured_backend = str(getattr(settings, "storage_backend", "postgres")).strip().lower() or "postgres"
+    db_url = getattr(settings, "db_url", None)
+    if _is_public_release(settings):
+        if mode_setting == OperatingMode.CLIENT.value:
+            raise RuntimeError(
+                "SCRIBE_MODE=client is not supported in SCRIBE_RELEASE_PROFILE=public. "
+                "Initial public release excludes remote/client mode."
+            )
+        if settings.remote_server_url:
+            raise RuntimeError(
+                "SCRIBE_REMOTE_URL is not supported in SCRIBE_RELEASE_PROFILE=public. "
+                "Initial public release excludes remote/client mode."
+            )
     if mode_setting in (
         OperatingMode.SERVER.value,
         OperatingMode.CLIENT.value,
         OperatingMode.STANDALONE.value,
     ):
+        if mode_setting == OperatingMode.SERVER.value and configured_backend != "postgres":
+            raise RuntimeError(
+                "SCRIBE_MODE=server requires SCRIBE_STORAGE_BACKEND=postgres. "
+                "SQLite is only supported when explicitly running standalone mode."
+            )
+        if mode_setting == OperatingMode.SERVER.value and not db_url:
+            raise RuntimeError(
+                "SCRIBE_MODE=server requires SCRIBE_DB_URL. "
+                "Server/public-release runtime fail-closes when Postgres configuration is missing."
+            )
         return OperatingMode(mode_setting)
 
     if settings.remote_server_url:
         return OperatingMode.CLIENT
 
-    if getattr(settings, "storage_backend", "sqlite") == "sqlite":
+    if configured_backend == "sqlite":
         return OperatingMode.STANDALONE
 
-    if settings.db_url:
+    if db_url:
         return OperatingMode.SERVER
 
-    return OperatingMode.STANDALONE
+    raise RuntimeError(
+        "Server-class runtime requires Postgres configuration. "
+        "Set SCRIBE_DB_URL for Postgres server mode, or explicitly opt into standalone SQLite "
+        "with SCRIBE_MODE=standalone and SCRIBE_STORAGE_BACKEND=sqlite."
+    )
 
 
 async def detect_operating_mode(settings: Settings) -> OperatingMode:
@@ -67,8 +94,9 @@ async def detect_operating_mode(settings: Settings) -> OperatingMode:
        - Unreachable + fallback enabled → STANDALONE (with warning)
        - Unreachable + fallback disabled → raise RuntimeError
     3. Local runtime storage selection
-       - Explicit SQLite backend (or no DB URL) → STANDALONE
+       - Explicit SQLite backend → STANDALONE
        - Direct Postgres runtime configured → SERVER
+       - Postgres default without DB URL → fail closed
     """
     configured_mode = resolve_configured_mode(settings)
     mode_setting = settings.mode
@@ -102,6 +130,12 @@ async def detect_operating_mode(settings: Settings) -> OperatingMode:
             )
 
         # Remote unreachable
+        if _is_public_release(settings):
+            raise RuntimeError(
+                "Remote probing failed in SCRIBE_RELEASE_PROFILE=public. "
+                "Public release mode fail-closes remote/client startup."
+            )
+
         if settings.remote_fallback:
             logger.warning(
                 "Remote server at %s unreachable — falling back to standalone mode. "
@@ -173,3 +207,10 @@ def _remote_auth_headers(auth_token: Optional[str]) -> dict[str, str]:
         "Authorization": f"Bearer {auth_token}",
         "x-scribe-auth": auth_token,
     }
+
+
+def _is_public_release(settings: Settings) -> bool:
+    """Return whether runtime is using public-release fail-closed profile."""
+    if bool(getattr(settings, "public_release", False)):
+        return True
+    return str(getattr(settings, "release_profile", "internal")).strip().lower() == "public"
