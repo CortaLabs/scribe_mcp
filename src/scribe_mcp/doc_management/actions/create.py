@@ -11,9 +11,19 @@ _CREATE_DOC_TYPE_ACTIONS = {
     "security": "create_security_report",
     "review": "create_review_report",
     "agent_card": "create_agent_report_card",
+    "spec": "create_doc",
 }
 
 _SPECIAL_CREATE_ACTIONS = set(_CREATE_DOC_TYPE_ACTIONS.values())
+_SPECIAL_DOC_TYPES = {"research", "bug", "security", "review", "agent_card"}
+
+
+def classify_create_doc_type(metadata: Optional[Dict[str, Any]]) -> str:
+    """Return normalized doc_type for create intent routing."""
+    if not isinstance(metadata, dict):
+        return "custom"
+    value = str(metadata.get("doc_type", "custom") or "custom").strip().lower()
+    return value or "custom"
 
 
 async def normalize_or_handle_create_action(
@@ -34,7 +44,7 @@ async def normalize_or_handle_create_action(
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Normalize create action and dispatch special create handlers when needed."""
     if action == "create":
-        doc_type = metadata.get("doc_type", "custom") if isinstance(metadata, dict) else "custom"
+        doc_type = classify_create_doc_type(metadata)
         if doc_type == "custom":
             return "create_doc", None
 
@@ -42,8 +52,13 @@ async def normalize_or_handle_create_action(
         if not mapped_action:
             return action, helper.error_response(
                 f"Unknown doc_type: {doc_type}",
-                suggestion="Valid doc_types: custom, research, bug, security, review, agent_card",
+                suggestion=(
+                    "Valid doc_types: custom, spec, "
+                    + ", ".join(sorted(_SPECIAL_DOC_TYPES))
+                ),
             )
+        if mapped_action == "create_doc":
+            return mapped_action, None
 
         response = await handle_special_document_creation(
             project,

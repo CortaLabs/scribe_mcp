@@ -20,6 +20,7 @@ from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
     resolve_logging_context,
 )
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 
 
@@ -150,6 +151,7 @@ class _ReadRecentHelper(LoggingToolMixin):
 
 
 _READ_RECENT_HELPER = _ReadRecentHelper()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 
 
 @app.tool(**read_only_local_tool(title="Read Recent Entries", tags=("logs", "inspection", "read-only")))
@@ -337,6 +339,7 @@ async def read_recent(
                 pagination=pagination_info,
                 extra_data={},
             )
+            _attach_planning_advisories(response, project.get("name"))
 
             # Add project name for concurrent session clarity
             if context and context.project:
@@ -440,6 +443,7 @@ async def read_recent(
         pagination=pagination_info,
         extra_data={},
     )
+    _attach_planning_advisories(response, project.get("name"))
 
     # Add project name for concurrent session clarity
     if context and context.project:
@@ -522,6 +526,14 @@ def _normalise_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
     if "priority_sort" in filters:
         normalised["priority_sort"] = filters["priority_sort"]
     return normalised
+
+
+def _attach_planning_advisories(response: Dict[str, Any], project_name: Optional[str]) -> None:
+    if not project_name:
+        return
+    advisories = _PROJECT_REGISTRY.get_planning_advisories(project_name)
+    if advisories:
+        response["planning_advisories"] = advisories
 
 
 def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:

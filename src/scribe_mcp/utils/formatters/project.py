@@ -768,6 +768,11 @@ class ProjectFormatter(BaseFormatter):
             if root and dev_plan.startswith(root):
                 dev_plan = dev_plan[len(root):].lstrip('/')
         lines.append(f"  Dev Plan: {dev_plan}")
+        root_authorization = project.get("root_authorization") or {}
+        if root_authorization.get("compatibility_override_used"):
+            lines.append("  Root Authorization: compatibility override via skip_validation=true")
+        elif root_authorization.get("skip_validation_requested"):
+            lines.append("  Root Authorization: skip_validation=true (trusted scope)")
         lines.append("")
 
         # Documents Created section
@@ -873,6 +878,11 @@ class ProjectFormatter(BaseFormatter):
             if root and dev_plan.startswith(root):
                 dev_plan = dev_plan[len(root):].lstrip('/')
         lines.append(f"  Dev Plan: {dev_plan}")
+        root_authorization = project.get("root_authorization") or {}
+        if root_authorization.get("compatibility_override_used"):
+            lines.append("  Root Authorization: compatibility override via skip_validation=true")
+        elif root_authorization.get("skip_validation_requested"):
+            lines.append("  Root Authorization: skip_validation=true (trusted scope)")
         lines.append("")
 
         # Existing Project Inventory section

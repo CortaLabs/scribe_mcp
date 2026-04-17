@@ -27,6 +27,7 @@ from scribe_mcp.templates import template_root
 from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
+from scribe_mcp.utils.error_handler import sanitize_error_message
 import re
 
 # Setup logging for doc management operations
@@ -60,6 +61,8 @@ def _log_operation(
     metadata: Optional[Dict[str, Any]] = None
 ) -> None:
     """Log document operations with structured data."""
+    redacted_error_message = sanitize_error_message(error_message) if error_message else None
+    redacted_metadata = _redact_error_payload(metadata or {})
     log_data = {
         "timestamp": time.time(),
         "operation": operation,
@@ -72,21 +75,33 @@ def _log_operation(
         "file_size_after": file_size_after,
         "file_size_change": file_size_after - file_size_before,
         "success": success,
-        "error_message": error_message,
-        "metadata": metadata or {}
+        "error_message": redacted_error_message,
+        "metadata": redacted_metadata,
     }
 
     # Convert to JSON for structured logging
     log_message = json.dumps(log_data, separators=(',', ':'))
 
     if level == "error":
-        doc_logger.error(f"Document operation failed: {operation} on {doc_name} - {error_message or 'Unknown error'}", extra={"structured_log": log_data})
+        doc_logger.error(f"Document operation failed: {operation} on {doc_name} - {redacted_error_message or 'Unknown error'}", extra={"structured_log": log_data})
     elif level == "warning":
-        doc_logger.warning(f"Document operation warning: {operation} on {doc_name} - {error_message}", extra={"structured_log": log_data})
+        doc_logger.warning(f"Document operation warning: {operation} on {doc_name} - {redacted_error_message}", extra={"structured_log": log_data})
     elif level == "info":
         doc_logger.info(f"Document operation successful: {operation} on {doc_name}", extra={"structured_log": log_data})
     else:
         doc_logger.debug(f"Document operation: {operation} on {doc_name}", extra={"structured_log": log_data})
+
+
+def _redact_error_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_error_message(value)
+    if isinstance(value, dict):
+        return {key: _redact_error_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_error_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_error_payload(item) for item in value)
+    return value
 
 
 @dataclass
@@ -122,6 +137,74 @@ class DocumentVerificationError(Exception):
 class DocumentValidationError(Exception):
     """Raised when document validation fails."""
     pass
+
+
+def resolve_registered_doc_key(project: Dict[str, Any], doc_name: str) -> str:
+    """Resolve doc aliases and path/.md variants to a registered docs key when possible."""
+    candidate = str(doc_name or "").strip()
+    if not candidate:
+        return candidate
+
+    docs = project.get("docs") or {}
+    if candidate in docs:
+        return candidate
+
+    lowered_lookup = {str(key).strip().lower(): key for key in docs.keys()}
+    lowered_candidate = candidate.lower()
+    if lowered_candidate in lowered_lookup:
+        return lowered_lookup[lowered_candidate]
+
+    candidate_path = Path(candidate)
+    candidate_name = candidate_path.name
+    if candidate_name in docs:
+        return candidate_name
+    if candidate_name.lower() in lowered_lookup:
+        return lowered_lookup[candidate_name.lower()]
+
+    candidate_has_md = candidate_name.lower().endswith(".md")
+    candidate_stem = candidate_name[:-3] if candidate_has_md else candidate_name
+    candidate_stem_lower = candidate_stem.lower()
+    if candidate_stem in docs:
+        return candidate_stem
+    if candidate_stem_lower in lowered_lookup:
+        return lowered_lookup[candidate_stem_lower]
+
+    normalized_candidate_rel = candidate.replace("\\", "/").lstrip("./")
+    candidate_abs: Optional[Path] = None
+    try:
+        if candidate_path.is_absolute():
+            candidate_abs = candidate_path.resolve()
+    except Exception:
+        candidate_abs = None
+
+    for key, value in docs.items():
+        try:
+            value_path = Path(str(value))
+        except Exception:
+            continue
+
+        value_name = value_path.name
+        value_stem = value_path.stem
+        if candidate_name and value_name.lower() == candidate_name.lower():
+            return key
+        if candidate_stem and value_stem.lower() == candidate_stem_lower:
+            return key
+
+        normalized_value_rel = str(value_path).replace("\\", "/")
+        if normalized_candidate_rel and (
+            normalized_value_rel == normalized_candidate_rel
+            or normalized_value_rel.endswith(f"/{normalized_candidate_rel}")
+        ):
+            return key
+
+        if candidate_abs is not None:
+            try:
+                if value_path.resolve() == candidate_abs:
+                    return key
+            except Exception:
+                pass
+
+    return candidate
 
 
 async def apply_doc_change(
@@ -580,6 +663,21 @@ async def apply_doc_change(
         verification_passed = False
 
         date_str = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        actor_id = "Scribe"
+        if isinstance(metadata, dict):
+            metadata_actor = metadata.get("agent_id")
+            if isinstance(metadata_actor, str) and metadata_actor.strip():
+                actor_id = metadata_actor.strip()
+        try:
+            from scribe_mcp import server as server_module
+
+            agent_identity = server_module.get_agent_identity()
+            if agent_identity:
+                resolved_actor = await agent_identity.get_or_create_agent_id()
+                if isinstance(resolved_actor, str) and resolved_actor.strip():
+                    actor_id = resolved_actor.strip()
+        except Exception:
+            pass
         frontmatter_extra: Dict[str, Any] = {}
 
         # === AUTO-TRANSFORM HOOK (opt-in via frontmatter) ===
@@ -597,7 +695,11 @@ async def apply_doc_change(
                 transforms_applied.append("normalize_headers")
             except Exception as e:
                 # Non-fatal - log but continue
-                doc_logger.warning(f"Auto-normalize failed for {doc_name}: {e}")
+                doc_logger.warning(
+                    "Auto-normalize failed for %s: %s",
+                    doc_name,
+                    sanitize_error_message(str(e)),
+                )
 
         if auto_toc and action not in ("normalize_headers", "generate_toc"):
             # Apply TOC generation to body
@@ -606,7 +708,11 @@ async def apply_doc_change(
                 transforms_applied.append("generate_toc")
             except Exception as e:
                 # Non-fatal - log but continue
-                doc_logger.warning(f"Auto-TOC failed for {doc_name}: {e}")
+                doc_logger.warning(
+                    "Auto-TOC failed for %s: %s",
+                    doc_name,
+                    sanitize_error_message(str(e)),
+                )
 
         allow_frontmatter_create = action != "status_update"
 
@@ -619,6 +725,8 @@ async def apply_doc_change(
                 project=project,
                 metadata=metadata,
                 date_str=date_str,
+                action=action,
+                actor_id=actor_id,
                 allow_create=allow_frontmatter_create,
             )
             after_hash = _hash_text(updated_text)
@@ -706,7 +814,10 @@ async def apply_doc_change(
                             file_size_after=file_size_before,  # Back to original
                             success=False,
                             error_message="Write failed, rolled back successfully",
-                            metadata={"rollback": True, "original_error": str(e)}
+                            metadata={
+                                "rollback": True,
+                                "original_error": sanitize_error_message(str(e)),
+                            }
                         )
                 except Exception as rollback_error:
                     duration_ms = (time.time() - start_time) * 1000
@@ -719,13 +830,20 @@ async def apply_doc_change(
                         file_path=doc_path,
                         duration_ms=duration_ms,
                         file_size_before=file_size_before,
-                        file_size_after=file_size_before,
-                        success=False,
-                        error_message=f"Write failed and rollback failed: {rollback_error}",
-                        metadata={"rollback_failed": True, "original_error": str(e)}
-                    )
+                            file_size_after=file_size_before,
+                            success=False,
+                            error_message=sanitize_error_message(
+                                f"Write failed and rollback failed: {rollback_error}"
+                            ),
+                            metadata={
+                                "rollback_failed": True,
+                                "original_error": sanitize_error_message(str(e)),
+                            }
+                        )
 
-                raise DocumentOperationError(f"Failed to write document {doc_path}: {e}")
+                raise DocumentOperationError(
+                    sanitize_error_message(f"Failed to write document {doc_path}: {e}")
+                )
 
         include_frontmatter_extra = bool(
             isinstance(metadata, dict) and metadata.get("include_frontmatter_extra")
@@ -734,7 +852,8 @@ async def apply_doc_change(
             frontmatter_extra = {
                 key: value
                 for key, value in frontmatter_extra.items()
-                if not key.startswith("frontmatter")
+                if key in {"frontmatter_updates", "frontmatter_ignored_keys", "attribution", "metadata_hints"}
+                or not key.startswith("frontmatter")
             }
 
         # Always include document structure info so agents know the coordinate
@@ -770,6 +889,7 @@ async def apply_doc_change(
         )
 
     except (DocumentValidationError, DocumentOperationError, DocumentVerificationError) as e:
+        sanitized_error = sanitize_error_message(str(e))
         duration_ms = (time.time() - start_time) * 1000
         _log_operation(
             level="error",
@@ -782,14 +902,14 @@ async def apply_doc_change(
             file_size_before=file_size_before,
             file_size_after=file_size_before,
             success=False,
-            error_message=str(e),
+            error_message=sanitized_error,
             metadata={"error_type": type(e).__name__}
         )
 
         extra: Dict[str, Any] = {}
         if isinstance(e, DocumentOperationError) and getattr(e, "extra", None):
             extra.update(e.extra)
-        if "PATCH_STALE_SOURCE" in str(e):
+        if "PATCH_STALE_SOURCE" in sanitized_error:
             extra.setdefault("precondition_failed", "SOURCE_HASH_MISMATCH")
 
         return DocChangeResult(
@@ -803,12 +923,13 @@ async def apply_doc_change(
             diff_preview="",
             extra=extra,
             success=False,
-            error_message=str(e),
+            error_message=sanitized_error,
             verification_passed=False,
             file_size_before=file_size_before,
             file_size_after=file_size_before,
         )
     except Exception as e:
+        sanitized_error = sanitize_error_message(str(e))
         # Catch any unexpected errors
         duration_ms = (time.time() - start_time) * 1000
         _log_operation(
@@ -822,7 +943,7 @@ async def apply_doc_change(
             file_size_before=file_size_before,
             file_size_after=file_size_before,
             success=False,
-            error_message=f"Unexpected error: {e}",
+            error_message=f"Unexpected error: {sanitized_error}",
             metadata={"error_type": type(e).__name__, "unexpected": True}
         )
 
@@ -837,7 +958,7 @@ async def apply_doc_change(
             diff_preview="",
             extra={},
             success=False,
-            error_message=f"Unexpected error: {e}",
+            error_message=f"Unexpected error: {sanitized_error}",
             verification_passed=False,
             file_size_before=file_size_before,
             file_size_after=file_size_before,
@@ -858,6 +979,7 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
     # Validate inputs
     if not doc_name:
         raise ValueError("doc_name cannot be empty")
+    doc_name = resolve_registered_doc_key(project, doc_name)
 
     project_name = project.get("name")
     if not project_name:
@@ -960,7 +1082,10 @@ def _resolve_create_doc_path(
     if not resolved_name:
         raise DocumentOperationError("CREATE_DOC_MISSING_NAME: doc_name or register_as is required")
 
-    safe_name = slugify_filename(resolved_name)
+    normalized_name = str(resolved_name)
+    while normalized_name.lower().endswith(".md"):
+        normalized_name = normalized_name[:-3]
+    safe_name = slugify_filename(normalized_name)
 
     docs_dir = project.get("docs_dir")
     if docs_dir:
@@ -981,7 +1106,8 @@ def _resolve_create_doc_path(
             ) from exc
         docs_dir = target_path
 
-    resolved_path = (docs_dir / f"{safe_name}.md").resolve()
+    filename = f"{safe_name}.md"
+    resolved_path = (docs_dir / filename).resolve()
     try:
         resolved_path.relative_to(project_root)
     except ValueError as exc:
@@ -1050,11 +1176,13 @@ async def _render_content(
             return rendered
 
         except TemplateEngineError as e:
-            doc_logger.error(f"Template engine error for '{template_name}': {e}")
-            raise DocumentOperationError(f"Failed to render template '{template_name}': {e}")
+            safe_error = sanitize_error_message(e)
+            doc_logger.error(f"Template engine error for '{template_name}': {safe_error}")
+            raise DocumentOperationError(f"Failed to render template '{template_name}': {safe_error}")
         except Exception as e:
-            doc_logger.error(f"Unexpected error rendering template '{template_name}': {e}")
-            raise DocumentOperationError(f"Unexpected template error: {e}")
+            safe_error = sanitize_error_message(e)
+            doc_logger.error(f"Unexpected error rendering template '{template_name}': {safe_error}")
+            raise DocumentOperationError(f"Unexpected template error: {safe_error}")
 
     if isinstance(content, str) and content:
         # Preserve author-provided formatting, but allow inline Jinja rendering when present.
@@ -1080,7 +1208,10 @@ async def _render_content(
                 )
                 return rendered_inline
             except Exception as e:  # pragma: no cover - defensive
-                doc_logger.error(f"Inline Jinja rendering failed, returning raw content: {e}")
+                safe_error = sanitize_error_message(e)
+                doc_logger.error(
+                    f"Inline Jinja rendering failed, returning raw content: {safe_error}"
+                )
                 return normalized
 
         return normalized
@@ -1098,6 +1229,29 @@ async def _load_fragment(name: str) -> str:
 def _replace_section(text: str, section: Optional[str], content: str, *, allow_append: bool = False) -> str:
     marker = SECTION_MARKER.format(section=section)
 
+    def _line_start_at(index: int) -> int:
+        line_start = text.rfind("\n", 0, index)
+        return 0 if line_start == -1 else line_start + 1
+
+    def _associated_heading_start(marker_index: int) -> Optional[int]:
+        marker_line_start = _line_start_at(marker_index)
+        cursor = marker_line_start - 1
+        while cursor >= 0:
+            line_end = cursor + 1
+            prev_newline = text.rfind("\n", 0, line_end - 1)
+            line_start = 0 if prev_newline == -1 else prev_newline + 1
+            line = text[line_start:line_end]
+            stripped = line.strip()
+            if not stripped:
+                cursor = line_start - 1
+                continue
+            if _HEADER_LINE_PATTERN.match(stripped):
+                return line_start
+            return None
+        return None
+
+    replacement_heading_prefix: Optional[str] = None
+
     # Strip redundant header+marker from content if present at the start.
     # This handles the common case where caller includes full section structure
     # (header + marker + body) instead of just the body content.
@@ -1112,6 +1266,7 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
             re.match(r'^#+\s', line) or not line.strip()
             for line in prefix_clean.splitlines()
         ):
+            replacement_heading_prefix = prefix_clean if prefix_clean else None
             # Strip everything up to and including the marker
             after_marker = content_stripped[marker_pos + len(marker):]
             content = after_marker.lstrip('\n\r')
@@ -1133,8 +1288,15 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
         return prefix + marker + "\n" + content.strip() + "\n"
     if text.find(marker, idx + 1) != -1:
         raise DocumentOperationError(
-            f"SECTION_ANCHOR_AMBIGUOUS: '{section}' appears multiple times; resolve duplicates first"
+            f"SECTION_ANCHOR_AMBIGUOUS: '{section}' appears multiple times; resolve duplicates first "
+            "or use replace_range/apply_patch for explicit boundaries"
         )
+    section_start = idx
+    if replacement_heading_prefix:
+        heading_start = _associated_heading_start(idx)
+        if heading_start is not None:
+            section_start = heading_start
+
     start = idx + len(marker)
     # Skip newline right after marker
     if start < len(text) and text[start] == "\r":
@@ -1142,10 +1304,19 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
     if start < len(text) and text[start] == "\n":
         start += 1
     next_marker = text.find("<!-- ID:", start)
-    if next_marker == -1:
-        next_marker = len(text)
-    new_block = marker + "\n" + content.strip() + "\n"
-    replacement = text[:idx] + new_block + text[next_marker:]
+    section_end = len(text)
+    if next_marker != -1:
+        next_heading_start = _associated_heading_start(next_marker)
+        section_end = next_heading_start if next_heading_start is not None else next_marker
+
+    new_block_lines: list[str] = []
+    if replacement_heading_prefix:
+        new_block_lines.append(replacement_heading_prefix)
+    new_block_lines.append(marker)
+    if content.strip():
+        new_block_lines.append(content.strip())
+    new_block = "\n".join(new_block_lines) + "\n"
+    replacement = text[:section_start] + new_block + text[section_end:]
     return replacement
 
 
@@ -2732,6 +2903,7 @@ def _default_frontmatter(
     project_name: str,
     body_text: str,
     date_str: str,
+    actor_id: str = "Scribe",
 ) -> Dict[str, Any]:
     project_slug = slugify_project_name(project_name or "project")
     doc_name_slug = doc_name.lower().replace("_", "-")
@@ -2750,13 +2922,56 @@ def _default_frontmatter(
         "status": "draft",
         "version": "0.1",
         "last_updated": date_str,
-        "maintained_by": "Corta Labs",
-        "created_by": "Corta Labs",
+        "maintained_by": actor_id,
+        "created_by": actor_id,
         "owners": [],
         "related_docs": [],
         "tags": [],
         "summary": "",
     }
+
+
+_WORKFLOW_FRONTMATTER_KEYS = {
+    "summary",
+    "tags",
+    "owners",
+    "category",
+    "status",
+    "version",
+    "related_docs",
+    "maintained_by",
+}
+_TRACE_INPUT_KEYS = ("run_id", "stage", "session_id", "work_item_id")
+_LIST_WORKFLOW_KEYS = {"tags", "owners"}
+_PRESERVED_WORKFLOW_KEYS = {
+    "summary",
+    "tags",
+    "owners",
+    "category",
+    "status",
+    "version",
+    "related_docs",
+    "maintained_by",
+}
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    values: list[str] = []
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = [item for item in value if isinstance(item, str)]
+    else:
+        return []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        cleaned = raw.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        deduped.append(cleaned)
+    return deduped
 
 
 def _apply_frontmatter_pipeline(
@@ -2768,14 +2983,37 @@ def _apply_frontmatter_pipeline(
     project: Dict[str, Any],
     metadata: Optional[Dict[str, Any]],
     date_str: str,
+    action: str,
+    actor_id: str,
     allow_create: bool = True,
 ) -> tuple[str, Dict[str, Any], int]:
+    is_create = action == "create_doc"
+    metadata_hints: list[Dict[str, str]] = []
+    frontmatter_ignored_keys: list[Dict[str, str]] = []
+    frontmatter_updates_summary: Dict[str, list[str]] = {
+        "updated_keys": [],
+        "defaulted_keys": [],
+        "preserved_keys": [],
+    }
+
     if metadata and metadata.get("frontmatter_disable") is True:
         line_count = len(parsed.frontmatter_raw.splitlines()) if parsed.has_frontmatter else 0
+        summary = {
+            "frontmatter_updated": False,
+            "frontmatter_updates": frontmatter_updates_summary,
+            "frontmatter_ignored_keys": frontmatter_ignored_keys,
+            "metadata_hints": metadata_hints,
+            "attribution": {
+                "actor_id": actor_id,
+                "created_by": parsed.frontmatter_data.get("created_by") if parsed.has_frontmatter else actor_id,
+                "maintained_by": parsed.frontmatter_data.get("maintained_by") if parsed.has_frontmatter else actor_id,
+                "edit_trace_updated": False,
+            },
+        }
         if parsed.has_frontmatter:
             return (
                 parsed.frontmatter_raw + updated_body,
-                {"frontmatter_updated": False},
+                summary,
                 line_count,
             )
         updated_parsed = parse_frontmatter(updated_body)
@@ -2783,10 +3021,10 @@ def _apply_frontmatter_pipeline(
             line_count = len(updated_parsed.frontmatter_raw.splitlines())
             return (
                 updated_body,
-                {"frontmatter_updated": False},
+                summary,
                 line_count,
             )
-        return updated_body, {"frontmatter_updated": False}, 0
+        return updated_body, summary, 0
 
     updates: Dict[str, Any] = {}
     updates["title"] = _extract_title(updated_body, doc_name.replace("_", " ").title())
@@ -2803,10 +3041,157 @@ def _apply_frontmatter_pipeline(
             updates["doc_type"] = metadata["doc_type"]
         if metadata.get("doc_name"):
             updates["doc_name"] = metadata["doc_name"]
+
+    explicit_created_by: Optional[str] = None
+    explicit_maintained_by: Optional[str] = None
+    trace_overrides: Dict[str, Any] = {}
+
+    if isinstance(metadata, dict):
+        if is_create and not str(metadata.get("summary", "")).strip():
+            metadata_hints.append(
+                {
+                    "code": "summary_missing_on_create",
+                    "message": "summary is recommended on create for workflow routing context.",
+                }
+            )
+
+        for key in _WORKFLOW_FRONTMATTER_KEYS:
+            if key not in metadata:
+                continue
+            if key in _LIST_WORKFLOW_KEYS:
+                normalized = _normalize_string_list(metadata.get(key))
+                if isinstance(metadata.get(key), str):
+                    metadata_hints.append(
+                        {
+                            "code": f"{key}_scalar_normalized_to_list",
+                            "message": f"{key} scalar input was normalized to a single-item list.",
+                        }
+                    )
+                updates[key] = normalized
+            else:
+                updates[key] = metadata.get(key)
+            frontmatter_updates_summary["updated_keys"].append(key)
+
+        for trace_key in _TRACE_INPUT_KEYS:
+            if trace_key in metadata and metadata.get(trace_key) is not None:
+                trace_overrides[trace_key] = metadata.get(trace_key)
+
+        if "edit_trace" in metadata:
+            frontmatter_ignored_keys.append(
+                {"field": "metadata.edit_trace", "reason": "reserved_field_managed_by_tool"}
+            )
+            metadata_hints.append(
+                {"code": "edit_trace_ignored", "message": "edit_trace is reserved and authored by manage_docs."}
+            )
+
+        if "created_by" in metadata:
+            if is_create:
+                explicit_created_by = str(metadata.get("created_by") or "").strip() or None
+            else:
+                frontmatter_ignored_keys.append(
+                    {"field": "metadata.created_by", "reason": "edit_time_override_ignored"}
+                )
+                metadata_hints.append(
+                    {
+                        "code": "created_by_edit_override_ignored",
+                        "message": "created_by is immutable after create in the generic frontmatter contract.",
+                    }
+                )
+
     if isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict):
-        updates.update(metadata["frontmatter"])
+        for key, value in metadata["frontmatter"].items():
+            if key == "edit_trace":
+                frontmatter_ignored_keys.append(
+                    {"field": "metadata.frontmatter.edit_trace", "reason": "reserved_field_managed_by_tool"}
+                )
+                metadata_hints.append(
+                    {"code": "edit_trace_ignored", "message": "edit_trace is reserved and authored by manage_docs."}
+                )
+                continue
+            if key == "created_by":
+                if is_create:
+                    explicit_created_by = str(value or "").strip() or None
+                else:
+                    frontmatter_ignored_keys.append(
+                        {"field": "metadata.frontmatter.created_by", "reason": "edit_time_override_ignored"}
+                    )
+                    metadata_hints.append(
+                        {
+                            "code": "created_by_edit_override_ignored",
+                            "message": "created_by is immutable after create in the generic frontmatter contract.",
+                        }
+                    )
+                continue
+            if key in _TRACE_INPUT_KEYS:
+                if value is not None:
+                    trace_overrides[key] = value
+                continue
+            if key == "maintained_by":
+                explicit_maintained_by = str(value or "").strip() or None
+            if key in _LIST_WORKFLOW_KEYS and isinstance(value, str):
+                updates[key] = _normalize_string_list(value)
+                metadata_hints.append(
+                    {
+                        "code": f"{key}_scalar_normalized_to_list",
+                        "message": f"{key} scalar input was normalized to a single-item list.",
+                    }
+                )
+            else:
+                updates[key] = value
+            if key not in frontmatter_updates_summary["updated_keys"]:
+                frontmatter_updates_summary["updated_keys"].append(key)
+
+    if "maintained_by" in updates and updates.get("maintained_by") is not None:
+        explicit_maintained_by = str(updates.get("maintained_by") or "").strip() or None
+
+    existing_frontmatter = dict(parsed.frontmatter_data or {})
+    existing_trace = (
+        dict(existing_frontmatter.get("edit_trace"))
+        if isinstance(existing_frontmatter.get("edit_trace"), dict)
+        else {}
+    )
 
     updates["last_updated"] = date_str
+    created_by = (
+        existing_frontmatter.get("created_by")
+        if (parsed.has_frontmatter and existing_frontmatter.get("created_by"))
+        else None
+    )
+    if not created_by:
+        created_by = explicit_created_by or actor_id
+        frontmatter_updates_summary["defaulted_keys"].append("created_by")
+    if str(created_by).strip() == "Corta Labs":
+        metadata_hints.append(
+            {
+                "code": "legacy_created_by_placeholder_preserved",
+                "message": "created_by legacy placeholder preserved; only maintained_by/edit_trace were refreshed.",
+            }
+        )
+
+    maintained_by = explicit_maintained_by or actor_id
+    if not explicit_maintained_by:
+        frontmatter_updates_summary["defaulted_keys"].append("maintained_by")
+    updates["created_by"] = created_by
+    updates["maintained_by"] = maintained_by
+
+    edit_trace: Dict[str, Any] = {
+        "tool": "manage_docs",
+        "created_at": existing_trace.get("created_at") or date_str,
+        "created_via": existing_trace.get("created_via") or ("create_doc" if is_create else action),
+        "last_edited_at": date_str,
+        "last_edited_by": actor_id,
+        "last_action": action,
+    }
+    for key in _TRACE_INPUT_KEYS:
+        if key in trace_overrides:
+            edit_trace[key] = trace_overrides[key]
+        elif key in existing_trace:
+            edit_trace[key] = existing_trace[key]
+    updates["edit_trace"] = edit_trace
+
+    for key in _PRESERVED_WORKFLOW_KEYS:
+        if parsed.has_frontmatter and key not in updates and key in existing_frontmatter:
+            frontmatter_updates_summary["preserved_keys"].append(key)
 
     if not parsed.has_frontmatter:
         updated_parsed = parse_frontmatter(updated_body)
@@ -2825,35 +3210,109 @@ def _apply_frontmatter_pipeline(
                         "frontmatter_updated": True,
                         "frontmatter_created": False,
                         "frontmatter": merged,
+                        "frontmatter_updates": frontmatter_updates_summary,
+                        "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                        "metadata_hints": metadata_hints,
+                        "attribution": {
+                            "actor_id": actor_id,
+                            "created_by": merged.get("created_by"),
+                            "maintained_by": merged.get("maintained_by"),
+                            "edit_trace_updated": True,
+                        },
                     },
                     line_count,
                 )
             line_count = len(updated_parsed.frontmatter_raw.splitlines())
             return (
                 updated_body,
-                {"frontmatter_updated": False, "frontmatter_created": False},
+                {
+                    "frontmatter_updated": False,
+                    "frontmatter_created": False,
+                    "frontmatter_updates": frontmatter_updates_summary,
+                    "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                    "metadata_hints": metadata_hints,
+                    "attribution": {
+                        "actor_id": actor_id,
+                        "created_by": created_by,
+                        "maintained_by": maintained_by,
+                        "edit_trace_updated": False,
+                    },
+                },
                 line_count,
             )
         if not allow_create:
             return (
                 updated_body,
-                {"frontmatter_updated": False, "frontmatter_created": False},
+                {
+                    "frontmatter_updated": False,
+                    "frontmatter_created": False,
+                    "frontmatter_updates": frontmatter_updates_summary,
+                    "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                    "metadata_hints": metadata_hints,
+                    "attribution": {
+                        "actor_id": actor_id,
+                        "created_by": created_by,
+                        "maintained_by": maintained_by,
+                        "edit_trace_updated": False,
+                    },
+                },
                 0,
             )
 
-        defaults = _default_frontmatter(doc_name, doc_category, project.get("name", ""), updated_body, date_str)
+        defaults = _default_frontmatter(
+            doc_name,
+            doc_category,
+            project.get("name", ""),
+            updated_body,
+            date_str,
+            actor_id=actor_id,
+        )
         defaults.update(updates)
         frontmatter_block = build_frontmatter(defaults)
         line_count = len(frontmatter_block.splitlines())
         new_text = frontmatter_block + updated_body
-        return new_text, {"frontmatter_updated": True, "frontmatter_created": True}, line_count
+        return (
+            new_text,
+            {
+                "frontmatter_updated": True,
+                "frontmatter_created": True,
+                "frontmatter": defaults,
+                "frontmatter_updates": frontmatter_updates_summary,
+                "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                "metadata_hints": metadata_hints,
+                "attribution": {
+                    "actor_id": actor_id,
+                    "created_by": defaults.get("created_by"),
+                    "maintained_by": defaults.get("maintained_by"),
+                    "edit_trace_updated": True,
+                },
+            },
+            line_count,
+        )
 
     frontmatter_raw, merged = apply_frontmatter_updates(
         parsed.frontmatter_raw, parsed.frontmatter_data, updates
     )
     line_count = len(frontmatter_raw.splitlines())
     new_text = frontmatter_raw + updated_body
-    return new_text, {"frontmatter_updated": True, "frontmatter_created": False, "frontmatter": merged}, line_count
+    return (
+        new_text,
+        {
+            "frontmatter_updated": True,
+            "frontmatter_created": False,
+            "frontmatter": merged,
+            "frontmatter_updates": frontmatter_updates_summary,
+            "frontmatter_ignored_keys": frontmatter_ignored_keys,
+            "metadata_hints": metadata_hints,
+            "attribution": {
+                "actor_id": actor_id,
+                "created_by": merged.get("created_by"),
+                "maintained_by": merged.get("maintained_by"),
+                "edit_trace_updated": True,
+            },
+        },
+        line_count,
+    )
 
 
 def _validate_comparison_symbols(value: Any) -> bool:

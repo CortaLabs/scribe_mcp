@@ -1938,26 +1938,7 @@ async def read_file(
             "repo_relative_path": rel_path,
         }, requested_mode)
 
-    _fetched_from_remote = False
     if not target.exists() or not target.is_file():
-        # CortaStore fallback: fetch from remote object store if eligible.
-        try:
-            from scribe_mcp.object_store.keys import should_sync, path_to_key
-
-            if should_sync(target, repo_root):
-                _store = getattr(getattr(server_module, "app", None), "state", None)
-                _store = getattr(_store, "document_store", None) if _store else None
-                if _store:
-                    _key = path_to_key(target, repo_root)
-                    _content = await _store.read(_key)
-                    if _content:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_text(_content, encoding="utf-8")
-                        _fetched_from_remote = True
-        except Exception:
-            pass  # Fallback failed — continue to normal error handling.
-
-    if not _fetched_from_remote and (not target.exists() or not target.is_file()):
         from scribe_mcp.utils.path_suggestions import (
             classify_path_error,
             get_fuzzy_file_suggestions,

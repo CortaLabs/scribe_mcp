@@ -20,7 +20,7 @@ from scribe_mcp.utils.parameter_validator import BulletproofParameterCorrector
 from scribe_mcp.utils.error_handler import HealingErrorHandler
 from scribe_mcp.utils.config_manager import ConfigManager
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class _ManageDocsHelper(LoggingToolMixin):
 
 
 _MANAGE_DOCS_HELPER = _ManageDocsHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 
 PRIMARY_ACTIONS = runtime_shared.PRIMARY_ACTIONS
 HIDDEN_ACTIONS = runtime_shared.HIDDEN_ACTIONS
@@ -91,13 +91,30 @@ async def manage_docs(
     target_dir: Optional[str] = None,
     project: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Apply structured updates to architecture/phase/checklist documents and create research/bug documents."""
+    """Apply structured document updates and creation workflows.
+
+    Generic frontmatter workflow metadata (via `metadata`) supports top-level keys:
+    `summary`, `tags`, `owners`, `category`, `status`, `version`, `related_docs`,
+    `maintained_by`, `run_id`, `stage`, `session_id`, `work_item_id`.
+
+    Reserved lifecycle behavior:
+    - `created_by` is computed from the acting runtime agent (fallback `Scribe`) on create
+      and treated as immutable on edit.
+    - `maintained_by` defaults to the acting agent for create/edit mutations unless
+      explicitly overridden.
+    - `edit_trace` is reserved and authored by the tool. Raw caller-provided
+      `metadata.edit_trace` / `metadata.frontmatter.edit_trace` is ignored with hints.
+
+    `metadata.frontmatter` remains the advanced override surface for non-reserved fields.
+    Responses include compact frontmatter summaries by default; set
+    `metadata.include_frontmatter_extra=true` to include the full merged payload.
+    """
     _ = agent  # reserved for audit metadata consistency in tool signature
     state_snapshot = await server_module.state_manager.record_tool("manage_docs")
     if doc_name is None and doc is not None:
         doc_name = doc
 
-    return await runtime_shared.handle_manage_docs_request(
+    result = await runtime_shared.handle_manage_docs_request(
         action=action,
         doc_category=doc_category,
         section=section,
@@ -127,6 +144,24 @@ async def manage_docs(
         valid_actions=VALID_ACTIONS,
         action_router=ACTION_ROUTER,
     )
+    if action == "create" and isinstance(result, dict) and result.get("ok"):
+        create_intent = runtime_shared.build_create_intent_payload(
+            result=result,
+            metadata=metadata if isinstance(metadata, dict) else None,
+            requested_doc_name=doc_name,
+        )
+        if create_intent:
+            result["create_intent"] = create_intent
+            canonical_doc_name = create_intent.get("canonical_doc_name")
+            if canonical_doc_name:
+                result.setdefault("canonical_doc_name", canonical_doc_name)
+            first_write_action = create_intent.get("first_write_action")
+            if first_write_action:
+                result.setdefault("first_write_action", first_write_action)
+            guidance = create_intent.get("next_step_guidance")
+            if guidance:
+                result["next_step_guidance"] = guidance
+    return result
 
 
 def manage_docs_main():

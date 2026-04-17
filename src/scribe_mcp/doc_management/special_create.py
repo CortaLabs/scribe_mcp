@@ -17,6 +17,7 @@ from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
 from scribe_mcp.doc_management import utils as utils_shared
 from scribe_mcp.doc_management.manager import DocumentOperationError
+from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.utils.slug import slugify_project_name
 
@@ -59,6 +60,43 @@ def _resolve_inline_special_content(
     if not inline_content.endswith("\n"):
         inline_content += "\n"
     return inline_content
+
+
+def _normalize_stage(value: Any) -> str:
+    """Normalize stage metadata for stage-bearing special docs."""
+    stage = str(value or "").strip().lower()
+    if not stage or stage == "unknown":
+        return "general"
+    stage = re.sub(r"[^\w\-_.]+", "_", stage).strip("_")
+    return stage or "general"
+
+
+def _project_docs_dir(project: Dict[str, Any], project_root: Path) -> Path:
+    """Resolve canonical project docs directory for project-scoped artifacts."""
+    progress_log_path = str(project.get("progress_log") or "").strip()
+    if progress_log_path:
+        progress_parent = Path(progress_log_path).parent
+        if progress_parent:
+            return progress_parent
+
+    docs_dir_str = str(project.get("docs_dir") or "").strip()
+    if docs_dir_str and docs_dir_str not in {"", "."}:
+        return Path(docs_dir_str)
+
+    project_slug = slugify_project_name(project.get("name", ""))
+    return project_root / ".scribe" / "docs" / "dev_plans" / project_slug
+
+
+def _normalize_research_doc_name(doc_name: str) -> str:
+    """Normalize research artifact names to a stable single .md suffix."""
+    normalized = str(doc_name or "").strip()
+    while normalized.lower().endswith(".md"):
+        normalized = normalized[:-3]
+    safe_name = re.sub(r"[^\w\-_.]", "_", normalized)
+    safe_name = re.sub(r"_+", "_", safe_name).strip("_")
+    if not safe_name:
+        safe_name = f"research_{int(datetime.now().timestamp())}"
+    return safe_name
 
 
 async def _get_or_create_storage_project(backend: Any, project: Dict[str, Any]) -> Any:
@@ -193,6 +231,7 @@ def get_index_updater_for_path(
         agent_id=agent_id,
         update_research_index=_update_research_index,
         update_bug_index=_update_bug_index,
+        update_security_index=_update_security_index,
         update_review_index=_update_review_index,
         update_agent_card_index=_update_agent_card_index,
     )
@@ -217,13 +256,15 @@ async def handle_special_document_creation(
     metadata = healed_metadata
 
     project_root = Path(project.get("root", ""))
-    docs_dir_str = project.get("docs_dir", "")
-    docs_dir = Path(docs_dir_str) if docs_dir_str else Path("")
-    if not docs_dir or str(docs_dir) in {"", "."}:
-        project_slug = slugify_project_name(project.get("name", ""))
-        docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / project_slug
+    docs_dir = _project_docs_dir(project, project_root)
     now = datetime.now(timezone.utc)
     timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    execution_context = None
+    if hasattr(server_module, "get_execution_context"):
+        try:
+            execution_context = server_module.get_execution_context()
+        except Exception:
+            execution_context = None
 
     template_name = ""
     doc_label = ""
@@ -242,30 +283,36 @@ async def handle_special_document_creation(
                 ),
                 context,
             )
-        safe_name = re.sub(r"[^\w\-_.]", "_", doc_name)
-        safe_name = re.sub(r"_+", "_", safe_name).strip("_")
-        if not safe_name:
-            safe_name = f"research_{int(datetime.now().timestamp())}"
+        safe_name = _normalize_research_doc_name(doc_name)
 
         override_dir = target_dir or metadata.get("target_dir")
         if override_dir:
             research_dir = Path(override_dir)
             if not research_dir.is_absolute():
                 research_dir = project_root / research_dir
+            placement_warning = (
+                f"Explicit research override active: writing to '{research_dir.resolve()}/'. "
+                f"Canonical project research path is '{(docs_dir / 'research').resolve()}'."
+            )
         else:
             research_dir = docs_dir / "research"
-            progress_log_path = project.get("progress_log", "")
-            if progress_log_path:
-                progress_log_dir = Path(progress_log_path).parent
+            legacy_docs_dir_str = str(project.get("docs_dir") or "").strip()
+            if legacy_docs_dir_str:
+                legacy_research_dir = Path(legacy_docs_dir_str) / "research"
                 try:
-                    expected_resolved = progress_log_dir.resolve()
-                    actual_resolved = docs_dir.resolve()
-                    if expected_resolved != actual_resolved:
-                        placement_warning = (
-                            f"Research doc will be created in '{actual_resolved}/research/' "
-                            f"but PROGRESS_LOG is in '{expected_resolved}'. "
-                            f"Use target_dir parameter or metadata.target_dir to override placement."
+                    if legacy_research_dir.resolve() != research_dir.resolve() and legacy_research_dir.exists():
+                        legacy_docs = sorted(
+                            p
+                            for p in legacy_research_dir.glob("*.md")
+                            if p.name != "INDEX.md" and not p.name.startswith("_")
                         )
+                        if legacy_docs:
+                            placement_warning = (
+                                "Canonical research placement is now project-scoped. "
+                                f"Detected {len(legacy_docs)} legacy research artifact(s) in "
+                                f"'{legacy_research_dir.resolve()}'. "
+                                "Those files are not reclassified automatically; use explicit migration."
+                            )
                 except Exception:
                     pass
 
@@ -336,10 +383,10 @@ async def handle_special_document_creation(
             "category": category,
             "reported_at": metadata.get("reported_at", timestamp_str),
         }
-        index_updater = lambda: _update_bug_index(project_root / "docs" / "security", agent_id, project_root)
+        index_updater = lambda: _update_security_index(project_root / "docs" / "security", agent_id, project_root)
         index_path = project_root / "docs" / "security" / "INDEX.md"
     elif action == "create_review_report":
-        stage = metadata.get("stage", "unknown")
+        stage = _normalize_stage(metadata.get("stage"))
         target_path = docs_dir / f"REVIEW_REPORT_{stage}_{now.strftime('%Y-%m-%d')}_{now.strftime('%H%M')}.md"
         template_name = "REVIEW_REPORT_TEMPLATE.md"
         doc_label = "review_report"
@@ -349,7 +396,7 @@ async def handle_special_document_creation(
         index_path = docs_dir / "REVIEW_INDEX.md"
     elif action == "create_agent_report_card":
         card_agent = metadata.get("agent_name", agent_id)
-        stage = metadata.get("stage", "unknown")
+        stage = _normalize_stage(metadata.get("stage"))
         target_path = docs_dir / f"AGENT_REPORT_CARD_{card_agent}_{stage}_{now.strftime('%Y%m%d_%H%M')}.md"
         template_name = "AGENT_REPORT_CARD_TEMPLATE.md"
         doc_label = "agent_report_card"
@@ -432,6 +479,10 @@ async def handle_special_document_creation(
                 "dry_run": True,
                 "path": str(target_path),
                 "content": rendered_content,
+                "next_step_guidance": (
+                    "create only scaffolds the document. Follow up with "
+                    "manage_docs(action='replace_section', ...) to add real content."
+                ),
             },
             context,
         )
@@ -540,11 +591,17 @@ async def handle_special_document_creation(
                     await storage_backend.update_project_docs(project_name, docs_json)
                     state_manager = getattr(server_module, "state_manager", None)
                     if state_manager and hasattr(state_manager, "set_current_project"):
+                        authoritative_scope = resolve_authoritative_write_scope(
+                            context=execution_context,
+                            agent_session_id=None,
+                        )
                         try:
                             await state_manager.set_current_project(
                                 project_name,
                                 project,
                                 agent_id=agent_id,
+                                session_id=authoritative_scope.get("authoritative_session_id"),
+                                resolved_scope=authoritative_scope.get("resolved_scope"),
                                 mirror_global=False,
                             )
                         except Exception as state_exc:
@@ -591,6 +648,10 @@ async def handle_special_document_creation(
             "document_type": doc_label,
             "doc_name": primary_doc_key or target_path.stem,
             "file_size": target_path.stat().st_size,
+            "next_step_guidance": (
+                "create scaffolds the document. Next, use "
+                "manage_docs(action='replace_section', ...) to fill required sections."
+            ),
         }
         if log_warning:
             success_payload["log_warning"] = log_warning
@@ -613,6 +674,10 @@ async def _update_research_index(research_dir: Path, agent_id: str, repo_root: P
 
 async def _update_bug_index(bugs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
     await special_indexes_shared.update_bug_index(bugs_dir, agent_id, repo_root=repo_root)
+
+
+async def _update_security_index(security_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    await special_indexes_shared.update_security_index(security_dir, agent_id, repo_root=repo_root)
 
 
 async def _update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:

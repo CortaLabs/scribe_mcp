@@ -11,6 +11,14 @@ import sqlite3
 from scribe_mcp.config.settings import settings
 from scribe_mcp.storage.models import ProjectRecord
 
+_DOC_KEY_ALIASES: Dict[str, str] = {
+    "architecture_guide": "architecture",
+    "architecture-guide": "architecture",
+    "phaseplan": "phase_plan",
+}
+
+_CORE_DOC_CANONICAL_KEYS = {"architecture", "phase_plan", "checklist"}
+
 
 def _float_env(name: str, default: float, minimum: float) -> float:
     raw = os.environ.get(name)
@@ -30,6 +38,12 @@ def _int_env(name: str, default: int, minimum: int) -> int:
         return max(minimum, int(raw))
     except ValueError:
         return default
+
+
+def _canonical_doc_key(doc: str) -> str:
+    normalized = str(doc or "").strip().lower().replace(".md", "")
+    normalized = normalized.replace("-", "_").replace(" ", "_")
+    return _DOC_KEY_ALIASES.get(normalized, normalized)
 
 
 @dataclass
@@ -326,19 +340,32 @@ class ProjectRegistry:
             docs_meta["update_count"] = int(docs_meta.get("update_count") or 0) + 1
 
             # Baseline and current hashes per doc type
+            raw_doc_key = str(doc or "").strip()
+            canonical_doc_key = _canonical_doc_key(raw_doc_key)
             baseline_map = docs_meta.get("baseline_hashes") or {}
             current_map = docs_meta.get("current_hashes") or {}
-            if doc not in baseline_map and before_hash:
-                baseline_map[doc] = before_hash
+            if canonical_doc_key not in baseline_map and before_hash:
+                baseline_map[canonical_doc_key] = before_hash
             if after_hash:
-                current_map[doc] = after_hash
+                current_map[canonical_doc_key] = after_hash
+
+            # Keep compatibility aliases coherent with canonical keys.
+            alias_keys = {raw_doc_key, canonical_doc_key}
+            for existing_key in set(baseline_map.keys()) | set(current_map.keys()):
+                if _canonical_doc_key(existing_key) == canonical_doc_key:
+                    alias_keys.add(existing_key)
+            if before_hash:
+                for key in alias_keys:
+                    baseline_map.setdefault(key, before_hash)
+            if after_hash:
+                for key in alias_keys:
+                    current_map[key] = after_hash
             docs_meta["baseline_hashes"] = baseline_map
             docs_meta["current_hashes"] = current_map
 
             # Derive simple doc-hygiene flags from hashes so agents
             # don't need to compare them manually.
             flags = docs_meta.get("flags") or {}
-            core_docs = {"architecture", "phase_plan", "checklist"}
             seen_docs = set(baseline_map.keys()) | set(current_map.keys())
             for doc_name in seen_docs:
                 baseline_val = baseline_map.get(doc_name)
@@ -352,14 +379,36 @@ class ProjectRegistry:
                 flags[f"{doc_name}_touched"] = touched
                 flags[f"{doc_name}_modified"] = modified
 
+            # Mirror canonical flags from aliases to preserve compatibility.
+            for doc_name in seen_docs:
+                canonical_name = _canonical_doc_key(doc_name)
+                if canonical_name == doc_name:
+                    continue
+                flags[f"{canonical_name}_touched"] = bool(
+                    flags.get(f"{canonical_name}_touched")
+                    or flags.get(f"{doc_name}_touched")
+                )
+                flags[f"{canonical_name}_modified"] = bool(
+                    flags.get(f"{canonical_name}_modified")
+                    or flags.get(f"{doc_name}_modified")
+                )
+
             # Aggregate readiness hints for core dev_plan docs.
-            if core_docs & seen_docs:
+            canonical_seen = {_canonical_doc_key(name) for name in seen_docs}
+            if _CORE_DOC_CANONICAL_KEYS & canonical_seen:
+                core_docs_with_drift = sorted(
+                    name
+                    for name in _CORE_DOC_CANONICAL_KEYS
+                    if bool(flags.get(f"{name}_modified"))
+                )
                 flags["docs_started"] = any(
-                    flags.get(f"{name}_touched") for name in core_docs
+                    flags.get(f"{name}_touched") for name in _CORE_DOC_CANONICAL_KEYS
                 )
+                flags["docs_hash_drift"] = bool(core_docs_with_drift)
                 flags["docs_ready_for_work"] = all(
-                    flags.get(f"{name}_touched") for name in core_docs
-                )
+                    flags.get(f"{name}_touched") for name in _CORE_DOC_CANONICAL_KEYS
+                ) and not flags["docs_hash_drift"]
+                docs_meta["core_docs_with_drift"] = core_docs_with_drift
 
             docs_meta["flags"] = flags
 
@@ -539,6 +588,21 @@ class ProjectRegistry:
         if not row:
             return None
         return self._row_to_project_info(row)
+
+    def get_last_known_project_for_recovery(
+        self,
+        *,
+        candidates: Optional[List[str]] = None,
+    ) -> Optional[ProjectInfo]:
+        """Compatibility-only helper for explicit recovery/bootstrap flows."""
+        return self.get_last_known_project(candidates=candidates)
+
+    def get_planning_advisories(self, project_name: str) -> Dict[str, Any]:
+        """Return additive readiness/drift advisories for caller-visible responses."""
+        info = self.get_project(project_name)
+        if info is None:
+            return {}
+        return build_planning_advisories(info)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -777,4 +841,145 @@ class ProjectRegistry:
         )
 
 
-__all__ = ["ProjectInfo", "ProjectRegistry"]
+class RuntimeProjectRegistry:
+    """Runtime-safe facade around the SQLite-first registry helper."""
+
+    def __init__(self, registry: Optional[ProjectRegistry]) -> None:
+        self._registry = registry
+
+    @property
+    def available(self) -> bool:
+        return self._registry is not None
+
+    def ensure_project(self, *args: Any, **kwargs: Any) -> None:
+        if self._registry is not None:
+            self._registry.ensure_project(*args, **kwargs)
+
+    def touch_access(self, *args: Any, **kwargs: Any) -> None:
+        if self._registry is not None:
+            self._registry.touch_access(*args, **kwargs)
+
+    def touch_entry(self, *args: Any, **kwargs: Any) -> None:
+        if self._registry is not None:
+            self._registry.touch_entry(*args, **kwargs)
+
+    def record_doc_update(self, *args: Any, **kwargs: Any) -> None:
+        if self._registry is not None:
+            self._registry.record_doc_update(*args, **kwargs)
+
+    def get_project(self, *args: Any, **kwargs: Any) -> Optional[ProjectInfo]:
+        if self._registry is None:
+            return None
+        return self._registry.get_project(*args, **kwargs)
+
+    def get_last_known_project(self, *args: Any, **kwargs: Any) -> Optional[ProjectInfo]:
+        if self._registry is None:
+            return None
+        return self._registry.get_last_known_project(*args, **kwargs)
+
+    def get_last_known_project_for_recovery(self, *args: Any, **kwargs: Any) -> Optional[ProjectInfo]:
+        if self._registry is None:
+            return None
+        return self._registry.get_last_known_project_for_recovery(*args, **kwargs)
+
+    def list_projects(self) -> List[ProjectInfo]:
+        if self._registry is None:
+            return []
+        return self._registry.list_projects()
+
+    def get_planning_advisories(self, project_name: str) -> Dict[str, Any]:
+        if self._registry is None:
+            return {}
+        return self._registry.get_planning_advisories(project_name)
+
+
+def build_planning_advisories(project_info: ProjectInfo) -> Dict[str, Any]:
+    """Build low-noise, provenance-aware planning advisories from registry meta."""
+    docs_meta = (project_info.meta or {}).get("docs") or {}
+    flags = docs_meta.get("flags") or {}
+    activity_meta = (project_info.meta or {}).get("activity") or {}
+
+    docs_ready_for_work = bool(flags.get("docs_ready_for_work"))
+    docs_hash_drift = bool(flags.get("docs_hash_drift"))
+    doc_drift_suspected = bool(flags.get("doc_drift_suspected"))
+    core_docs_with_drift = list(docs_meta.get("core_docs_with_drift") or [])
+
+    contradictory_readiness = docs_ready_for_work and docs_hash_drift
+    stale_docs_warning = doc_drift_suspected and activity_meta.get("days_since_last_entry") is not None
+
+    advisories: List[Dict[str, Any]] = []
+    if contradictory_readiness:
+        advisories.append(
+            {
+                "code": "docs_readiness_conflict",
+                "severity": "warn",
+                "message": "docs_ready_for_work is true while docs_hash_drift is true.",
+                "provenance": {
+                    "source": "registry.docs.flags",
+                    "fields": ["docs_ready_for_work", "docs_hash_drift"],
+                },
+            }
+        )
+
+    if stale_docs_warning:
+        advisories.append(
+            {
+                "code": "doc_drift_suspected",
+                "severity": "info",
+                "message": "Recent project activity may have outpaced planning-doc updates.",
+                "provenance": {
+                    "source": "registry.docs+activity",
+                    "fields": [
+                        "doc_drift_suspected",
+                        "doc_drift_days_since_update",
+                        "days_since_last_entry",
+                    ],
+                },
+            }
+        )
+
+    return {
+        "docs_ready_for_work": docs_ready_for_work,
+        "docs_hash_drift": docs_hash_drift,
+        "doc_drift_suspected": doc_drift_suspected,
+        "core_docs_with_drift": core_docs_with_drift,
+        "has_contradiction": contradictory_readiness,
+        "advisories": advisories,
+    }
+
+
+_RUNTIME_REGISTRY: Optional[RuntimeProjectRegistry] = None
+
+
+def get_runtime_project_registry() -> RuntimeProjectRegistry:
+    """Return a runtime-safe registry facade.
+
+    Registry access is only enabled for explicit standalone SQLite runtime.
+    Server/public-release paths receive an unavailable facade to avoid any
+    implicit SQLite bootstrap side effects.
+    """
+    global _RUNTIME_REGISTRY
+    if _RUNTIME_REGISTRY is not None:
+        return _RUNTIME_REGISTRY
+
+    registry: Optional[ProjectRegistry] = None
+    try:
+        from scribe_mcp.config.mode_detection import OperatingMode, resolve_configured_mode
+
+        mode = resolve_configured_mode(settings)
+        if mode == OperatingMode.STANDALONE and str(settings.storage_backend).strip().lower() == "sqlite":
+            registry = ProjectRegistry()
+    except Exception:
+        registry = None
+
+    _RUNTIME_REGISTRY = RuntimeProjectRegistry(registry)
+    return _RUNTIME_REGISTRY
+
+
+__all__ = [
+    "ProjectInfo",
+    "ProjectRegistry",
+    "RuntimeProjectRegistry",
+    "build_planning_advisories",
+    "get_runtime_project_registry",
+]

@@ -210,6 +210,64 @@ def test_record_doc_update_sets_doc_hygiene_flags(tmp_path: Path) -> None:
     assert current.get("architecture") == "edited-hash"
     assert flags.get("architecture_touched") is True
     assert flags.get("architecture_modified") is True
+    assert flags.get("docs_hash_drift") is True
+    assert flags.get("docs_ready_for_work") is False
+
+
+def test_record_doc_update_core_readiness_tracks_drift(tmp_path: Path) -> None:
+    """Core-doc readiness should drop when a core doc drifts from baseline."""
+    db_path = _make_temp_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO scribe_projects (name, repo_root, progress_log_path, created_at, updated_at, status)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'planning')
+            """,
+            ("doc_readiness_test", str(tmp_path), str(tmp_path / "PROGRESS_LOG.md")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    registry = ProjectRegistry(db_path=db_path)
+    for doc_name, hash_value in (
+        ("architecture", "arch-1"),
+        ("phase_plan", "plan-1"),
+        ("checklist", "check-1"),
+    ):
+        registry.record_doc_update(
+            "doc_readiness_test",
+            doc=doc_name,
+            action="auto_register",
+            after_hash=hash_value,
+        )
+
+    info = registry.get_project("doc_readiness_test")
+    assert info is not None
+    docs_meta = info.meta.get("docs") or {}
+    flags = docs_meta.get("flags") or {}
+    assert flags.get("docs_ready_for_work") is True
+    assert flags.get("docs_hash_drift") is False
+    assert docs_meta.get("core_docs_with_drift") == []
+
+    registry.record_doc_update(
+        "doc_readiness_test",
+        doc="phase_plan",
+        action="replace_section",
+        before_hash="plan-1",
+        after_hash="plan-2",
+    )
+
+    info = registry.get_project("doc_readiness_test")
+    assert info is not None
+    docs_meta = info.meta.get("docs") or {}
+    flags = docs_meta.get("flags") or {}
+    assert flags.get("phase_plan_modified") is True
+    assert flags.get("docs_hash_drift") is True
+    assert flags.get("docs_ready_for_work") is False
+    assert docs_meta.get("core_docs_with_drift") == ["phase_plan"]
 
 
 def test_get_project_enriches_meta_with_activity_and_drift(tmp_path: Path) -> None:

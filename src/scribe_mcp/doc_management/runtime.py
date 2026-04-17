@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-from scribe_mcp.doc_management.manager import apply_doc_change
+from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key
 from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import utils as utils_shared
@@ -23,6 +23,7 @@ from scribe_mcp.doc_management.actions import search as search_actions
 from scribe_mcp.doc_management.actions import status as status_actions
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
+from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input
 
 
@@ -45,6 +46,7 @@ HIDDEN_ACTIONS = {
     "validate_crosslinks",
     "list_sections",
     "list_checklist_items",
+    "preview_reconciliation",
     "search",
     "batch",
 }
@@ -64,12 +66,12 @@ ACTION_ROUTER = {
     "validate_crosslinks": "query_transform",
     "list_sections": "query",
     "list_checklist_items": "query",
+    "preview_reconciliation": "query",
     "search": "search",
     "batch": "batch",
 }
 
-_EDIT_ACTIONS = {
-    "list_sections",
+_MUTATION_ACTIONS = {
     "replace_section",
     "apply_patch",
     "replace_range",
@@ -77,46 +79,85 @@ _EDIT_ACTIONS = {
     "status_update",
     "normalize_headers",
     "generate_toc",
-    "search",
     "replace_text",
     "validate_crosslinks",
 }
 
 _CUSTOM_DOC_TYPES = {"research", "bugs", "reviews", "agent_cards"}
+_READ_ONLY_REGISTRATION_GATED_ACTIONS = {
+    "list_sections",
+    "list_checklist_items",
+    "preview_reconciliation",
+    "search",
+}
 
 
-def _canonicalize_doc_name(doc_name: Optional[str], project: Dict[str, Any]) -> Optional[str]:
-    """Resolve common doc-name variants (e.g. trailing .md) to registered keys."""
-    if not doc_name:
-        return doc_name
+_SPECIAL_DOC_TYPES = {"research", "bug", "security", "review", "agent_card"}
 
-    candidate = str(doc_name).strip()
-    if not candidate:
-        return candidate
 
-    docs = project.get("docs") or {}
-    if candidate in docs:
-        return candidate
+def build_create_intent_payload(
+    *,
+    result: Dict[str, Any],
+    metadata: Optional[Dict[str, Any]],
+    requested_doc_name: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Build additive create-intent guidance for caller-facing clarity."""
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
 
-    candidate_name = Path(candidate).name
-    if candidate_name in docs:
-        return candidate_name
+    metadata_mapping = metadata if isinstance(metadata, dict) else {}
+    doc_type = str(metadata_mapping.get("doc_type", "custom") or "custom").strip().lower()
+    canonical_doc_name = (
+        metadata_mapping.get("register_as")
+        or metadata_mapping.get("doc_name")
+        or result.get("doc_name")
+        or requested_doc_name
+    )
+    canonical_doc_name = str(canonical_doc_name).strip() if canonical_doc_name else ""
 
-    if candidate_name.lower().endswith(".md"):
-        stem = candidate_name[:-3]
-        if stem in docs:
-            return stem
+    first_write_action = "replace_section"
+    target_for_guidance = canonical_doc_name or requested_doc_name or "doc_name"
 
-        stem_lower = stem.lower()
-        for key, path_str in docs.items():
-            try:
-                path_stem = Path(path_str).stem.lower()
-            except Exception:
-                continue
-            if path_stem == stem_lower:
-                return key
+    if bool(metadata_mapping.get("register_existing")):
+        first_write_action = "apply_patch"
+        follow_up = (
+            "create registered an existing file without writing new content. "
+            "For the first mutation, call manage_docs(action='apply_patch', "
+            f"doc='{target_for_guidance}', ...) so edits work on non-scaffold content."
+        )
+        return {
+            "kind": "empty_registered_doc",
+            "canonical_doc_name": canonical_doc_name or None,
+            "first_write_action": first_write_action,
+            "next_step_guidance": follow_up,
+        }
 
-    return candidate
+    if doc_type in _SPECIAL_DOC_TYPES or bool(result.get("document_type")):
+        first_write_action = "apply_patch"
+        follow_up = (
+            "create produced a contentful special document. "
+            "Use manage_docs(action='apply_patch', ...) for follow-up edits."
+        )
+        return {
+            "kind": "contentful_special_doc",
+            "canonical_doc_name": canonical_doc_name or None,
+            "first_write_action": first_write_action,
+            "next_step_guidance": follow_up,
+        }
+
+    follow_up = (
+        "create scaffolds a governed document. Next, call "
+        f"manage_docs(action='replace_section', doc='{target_for_guidance}', ...) "
+        "to add or replace section content anchored by <!-- ID: ... --> markers. "
+        "If section boundaries drift or anchors/headings become ambiguous, switch to "
+        "manage_docs(action='replace_range', ...) or action='apply_patch' for explicit control."
+    )
+    return {
+        "kind": "governed_scaffold_doc",
+        "canonical_doc_name": canonical_doc_name or None,
+        "first_write_action": first_write_action,
+        "next_step_guidance": follow_up,
+    }
 
 
 async def get_or_create_storage_project(backend: Any, project: Dict[str, Any], server_module: Any) -> Any:
@@ -181,11 +222,24 @@ async def auto_register_document(
         await backend.update_project_docs(project_name, docs_json)
         state_manager = getattr(server_module, "state_manager", None)
         if state_manager and hasattr(state_manager, "set_current_project"):
+            execution_context = None
+            get_execution_context = getattr(server_module, "get_execution_context", None)
+            if callable(get_execution_context):
+                try:
+                    execution_context = get_execution_context()
+                except Exception:  # pragma: no cover - defensive context lookup
+                    execution_context = None
+            authoritative_scope = resolve_authoritative_write_scope(
+                context=execution_context,
+                agent_session_id=None,
+            )
             try:
                 await state_manager.set_current_project(
                     project_name,
                     project,
                     agent_id="manage_docs",
+                    session_id=authoritative_scope.get("authoritative_session_id"),
+                    resolved_scope=authoritative_scope.get("resolved_scope"),
                     mirror_global=False,
                 )
             except Exception as exc:  # pragma: no cover - defensive state sync
@@ -228,6 +282,96 @@ async def auto_register_document(
         logger.warning("Failed to log auto-registration event: %s", exc)
 
     return True
+
+
+async def register_document_path(
+    project: Dict[str, Any],
+    doc_name: str,
+    doc_path: Path,
+    *,
+    server_module: Any,
+    project_registry: Any,
+    append_entry: Callable[..., Awaitable[Any]],
+    logger: logging.Logger,
+    execution_context: Any = None,
+    agent_id: str = "manage_docs",
+) -> Optional[str]:
+    """Persist a resolved document path into docs mapping and registry state."""
+    if not doc_path.exists():
+        raise ValueError(f"Cannot register '{doc_name}': File {doc_path} does not exist.")
+
+    try:
+        with open(doc_path, "rb") as handle:
+            doc_hash = hashlib.sha256(handle.read()).hexdigest()
+    except Exception as exc:  # pragma: no cover - filesystem failure
+        raise ValueError(f"Failed to read document {doc_path} for hashing: {exc}") from exc
+
+    backend = server_module.storage_backend
+    if not backend:
+        raise ValueError("Storage backend not available for registration")
+
+    project_name = project.get("name")
+    if not project_name:
+        raise ValueError("Project must have a name for registration")
+
+    current_docs = dict(project.get("docs", {}) or {})
+    current_docs[doc_name] = str(doc_path)
+    project["docs"] = current_docs
+    docs_json = json.dumps(current_docs)
+    await backend.update_project_docs(project_name, docs_json)
+
+    reload_warning: Optional[str] = None
+    state_manager = getattr(server_module, "state_manager", None)
+    if state_manager and hasattr(state_manager, "set_current_project"):
+        authoritative_scope = resolve_authoritative_write_scope(
+            context=execution_context,
+            agent_session_id=None,
+        )
+        try:
+            await state_manager.set_current_project(
+                project_name,
+                project,
+                agent_id=agent_id,
+                session_id=authoritative_scope.get("authoritative_session_id"),
+                resolved_scope=authoritative_scope.get("resolved_scope"),
+                mirror_global=False,
+            )
+        except Exception as exc:  # pragma: no cover - defensive state sync
+            reload_warning = (
+                f"Registration persisted for '{doc_name}', but context reload failed: {exc}"
+            )
+            logger.warning(reload_warning)
+
+    try:
+        registry_call = project_registry.record_doc_update(
+            project_name=project_name,
+            doc=doc_name,
+            action="auto_register",
+            after_hash=doc_hash,
+        )
+        if inspect.isawaitable(registry_call):
+            await registry_call
+    except Exception as exc:  # pragma: no cover - non-fatal logging path
+        logger.warning("Failed to update ProjectRegistry for '%s': %s", doc_name, exc)
+
+    try:
+        await append_entry(
+            message=f"Auto-registered document: {doc_name} ({doc_path.name})",
+            status="info",
+            agent="manage_docs",
+            meta={
+                "action": "auto_register",
+                "doc": doc_name,
+                "doc_name": doc_name,
+                "path": str(doc_path),
+                "hash": doc_hash[:8],
+            },
+            format="structured",
+        )
+    except Exception as exc:  # pragma: no cover - non-fatal logging path
+        logger.warning("Failed to log auto-registration event: %s", exc)
+
+    return reload_warning
 
 
 async def handle_manage_docs_request(
@@ -325,6 +469,7 @@ async def handle_manage_docs_request(
                         "generate_toc",
                         "list_sections",
                         "list_checklist_items",
+                        "preview_reconciliation",
                         "batch",
                         "validate_crosslinks",
                         "search",
@@ -356,7 +501,7 @@ async def handle_manage_docs_request(
     if project is not None:
         project = normalize_project_input(project)
 
-    if context is None:
+    if context is not None and project is not None:
         try:
             context = await helper.prepare_context(
                 tool_name="manage_docs",
@@ -365,6 +510,23 @@ async def handle_manage_docs_request(
                 require_project=True,
                 state_snapshot=state_snapshot,
                 reminder_variables={"action": action, "scaffold": scaffold_flag},
+                recovery_mode="none",
+            )
+        except ProjectResolutionError as exc:
+            payload = helper.translate_project_error(exc)
+            payload.setdefault("suggestion", "Invoke set_project before managing docs.")
+            payload.setdefault("reminders", [])
+            return payload
+    elif context is None:
+        try:
+            context = await helper.prepare_context(
+                tool_name="manage_docs",
+                agent_id=None,
+                explicit_project=project,
+                require_project=True,
+                state_snapshot=state_snapshot,
+                reminder_variables={"action": action, "scaffold": scaffold_flag},
+                recovery_mode="none",
             )
         except ProjectResolutionError as exc:
             payload = helper.translate_project_error(exc)
@@ -374,7 +536,7 @@ async def handle_manage_docs_request(
 
     active_project = context.project or {}
     original_doc_name = doc_name
-    doc_name = _canonicalize_doc_name(doc_name, active_project)
+    doc_name = resolve_registered_doc_key(active_project, doc_name) if doc_name else doc_name
     if original_doc_name and doc_name and original_doc_name != doc_name:
         logger.info("Canonicalized doc reference '%s' -> '%s'", original_doc_name, doc_name)
 
@@ -385,7 +547,17 @@ async def handle_manage_docs_request(
 
     backend = server_module.storage_backend
 
-    if action in _EDIT_ACTIONS and doc_category in _CUSTOM_DOC_TYPES and doc_name:
+    runtime_warnings: list[str] = []
+    execution_context = None
+    if hasattr(server_module, "get_execution_context"):
+        try:
+            execution_context = server_module.get_execution_context()
+        except Exception:
+            execution_context = None
+    if action in _READ_ONLY_REGISTRATION_GATED_ACTIONS and doc_name:
+        logger.debug("Skipping auto-registration for read-only action '%s' on '%s'", action, doc_name)
+
+    if action in _MUTATION_ACTIONS and doc_category in _CUSTOM_DOC_TYPES and doc_name:
         resolved_path = utils_shared.resolve_custom_doc_path(
             project=active_project,
             doc_category=doc_category,
@@ -393,32 +565,56 @@ async def handle_manage_docs_request(
         )
         if resolved_path:
             logger.info("Resolved custom document: %s", resolved_path)
-            active_project = active_project.copy()
-            active_project["docs"] = active_project.get("docs", {}).copy()
+            if not resolved_path.exists():
+                error_payload = helper.error_response(
+                    f"Custom document '{doc_name}' resolved to a missing file",
+                    suggestion="Ensure the file exists before running mutation actions.",
+                    extra={"doc_name": doc_name, "resolved_path": str(resolved_path)},
+                )
+                return helper.apply_context_payload(error_payload, context)
 
-            progress_log = active_project.get("progress_log")
-            if progress_log:
-                docs_dir = Path(progress_log).parent
+            docs_mapping = active_project.get("docs", {}) or {}
+            needs_registration = doc_name not in docs_mapping or doc_category not in docs_mapping
+            if needs_registration and dry_run:
+                active_project = active_project.copy()
+                staged_docs = dict(active_project.get("docs", {}) or {})
+                staged_docs[doc_name] = str(resolved_path)
+                staged_docs[doc_category] = str(resolved_path)
+                active_project["docs"] = staged_docs
+                runtime_warnings.append(
+                    f"dry_run: would register '{doc_name}' and '{doc_category}' to '{resolved_path}' before mutation."
+                )
+            elif needs_registration:
+                for registration_key in (doc_name, doc_category):
+                    if registration_key in docs_mapping:
+                        continue
+                    reload_warning = await register_document_path(
+                        active_project,
+                        registration_key,
+                        resolved_path,
+                        server_module=server_module,
+                        project_registry=project_registry,
+                        append_entry=append_entry,
+                        logger=logger,
+                        execution_context=execution_context,
+                        agent_id=str(agent_id),
+                    )
+                    if reload_warning:
+                        runtime_warnings.append(reload_warning)
                 try:
-                    relative_path = resolved_path.relative_to(docs_dir)
-                    active_project["docs"][doc_category] = str(relative_path)
-                except ValueError:
-                    project_root = Path(active_project.get("root", ""))
-                    try:
-                        relative_path = resolved_path.relative_to(project_root)
-                        active_project["docs"][doc_category] = str(relative_path)
-                    except ValueError:
-                        active_project["docs"][doc_category] = str(resolved_path)
-            else:
-                active_project["docs"][doc_category] = str(resolved_path)
-
-            active_project["docs"][doc_name] = active_project["docs"][doc_category]
-            logger.info(
-                "Temporarily registered custom doc '%s' (also as '%s') at: %s",
-                doc_category,
-                doc_name,
-                active_project["docs"][doc_category],
-            )
+                    context = await helper.prepare_context(
+                        tool_name="manage_docs",
+                        agent_id=None,
+                        require_project=True,
+                        state_snapshot=state_snapshot,
+                        reminder_variables={"action": action, "scaffold": scaffold_flag},
+                    )
+                    active_project = context.project or active_project
+                except Exception as reload_error:
+                    runtime_warnings.append(
+                        f"Custom document registration persisted, but context reload failed: {reload_error}"
+                    )
+                    logger.warning(runtime_warnings[-1])
         else:
             project_slug = slugify_project_name(active_project.get("name", "<project>"))
             error_payload = helper.error_response(
@@ -439,33 +635,37 @@ async def handle_manage_docs_request(
                 },
             )
             return helper.apply_context_payload(error_payload, context)
-    elif action in _EDIT_ACTIONS and doc_name:
+    elif action in _MUTATION_ACTIONS and doc_name:
         docs = active_project.get("docs", {})
-        wildcard_search = action == "search" and str(doc_name).strip().lower() in {"all", "*"}
-        if wildcard_search:
-            logger.debug("Skipping auto-registration for wildcard search target '%s'", doc_name)
-        elif doc_name not in docs:
+        if doc_name not in docs:
             logger.info("Document '%s' not registered, attempting auto-registration...", doc_name)
+            if dry_run:
+                runtime_warnings.append(
+                    f"dry_run: would auto-register '{doc_name}' before executing mutation action '{action}'."
+                )
             try:
-                await auto_register_document(active_project, doc_name)
-                try:
-                    context = await helper.prepare_context(
-                        tool_name="manage_docs",
-                        agent_id=None,
-                        require_project=True,
-                        state_snapshot=state_snapshot,
-                        reminder_variables={"action": action, "scaffold": scaffold_flag},
-                    )
-                    active_project = context.project or {}
-                    logger.info(
-                        "Successfully auto-registered and reloaded project context for '%s'",
-                        doc_name,
-                    )
-                except Exception as reload_error:
-                    logger.warning(
-                        "Auto-registration succeeded but context reload failed: %s",
-                        reload_error,
-                    )
+                if not dry_run:
+                    await auto_register_document(active_project, doc_name)
+                    try:
+                        context = await helper.prepare_context(
+                            tool_name="manage_docs",
+                            agent_id=None,
+                            require_project=True,
+                            state_snapshot=state_snapshot,
+                            reminder_variables={"action": action, "scaffold": scaffold_flag},
+                        )
+                        active_project = context.project or {}
+                        logger.info(
+                            "Successfully auto-registered and reloaded project context for '%s'",
+                            doc_name,
+                        )
+                    except Exception as reload_error:
+                        warning = (
+                            "Auto-registration succeeded but context reload failed: "
+                            f"{reload_error}"
+                        )
+                        runtime_warnings.append(warning)
+                        logger.warning(warning)
             except Exception as exc:
                 error_payload = helper.error_response(
                     f"Auto-registration failed for document '{doc_name}'",
@@ -594,6 +794,8 @@ async def handle_manage_docs_request(
         )
 
     if response is not None:
+        if runtime_warnings and isinstance(response, dict) and response.get("ok") is not False:
+            response.setdefault("warnings", []).extend(runtime_warnings)
         return response
 
     return helper.apply_context_payload(

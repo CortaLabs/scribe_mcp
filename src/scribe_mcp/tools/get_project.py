@@ -13,7 +13,7 @@ from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.project_utils import load_active_project, load_project_config
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.shared.logging_utils import resolve_log_definition
 from scribe_mcp.shared.project_utils import detect_project_state
 from scribe_mcp.config import log_config as log_config_module
@@ -28,7 +28,7 @@ class _GetProjectHelper(LoggingToolMixin):
 
 
 _GET_PROJECT_HELPER = _GetProjectHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 logger = logging.getLogger(__name__)
 
 
@@ -376,13 +376,21 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.tool(**read_only_local_tool(title="Get Active Project", tags=("projects", "context", "read-only")))
-async def get_project(agent: str = "Codex", project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
+async def get_project(
+    agent: str = "Codex",
+    project: Optional[str] = None,
+    format: str = "structured",
+    verbose: bool = False,
+    recovery_mode: Optional[str] = None,
+) -> Dict[str, Any]:
     """Return the active project selection, resolving defaults when necessary.
 
     Args:
         project: Optional project name to retrieve
         format: Output format - "readable" (human-friendly), "structured" (full JSON), "compact" (minimal)
         verbose: If True, include recent log entries in readable format (default: False)
+        recovery_mode: Optional explicit compatibility recovery branch.
+            Supported values: "compat_active_project", "compat_last_known_project".
     """
     state_snapshot = await server_module.state_manager.record_tool("get_project")
     agent_identity = server_module.get_agent_identity()
@@ -408,6 +416,27 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         return payload
 
     recent_projects = list(context.recent_projects)
+    allowed_recovery_modes = {"compat_active_project", "compat_last_known_project"}
+    compatibility_mode = recovery_mode in allowed_recovery_modes
+
+    def _resolution_payload() -> Dict[str, Any]:
+        source = context.resolution_source
+        fallback_used = bool(context.fallback_used)
+        fallback_chain = list(context.fallback_chain or [])
+        if compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
+            fallback_chain.append(recovery_mode)
+            fallback_used = True
+        summary = (
+            f"Resolved via '{source}'"
+            if not fallback_used
+            else f"Resolved via '{source}' with recovery chain: {', '.join(fallback_chain)}"
+        )
+        return {
+            "resolution_source": source,
+            "fallback_used": fallback_used,
+            "fallback_chain": fallback_chain,
+            "resolution_summary": summary,
+        }
 
     target_project = context.project if context.project else None
     current_name = target_project.get("name") if target_project else None
@@ -448,26 +477,30 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
                 resolved_name = project_data.get("name") or candidate
                 break
         if not project_data:
-            return _GET_PROJECT_HELPER.apply_context_payload(
+            response = _GET_PROJECT_HELPER.apply_context_payload(
                 _GET_PROJECT_HELPER.error_response(
                     f"Project '{requested_project}' not found.",
                     suggestion="Ensure the project is registered via set_project or exists in config/projects/",
                 ),
                 context,
             )
+            response.update(_resolution_payload())
+            return response
         target_project = dict(project_data)
         current_name = target_project.get("name") or resolved_name or requested_project
     else:
         if exec_context and getattr(exec_context, "mode", None) in {"project", "sentinel"}:
             if not target_project:
-                return _GET_PROJECT_HELPER.apply_context_payload(
+                response = _GET_PROJECT_HELPER.apply_context_payload(
                     _GET_PROJECT_HELPER.error_response(
                         "No session-scoped project configured.",
                         suggestion="Invoke set_project before using this tool",
                     ),
                     context,
                 )
-        if not target_project and not exec_context:
+                response.update(_resolution_payload())
+                return response
+        if not target_project and not exec_context and compatibility_mode and recovery_mode == "compat_active_project":
             active_project, current_name, recent = await load_active_project(server_module.state_manager)
             if active_project:
                 target_project = dict(active_project)
@@ -475,7 +508,9 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         if not target_project:
             extra: Dict[str, Any] = {}
             try:
-                last_known = _PROJECT_REGISTRY.get_last_known_project(candidates=recent_projects)
+                last_known = None
+                if compatibility_mode and recovery_mode == "compat_last_known_project":
+                    last_known = _PROJECT_REGISTRY.get_last_known_project_for_recovery(candidates=recent_projects)
                 if last_known and last_known.last_access_at:
                     from datetime import datetime, timezone
 
@@ -491,7 +526,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
             except Exception:
                 extra = {}
 
-            return _GET_PROJECT_HELPER.apply_context_payload(
+            response = _GET_PROJECT_HELPER.apply_context_payload(
                 _GET_PROJECT_HELPER.error_response(
                     "No project configured.",
                     suggestion="Invoke set_project or add a config/projects/<name>.json entry",
@@ -499,11 +534,16 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
                 ),
                 context,
             )
+            response.update(_resolution_payload())
+            return response
 
     response = dict(target_project)
     response.setdefault("meta", {})
     if current_name:
         response["meta"]["current_project"] = current_name
+    response["meta"].update(_resolution_payload())
+    if current_name:
+        response["meta"]["planning_advisories"] = _PROJECT_REGISTRY.get_planning_advisories(current_name)
 
     # Enrich with doc status + per-log entry counts for quick situational awareness.
     try:
@@ -607,6 +647,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         if context.reminders:
             payload["reminders"] = list(context.reminders)
 
+        payload.update(_resolution_payload())
         return await default_formatter.finalize_tool_response(
             payload,
             format="readable",
@@ -653,6 +694,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         pagination_info = calc.create_pagination_info(page, page_size, len(recent_entries))
         payload["pagination"] = pagination_info.to_dict() if hasattr(pagination_info, 'to_dict') else pagination_info
 
+        payload.update(_resolution_payload())
         return _GET_PROJECT_HELPER.apply_context_payload(payload, context)
 
     # Fallback for unknown formats
@@ -661,4 +703,5 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         "project": response,
         "recent_projects": recent_projects,
     }
+    payload.update(_resolution_payload())
     return _GET_PROJECT_HELPER.apply_context_payload(payload, context)

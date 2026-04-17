@@ -12,6 +12,19 @@ from typing import Any, Awaitable, Callable, Dict, Mapping, MutableMapping, Opti
 ToolCallable = Callable[..., Any]
 BridgeToolResolver = Callable[[str], Optional[ToolCallable]]
 ScopeViolationLogger = Callable[..., None]
+_PROVENANCE_VALUES = {"verified", "claimed", "inferred", "anonymous"}
+_PROVENANCE_RANK = {
+    "anonymous": 0,
+    "inferred": 1,
+    "claimed": 2,
+    "verified": 3,
+}
+_UNTRUSTED_CALLER_SESSION_KEYS = (
+    "session_id",
+    "client_id",
+    "connection_id",
+    "transport_session_id",
+)
 
 
 def _normalize_repo_root(value: Any, project_root: Path) -> Optional[str]:
@@ -56,17 +69,19 @@ def _derive_transport_session_id(
     app: Any,
     fallback_process_id: str,
     kwargs: Mapping[str, Any],
+    allow_untrusted_sources: bool = True,
 ) -> str:
-    fallback = kwargs.get("session_id") or kwargs.get("client_id") or kwargs.get("connection_id")
-    if fallback:
-        return str(fallback)
+    if allow_untrusted_sources:
+        fallback = kwargs.get("session_id") or kwargs.get("client_id") or kwargs.get("connection_id")
+        if fallback:
+            return str(fallback)
 
     try:
         request_context = app.request_context
     except Exception:
         request_context = None
 
-    if request_context:
+    if request_context and allow_untrusted_sources:
         request = getattr(request_context, "request", None)
         if request is not None:
             headers = getattr(request, "headers", None)
@@ -82,6 +97,65 @@ def _derive_transport_session_id(
     return f"process:{fallback_process_id}"
 
 
+def _collect_public_release_session_claims(
+    *,
+    context_payload: Mapping[str, Any],
+    kwargs: Mapping[str, Any],
+    app: Any,
+) -> Set[str]:
+    claims: Set[str] = set()
+    for key in _UNTRUSTED_CALLER_SESSION_KEYS:
+        value = context_payload.get(key)
+        if value:
+            claims.add(key)
+    for key in ("session_id", "client_id", "connection_id"):
+        value = kwargs.get(key)
+        if value:
+            claims.add(key)
+    try:
+        request_context = app.request_context
+    except Exception:
+        request_context = None
+    if request_context:
+        request = getattr(request_context, "request", None)
+        headers = getattr(request, "headers", None) if request is not None else None
+        if headers and headers.get("mcp-session-id"):
+            claims.add("mcp-session-id")
+    return claims
+
+
+def _set_scope_provenance(
+    payload: MutableMapping[str, Any],
+    *,
+    field: str,
+    label: str,
+) -> None:
+    if label not in _PROVENANCE_VALUES:
+        return
+    provenance = payload.get("scope_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    existing = provenance.get(field)
+    if existing not in _PROVENANCE_VALUES:
+        provenance[field] = label
+    elif _PROVENANCE_RANK[label] >= _PROVENANCE_RANK[existing]:
+        provenance[field] = label
+    payload["scope_provenance"] = provenance
+
+
+def _set_scope_defaults(context_payload: MutableMapping[str, Any]) -> None:
+    if not context_payload.get("resolution_source"):
+        context_payload["resolution_source"] = "runtime_context"
+    if context_payload.get("trust_level") not in _PROVENANCE_VALUES:
+        context_payload["trust_level"] = "claimed"
+
+
+def _derive_scoped_reuse_key(repo_root: str, project_name: str | None) -> str:
+    normalized_repo_root = os.path.realpath(repo_root) if repo_root else ""
+    normalized_project = (project_name or "").strip() or "__prebinding__"
+    return f"{normalized_repo_root}:{normalized_project}"
+
+
 def _derive_session_identity_preview(
     context_payload: Mapping[str, Any],
     arguments: Mapping[str, Any],
@@ -93,13 +167,25 @@ def _derive_session_identity_preview(
         timestamp_utc = context_payload.get("timestamp_utc")
         if not timestamp_utc:
             timestamp_utc = datetime.now(timezone.utc).isoformat()
-        scope_key = str(timestamp_utc).split("T")[0]
+        scope_day = str(timestamp_utc).split("T")[0]
+        run_discriminator = str(context_payload.get("transport_session_id") or "").strip()
+        if bool(context_payload.get("public_release")) and not run_discriminator:
+            raise ValueError(
+                "Public release sentinel mode requires trusted runtime-derived "
+                "transport_session_id for identity isolation"
+            )
+        if run_discriminator:
+            scope_key = f"{scope_day}:{run_discriminator}"
+        else:
+            scope_key = scope_day
     else:
-        scope_key = str(
-            context_payload.get("transport_session_id")
-            or context_payload.get("session_id")
-            or datetime.now(timezone.utc).isoformat()
-        )
+        project_name = str(
+            context_payload.get("project_name")
+            or arguments.get("project")
+            or arguments.get("project_name")
+            or ""
+        ).strip()
+        scope_key = project_name or "__prebinding__"
 
     agent_key = arguments.get("agent")
     if not agent_key:
@@ -269,6 +355,26 @@ async def execute_tool_call(
         context_payload = kwargs.get("context")
     if not isinstance(context_payload, dict):
         context_payload = {}
+    context_payload["_server_derived_session_id"] = False
+    public_release = bool(getattr(settings, "public_release", False))
+    context_payload["public_release"] = public_release
+
+    if public_release:
+        caller_claims = _collect_public_release_session_claims(
+            context_payload=context_payload,
+            kwargs=kwargs,
+            app=app,
+        )
+        # In public release, mixed caller identifiers are denied; single claims are ignored.
+        if len(caller_claims) > 1:
+            denied = ", ".join(sorted(caller_claims))
+            raise ValueError(
+                "Public release rejected untrusted caller session identifiers: "
+                f"{denied}"
+            )
+        for key in _UNTRUSTED_CALLER_SESSION_KEYS:
+            context_payload.pop(key, None)
+        context_payload.pop("stable_session_id", None)
 
     if not context_payload.get("repo_root"):
         request_repo_root = _extract_request_repo_root(app)
@@ -281,24 +387,42 @@ async def execute_tool_call(
                     candidate_root = RepoDiscovery.find_repo_root(request_path)
                     if candidate_root and candidate_root.exists():
                         context_payload["repo_root"] = str(candidate_root.resolve())
+                        _set_scope_provenance(
+                            context_payload,
+                            field="repo_root",
+                            label="inferred",
+                        )
             except Exception:
                 pass
 
     repo_root_hint = _normalize_repo_root(context_payload.get("repo_root"), settings.project_root)
-    if not repo_root_hint:
+    if repo_root_hint:
+        context_payload["repo_root"] = repo_root_hint
+        _set_scope_provenance(context_payload, field="repo_root", label="claimed")
+    else:
         repo_root_hint = _normalize_repo_root(
             call_arguments.get("root") or call_arguments.get("repo_root"),
             settings.project_root,
         )
-    if repo_root_hint:
-        context_payload["repo_root"] = repo_root_hint
+        if repo_root_hint:
+            context_payload["repo_root"] = repo_root_hint
+            _set_scope_provenance(context_payload, field="repo_root", label="claimed")
+
+    if not context_payload.get("project_name"):
+        project_hint = call_arguments.get("project") or call_arguments.get("name")
+        if project_hint:
+            context_payload["project_name"] = str(project_hint)
+            _set_scope_provenance(context_payload, field="project_name", label="claimed")
 
     if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
         context_payload["transport_session_id"] = _derive_transport_session_id(
             app=app,
             fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
             kwargs=kwargs,
+            allow_untrusted_sources=not public_release,
         )
+    if context_payload.get("transport_session_id"):
+        _set_scope_provenance(context_payload, field="transport_session_id", label="claimed")
 
     if not context_payload.get("session_id") and context_payload.get("transport_session_id"):
         if storage_backend and hasattr(storage_backend, "get_session_by_transport"):
@@ -307,40 +431,69 @@ async def execute_tool_call(
             )
             if existing and existing.get("session_id"):
                 context_payload["session_id"] = existing["session_id"]
-            if existing and not context_payload.get("repo_root"):
-                context_payload["repo_root"] = _normalize_repo_root(
-                    existing.get("repo_root"),
-                    settings.project_root,
-                )
+                context_payload["_server_derived_session_id"] = True
+                _set_scope_provenance(context_payload, field="stable_session_id", label="verified")
+                context_payload["trust_level"] = "verified"
+            if existing and existing.get("session_id") and hasattr(storage_backend, "get_session_project"):
+                bound_project = await storage_backend.get_session_project(str(existing["session_id"]))
+                if bound_project and not context_payload.get("project_name"):
+                    context_payload["project_name"] = str(bound_project)
+                    _set_scope_provenance(context_payload, field="project_name", label="verified")
+                if bound_project and not context_payload.get("repo_root"):
+                    context_payload["repo_root"] = _normalize_repo_root(
+                        existing.get("repo_root"),
+                        settings.project_root,
+                    )
+                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
         if not context_payload.get("session_id"):
             session_id = await router_context_manager.get_or_create_session_id(
                 context_payload["transport_session_id"]
             )
             context_payload["session_id"] = session_id
+            context_payload["_server_derived_session_id"] = True
+            _set_scope_provenance(context_payload, field="stable_session_id", label="inferred")
 
     if not context_payload.get("repo_root") and storage_backend and hasattr(storage_backend, "fetch_project"):
         explicit_project = call_arguments.get("project") or call_arguments.get("name")
         if explicit_project:
+            context_payload["project_name"] = str(explicit_project)
+            _set_scope_provenance(context_payload, field="project_name", label="claimed")
             project_record = await storage_backend.fetch_project(str(explicit_project))
             if project_record:
                 context_payload["repo_root"] = _normalize_repo_root(
                     project_record.repo_root,
                     settings.project_root,
                 )
+                _set_scope_provenance(context_payload, field="repo_root", label="verified")
+                _set_scope_provenance(context_payload, field="project_name", label="verified")
         if not context_payload.get("repo_root") and context_payload.get("session_id"):
             project_name = None
             if hasattr(storage_backend, "get_session_project"):
                 project_name = await storage_backend.get_session_project(context_payload.get("session_id"))
             if project_name:
+                context_payload["project_name"] = str(project_name)
+                _set_scope_provenance(context_payload, field="project_name", label="verified")
                 project_record = await storage_backend.fetch_project(str(project_name))
                 if project_record:
                     context_payload["repo_root"] = _normalize_repo_root(
                         project_record.repo_root,
                         settings.project_root,
                     )
+                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
 
     if not context_payload.get("repo_root"):
-        context_payload["repo_root"] = str(settings.project_root.resolve())
+        context_payload["resolution_source"] = "unresolved_repo_scope"
+        context_payload["scope_resolution_status"] = "unresolved"
+        context_payload["scope_resolution_reason"] = (
+            "repo_root_unresolved_no_verified_project_binding"
+        )
+        _set_scope_provenance(context_payload, field="repo_root", label="anonymous")
+        raise ValueError(
+            "ExecutionContext repo scope unresolved: no verified project binding "
+            "or explicit repo_root was provided."
+        )
+
+    _set_scope_defaults(context_payload)
 
     await _resolve_mode(
         tool_name=name,
@@ -349,6 +502,16 @@ async def execute_tool_call(
         storage_backend=storage_backend,
         state_manager=state_manager,
     )
+
+    if (
+        public_release
+        and str(context_payload.get("mode", "")) == "sentinel"
+        and not str(context_payload.get("transport_session_id") or "").strip()
+    ):
+        raise ValueError(
+            "Public release sentinel mode requires trusted runtime-derived "
+            "transport_session_id for identity isolation"
+        )
 
     if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
         raise ValueError("ExecutionContext requires context.session_id or context.transport_session_id")
@@ -368,10 +531,19 @@ async def execute_tool_call(
             pass
 
     identity_hash, identity_parts = _derive_session_identity_preview(context_payload, call_arguments)
+    derived_scoped_reuse_key = _derive_scoped_reuse_key(
+        identity_parts["repo_root"],
+        None if identity_parts["scope_key"] == "__prebinding__" else identity_parts["scope_key"],
+    )
+    context_payload["scoped_reuse_key"] = derived_scoped_reuse_key
+    context_payload["session_reuse_scope"] = derived_scoped_reuse_key
     stable_session_id = context_payload.get("stable_session_id")
+    stable_session_source = "context" if stable_session_id else None
 
     if not stable_session_id and hasattr(router_context_manager, "get_cached_agent_session_id"):
         stable_session_id = await router_context_manager.get_cached_agent_session_id(identity_hash)
+        if stable_session_id:
+            stable_session_source = "cache"
 
     if (
         not stable_session_id
@@ -386,11 +558,35 @@ async def execute_tool_call(
             mode=identity_parts["mode"],
             scope_key=identity_parts["scope_key"],
         )
+        if stable_session_id:
+            stable_session_source = "allocator"
         if stable_session_id and hasattr(router_context_manager, "cache_agent_session_id"):
             await router_context_manager.cache_agent_session_id(identity_hash, stable_session_id)
+        if stable_session_id and not context_payload.get("session_reuse_status"):
+            context_payload["session_reuse_status"] = "allocated"
+
+    if stable_session_id and storage_backend and hasattr(storage_backend, "get_last_agent_session_allocation"):
+        allocation = await storage_backend.get_last_agent_session_allocation(identity_hash)
+        if isinstance(allocation, Mapping):
+            status = allocation.get("status")
+            scope = allocation.get("scoped_reuse_key")
+            allocation_session_id = allocation.get("session_id")
+            if isinstance(status, str) and status:
+                if allocation_session_id is None or str(allocation_session_id) == str(stable_session_id):
+                    context_payload["session_reuse_status"] = status
+            if isinstance(scope, str) and scope:
+                context_payload["scoped_reuse_key"] = scope
+                context_payload["session_reuse_scope"] = scope
+
+    if stable_session_id and not context_payload.get("session_reuse_status"):
+        if stable_session_source == "cache":
+            context_payload["session_reuse_status"] = "cache_hit_unverified"
+        else:
+            context_payload["session_reuse_status"] = "reused"
 
     if stable_session_id:
         context_payload["stable_session_id"] = stable_session_id
+        _set_scope_provenance(context_payload, field="agent_session_id", label="verified")
 
     exec_context = await router_context_manager.build_execution_context(context_payload)
 
@@ -400,7 +596,10 @@ async def execute_tool_call(
             reason="tool_not_allowed_in_sentinel_mode",
             tool_name=name,
         )
-        raise ValueError(f"Tool '{name}' not allowed in sentinel mode")
+        raise ValueError(
+            f"Tool '{name}' requires an active Scribe project. "
+            "No project is active in sentinel mode; run set_project first."
+        )
 
     if exec_context.mode == "project" and name in sentinel_only and name != "append_event":
         raise ValueError(f"Tool '{name}' not allowed in project mode")

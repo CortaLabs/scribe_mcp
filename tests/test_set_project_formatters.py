@@ -71,6 +71,18 @@ class TestFormatProjectSitrepNew:
         assert "Root: /tmp/projects/MCP_SPINE/scribe_mcp" in output
         assert "Dev Plan: .scribe/docs/dev_plans/my_new_feature/" in output
 
+    def test_new_sitrep_surfaces_compatibility_override(self, formatter, sample_project, sample_docs_created):
+        """Verify readable new-project SITREP surfaces compatibility override provenance."""
+        project = dict(sample_project)
+        project["root_authorization"] = {
+            "skip_validation_requested": True,
+            "compatibility_override_used": True,
+            "authorization_mode": "compatibility_opt_in",
+        }
+
+        output = formatter.format_project_sitrep_new(project, sample_docs_created)
+        assert "Root Authorization: compatibility override via skip_validation=true" in output
+
     def test_template_doc_line_counts(self, formatter, sample_project, sample_docs_created):
         """Verify template docs show correct line counts."""
         output = formatter.format_project_sitrep_new(sample_project, sample_docs_created)
@@ -176,6 +188,20 @@ class TestFormatProjectSitrepExisting:
 
         assert "📌 PROJECT ACTIVATED: scribe_tool_output_refinement" in output
         assert "╔══════════════════════════════════════════════════════════╗" in output
+
+    def test_existing_sitrep_surfaces_compatibility_override(self, formatter, sample_project, sample_inventory, sample_activity):
+        """Verify readable existing-project SITREP surfaces compatibility override provenance."""
+        project = dict(sample_project)
+        project["root_authorization"] = {
+            "skip_validation_requested": True,
+            "compatibility_override_used": True,
+            "authorization_mode": "compatibility_opt_in",
+        }
+
+        output = formatter.format_project_sitrep_existing(
+            project, sample_inventory, sample_activity
+        )
+        assert "Root Authorization: compatibility override via skip_validation=true" in output
 
     def test_status_annotation_active_work(self, formatter, sample_project, sample_inventory, sample_activity):
         """Verify 'in_progress' status shows '(active work)' annotation."""
