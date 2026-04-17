@@ -256,12 +256,21 @@ async def list_projects(
     projects_map: Dict[str, Dict[str, Any]] = {}
     allowed_recovery_modes = {"compat_active_project"}
     compatibility_mode = recovery_mode in allowed_recovery_modes
+    recovery_applied = False
+    recovery_reason: Optional[str] = None
+
+    def _resolve_active_project_name(active_name: Optional[str]) -> Optional[str]:
+        """Resolve active project for response metadata with session binding precedence."""
+        session_bound_name = context.project.get("name") if context.project else None
+        if context.resolution_source == "session_binding":
+            return session_bound_name
+        return active_name or session_bound_name
 
     def _resolution_payload(active_name: Optional[str]) -> Dict[str, Any]:
         source = context.resolution_source
         fallback_used = bool(context.fallback_used)
         fallback_chain = list(context.fallback_chain or [])
-        if compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
+        if recovery_applied and compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
             fallback_chain.append(recovery_mode)
             fallback_used = True
         effective_source = source if source != "unresolved" else "project_index"
@@ -270,16 +279,19 @@ async def list_projects(
             if not fallback_used
             else f"Listed projects from '{effective_source}' with recovery chain: {', '.join(fallback_chain)}"
         )
+        resolved_active_name = _resolve_active_project_name(active_name)
         return {
             "resolution_source": effective_source,
             "fallback_used": fallback_used,
             "fallback_chain": fallback_chain,
             "resolution_summary": summary,
-            "active_project": (
-                active_name
-                if active_name
-                else (context.project.get("name") if context.project else None)
-            ),
+            "active_project": resolved_active_name,
+            "compatibility_recovery": {
+                "requested": compatibility_mode,
+                "mode": recovery_mode if compatibility_mode else None,
+                "applied": recovery_applied,
+                "reason": recovery_reason,
+            },
         }
 
     # Determine repo scope for query
@@ -324,20 +336,27 @@ async def list_projects(
     current_name = context.project.get("name") if context.project else None
     recent = list(context.recent_projects)
     if compatibility_mode and recovery_mode == "compat_active_project":
-        active_project, recovered_name, recovered_recent = await load_active_project(server_module.state_manager)
-        if active_project:
-            current_name = recovered_name or active_project.get("name")
-            recent = list(recovered_recent)
-            if active_project["name"] not in projects_map:
-                projects_map[active_project["name"]] = {
-                    "name": active_project["name"],
-                    "root": active_project.get("root"),
-                    "progress_log": active_project.get("progress_log"),
-                    "docs": active_project.get("docs"),
-                    "defaults": active_project.get("defaults"),
-                    "description": active_project.get("description"),
-                    "tags": active_project.get("tags"),
-                }
+        if current_name:
+            recovery_reason = "session_authority_present"
+        else:
+            active_project, recovered_name, recovered_recent = await load_active_project(server_module.state_manager)
+            if active_project:
+                recovery_applied = True
+                recovery_reason = "compat_active_project"
+                current_name = recovered_name or active_project.get("name")
+                recent = list(recovered_recent)
+                if active_project["name"] not in projects_map:
+                    projects_map[active_project["name"]] = {
+                        "name": active_project["name"],
+                        "root": active_project.get("root"),
+                        "progress_log": active_project.get("progress_log"),
+                        "docs": active_project.get("docs"),
+                        "defaults": active_project.get("defaults"),
+                        "description": active_project.get("description"),
+                        "tags": active_project.get("tags"),
+                    }
+            else:
+                recovery_reason = "compat_active_project_not_found"
 
     # Enrich with Project Registry information (best-effort).
     for name, data in list(projects_map.items()):

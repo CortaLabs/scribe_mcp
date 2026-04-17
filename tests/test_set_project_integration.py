@@ -354,3 +354,109 @@ async def test_state_manager_same_repo_writes_do_not_global_fallback():
         assert backend.session_projects["stable-a"] == "project_a"
         assert backend.session_projects["stable-b"] == "project_b"
         assert backend.global_project_calls == []
+
+
+@pytest.mark.asyncio
+async def test_set_project_accepts_claimed_runtime_repo_root_when_local_repo_is_verifiable(monkeypatch, tmp_path):
+    """Claimed runtime repo_root should be accepted when it resolves to a real local repo."""
+    repo_root = tmp_path / "claimed_repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / ".git").mkdir()
+    db_path = tmp_path / "claimed-root.db"
+    state_path = tmp_path / "claimed-root-state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    state_manager = StateManager(state_path, storage_backend=storage)
+    agent_manager = AgentContextManager(storage, state_manager)
+    session_id = "claimed-root-session"
+    await storage.upsert_session(
+        session_id=session_id,
+        transport_session_id=session_id,
+        agent_id="ClaimedRootAgent",
+        repo_root=str(repo_root),
+        mode="project",
+    )
+    await agent_manager.start_session("ClaimedRootAgent", session_id=session_id)
+
+    monkeypatch.setattr(server_module, "storage_backend", storage)
+    monkeypatch.setattr(server_module, "state_manager", state_manager)
+    monkeypatch.setattr(server_module, "agent_context_manager", agent_manager, raising=False)
+
+    claimed_context = SimpleNamespace(
+        session_id=session_id,
+        stable_session_id=session_id,
+        repo_root=str(repo_root),
+        scope_provenance={"repo_root": "claimed"},
+    )
+
+    def _get_execution_context(*_args, **kwargs):
+        if kwargs.get("include_metadata"):
+            return claimed_context, {}
+        return claimed_context
+
+    monkeypatch.setattr(server_module, "get_execution_context", _get_execution_context)
+
+    result = await set_project_tool.set_project(
+        agent="ClaimedRootAgent",
+        name="claimed_root_project",
+        root=str(repo_root),
+        format="structured",
+    )
+
+    assert result["ok"] is True
+    assert result["root_authorization"]["authorization_mode"] == "context_repo_claim_verified_local"
+    assert result["root_authorization"]["reason_code"] == "claimed_context_repo_verified_local"
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_set_project_rejection_includes_reason_code_for_untrusted_root(tmp_path):
+    """Rejected roots should explain why validation failed instead of only suggesting skip_validation."""
+    outside_root = tmp_path / "outside_root"
+    outside_root.mkdir(parents=True, exist_ok=True)
+
+    result = await set_project_tool.set_project(
+        agent="UntrustedRootAgent",
+        name="untrusted_root_project",
+        root=str(outside_root),
+        format="structured",
+    )
+
+    assert result["ok"] is False
+    assert result["reason_code"] == "requested_root_outside_trusted_scope"
+    assert "trusted_roots" in result
+
+
+@pytest.mark.asyncio
+async def test_set_project_rejects_mirrored_root_without_explicit_compatibility_opt_in(
+    monkeypatch,
+    tmp_path,
+):
+    """Mapped workspace mirrors must not auto-upgrade invalid roots into trusted scope."""
+    requested_root = tmp_path / "tmp" / "not-a-valid-scribe-root"
+    trusted_mirror_root = (
+        Path(server_module.settings.project_root).resolve()
+        / "workspaces"
+        / "austin"
+        / "tmp"
+        / "not-a-valid-scribe-root"
+    )
+
+    from scribe_mcp.config import paths as paths_module
+
+    monkeypatch.setattr(
+        paths_module,
+        "map_client_root",
+        lambda client_path, user=None: (str(trusted_mirror_root), str(client_path)),
+    )
+
+    result = await set_project_tool.set_project(
+        agent="MirroredRootRejectAgent",
+        name="mirrored_root_reject_project",
+        root=str(requested_root),
+        format="structured",
+    )
+
+    assert result["ok"] is False
+    assert result["reason_code"] == "mapped_root_requires_explicit_compatibility_opt_in"
+    assert result["resolved_root"] == str(trusted_mirror_root)

@@ -441,11 +441,13 @@ async def get_project(
     recent_projects = list(context.recent_projects)
     allowed_recovery_modes = {"compat_active_project", "compat_last_known_project"}
     compatibility_mode = recovery_mode in allowed_recovery_modes
+    recovery_applied = False
+    recovery_reason: Optional[str] = None
 
     def _resolution_payload() -> Dict[str, Any]:
         payload = build_resolution_metadata(context, include_project=False)
         fallback_chain = list(payload.get("fallback_chain") or [])
-        if compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
+        if recovery_applied and compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
             fallback_chain.append(recovery_mode)
             payload["fallback_chain"] = fallback_chain
             payload["fallback_used"] = True
@@ -453,6 +455,12 @@ async def get_project(
                 f"Resolved via '{payload.get('resolution_source', 'unresolved')}' "
                 f"with recovery chain: {', '.join(fallback_chain)}"
             )
+        payload["compatibility_recovery"] = {
+            "requested": compatibility_mode,
+            "mode": recovery_mode if compatibility_mode else None,
+            "applied": recovery_applied,
+            "reason": recovery_reason,
+        }
         return payload
 
     target_project = context.project if context.project else None
@@ -517,17 +525,24 @@ async def get_project(
                 )
                 response.update(_resolution_payload())
                 return response
+            if compatibility_mode:
+                recovery_reason = "session_authority_present"
         if not target_project and not exec_context and compatibility_mode and recovery_mode == "compat_active_project":
             active_project, current_name, recent = await load_active_project(server_module.state_manager)
             if active_project:
                 target_project = dict(active_project)
                 recent_projects = list(recent)
+                recovery_applied = True
+                recovery_reason = "compat_active_project"
+            else:
+                recovery_reason = "compat_active_project_not_found"
         if not target_project:
             extra: Dict[str, Any] = {}
             try:
                 last_known = None
                 if compatibility_mode and recovery_mode == "compat_last_known_project":
                     last_known = _PROJECT_REGISTRY.get_last_known_project_for_recovery(candidates=recent_projects)
+                    recovery_reason = "compat_last_known_project_lookup"
                 if last_known and last_known.last_access_at:
                     from datetime import datetime, timezone
 

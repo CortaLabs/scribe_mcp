@@ -163,16 +163,22 @@ async def resolve_logging_context(
         try:
             session_project = None
             state = None
+            backend_session_lookup_available = False
+            backend_session_lookup_attempted = False
             backend = getattr(server_module, "storage_backend", None)
             if backend and hasattr(backend, "get_session_project"):
-                stable_session_id = getattr(exec_context, "stable_session_id", None)
+                backend_session_lookup_available = True
+                # Canonical precedence must follow set_project write-path authority:
+                # execution session_id binding first, then stable_session_id fallback.
                 transport_session_id = getattr(exec_context, "session_id", None)
+                stable_session_id = getattr(exec_context, "stable_session_id", None)
                 session_keys: List[str] = []
-                for candidate_key in (stable_session_id, transport_session_id):
+                for candidate_key in (transport_session_id, stable_session_id):
                     if candidate_key and str(candidate_key) not in session_keys:
                         session_keys.append(str(candidate_key))
 
                 for session_key in session_keys:
+                    backend_session_lookup_attempted = True
                     project_name = await backend.get_session_project(session_key)
                     from datetime import datetime, timezone
 
@@ -232,10 +238,13 @@ async def resolve_logging_context(
                         session_project = load_project_config(project_name, allow_fallback=False)
                     if session_project:
                         break
-            if not session_project:
+            if not session_project and (
+                not backend_session_lookup_available
+                or not backend_session_lookup_attempted
+            ):
                 state = await server_module.state_manager.load()
-                # Prefer stable_session_id for deterministic project resolution
-                session_key_fallback = getattr(exec_context, "stable_session_id", None) or getattr(exec_context, "session_id", None)
+                # Canonical fallback follows write-path authority first.
+                session_key_fallback = getattr(exec_context, "session_id", None) or getattr(exec_context, "stable_session_id", None)
                 session_project = state.get_session_project(session_key_fallback)
                 from datetime import datetime, timezone
                 _session_debug_trace(
@@ -274,7 +283,15 @@ async def resolve_logging_context(
     if explicit_requested:
         explicit_name = str(explicit_project).strip()
         explicit_alias = normalize_project_input(explicit_name)
-        if public_release:
+        if exec_context and getattr(exec_context, "mode", None) == "project" and authorized_project_names:
+            if explicit_name not in authorized_project_names and (
+                not explicit_alias or explicit_alias not in authorized_project_names
+            ):
+                raise ProjectResolutionError(
+                    f"Explicit project override '{explicit_project}' does not match the session-bound active project.",
+                    recent_projects,
+                )
+        elif public_release:
             if explicit_name not in authorized_project_names and (
                 not explicit_alias or explicit_alias not in authorized_project_names
             ):

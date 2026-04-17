@@ -1135,12 +1135,6 @@ class PostgresStorage(StorageBackend):
                 SELECT session_id, transport_session_id, agent_id, repo_root, mode
                 FROM scribe_sessions
                 WHERE transport_session_id = $1
-                  AND EXISTS (
-                      SELECT 1
-                      FROM agent_sessions
-                      WHERE agent_sessions.session_id = scribe_sessions.session_id
-                        AND (agent_sessions.expires_at IS NULL OR agent_sessions.expires_at > NOW())
-                  )
                 ORDER BY last_active_at DESC
                 LIMIT 2
             )

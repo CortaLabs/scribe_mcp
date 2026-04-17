@@ -184,6 +184,54 @@ async def test_open_security_missing_category_returns_error() -> None:
     assert "category" in result.get("error", "").lower()
 
 
+@pytest.mark.asyncio
+async def test_open_bug_preview_is_non_mutating_in_project_mode() -> None:
+    """open_bug(preview=True) should return case_id without append_entry/manage_docs writes."""
+    ctx = _make_execution_context("project")
+    ctx.repo_root = "/tmp/repo"
+    ctx.affected_dev_projects = ["test-project"]
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.append_entry.append_entry", AsyncMock()) as mock_append, \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", AsyncMock()) as mock_manage, \
+         patch("scribe_mcp.tools.sentinel_tools._preview_case_id_for_project", return_value="BUG-2026-03-15-0007"):
+        result = await open_bug(
+            agent="test-agent",
+            title="Preview bug",
+            symptoms="Preview only",
+            category="runtime",
+            preview=True,
+        )
+
+    assert result == {"ok": True, "case_id": "BUG-2026-03-15-0007", "preview": True}
+    mock_append.assert_not_awaited()
+    mock_manage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_open_security_preview_is_non_mutating_in_project_mode() -> None:
+    """open_security(preview=True) should return case_id without append_entry/manage_docs writes."""
+    ctx = _make_execution_context("project")
+    ctx.repo_root = "/tmp/repo"
+    ctx.affected_dev_projects = ["test-project"]
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.append_entry.append_entry", AsyncMock()) as mock_append, \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", AsyncMock()) as mock_manage, \
+         patch("scribe_mcp.tools.sentinel_tools._preview_case_id_for_project", return_value="SEC-2026-03-15-0004"):
+        result = await open_security(
+            agent="test-agent",
+            title="Preview security",
+            symptoms="Preview only",
+            category="auth",
+            preview=True,
+        )
+
+    assert result == {"ok": True, "case_id": "SEC-2026-03-15-0004", "preview": True}
+    mock_append.assert_not_awaited()
+    mock_manage.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Tests: link_fix happy path
 # ---------------------------------------------------------------------------

@@ -59,6 +59,99 @@ def _heading_to_section_id(heading_text: str, fallback_index: int) -> str:
     return candidate or f"section_{fallback_index}"
 
 
+async def inspect_document_sections(path: Path) -> Dict[str, Any]:
+    """Inspect a document and return stable section targeting metadata."""
+    text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+    return inspect_document_sections_from_text(text)
+
+
+def inspect_document_sections_from_text(text: str) -> Dict[str, Any]:
+    """Inspect markdown content and return stable section targeting metadata."""
+    parsed = parse_frontmatter(text)
+    body_lines = parsed.body.splitlines()
+    body_line_offset = len(parsed.frontmatter_raw.splitlines()) if parsed.has_frontmatter else 0
+    sections: List[Dict[str, Any]] = []
+    anchor_duplicates: Dict[str, List[int]] = {}
+    heading_sections: List[Dict[str, Any]] = []
+    heading_duplicates: Dict[str, List[int]] = {}
+    in_code_fence = False
+
+    for line_no, line in enumerate(body_lines, start=1):
+        stripped = line.strip()
+
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_fence = not in_code_fence
+            continue
+
+        if stripped.startswith("<!-- ID:") and stripped.endswith("-->"):
+            section_id = stripped[len("<!-- ID:"): -len("-->")].strip()
+            anchor_duplicates.setdefault(section_id, []).append(line_no)
+            sections.append(
+                {
+                    "id": section_id,
+                    "line": line_no,
+                    "file_line": line_no + body_line_offset,
+                    "source": "anchor",
+                }
+            )
+            continue
+
+        if in_code_fence:
+            continue
+
+        heading_match = _HEADING_PATTERN.match(stripped)
+        if not heading_match:
+            continue
+
+        heading_text = _normalize_heading_text(heading_match.group(2))
+        if not heading_text:
+            continue
+
+        heading_level = len(heading_match.group(1))
+        section_id = _heading_to_section_id(heading_text, line_no)
+        heading_duplicates.setdefault(section_id, []).append(line_no)
+        heading_sections.append(
+            {
+                "id": section_id,
+                "line": line_no,
+                "file_line": line_no + body_line_offset,
+                "source": "heading",
+                "heading": heading_text,
+                "heading_level": heading_level,
+            }
+        )
+
+    section_source = "anchors" if sections else "headings"
+    resolved_sections = sections if sections else heading_sections
+    source_duplicates = anchor_duplicates if sections else heading_duplicates
+    duplicate_sections = {
+        section_id: lines for section_id, lines in source_duplicates.items() if len(lines) > 1
+    }
+
+    payload: Dict[str, Any] = {
+        "sections": resolved_sections,
+        "section_source": section_source,
+        "body_line_offset": body_line_offset,
+        "frontmatter_line_count": body_line_offset,
+    }
+    if not sections and heading_sections:
+        payload["warning"] = (
+            "No explicit section anchors found; returning heading-derived section IDs. "
+            "Use apply_patch/replace_range or add <!-- ID: ... --> anchors for stable replace_section targeting."
+        )
+    if duplicate_sections:
+        payload["duplicates"] = duplicate_sections
+        if sections:
+            payload["warning"] = (
+                "Duplicate section anchors detected; use apply_patch or fix anchors before replace_section."
+            )
+        elif "warning" not in payload:
+            payload["warning"] = (
+                "Duplicate heading-derived section IDs detected; headings may be ambiguous for targeting."
+            )
+    return payload
+
+
 async def handle_query_actions(
     *,
     action: str,
@@ -147,67 +240,11 @@ async def _handle_list_sections(
             context,
         )
 
-    text = await asyncio.to_thread(path.read_text, encoding="utf-8")
-    parsed = parse_frontmatter(text)
-    body_lines = parsed.body.splitlines()
-    body_line_offset = len(parsed.frontmatter_raw.splitlines()) if parsed.has_frontmatter else 0
-    sections: List[Dict[str, Any]] = []
-    anchor_duplicates: Dict[str, List[int]] = {}
-    heading_sections: List[Dict[str, Any]] = []
-    heading_duplicates: Dict[str, List[int]] = {}
-    in_code_fence = False
-
-    for line_no, line in enumerate(body_lines, start=1):
-        stripped = line.strip()
-
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_code_fence = not in_code_fence
-            continue
-
-        if stripped.startswith("<!-- ID:") and stripped.endswith("-->"):
-            section_id = stripped[len("<!-- ID:"): -len("-->")].strip()
-            anchor_duplicates.setdefault(section_id, []).append(line_no)
-            sections.append(
-                {
-                    "id": section_id,
-                    "line": line_no,
-                    "file_line": line_no + body_line_offset,
-                    "source": "anchor",
-                }
-            )
-            continue
-
-        if in_code_fence:
-            continue
-
-        heading_match = _HEADING_PATTERN.match(stripped)
-        if not heading_match:
-            continue
-
-        heading_text = _normalize_heading_text(heading_match.group(2))
-        if not heading_text:
-            continue
-
-        heading_level = len(heading_match.group(1))
-        section_id = _heading_to_section_id(heading_text, line_no)
-        heading_duplicates.setdefault(section_id, []).append(line_no)
-        heading_sections.append(
-            {
-                "id": section_id,
-                "line": line_no,
-                "file_line": line_no + body_line_offset,
-                "source": "heading",
-                "heading": heading_text,
-                "heading_level": heading_level,
-            }
-        )
-
-    section_source = "anchors" if sections else "headings"
-    resolved_sections = sections if sections else heading_sections
-    source_duplicates = anchor_duplicates if sections else heading_duplicates
-    duplicate_sections = {
-        section_id: lines for section_id, lines in source_duplicates.items() if len(lines) > 1
-    }
+    section_payload = await inspect_document_sections(path)
+    resolved_sections = section_payload.get("sections", [])
+    section_source = section_payload.get("section_source", "headings")
+    body_line_offset = int(section_payload.get("body_line_offset", 0) or 0)
+    duplicate_sections = section_payload.get("duplicates", {})
 
     page = metadata.get("page", 1) if metadata else 1
     page_size = metadata.get("page_size", 50) if metadata else 50
@@ -233,22 +270,11 @@ async def _handle_list_sections(
         },
     }
 
-    if not sections and heading_sections:
-        response["warning"] = (
-            "No explicit section anchors found; returning heading-derived section IDs. "
-            "Use apply_patch/replace_range or add <!-- ID: ... --> anchors for stable replace_section targeting."
-        )
-
+    warning = section_payload.get("warning")
+    if warning:
+        response["warning"] = warning
     if duplicate_sections:
         response["duplicates"] = duplicate_sections
-        if sections:
-            response["warning"] = (
-                "Duplicate section anchors detected; use apply_patch or fix anchors before replace_section."
-            )
-        elif "warning" not in response:
-            response["warning"] = (
-                "Duplicate heading-derived section IDs detected; headings may be ambiguous for targeting."
-            )
 
     return helper.apply_context_payload(response, context)
 

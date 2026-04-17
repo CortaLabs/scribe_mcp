@@ -481,3 +481,116 @@ async def test_resolve_logging_context_allows_explicit_compat_active_project_rec
     assert context.resolution_source == "compat_active_project"
     assert context.fallback_used is True
     assert "compat_active_project" in (context.fallback_chain or [])
+
+
+@pytest.mark.asyncio
+async def test_resolve_logging_context_project_mode_does_not_use_state_session_fallback_when_backend_lookup_available() -> None:
+    class DummyState:
+        recent_projects = ["security_public_release_hardening_20260409_0940utc"]
+        current_project = None
+
+        def get_session_project(self, _session_key: Optional[str]) -> Optional[Dict[str, Any]]:
+            return {
+                "name": "security_public_release_hardening_20260409_0940utc",
+                "root": "/tmp/stale",
+                "progress_log": "/tmp/stale/PROGRESS_LOG.md",
+            }
+
+    class DummyStateManager:
+        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
+            return {"tool": tool_name}
+
+        async def load(self) -> Any:
+            return DummyState()
+
+    class DummyBackend:
+        async def get_session_project(self, _session_id: str) -> Optional[str]:
+            return None
+
+    class DummyServerModule:
+        state_manager = DummyStateManager()
+        storage_backend = DummyBackend()
+
+        @staticmethod
+        def get_execution_context() -> Any:
+            return SimpleNamespace(
+                mode="project",
+                stable_session_id="stable-session-404",
+                session_id="transport-session-404",
+            )
+
+    context = await resolve_logging_context(
+        tool_name="list_projects",
+        server_module=DummyServerModule(),
+        require_project=False,
+    )
+
+    assert context.project is None
+    assert context.resolution_source == "unresolved"
+
+
+@pytest.mark.asyncio
+async def test_resolve_logging_context_project_mode_prefers_authoritative_execution_session_id_over_stale_stable() -> None:
+    class DummyState:
+        recent_projects: List[str] = []
+        current_project = None
+
+        def get_session_project(self, _session_key: Optional[str]) -> Optional[Dict[str, Any]]:
+            return None
+
+    class DummyStateManager:
+        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
+            return {"tool": tool_name}
+
+        async def load(self) -> Any:
+            return DummyState()
+
+    class DummyBackend:
+        async def get_session_project(self, session_id: str) -> Optional[str]:
+            if session_id == "execution-session-123":
+                return "authoritative_project"
+            if session_id == "stale-prebinding-session-999":
+                return "stale_project"
+            return None
+
+        async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+            if name == "authoritative_project":
+                return ProjectRecord(
+                    id=1,
+                    name="authoritative_project",
+                    repo_root="/tmp/authoritative",
+                    progress_log_path="/tmp/authoritative/PROGRESS_LOG.md",
+                    docs_json=None,
+                )
+            if name == "stale_project":
+                return ProjectRecord(
+                    id=2,
+                    name="stale_project",
+                    repo_root="/tmp/stale",
+                    progress_log_path="/tmp/stale/PROGRESS_LOG.md",
+                    docs_json=None,
+                )
+            return None
+
+    class DummyServerModule:
+        state_manager = DummyStateManager()
+        storage_backend = DummyBackend()
+
+        @staticmethod
+        def get_execution_context() -> Any:
+            return SimpleNamespace(
+                mode="project",
+                session_id="execution-session-123",
+                stable_session_id="stale-prebinding-session-999",
+            )
+
+    context = await resolve_logging_context(
+        tool_name="list_projects",
+        server_module=DummyServerModule(),
+        require_project=False,
+    )
+
+    assert context.project is not None
+    assert context.project["name"] == "authoritative_project"
+    assert context.project["root"] == "/tmp/authoritative"
+    assert context.resolution_source == "session_binding"

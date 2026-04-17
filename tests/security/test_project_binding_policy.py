@@ -279,7 +279,7 @@ async def test_rejects_unauthorized_explicit_project_override_in_public_release(
             recovery_mode="none",
         )
 
-    assert "not authorized for this session" in str(excinfo.value)
+    assert "does not match the session-bound active project" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
@@ -318,6 +318,44 @@ async def test_rejects_explicit_project_override_without_authorized_session_bind
         )
 
     assert "not authorized for this session" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_project_mode_rejects_explicit_project_override_even_outside_public_release(monkeypatch) -> None:
+    monkeypatch.delenv("SCRIBE_RELEASE_PROFILE", raising=False)
+    server_module = SimpleNamespace(
+        state_manager=SimpleNamespace(
+            record_tool=lambda _tool: {"tool": "query_entries"},
+            load=lambda: _BindingState(),
+        ),
+        storage_backend=_ExplicitOverrideBackend(),
+        get_execution_context=lambda: SimpleNamespace(
+            mode="project",
+            stable_session_id="session-security",
+            session_id="session-security",
+        ),
+        get_agent_identity=lambda: None,
+    )
+
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return _BindingState()
+
+    server_module.state_manager.record_tool = _record_tool
+    server_module.state_manager.load = _load_state
+
+    with pytest.raises(logging_utils_module.ProjectResolutionError) as excinfo:
+        await resolve_logging_context(
+            tool_name="query_entries",
+            server_module=server_module,
+            explicit_project="other-project",
+            require_project=True,
+            recovery_mode="none",
+        )
+
+    assert "does not match the session-bound active project" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

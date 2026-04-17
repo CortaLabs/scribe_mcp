@@ -415,6 +415,59 @@ class TestGetProjectIntegration:
         storage_backend.get_session_project.assert_any_await("transport-session-bound")
 
     @pytest.mark.asyncio
+    async def test_structured_lookup_recovery_mode_does_not_mark_fallback_when_session_binding_resolves(self, monkeypatch):
+        """Compatibility mode metadata should stay truthful when session binding already resolved the project."""
+        state_manager = AsyncMock()
+        state_manager.record_tool.return_value = {"tool": "get_project"}
+        state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project="demo")
+
+        storage_backend = Mock()
+        storage_backend.get_session_project = AsyncMock(return_value="demo")
+        storage_backend.fetch_project = AsyncMock(
+            return_value=SimpleNamespace(
+                name="demo",
+                repo_root="/tmp/demo",
+                progress_log_path="/tmp/demo/PROGRESS_LOG.md",
+                docs_json=None,
+            )
+        )
+        storage_backend.count_entries = AsyncMock(return_value=0)
+
+        fake_server = Mock()
+        fake_server.state_manager = state_manager
+        fake_server.get_agent_identity.return_value = None
+        fake_server.get_execution_context.return_value = SimpleNamespace(
+            mode="project",
+            stable_session_id="stable-session-001",
+            session_id="transport-session-001",
+        )
+        fake_server.storage_backend = storage_backend
+        fake_server.app = SimpleNamespace(state=SimpleNamespace(execution_context={"forbidden": True}))
+
+        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
+        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project.load_active_project",
+            AsyncMock(side_effect=AssertionError("compat fallback must not run when session binding resolves")),
+        )
+        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
+        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_log_counts", AsyncMock(return_value={}))
+        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_progress_entries", AsyncMock(return_value=[]))
+        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_entries_from_db", AsyncMock(return_value=[]))
+        monkeypatch.setattr("scribe_mcp.tools.get_project.detect_project_state", lambda *_args, **_kwargs: ("NEW", "ok"))
+
+        result = await get_project(format="structured", recovery_mode="compat_active_project")
+
+        assert result["ok"] is True
+        assert result["project"]["name"] == "demo"
+        assert result["resolution_source"] == "session_binding"
+        assert result["fallback_used"] is False
+        assert result["fallback_chain"] == []
+        assert result["compatibility_recovery"]["requested"] is True
+        assert result["compatibility_recovery"]["applied"] is False
+        assert result["compatibility_recovery"]["reason"] == "session_authority_present"
+
+    @pytest.mark.asyncio
     async def test_readable_lookup_includes_resolution_metadata_and_recovery_chain(self, monkeypatch):
         """Readable lookup in explicit recovery mode should expose resolution metadata truthfully."""
         state_manager = AsyncMock()

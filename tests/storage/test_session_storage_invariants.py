@@ -83,6 +83,11 @@ async def test_postgres_session_linkage_invariants(postgres_storage: PostgresSto
         repo_root="/tmp/postgres",
         mode="project",
     )
+    await postgres_storage._execute(
+        "DELETE FROM agent_sessions WHERE session_id = $1;",
+        session_primary,
+    )
+    assert await postgres_storage.fetch_agent_session(session_primary) is None
 
     with pytest.raises(ConflictError, match="unknown session_id"):
         await postgres_storage.set_session_project(_sid("postgres_missing"), None)

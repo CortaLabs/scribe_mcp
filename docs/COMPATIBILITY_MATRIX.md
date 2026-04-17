@@ -7,8 +7,8 @@ Release framing: **v2.5 compatibility baseline**
 
 This baseline keeps compatibility posture for the 2.5 documentation wave:
 
-- **Core package version:** `scribe-mcp==2.2.2`
-- **Optional template package:** `scribe-council==2.2.2`
+- **Core package version:** `scribe-mcp==2.2.3`
+- **Optional template package:** `scribe-council==2.2.3`
 - **Default runtime posture:** local/core
 - **Remote posture:** optional and authenticated
 
@@ -18,30 +18,30 @@ This baseline keeps compatibility posture for the 2.5 documentation wave:
 
 | Core (`scribe-mcp`) | Optional templates (`scribe-council`) | Status | Intended use |
 | --- | --- | --- | --- |
-| `2.2.2` | — | Supported | Standard install for local/core usage. |
-| `2.2.2` | `2.2.2` | Supported | Add optional template bundle when template assets are needed. |
+| `2.2.3` | — | Supported | Standard install for local/core usage. |
+| `2.2.3` | `2.2.3` | Supported | Add optional template bundle when template assets are needed. |
 
 ## Not supported by this baseline
 
 | Combination / practice | Status | Why |
 | --- | --- | --- |
-| `scribe-council` without `scribe-mcp==2.2.2` | Unsupported | Optional package explicitly depends on `scribe-mcp==2.2.2`. |
+| `scribe-council` without `scribe-mcp==2.2.3` | Unsupported | Optional package explicitly depends on `scribe-mcp==2.2.3`. |
 | Guidance that depends on repo-local/operator files as public setup | Unsupported | Those files are local convenience, not release contract. |
 | Unversioned or mixed versions outside the baseline above | Not signed off | This baseline only certifies the combinations listed in this document. |
 
 ## What is shipped
 
-### `scribe-mcp 2.2.2`
+### `scribe-mcp 2.2.3`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`
 - One compatibility shim remains in `src/scribe_mcp/council_templates/__init__.py`
 
-### `scribe-council 2.2.2` (optional)
+### `scribe-council 2.2.3` (optional)
 
 - Ships optional template assets from `packages/scribe_council/src/scribe_council/**`
 - Provides `council.templates` entry point
-- Depends on `scribe-mcp==2.2.2`
+- Depends on `scribe-mcp==2.2.3`
 
 ## Versioning contract
 

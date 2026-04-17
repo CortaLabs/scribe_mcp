@@ -284,6 +284,9 @@ async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Pa
         )
         assert result["ok"] is True
         assert "replace_section" in result.get("next_step_guidance", "")
+        assert isinstance(result.get("editable_sections"), list)
+        assert result.get("editable_sections")
+        assert result.get("section_source") in {"anchors", "headings"}
 
         state = await state_manager.load()
         stored_project = state.get_project(project["name"])

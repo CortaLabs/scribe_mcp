@@ -42,6 +42,14 @@ _PROJECT_REGISTRY = get_runtime_project_registry()
 _SESSION_DEBUG_ENABLED = os.environ.get("SCRIBE_SESSION_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 
 
+class ProjectRootAuthorizationError(ValueError):
+    """Structured root-authorization failure surfaced by set_project."""
+
+    def __init__(self, message: str, *, payload: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(message)
+        self.payload = dict(payload or {})
+
+
 def _trusted_workspace_user(_caller_user: Optional[str]) -> Optional[str]:
     """Resolve workspace mapping user from server-owned environment only."""
     return os.environ.get("SCRIBE_USER")
@@ -403,36 +411,30 @@ async def set_project(
 
     _mark("prepare_context")
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
-    context_root = _get_context_repo_root()
+    context_root_details = _get_context_repo_root_details()
     try:
-        resolved_root = _resolve_root(root, context_root, skip_validation, scribe_user=trusted_workspace_user)
-    except ValueError as exc:
+        resolved_root, root_authorization = _resolve_root(
+            root,
+            context_root_details,
+            skip_validation,
+            scribe_user=trusted_workspace_user,
+        )
+    except ProjectRootAuthorizationError as exc:
         return _SET_PROJECT_HELPER.apply_context_payload(
-            _SET_PROJECT_HELPER.error_response(str(exc)),
+            _SET_PROJECT_HELPER.error_response(
+                str(exc),
+                extra=exc.payload,
+            ),
             base_context,
         )
 
     trusted_roots: List[Path] = [settings.project_root.resolve()]
+    context_root = context_root_details.get("trusted_path")
     if context_root is not None:
         try:
             trusted_roots.append(context_root.resolve())
         except (TypeError, ValueError):
             pass
-    compatibility_override_used = bool(
-        skip_validation
-        and bool(root)
-        and not any(
-            resolved_root == trusted_root or _is_within(resolved_root, trusted_root)
-            for trusted_root in trusted_roots
-        )
-    )
-    root_authorization = {
-        "skip_validation_requested": bool(skip_validation),
-        "compatibility_override_used": compatibility_override_used,
-        "authorization_mode": "compatibility_opt_in" if compatibility_override_used else "trusted_scope",
-        "resolved_root": str(resolved_root),
-        "trusted_context_root": str(context_root) if context_root else None,
-    }
 
     # Detect if a path mapping occurred (for metadata).
     from scribe_mcp.config.paths import map_client_root as _mcr
@@ -919,13 +921,18 @@ async def set_project(
     return _SET_PROJECT_HELPER.apply_context_payload(response, context_after)
 
 
-def _get_context_repo_root() -> Optional[Path]:
+def _get_context_repo_root_details() -> Dict[str, Any]:
     try:
         context = server_module.get_execution_context()
     except Exception:
         context = None
     if not context or not getattr(context, "repo_root", None):
-        return None
+        return {
+            "trusted_path": None,
+            "claimed_path": None,
+            "provenance": "missing",
+        }
+    repo_root_provenance = None
     try:
         resolved_scope = getattr(context, "resolved_scope", None)
         scope_provenance = getattr(resolved_scope, "provenance", None)
@@ -934,38 +941,90 @@ def _get_context_repo_root() -> Optional[Path]:
             raw_scope_provenance = getattr(context, "scope_provenance", None)
             if isinstance(raw_scope_provenance, dict):
                 repo_root_provenance = raw_scope_provenance.get("repo_root")
-        if str(repo_root_provenance or "").strip().lower() == "claimed":
-            return None
     except Exception:
-        pass
+        repo_root_provenance = None
     try:
-        return Path(str(context.repo_root)).expanduser().resolve()
+        resolved_path = Path(str(context.repo_root)).expanduser().resolve()
     except (TypeError, ValueError):
-        return None
+        return {
+            "trusted_path": None,
+            "claimed_path": None,
+            "provenance": "invalid",
+        }
+
+    provenance_label = str(repo_root_provenance or "unknown").strip().lower() or "unknown"
+    if provenance_label == "claimed":
+        return {
+            "trusted_path": None,
+            "claimed_path": resolved_path,
+            "provenance": provenance_label,
+        }
+    return {
+        "trusted_path": resolved_path,
+        "claimed_path": None,
+        "provenance": provenance_label,
+    }
+
+
+def _looks_like_local_repo_root(path: Path) -> bool:
+    """Treat a claimed repo_root as locally trustworthy only when it looks real."""
+    try:
+        git_marker = path / ".git"
+        return path.exists() and path.is_dir() and git_marker.exists()
+    except OSError:
+        return False
 
 
 def _resolve_root(
     root: Optional[str],
-    context_root: Optional[Path],
+    context_root_details: Dict[str, Any],
     skip_validation: bool,
     scribe_user: Optional[str] = None,
-) -> Path:
+) -> tuple[Path, Dict[str, Any]]:
     base = settings.project_root.resolve()
     trusted_roots: List[Path] = [base]
-    if context_root is not None:
+    trusted_context_root = context_root_details.get("trusted_path")
+    claimed_context_root = context_root_details.get("claimed_path")
+    context_repo_root_provenance = str(context_root_details.get("provenance") or "unknown")
+    if trusted_context_root is not None:
         try:
-            trusted_roots.append(context_root.resolve())
+            trusted_roots.append(trusted_context_root.resolve())
         except (TypeError, ValueError):
             pass
 
     if not root:
         for trusted_root in trusted_roots:
             if trusted_root != base:
-                return trusted_root
+                return trusted_root, {
+                    "skip_validation_requested": bool(skip_validation),
+                    "compatibility_override_used": False,
+                    "authorization_mode": "trusted_scope",
+                    "reason_code": "trusted_context_root",
+                    "resolved_root": str(trusted_root),
+                    "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
+                    "context_repo_root_provenance": context_repo_root_provenance,
+                    "trusted_roots": [str(item) for item in trusted_roots],
+                }
         if skip_validation:
-            return base
-        raise ValueError(
-            "Explicit trusted project root required. Pass root=... within workspace scope or provide context.repo_root."
+            return base, {
+                "skip_validation_requested": True,
+                "compatibility_override_used": True,
+                "authorization_mode": "compatibility_opt_in",
+                "reason_code": "skip_validation_without_explicit_root",
+                "resolved_root": str(base),
+                "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
+                "context_repo_root_provenance": context_repo_root_provenance,
+                "trusted_roots": [str(item) for item in trusted_roots],
+            }
+        raise ProjectRootAuthorizationError(
+            "Explicit trusted project root required. Pass root=... within workspace scope or provide a valid runtime repo_root.",
+            payload={
+                "reason_code": "missing_explicit_root_no_trusted_context",
+                "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
+                "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
+                "context_repo_root_provenance": context_repo_root_provenance,
+                "trusted_roots": [str(item) for item in trusted_roots],
+            },
         )
 
     root_path = Path(root).expanduser()
@@ -975,20 +1034,106 @@ def _resolve_root(
     else:
         root_path = root_path.resolve()
 
+    requested_root_path = root_path
+
     # Server-side path mapping for remote clients (Docker/SSE).
     # No-op when the path exists on this filesystem (local dev).
     from scribe_mcp.config.paths import map_client_root
 
-    mapped, _original = map_client_root(str(root_path), user=scribe_user)
+    mapped, original_client_root = map_client_root(str(root_path), user=scribe_user)
     root_path = Path(mapped).expanduser().resolve()
 
-    if any(root_path == trusted_root or _is_within(root_path, trusted_root) for trusted_root in trusted_roots):
-        return root_path
-    if skip_validation:
-        return root_path
+    mapped_outside_trusted_scope = False
+    if original_client_root:
+        mapped_outside_trusted_scope = not any(
+            requested_root_path == trusted_root or _is_within(requested_root_path, trusted_root)
+            for trusted_root in trusted_roots
+        )
+        if mapped_outside_trusted_scope and not skip_validation:
+            raise ProjectRootAuthorizationError(
+                "Mapped project root requires explicit compatibility opt-in.",
+                payload={
+                    "reason_code": "mapped_root_requires_explicit_compatibility_opt_in",
+                    "requested_root": str(root or ""),
+                    "resolved_root": str(root_path),
+                    "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
+                    "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
+                    "context_repo_root_provenance": context_repo_root_provenance,
+                    "trusted_roots": [str(item) for item in trusted_roots],
+                    "suggestion": "Retry with a trusted local root, or set skip_validation=true only for an intentional compatibility override.",
+                },
+            )
 
-    raise ValueError(
-        "Project root is outside trusted workspace scope. Set skip_validation=true only for explicit compatibility workflows."
+    for trusted_root in trusted_roots:
+        if root_path == trusted_root or _is_within(root_path, trusted_root):
+            return root_path, {
+                "skip_validation_requested": bool(skip_validation),
+                "compatibility_override_used": False,
+                "authorization_mode": "trusted_scope",
+                "reason_code": "trusted_scope_match",
+                "resolved_root": str(root_path),
+                "matched_trusted_root": str(trusted_root),
+                "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
+                "context_repo_root_provenance": context_repo_root_provenance,
+                "trusted_roots": [str(item) for item in trusted_roots],
+            }
+
+    if claimed_context_root is not None and (
+        root_path == claimed_context_root or _is_within(root_path, claimed_context_root)
+    ):
+        if _looks_like_local_repo_root(claimed_context_root):
+            return root_path, {
+                "skip_validation_requested": bool(skip_validation),
+                "compatibility_override_used": False,
+                "authorization_mode": "context_repo_claim_verified_local",
+                "reason_code": "claimed_context_repo_verified_local",
+                "resolved_root": str(root_path),
+                "claimed_context_root": str(claimed_context_root),
+                "context_repo_root_provenance": context_repo_root_provenance,
+                "trusted_roots": [str(item) for item in trusted_roots],
+            }
+        if not skip_validation:
+            raise ProjectRootAuthorizationError(
+                "Project root matches the active runtime repo_root claim, but that claim could not be verified as a local repository.",
+                payload={
+                    "reason_code": "claimed_context_repo_unverified",
+                    "requested_root": str(root or ""),
+                    "resolved_root": str(root_path),
+                    "claimed_context_root": str(claimed_context_root),
+                    "context_repo_root_provenance": context_repo_root_provenance,
+                    "trusted_roots": [str(item) for item in trusted_roots],
+                    "suggestion": "Retry after the workspace/runtime repo_root is refreshed, or use skip_validation=true only if you intentionally trust this root.",
+                },
+            )
+    if skip_validation:
+        return root_path, {
+            "skip_validation_requested": True,
+            "compatibility_override_used": True,
+            "authorization_mode": "compatibility_opt_in",
+            "reason_code": (
+                "skip_validation_mapped_outside_trusted_scope"
+                if mapped_outside_trusted_scope
+                else "skip_validation_outside_trusted_scope"
+            ),
+            "resolved_root": str(root_path),
+            "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
+            "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
+            "context_repo_root_provenance": context_repo_root_provenance,
+            "trusted_roots": [str(item) for item in trusted_roots],
+        }
+
+    raise ProjectRootAuthorizationError(
+        "Project root is outside trusted workspace scope.",
+        payload={
+            "reason_code": "requested_root_outside_trusted_scope",
+            "requested_root": str(root or ""),
+            "resolved_root": str(root_path),
+            "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
+            "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
+            "context_repo_root_provenance": context_repo_root_provenance,
+            "trusted_roots": [str(item) for item in trusted_roots],
+            "suggestion": "Use a root inside the trusted workspace scope, or pass skip_validation=true only for an intentional compatibility override.",
+        },
     )
 
 

@@ -121,6 +121,9 @@ async def test_create_custom_returns_governed_scaffold_intent(tmp_path: Path) ->
     assert result.get("create_intent", {}).get("kind") == "governed_scaffold_doc"
     assert result.get("create_intent", {}).get("canonical_doc_name") == "INTENT_CUSTOM_DOC"
     assert result.get("canonical_doc_name") == "INTENT_CUSTOM_DOC"
+    assert result.get("project_name") == project["name"]
+    assert isinstance(result.get("editable_sections"), list)
+    assert result.get("editable_sections")
     assert "replace_section" in result.get("next_step_guidance", "")
     assert "INTENT_CUSTOM_DOC" in result.get("next_step_guidance", "")
 
@@ -146,6 +149,8 @@ async def test_create_special_doc_returns_contentful_intent(tmp_path: Path) -> N
     assert result["ok"] is True
     assert result.get("create_intent", {}).get("kind") == "contentful_special_doc"
     assert result.get("create_intent", {}).get("canonical_doc_name") == "RESEARCH_INTENT_CONTENTFUL"
+    assert result.get("project_name") == project["name"]
+    assert isinstance(result.get("editable_sections"), list)
     assert "contentful special document" in result.get("next_step_guidance", "")
 
 
@@ -176,3 +181,28 @@ async def test_create_register_existing_returns_empty_registered_intent(tmp_path
     assert result.get("create_intent", {}).get("canonical_doc_name") == "existing_doc"
     assert "without writing new content" in result.get("next_step_guidance", "")
     assert "existing_doc" in result.get("next_step_guidance", "")
+
+
+@pytest.mark.asyncio
+async def test_create_special_doc_dry_run_includes_editable_sections(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_server(state_manager, project_root=Path(project["root"])):
+        result = await manage_docs(
+            action="create",
+            doc="RESEARCH_INTENT_DRY_RUN",
+            metadata={
+                "doc_type": "research",
+                "doc_name": "RESEARCH_INTENT_DRY_RUN",
+                "body": "# Research\n\nFindings.",
+            },
+            dry_run=True,
+        )
+
+    assert result["ok"] is True
+    assert result.get("dry_run") is True
+    assert isinstance(result.get("editable_sections"), list)
+    assert result.get("editable_sections")
+    assert result.get("section_source") in {"anchors", "headings"}

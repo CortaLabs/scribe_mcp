@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -22,7 +23,11 @@ from scribe_mcp.doc_management.actions import query as query_actions
 from scribe_mcp.doc_management.actions import search as search_actions
 from scribe_mcp.doc_management.actions import status as status_actions
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
-from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
+from scribe_mcp.shared.logging_utils import (
+    LoggingContext,
+    ProjectResolutionError,
+    build_resolution_metadata,
+)
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input
 
@@ -47,11 +52,16 @@ HIDDEN_ACTIONS = {
     "list_sections",
     "list_checklist_items",
     "preview_reconciliation",
+    "project_health",
+    "rehome_doc",
     "search",
     "batch",
 }
 
 VALID_ACTIONS = PRIMARY_ACTIONS | HIDDEN_ACTIONS
+
+_CLEANUP_ACTIONS = {"project_health", "rehome_doc"}
+_ADVANCED_ACTIONS = HIDDEN_ACTIONS - _CLEANUP_ACTIONS
 
 ACTION_ROUTER = {
     "create_doc": "edit",
@@ -70,6 +80,16 @@ ACTION_ROUTER = {
     "search": "search",
     "batch": "batch",
 }
+
+
+def build_manage_docs_action_manifest() -> Dict[str, Any]:
+    """Return a stable, truthful action-discovery payload for manage_docs."""
+    return {
+        "primary_actions": sorted(PRIMARY_ACTIONS),
+        "cleanup_actions": sorted(_CLEANUP_ACTIONS),
+        "advanced_actions": sorted(_ADVANCED_ACTIONS),
+        "all_actions": sorted(VALID_ACTIONS),
+    }
 
 _MUTATION_ACTIONS = {
     "replace_section",
@@ -93,6 +113,338 @@ _READ_ONLY_REGISTRATION_GATED_ACTIONS = {
 
 
 _SPECIAL_DOC_TYPES = {"research", "bug", "security", "review", "agent_card"}
+_UNSAFE_PROJECT_WRITE_RESOLUTION_SOURCES = {
+    "agent_context",
+    "compat_state_current_project",
+    "compat_active_project",
+    "compat_recent_project",
+}
+
+
+def _is_manage_docs_write_intent(action: str) -> bool:
+    return action in {"create", "rehome_doc"} or action in _MUTATION_ACTIONS
+
+
+def _attach_manage_docs_project_context(
+    response: Dict[str, Any],
+    *,
+    context: LoggingContext,
+) -> Dict[str, Any]:
+    response.setdefault("project_name", context.project.get("name") if context.project else None)
+    response.setdefault("project_resolution", build_resolution_metadata(context))
+    return response
+
+
+async def _attach_create_section_inventory(response: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_preview_text(payload: Dict[str, Any]) -> Optional[str]:
+        content_value = payload.get("content")
+        if isinstance(content_value, str) and content_value.strip():
+            return content_value
+
+        preview_value = payload.get("preview")
+        if isinstance(preview_value, str) and preview_value.strip():
+            return preview_value
+
+        diff_value = payload.get("diff")
+        if isinstance(diff_value, str) and diff_value.strip():
+            added_lines: list[str] = []
+            for line in diff_value.splitlines():
+                if line.startswith("+++"):
+                    continue
+                if line.startswith("+"):
+                    added_lines.append(line[1:])
+            if added_lines:
+                return "\n".join(added_lines)
+        return None
+
+    path_value = response.get("path")
+    section_payload: Optional[Dict[str, Any]] = None
+    if isinstance(path_value, str) and path_value.strip():
+        path = Path(path_value)
+        if path.exists() and path.is_file():
+            try:
+                section_payload = await query_actions.inspect_document_sections(path)
+            except Exception:
+                section_payload = None
+
+    if section_payload is None:
+        preview_content = _extract_preview_text(response)
+        if isinstance(preview_content, str) and preview_content.strip():
+            try:
+                section_payload = query_actions.inspect_document_sections_from_text(preview_content)
+            except Exception:
+                section_payload = None
+
+    if section_payload is None:
+        return response
+
+    response.setdefault("editable_sections", section_payload.get("sections", []))
+    response.setdefault("section_source", section_payload.get("section_source"))
+    if section_payload.get("warning"):
+        response.setdefault("section_warning", section_payload.get("warning"))
+    if section_payload.get("duplicates"):
+        response.setdefault("section_duplicates", section_payload.get("duplicates"))
+    return response
+
+
+async def _load_project_record(
+    *,
+    project_name: str,
+    server_module: Any,
+) -> Optional[Dict[str, Any]]:
+    backend = getattr(server_module, "storage_backend", None)
+    if backend and hasattr(backend, "fetch_project"):
+        try:
+            record = await backend.fetch_project(project_name)
+        except Exception:
+            record = None
+        if record:
+            payload = {
+                "name": record.name,
+                "root": record.repo_root,
+                "progress_log": record.progress_log_path,
+            }
+            if getattr(record, "docs_json", None):
+                try:
+                    payload["docs"] = json.loads(record.docs_json)
+                except (TypeError, json.JSONDecodeError):
+                    payload["docs"] = {}
+            return payload
+
+    state_manager = getattr(server_module, "state_manager", None)
+    if state_manager and hasattr(state_manager, "load"):
+        try:
+            state = await state_manager.load()
+            project = state.get_project(project_name)
+        except Exception:
+            project = None
+        if project:
+            return dict(project)
+    return None
+
+
+async def _handle_project_health(
+    *,
+    active_project: Dict[str, Any],
+    metadata: Optional[Dict[str, Any]],
+    helper: LoggingToolMixin,
+    context: LoggingContext,
+) -> Dict[str, Any]:
+    repo_root = Path(str(active_project.get("root") or "")).expanduser()
+    if not repo_root.exists():
+        return helper.apply_context_payload(
+            helper.error_response(
+                "project_health requires an active project with a readable repo root.",
+            ),
+            context,
+        )
+
+    limit = int((metadata or {}).get("limit", 20) or 20)
+    discovered = utils_shared.discover_scribe_source_documents(repo_root)
+    entries: list[Dict[str, Any]] = []
+    for doc in discovered:
+        try:
+            modified_at = doc.path.stat().st_mtime
+        except OSError:
+            modified_at = 0.0
+        entries.append(
+            {
+                "project_slug": doc.project_slug or "unscoped",
+                "path": str(doc.path),
+                "doc_type": doc.doc_type,
+                "source_family": doc.source_family,
+                "category": doc.category,
+                "case_id": doc.case_id,
+                "modified_at": modified_at,
+            }
+        )
+
+    entries.sort(key=lambda item: item["modified_at"], reverse=True)
+    active_slug = slugify_project_name(active_project.get("name", ""))
+    grouped: Dict[str, list[Dict[str, Any]]] = {}
+    for entry in entries[: max(limit * 3, limit)]:
+        grouped.setdefault(entry["project_slug"], []).append(entry)
+
+    project_groups = []
+    for project_slug, docs in sorted(
+        grouped.items(),
+        key=lambda item: max(doc["modified_at"] for doc in item[1]) if item[1] else 0.0,
+        reverse=True,
+    ):
+        project_groups.append(
+            {
+                "project_slug": project_slug,
+                "is_active_project": project_slug == active_slug,
+                "recent_docs": docs[:limit],
+            }
+        )
+
+    response = {
+        "ok": True,
+        "active_project": active_project.get("name"),
+        "active_project_slug": active_slug,
+        "recent_projects": project_groups[:limit],
+        "cross_project_recent_docs": [
+            entry for entry in entries[: max(limit * 2, limit)]
+            if entry["project_slug"] != active_slug
+        ][:limit],
+    }
+    return helper.apply_context_payload(response, context)
+
+
+async def _handle_rehome_doc(
+    *,
+    active_project: Dict[str, Any],
+    doc_name: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    dry_run: bool,
+    helper: LoggingToolMixin,
+    context: LoggingContext,
+    execution_context: Any,
+    server_module: Any,
+    agent_id: str,
+) -> Dict[str, Any]:
+    metadata_mapping = metadata if isinstance(metadata, dict) else {}
+    target_project_name = str(metadata_mapping.get("target_project") or "").strip()
+    if not target_project_name:
+        return helper.apply_context_payload(
+            helper.error_response("rehome_doc requires metadata.target_project."),
+            context,
+        )
+    if not doc_name:
+        return helper.apply_context_payload(
+            helper.error_response("rehome_doc requires doc/doc_name."),
+            context,
+        )
+
+    source_docs = dict(active_project.get("docs") or {})
+    source_doc_key = resolve_registered_doc_key(active_project, doc_name)
+    source_path_str = source_docs.get(source_doc_key)
+    if not source_path_str:
+        return helper.apply_context_payload(
+            helper.error_response(
+                f"rehome_doc requires a registered source document; '{doc_name}' is not registered.",
+            ),
+            context,
+        )
+
+    target_project = await _load_project_record(
+        project_name=target_project_name,
+        server_module=server_module,
+    )
+    if not target_project:
+        return helper.apply_context_payload(
+            helper.error_response(
+                f"Target project '{target_project_name}' was not found.",
+            ),
+            context,
+        )
+
+    source_docs_dir = Path(str(active_project.get("docs_dir") or "")).expanduser().resolve()
+    raw_target_docs_dir = str(target_project.get("docs_dir") or "").strip()
+    if raw_target_docs_dir:
+        target_docs_dir = Path(raw_target_docs_dir).expanduser().resolve()
+    else:
+        target_progress = Path(str(target_project.get("progress_log") or "")).expanduser()
+        target_docs_dir = target_progress.parent.resolve()
+    source_path = Path(source_path_str).expanduser().resolve()
+
+    try:
+        relative_path = source_path.relative_to(source_docs_dir)
+    except ValueError:
+        return helper.apply_context_payload(
+            helper.error_response(
+                "rehome_doc currently supports documents inside the source project's docs_dir only.",
+                extra={"path": str(source_path), "docs_dir": str(source_docs_dir)},
+            ),
+            context,
+        )
+
+    target_relative_path = metadata_mapping.get("target_relative_path")
+    if isinstance(target_relative_path, str) and target_relative_path.strip():
+        relative_path = Path(target_relative_path.strip())
+
+    target_path = (target_docs_dir / relative_path).resolve()
+    overwrite = bool(metadata_mapping.get("overwrite"))
+    raw_move_mode = metadata_mapping.get("move", True)
+    move_mode = bool(raw_move_mode) if not isinstance(raw_move_mode, str) else raw_move_mode.strip().lower() in {"1", "true", "yes", "on"}
+    target_doc_key = str(metadata_mapping.get("target_doc_name") or source_doc_key).strip() or source_doc_key
+
+    try:
+        target_path.relative_to(target_docs_dir)
+    except ValueError:
+        return helper.apply_context_payload(
+            helper.error_response(
+                "rehome_doc target path must stay within the target project's docs_dir.",
+                extra={"target_path": str(target_path), "target_docs_dir": str(target_docs_dir)},
+            ),
+            context,
+        )
+
+    if target_path.exists() and not overwrite:
+        return helper.apply_context_payload(
+            helper.error_response(
+                "rehome_doc target already exists (set metadata.overwrite=true to replace).",
+                extra={"target_path": str(target_path)},
+            ),
+            context,
+        )
+
+    removed_doc_keys = [
+        key for key, value in source_docs.items()
+        if Path(str(value)).expanduser().resolve() == source_path
+    ]
+    target_docs = dict(target_project.get("docs") or {})
+    target_docs[target_doc_key] = str(target_path)
+
+    if not dry_run:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if move_mode:
+            if overwrite and target_path.exists():
+                target_path.unlink()
+            shutil.move(str(source_path), str(target_path))
+        else:
+            shutil.copy2(source_path, target_path)
+
+        for key in removed_doc_keys:
+            source_docs.pop(key, None)
+        active_project["docs"] = source_docs
+        target_project["docs"] = target_docs
+
+        backend = getattr(server_module, "storage_backend", None)
+        if backend and hasattr(backend, "update_project_docs"):
+            await backend.update_project_docs(active_project.get("name"), json.dumps(source_docs))
+            await backend.update_project_docs(target_project_name, json.dumps(target_docs))
+
+        authoritative_scope = resolve_authoritative_write_scope(
+            context=execution_context,
+            agent_session_id=None,
+        )
+        authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+        state_manager = getattr(server_module, "state_manager", None)
+        if state_manager and hasattr(state_manager, "set_current_project") and authoritative_session_id:
+            await state_manager.set_current_project(
+                active_project.get("name"),
+                active_project,
+                agent_id=agent_id,
+                session_id=authoritative_session_id,
+                resolved_scope=authoritative_scope.get("resolved_scope"),
+                mirror_global=False,
+            )
+
+    response = {
+        "ok": True,
+        "action": "rehome_doc",
+        "source_project": active_project.get("name"),
+        "target_project": target_project_name,
+        "source_path": str(source_path),
+        "target_path": str(target_path),
+        "moved": move_mode,
+        "dry_run": dry_run,
+        "removed_doc_keys": removed_doc_keys if move_mode else [],
+        "target_doc_key": target_doc_key,
+    }
+    return helper.apply_context_payload(response, context)
 
 
 def build_create_intent_payload(
@@ -476,6 +828,8 @@ async def handle_manage_docs_request(
                         "list_sections",
                         "list_checklist_items",
                         "preview_reconciliation",
+                        "project_health",
+                        "rehome_doc",
                         "batch",
                         "validate_crosslinks",
                         "search",
@@ -560,6 +914,50 @@ async def handle_manage_docs_request(
             execution_context = server_module.get_execution_context()
         except Exception:
             execution_context = None
+
+    if (
+        _is_manage_docs_write_intent(action)
+        and execution_context is not None
+        and getattr(execution_context, "mode", None) == "project"
+        and context.resolution_source in _UNSAFE_PROJECT_WRITE_RESOLUTION_SOURCES
+    ):
+        authority_error = helper.error_response(
+            "manage_docs refused a write because project resolution fell back to non-session context.",
+            suggestion=(
+                "Re-run set_project for this session before creating or mutating docs. "
+                "Writes must use the session-bound active project, not agent or legacy fallback state."
+            ),
+            extra={
+                "project_name": active_project.get("name"),
+                "project_resolution": build_resolution_metadata(context),
+                "reason_code": "manage_docs_write_requires_session_binding",
+            },
+        )
+        return helper.apply_context_payload(authority_error, context)
+
+    if action == "project_health":
+        response = await _handle_project_health(
+            active_project=active_project,
+            metadata=metadata if isinstance(metadata, dict) else {},
+            helper=helper,
+            context=context,
+        )
+        return _attach_manage_docs_project_context(response, context=context)
+
+    if action == "rehome_doc":
+        response = await _handle_rehome_doc(
+            active_project=active_project,
+            doc_name=doc_name,
+            metadata=metadata if isinstance(metadata, dict) else {},
+            dry_run=dry_run,
+            helper=helper,
+            context=context,
+            execution_context=execution_context,
+            server_module=server_module,
+            agent_id=str(agent_id),
+        )
+        return _attach_manage_docs_project_context(response, context=context)
+
     if action in _READ_ONLY_REGISTRATION_GATED_ACTIONS and doc_name:
         logger.debug("Skipping auto-registration for read-only action '%s' on '%s'", action, doc_name)
 
@@ -711,7 +1109,10 @@ async def handle_manage_docs_request(
         deprecation_warning=deprecation_warning,
     )
     if create_response is not None:
-        return create_response
+        enriched_create = _attach_manage_docs_project_context(create_response, context=context)
+        if isinstance(enriched_create, dict) and enriched_create.get("ok"):
+            enriched_create = await _attach_create_section_inventory(enriched_create)
+        return enriched_create
 
     route_key = action_router.get(action)
     if route_key is None:
@@ -801,6 +1202,10 @@ async def handle_manage_docs_request(
         )
 
     if response is not None:
+        if isinstance(response, dict):
+            response = _attach_manage_docs_project_context(response, context=context)
+            if response.get("ok") and action in {"create", "create_doc"}:
+                response = await _attach_create_section_inventory(response)
         if runtime_warnings and isinstance(response, dict) and response.get("ok") is not False:
             response.setdefault("warnings", []).extend(runtime_warnings)
         return response

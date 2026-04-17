@@ -144,6 +144,8 @@ async def manage_docs(
         valid_actions=VALID_ACTIONS,
         action_router=ACTION_ROUTER,
     )
+    if isinstance(result, dict):
+        result.setdefault("supported_actions", runtime_shared.build_manage_docs_action_manifest())
     if action == "create" and isinstance(result, dict) and result.get("ok"):
         create_intent = runtime_shared.build_create_intent_payload(
             result=result,

@@ -87,7 +87,7 @@ def _unwrap_result(result: Any) -> Dict[str, Any]:
 
 
 def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
-    """Generate a case ID for project mode using a per-project atomic counter.
+    """Generate a case ID for project mode using a repo-scoped atomic counter.
 
     Args:
         kind: "BUG" or "SEC"
@@ -119,8 +119,20 @@ def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
             "case-id allocation failed: unable to resolve project directory from append_entry result paths"
         )
 
-    counter_file = project_dir / ".sentinel_case_id_counters.json"
-    lock_file = project_dir / ".sentinel_case_id_counters.lock"
+    repo_root = project_dir
+    for parent in project_dir.parents:
+        expected = parent / ".scribe" / "docs" / "dev_plans" / project_dir.name
+        try:
+            if expected.resolve() == project_dir:
+                repo_root = parent
+                break
+        except Exception:
+            continue
+
+    counter_dir = repo_root / ".scribe" if repo_root != project_dir else project_dir
+    counter_dir.mkdir(parents=True, exist_ok=True)
+    counter_file = counter_dir / ".sentinel_case_id_counters.json"
+    lock_file = counter_dir / ".sentinel_case_id_counters.lock"
     lock_fd: Optional[int] = None
     deadline = time.monotonic() + 2.0
 
@@ -178,6 +190,29 @@ def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
                 f"(expected non-negative integer at date bucket '{today}' for kind '{kind}')"
             )
         next_seq = persisted_seq + 1
+        while True:
+            candidate_case_id = f"{prefix}{next_seq:04d}"
+            duplicate_found = False
+            docs_root = repo_root / "docs"
+            for candidate in (
+                docs_root / "bugs",
+                docs_root / "security",
+            ):
+                if not candidate.exists():
+                    continue
+                for report_path in candidate.glob("*/*/report.md"):
+                    try:
+                        if candidate_case_id in report_path.read_text(encoding="utf-8"):
+                            duplicate_found = True
+                            break
+                    except OSError:
+                        continue
+                if duplicate_found:
+                    break
+            if not duplicate_found:
+                break
+            next_seq += 1
+
         day_counters[kind] = next_seq
 
         import json
@@ -195,6 +230,89 @@ def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
                 lock_file.unlink()
             except Exception:
                 pass
+
+
+def _preview_case_id_for_project(kind: str, context: Any) -> str:
+    """Compute next case ID without mutating state.
+
+    This preview path reads persisted counter/docs state but does not write counters,
+    append entries, or create documents.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    prefix = f"{kind}-{today}-"
+
+    repo_root_raw = getattr(context, "repo_root", None)
+    if not isinstance(repo_root_raw, str) or not repo_root_raw.strip():
+        raise RuntimeError("case-id preview failed: missing repo_root in execution context")
+    repo_root = Path(repo_root_raw).resolve()
+
+    affected_projects = getattr(context, "affected_dev_projects", None)
+    project_name = (
+        affected_projects[0]
+        if isinstance(affected_projects, list) and affected_projects and isinstance(affected_projects[0], str)
+        else None
+    )
+
+    if project_name:
+        project_dir = (repo_root / ".scribe" / "docs" / "dev_plans" / project_name).resolve()
+        if project_dir.exists() and project_dir.is_dir():
+            counter_dir = repo_root / ".scribe"
+        else:
+            counter_dir = repo_root / ".scribe"
+    else:
+        counter_dir = repo_root / ".scribe"
+
+    counter_file = counter_dir / ".sentinel_case_id_counters.json"
+    persisted_seq = 0
+    if counter_file.exists():
+        try:
+            import json
+            loaded = json.loads(counter_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(
+                f"case-id preview failed: unable to read persisted counter state: {exc}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError(
+                "case-id preview failed: persisted counter state is malformed (expected JSON object)"
+            )
+        day_counters = loaded.get(today, {})
+        if not isinstance(day_counters, dict):
+            raise RuntimeError(
+                "case-id preview failed: persisted counter state is malformed "
+                f"(expected object at date bucket '{today}')"
+            )
+        persisted_value = day_counters.get(kind, 0)
+        if not isinstance(persisted_value, int) or isinstance(persisted_value, bool) or persisted_value < 0:
+            raise RuntimeError(
+                "case-id preview failed: persisted counter state is malformed "
+                f"(expected non-negative integer at date bucket '{today}' for kind '{kind}')"
+            )
+        persisted_seq = persisted_value
+
+    next_seq = persisted_seq + 1
+    while True:
+        candidate_case_id = f"{prefix}{next_seq:04d}"
+        duplicate_found = False
+        docs_root = repo_root / "docs"
+        for candidate in (
+            docs_root / "bugs",
+            docs_root / "security",
+        ):
+            if not candidate.exists():
+                continue
+            for report_path in candidate.glob("*/*/report.md"):
+                try:
+                    if candidate_case_id in report_path.read_text(encoding="utf-8"):
+                        duplicate_found = True
+                        break
+                except OSError:
+                    continue
+            if duplicate_found:
+                break
+        if not duplicate_found:
+            return candidate_case_id
+        next_seq += 1
 
 
 def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[str, Any]]) -> str:
@@ -378,6 +496,7 @@ async def open_bug(
     component: Optional[str] = None,
     environment: Optional[str] = None,
     customer_impact: Optional[str] = None,
+    preview: bool = False,
 ) -> Dict[str, Any]:
     """Open a BUG case with per-day stable ID and create a detailed bug report document.
 
@@ -403,6 +522,13 @@ async def open_bug(
 
     # Project mode: route through append_entry with bug status AND create bug report doc
     if context.mode == "project":
+        if preview:
+            try:
+                case_id = _preview_case_id_for_project("BUG", context)
+            except Exception as exc:
+                return {"ok": False, "error": f"Failed to preview BUG case ID: {exc}"}
+            return {"ok": True, "case_id": case_id, "preview": True}
+
         from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
         from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
 
@@ -527,6 +653,12 @@ async def open_bug(
         }
 
     # Sentinel mode: original behavior
+    if preview:
+        sentinel_day = getattr(context, "sentinel_day", None)
+        if not isinstance(sentinel_day, str) or not sentinel_day.strip():
+            sentinel_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return {"ok": True, "case_id": f"BUG-{sentinel_day}-PREVIEW", "preview": True}
+
     case_id = append_case_event(
         context,
         kind="BUG",
@@ -558,6 +690,7 @@ async def open_security(
     component: Optional[str] = None,
     environment: Optional[str] = None,
     customer_impact: Optional[str] = None,
+    preview: bool = False,
 ) -> Dict[str, Any]:
     """Open a SECURITY case with per-day stable ID and create a detailed security report document.
 
@@ -583,6 +716,13 @@ async def open_security(
 
     # Project mode: route through append_entry with security flag AND create security report doc
     if context.mode == "project":
+        if preview:
+            try:
+                case_id = _preview_case_id_for_project("SEC", context)
+            except Exception as exc:
+                return {"ok": False, "error": f"Failed to preview SEC case ID: {exc}"}
+            return {"ok": True, "case_id": case_id, "preview": True}
+
         from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
         from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
 
@@ -705,6 +845,12 @@ async def open_security(
         }
 
     # Sentinel mode: original behavior
+    if preview:
+        sentinel_day = getattr(context, "sentinel_day", None)
+        if not isinstance(sentinel_day, str) or not sentinel_day.strip():
+            sentinel_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return {"ok": True, "case_id": f"SEC-{sentinel_day}-PREVIEW", "preview": True}
+
     case_id = append_case_event(
         context,
         kind="SEC",

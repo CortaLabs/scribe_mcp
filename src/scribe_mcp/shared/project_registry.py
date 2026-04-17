@@ -659,6 +659,7 @@ class ProjectRegistry:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
                     file_path TEXT,
+                    plan_type TEXT,
                     doc_type TEXT
                 )
                 """
@@ -688,6 +689,10 @@ class ProjectRegistry:
             add_column("last_status_change", "last_status_change TEXT")
             add_column("tags", "tags TEXT")
             add_column("meta", "meta TEXT")
+            cursor.execute("PRAGMA table_info(dev_plans)")
+            dev_plan_columns = {row[1] for row in cursor.fetchall()}
+            if "plan_type" not in dev_plan_columns:
+                cursor.execute("ALTER TABLE dev_plans ADD COLUMN plan_type TEXT")
             conn.commit()
 
     @staticmethod

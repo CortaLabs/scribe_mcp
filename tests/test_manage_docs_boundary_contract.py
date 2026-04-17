@@ -156,3 +156,78 @@ async def test_manage_docs_in_project_target_remains_successful(tmp_path: Path) 
 
     assert result["ok"] is True
     assert Path(result["path"]).is_relative_to(Path(project["root"]))
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_write_fails_closed_when_context_falls_back_to_agent_project(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    originals = {
+        "state_manager": server_module.state_manager,
+        "storage_backend": server_module.storage_backend,
+    }
+    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
+    from scribe_mcp.tools import manage_docs as manage_docs_module
+
+    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
+    server_module.state_manager = state_manager
+    server_module.storage_backend = None
+    server_module.get_execution_context = lambda: SimpleNamespace(
+        mode="project",
+        session_id="fallback-write-session",
+        stable_session_id="fallback-write-session",
+    )
+
+    try:
+        async def _prepare_context_stub(**kwargs):
+            state = await state_manager.load()
+            return LoggingContext(
+                tool_name=str(kwargs.get("tool_name") or "manage_docs"),
+                project=state.get_project(project["name"]),
+                recent_projects=list(getattr(state, "recent_projects", []) or []),
+                state_snapshot=kwargs.get("state_snapshot") or {},
+                reminders=[],
+                resolution_source="agent_context",
+            )
+
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
+        result = await manage_docs(
+            action="create",
+            doc="fallback_blocked_note",
+            metadata={
+                "doc_type": "custom",
+                "doc_name": "fallback_blocked_note",
+                "body": "# Note\nShould fail closed.\n",
+            },
+            dry_run=False,
+        )
+    finally:
+        server_module.state_manager = originals["state_manager"]
+        server_module.storage_backend = originals["storage_backend"]
+        if orig_exec_ctx is not None:
+            server_module.get_execution_context = orig_exec_ctx
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
+
+    assert result["ok"] is False
+    assert result.get("reason_code") == "manage_docs_write_requires_session_binding"
+    assert "fell back to non-session context" in (result.get("error") or "")
+    assert result.get("project_resolution", {}).get("resolution_source") == "agent_context"
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_invalid_action_response_includes_supported_actions_manifest(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    with _isolated_server(state_manager, project_root=Path(project["root"])):
+        result = await manage_docs(action="definitely_not_real", dry_run=True)
+
+    assert result["ok"] is False
+    manifest = result.get("supported_actions")
+    assert isinstance(manifest, dict)
+    assert manifest.get("cleanup_actions") == ["project_health", "rehome_doc"]

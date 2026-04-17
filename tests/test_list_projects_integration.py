@@ -401,6 +401,146 @@ class TestListProjectsIntegration:
         assert result["fallback_used"] is True
         assert "compat_active_project" in result["fallback_chain"]
         assert "recovery chain" in result["resolution_summary"].lower()
+        assert result["compatibility_recovery"]["applied"] is True
+
+    @pytest.mark.asyncio
+    async def test_structured_format_recovery_mode_does_not_override_session_authority(
+        self,
+        mock_state_manager,
+        mock_storage_backend,
+    ):
+        """Recovery mode must not replace an already resolved session-bound project."""
+        with patch('scribe_mcp.tools.list_projects.server_module') as mock_server:
+            mock_server.state_manager = mock_state_manager
+            mock_server.storage_backend = mock_storage_backend
+            mock_server.get_agent_identity.return_value = None
+
+            with patch(
+                "scribe_mcp.tools.list_projects._LIST_PROJECTS_HELPER.prepare_context",
+                AsyncMock(
+                    return_value=LoggingContext(
+                        tool_name="list_projects",
+                        project={
+                            "name": "session_project",
+                            "root": "/tmp/session",
+                            "progress_log": "/tmp/session/PROGRESS_LOG.md",
+                        },
+                        recent_projects=["session_project"],
+                        state_snapshot={},
+                        reminders=[],
+                        resolution_source="session_binding",
+                        fallback_used=False,
+                        fallback_chain=[],
+                    )
+                ),
+            ):
+                with patch(
+                    "scribe_mcp.tools.list_projects.load_active_project",
+                    AsyncMock(
+                        return_value=(
+                            {
+                                "name": "stale_global_project",
+                                "root": "/tmp/stale",
+                                "progress_log": "/tmp/stale/PROGRESS_LOG.md",
+                                "docs": {},
+                                "defaults": {},
+                            },
+                            "stale_global_project",
+                            ["stale_global_project"],
+                        )
+                    ),
+                ) as mock_load_active:
+                    result = await list_projects(format="structured", recovery_mode="compat_active_project")
+
+        assert result["ok"] is True
+        assert result["active_project"] == "session_project"
+        assert result["resolution_source"] == "session_binding"
+        assert result["fallback_used"] is False
+        assert result["fallback_chain"] == []
+        assert result["compatibility_recovery"]["requested"] is True
+        assert result["compatibility_recovery"]["applied"] is False
+        assert result["compatibility_recovery"]["reason"] == "session_authority_present"
+        mock_load_active.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_structured_format_session_binding_active_project_ignores_stale_recent_global(
+        self,
+        mock_state_manager,
+        mock_storage_backend,
+    ):
+        """Session-bound resolution must own active_project even when recents contain stale global names."""
+        with patch('scribe_mcp.tools.list_projects.server_module') as mock_server:
+            mock_server.state_manager = mock_state_manager
+            mock_server.storage_backend = mock_storage_backend
+            mock_server.get_agent_identity.return_value = None
+
+            with patch(
+                "scribe_mcp.tools.list_projects._LIST_PROJECTS_HELPER.prepare_context",
+                AsyncMock(
+                    return_value=LoggingContext(
+                        tool_name="list_projects",
+                        project={
+                            "name": "session_resolution_tool_audit_20260417",
+                            "root": "/tmp/session",
+                            "progress_log": "/tmp/session/PROGRESS_LOG.md",
+                        },
+                        recent_projects=[
+                            "security_public_release_hardening_20260409_0940utc",
+                            "session_resolution_tool_audit_20260417",
+                        ],
+                        state_snapshot={},
+                        reminders=[],
+                        resolution_source="session_binding",
+                        fallback_used=False,
+                        fallback_chain=[],
+                    )
+                ),
+            ):
+                result = await list_projects(format="structured")
+
+        assert result["ok"] is True
+        assert result["resolution_source"] == "session_binding"
+        assert result["fallback_used"] is False
+        assert result["active_project"] == "session_resolution_tool_audit_20260417"
+
+    @pytest.mark.asyncio
+    async def test_structured_format_does_not_report_stale_state_session_project_when_backend_session_lookup_misses(
+        self,
+        mock_state_manager,
+    ):
+        mock_state = Mock()
+        mock_state.projects = {}
+        mock_state.recent_projects = ["security_public_release_hardening_20260409_0940utc"]
+        mock_state.get_session_project = Mock(
+            return_value={
+                "name": "security_public_release_hardening_20260409_0940utc",
+                "root": "/tmp/stale",
+                "progress_log": "/tmp/stale/PROGRESS_LOG.md",
+            }
+        )
+        mock_state_manager.load.return_value = mock_state
+
+        mock_backend = AsyncMock()
+        mock_backend.get_session_project = AsyncMock(return_value=None)
+        mock_backend.list_projects.return_value = []
+
+        with patch("scribe_mcp.tools.list_projects.server_module") as mock_server:
+            mock_server.state_manager = mock_state_manager
+            mock_server.storage_backend = mock_backend
+            mock_server.get_agent_identity.return_value = None
+            mock_server.get_execution_context.return_value = Mock(
+                mode="project",
+                stable_session_id="stable-session-404",
+                session_id="transport-session-404",
+            )
+            with patch("scribe_mcp.tools.list_projects._LIST_PROJECTS_HELPER.server_module", mock_server):
+                result = await list_projects(format="structured")
+
+        assert result["ok"] is True
+        assert result["resolution_source"] == "project_index"
+        assert result["fallback_used"] is False
+        assert result["active_project"] is None
+        assert mock_backend.get_session_project.await_count == 2
 
 
 class TestListProjectsPagination:
