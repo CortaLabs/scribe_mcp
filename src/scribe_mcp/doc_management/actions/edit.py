@@ -6,6 +6,11 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from scribe_mcp.doc_management.manager import (
+    build_manage_docs_boundary_guidance,
+    is_manage_docs_boundary_error,
+)
+from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 
 
@@ -20,6 +25,13 @@ _ALLOWED_DOC_ACTIONS = {
     "generate_toc",
     "validate_crosslinks",
 }
+
+
+def _strip_unexpected_prefix(message: str) -> str:
+    prefix = "Unexpected error: "
+    if str(message).startswith(prefix):
+        return str(message)[len(prefix) :]
+    return str(message)
 
 
 def _with_session_provenance(metadata: Optional[Dict[str, Any]], context: Any) -> Dict[str, Any]:
@@ -58,6 +70,7 @@ async def handle_edit_action(
     agent_id: str,
     helper: Any,
     context: Any,
+    execution_context: Any,
     deprecation_warning: Optional[str],
     apply_doc_change: Any,
     get_or_create_storage_project: Any,
@@ -103,10 +116,21 @@ async def handle_edit_action(
                 project["docs"] = docs_mapping
                 registry_warning = ""
                 try:
+                    authoritative_scope = resolve_authoritative_write_scope(
+                        context=execution_context,
+                        agent_session_id=None,
+                    )
+                    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+                    if not authoritative_session_id:
+                        raise ValueError(
+                            "Cannot establish authoritative session binding for register_existing."
+                        )
                     await server_module.state_manager.set_current_project(
                         project.get("name"),
                         project,
                         agent_id=agent_id,
+                        session_id=authoritative_session_id,
+                        resolved_scope=authoritative_scope.get("resolved_scope"),
                         mirror_global=False,
                     )
                     runtime_backend = getattr(server_module, "storage_backend", None)
@@ -278,11 +302,26 @@ async def handle_edit_action(
             docs_mapping = dict(project.get("docs") or {})
             docs_mapping[str(register_key)] = str(change.path)
             project["docs"] = docs_mapping
+            authoritative_scope = resolve_authoritative_write_scope(
+                context=execution_context,
+                agent_session_id=None,
+            )
+            authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+            if not authoritative_session_id:
+                return helper.apply_context_payload(
+                    helper.error_response(
+                        "Cannot establish authoritative session binding for register_doc.",
+                        extra={"path": str(change.path)},
+                    ),
+                    context,
+                )
             try:
                 await server_module.state_manager.set_current_project(
                     project.get("name"),
                     project,
                     agent_id=agent_id,
+                    session_id=authoritative_session_id,
+                    resolved_scope=authoritative_scope.get("resolved_scope"),
                     mirror_global=False,
                 )
                 runtime_backend = getattr(server_module, "storage_backend", None)
@@ -298,7 +337,20 @@ async def handle_edit_action(
     if registry_warning:
         response.setdefault("warnings", []).append(registry_warning)
     if not change.success and change.error_message:
-        response["error"] = change.error_message
+        normalized_error = _strip_unexpected_prefix(change.error_message)
+        response["error"] = normalized_error
+        if is_manage_docs_boundary_error(normalized_error):
+            rejected_target = None
+            if isinstance(metadata, dict):
+                rejected_target = metadata.get("target_dir")
+            response["boundary_guidance"] = build_manage_docs_boundary_guidance(
+                project,
+                rejected_target=str(rejected_target) if rejected_target else None,
+            )
+            response["suggestion"] = (
+                "Choose a target_dir inside the active project root, or omit target_dir "
+                "to use the project docs_dir."
+            )
 
     if not dry_run:
         response["verification_passed"] = change.verification_passed

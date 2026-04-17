@@ -927,6 +927,18 @@ def _get_context_repo_root() -> Optional[Path]:
     if not context or not getattr(context, "repo_root", None):
         return None
     try:
+        resolved_scope = getattr(context, "resolved_scope", None)
+        scope_provenance = getattr(resolved_scope, "provenance", None)
+        repo_root_provenance = getattr(scope_provenance, "repo_root", None)
+        if repo_root_provenance is None:
+            raw_scope_provenance = getattr(context, "scope_provenance", None)
+            if isinstance(raw_scope_provenance, dict):
+                repo_root_provenance = raw_scope_provenance.get("repo_root")
+        if str(repo_root_provenance or "").strip().lower() == "claimed":
+            return None
+    except Exception:
+        pass
+    try:
         return Path(str(context.repo_root)).expanduser().resolve()
     except (TypeError, ValueError):
         return None

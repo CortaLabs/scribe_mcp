@@ -68,6 +68,32 @@ class ProjectResolutionError(RuntimeError):
         self.recent_projects = list(recent_projects or [])
 
 
+def build_resolution_metadata(
+    context: LoggingContext,
+    *,
+    include_project: bool = True,
+) -> Dict[str, Any]:
+    """Create a consistent, readable resolution payload for tool responses."""
+    source = context.resolution_source or "unresolved"
+    fallback_used = bool(context.fallback_used)
+    fallback_chain = list(context.fallback_chain or [])
+    summary = (
+        f"Resolved via '{source}'"
+        if not fallback_used
+        else f"Resolved via '{source}' with recovery chain: {', '.join(fallback_chain)}"
+    )
+
+    payload: Dict[str, Any] = {
+        "resolution_source": source,
+        "fallback_used": fallback_used,
+        "fallback_chain": fallback_chain,
+        "resolution_summary": summary,
+    }
+    if include_project:
+        payload["project"] = context.project.get("name") if context.project else None
+    return payload
+
+
 async def resolve_logging_context(
     *,
     tool_name: str,

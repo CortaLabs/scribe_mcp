@@ -102,6 +102,20 @@ async def _setup_project(tmp_path: Path) -> dict:
     }
 
 
+async def _seed_runtime_session(
+    state_manager: StateManager,
+    project_root: str,
+    session_id: str = "test-session",
+) -> None:
+    backend = getattr(state_manager, "_storage_backend", None)
+    if backend and hasattr(backend, "upsert_session"):
+        await backend.upsert_session(
+            session_id=session_id,
+            repo_root=project_root,
+            mode="project",
+        )
+
+
 @pytest.mark.asyncio
 async def test_create_doc_from_body(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
@@ -225,6 +239,7 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
 
     async def _fail_set_current(*args, **kwargs):
         raise RuntimeError("boom")
@@ -254,6 +269,7 @@ async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Pa
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
 
     with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
@@ -286,6 +302,7 @@ async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path) -> None
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
 
     with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
@@ -309,6 +326,7 @@ async def test_manage_docs_create_spec_routes_to_generic_create_doc(tmp_path: Pa
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
 
     with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
@@ -389,6 +407,7 @@ async def test_manage_docs_deprecated_create_aliases_fail_hard(
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
 
     with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(

@@ -12,7 +12,11 @@ from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.project_utils import load_active_project, load_project_config
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
-from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
+from scribe_mcp.shared.logging_utils import (
+    LoggingContext,
+    ProjectResolutionError,
+    build_resolution_metadata,
+)
 from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.shared.logging_utils import resolve_log_definition
 from scribe_mcp.shared.project_utils import detect_project_state
@@ -45,6 +49,25 @@ async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str
     """
     info = _PROJECT_REGISTRY.get_project(project_name)
     if not info:
+        registry_context = {}
+        get_context = getattr(_PROJECT_REGISTRY, "get_registry_advisory_context", None)
+        if callable(get_context):
+            try:
+                registry_context = dict(get_context() or {})
+            except Exception:
+                registry_context = {}
+        if registry_context and not registry_context.get("available", False):
+            return {
+                "available": False,
+                "classification": registry_context.get("classification", "environment_mismatch"),
+                "reason_code": registry_context.get("reason_code", "runtime_registry_unavailable"),
+                "message": registry_context.get(
+                    "message",
+                    "Document status is unavailable because planning registry is disabled for this runtime.",
+                ),
+                "mode": registry_context.get("mode"),
+                "storage_backend": registry_context.get("storage_backend"),
+            }
         return {}
     docs_meta = (info.meta or {}).get("docs") or {}
     flags = docs_meta.get("flags") or {}
@@ -420,23 +443,17 @@ async def get_project(
     compatibility_mode = recovery_mode in allowed_recovery_modes
 
     def _resolution_payload() -> Dict[str, Any]:
-        source = context.resolution_source
-        fallback_used = bool(context.fallback_used)
-        fallback_chain = list(context.fallback_chain or [])
+        payload = build_resolution_metadata(context, include_project=False)
+        fallback_chain = list(payload.get("fallback_chain") or [])
         if compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
             fallback_chain.append(recovery_mode)
-            fallback_used = True
-        summary = (
-            f"Resolved via '{source}'"
-            if not fallback_used
-            else f"Resolved via '{source}' with recovery chain: {', '.join(fallback_chain)}"
-        )
-        return {
-            "resolution_source": source,
-            "fallback_used": fallback_used,
-            "fallback_chain": fallback_chain,
-            "resolution_summary": summary,
-        }
+            payload["fallback_chain"] = fallback_chain
+            payload["fallback_used"] = True
+            payload["resolution_summary"] = (
+                f"Resolved via '{payload.get('resolution_source', 'unresolved')}' "
+                f"with recovery chain: {', '.join(fallback_chain)}"
+            )
+        return payload
 
     target_project = context.project if context.project else None
     current_name = target_project.get("name") if target_project else None

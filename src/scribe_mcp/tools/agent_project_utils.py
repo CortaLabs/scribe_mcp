@@ -175,12 +175,13 @@ def resolve_authoritative_write_scope(
 
     authoritative_session_id: Optional[str] = None
     for candidate in (
+        # Prefer the authoritative session_id used by set_project writes.
         getattr(resolved_scope, "stable_session_id", None),
+        getattr(context, "session_id", None) if context else None,
         getattr(context, "stable_session_id", None) if context else None,
         getattr(resolved_scope, "agent_session_id", None),
         agent_session_id,
         getattr(resolved_scope, "transport_session_id", None),
-        getattr(context, "session_id", None) if context else None,
     ):
         if candidate:
             authoritative_session_id = str(candidate)

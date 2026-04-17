@@ -16,7 +16,10 @@ from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
 from scribe_mcp.doc_management import utils as utils_shared
-from scribe_mcp.doc_management.manager import DocumentOperationError
+from scribe_mcp.doc_management.manager import (
+    DocumentOperationError,
+    build_manage_docs_boundary_guidance,
+)
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.utils.slug import slugify_project_name
@@ -456,9 +459,18 @@ async def handle_special_document_creation(
     try:
         target_path.resolve().relative_to(project_root.resolve())
     except ValueError:
+        boundary_guidance = build_manage_docs_boundary_guidance(
+            project,
+            rejected_target=str(target_path.parent),
+        )
         return helper.apply_context_payload(
             helper.error_response(
                 f"Generated document path {target_path} is outside project root",
+                suggestion=(
+                    "Use an in-project target_dir under the active project root, "
+                    "or omit target_dir to use the canonical docs location."
+                ),
+                extra={"boundary_guidance": boundary_guidance},
             ),
             context,
         )
@@ -572,6 +584,15 @@ async def handle_special_document_creation(
             try:
                 project_name = project.get("name")
                 if project_name:
+                    authoritative_scope = resolve_authoritative_write_scope(
+                        context=execution_context,
+                        agent_session_id=None,
+                    )
+                    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+                    if not authoritative_session_id:
+                        raise ValueError(
+                            "Cannot establish authoritative session binding for manage_docs create registration."
+                        )
                     registration_keys: list[str] = []
                     if primary_doc_key and str(primary_doc_key).strip():
                         registration_keys.append(str(primary_doc_key).strip())
@@ -591,21 +612,14 @@ async def handle_special_document_creation(
                     await storage_backend.update_project_docs(project_name, docs_json)
                     state_manager = getattr(server_module, "state_manager", None)
                     if state_manager and hasattr(state_manager, "set_current_project"):
-                        authoritative_scope = resolve_authoritative_write_scope(
-                            context=execution_context,
-                            agent_session_id=None,
+                        await state_manager.set_current_project(
+                            project_name,
+                            project,
+                            agent_id=agent_id,
+                            session_id=authoritative_session_id,
+                            resolved_scope=authoritative_scope.get("resolved_scope"),
+                            mirror_global=False,
                         )
-                        try:
-                            await state_manager.set_current_project(
-                                project_name,
-                                project,
-                                agent_id=agent_id,
-                                session_id=authoritative_scope.get("authoritative_session_id"),
-                                resolved_scope=authoritative_scope.get("resolved_scope"),
-                                mirror_global=False,
-                            )
-                        except Exception as state_exc:
-                            registration_warning = f"State sync failed: {state_exc}"
                     try:
                         project_registry.record_doc_update(
                             project_name=project_name,

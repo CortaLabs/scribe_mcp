@@ -196,6 +196,7 @@ async def test_set_project_ordinary_mode_does_not_request_bootstrap_recovery(mon
             agent="BugHunterAgent-set-project-proof",
             name="set_project_ordinary_mode_proof",
             root=temp_dir,
+            skip_validation=True,
             format="structured",
         )
 
@@ -246,7 +247,7 @@ async def test_set_project_reports_authoritative_session_id(monkeypatch):
         monkeypatch.setattr(server_module, "state_manager", state_manager)
         monkeypatch.setattr(server_module, "agent_context_manager", agent_manager, raising=False)
         await storage.upsert_session(
-            session_id="stable-fallback-1",
+            session_id="transport-session-1",
             transport_session_id="transport-session-1",
             agent_id="CoderAgent-authoritative-session-proof",
             repo_root=temp_dir,
@@ -254,15 +255,17 @@ async def test_set_project_reports_authoritative_session_id(monkeypatch):
         )
         await agent_manager.start_session(
             "CoderAgent-authoritative-session-proof",
-            session_id="stable-fallback-1",
+            session_id="transport-session-1",
         )
 
         result = await set_project_tool.set_project(
             agent="CoderAgent-authoritative-session-proof",
             name="set_project_authoritative_session_proof",
             root=temp_dir,
+            skip_validation=True,
             format="structured",
         )
+        persisted_project = await storage.get_session_project(authoritative_session_id := result["side_effects"]["authoritative_session_id"])
         await storage.close()
 
     assert result["ok"] is True
@@ -276,6 +279,7 @@ async def test_set_project_reports_authoritative_session_id(monkeypatch):
     assert result["scope_resolution"]["source"] == result["side_effects"]["scope_resolution_source"]
     assert result["scope_resolution"]["authoritative_session_id"] == authoritative_session_id
     assert result["scope_resolution"]["global_mirror_performed"] is False
+    assert persisted_project == "set_project_authoritative_session_proof"
 
 
 @pytest.mark.asyncio

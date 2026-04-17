@@ -14,6 +14,7 @@ from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.config.mode_detection import resolve_configured_mode
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.plugins.registry import get_plugin_registry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 
 
 def _list_loaded_plugins() -> list[str]:
@@ -108,6 +109,12 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
     except Exception:
         runtime_exec_context = None
     storage_diagnostics = _storage_diagnostics()
+    planning_registry = get_runtime_project_registry()
+    planning_registry_context: Dict[str, Any] = {}
+    try:
+        planning_registry_context = planning_registry.get_registry_advisory_context()
+    except Exception:
+        planning_registry_context = {}
 
     config_view = None
     if config is not None:
@@ -169,6 +176,14 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
                 "transport_session_id": getattr(runtime_exec_context, "transport_session_id", None),
             } if runtime_exec_context else None,
             "storage_diagnostics": storage_diagnostics,
+            "planning_registry": {
+                "available": bool(getattr(planning_registry, "available", False)),
+                "classification": planning_registry_context.get("classification"),
+                "reason_code": planning_registry_context.get("reason_code"),
+                "message": planning_registry_context.get("message"),
+                "mode": planning_registry_context.get("mode"),
+                "storage_backend": planning_registry_context.get("storage_backend"),
+            },
         },
         "config": config_view,
         "config_path": str(config_path) if config_path else None,

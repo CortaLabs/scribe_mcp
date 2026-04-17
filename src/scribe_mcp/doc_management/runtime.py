@@ -215,6 +215,23 @@ async def auto_register_document(
         raise ValueError("Project must have a name for auto-registration")
 
     try:
+        execution_context = None
+        get_execution_context = getattr(server_module, "get_execution_context", None)
+        if callable(get_execution_context):
+            try:
+                execution_context = get_execution_context()
+            except Exception:  # pragma: no cover - defensive context lookup
+                execution_context = None
+        authoritative_scope = resolve_authoritative_write_scope(
+            context=execution_context,
+            agent_session_id=None,
+        )
+        authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+        if not authoritative_session_id:
+            raise ValueError(
+                "Cannot establish authoritative session binding for manage_docs auto-registration."
+            )
+
         current_docs = dict(project.get("docs", {}) or {})
         current_docs[doc_name] = str(doc_path)
         project["docs"] = current_docs
@@ -222,32 +239,19 @@ async def auto_register_document(
         await backend.update_project_docs(project_name, docs_json)
         state_manager = getattr(server_module, "state_manager", None)
         if state_manager and hasattr(state_manager, "set_current_project"):
-            execution_context = None
-            get_execution_context = getattr(server_module, "get_execution_context", None)
-            if callable(get_execution_context):
-                try:
-                    execution_context = get_execution_context()
-                except Exception:  # pragma: no cover - defensive context lookup
-                    execution_context = None
-            authoritative_scope = resolve_authoritative_write_scope(
-                context=execution_context,
-                agent_session_id=None,
-            )
             try:
                 await state_manager.set_current_project(
                     project_name,
                     project,
                     agent_id="manage_docs",
-                    session_id=authoritative_scope.get("authoritative_session_id"),
+                    session_id=authoritative_session_id,
                     resolved_scope=authoritative_scope.get("resolved_scope"),
                     mirror_global=False,
                 )
-            except Exception as exc:  # pragma: no cover - defensive state sync
-                logger.warning(
-                    "Auto-registration database update succeeded but state sync failed for '%s': %s",
-                    doc_name,
-                    exc,
-                )
+            except Exception as exc:
+                raise ValueError(
+                    f"Authoritative session binding failed during auto-registration: {exc}"
+                ) from exc
         logger.info("Auto-registered document '%s' for project '%s'", doc_name, project_name)
     except Exception as exc:
         raise ValueError(f"Failed to update database for auto-registration: {exc}") from exc
@@ -314,33 +318,35 @@ async def register_document_path(
     if not project_name:
         raise ValueError("Project must have a name for registration")
 
+    authoritative_scope = resolve_authoritative_write_scope(
+        context=execution_context,
+        agent_session_id=None,
+    )
+    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+    if not authoritative_session_id:
+        raise ValueError("Cannot establish authoritative session binding for manage_docs registration.")
+
     current_docs = dict(project.get("docs", {}) or {})
     current_docs[doc_name] = str(doc_path)
     project["docs"] = current_docs
     docs_json = json.dumps(current_docs)
-    await backend.update_project_docs(project_name, docs_json)
-
-    reload_warning: Optional[str] = None
     state_manager = getattr(server_module, "state_manager", None)
     if state_manager and hasattr(state_manager, "set_current_project"):
-        authoritative_scope = resolve_authoritative_write_scope(
-            context=execution_context,
-            agent_session_id=None,
-        )
         try:
             await state_manager.set_current_project(
                 project_name,
                 project,
                 agent_id=agent_id,
-                session_id=authoritative_scope.get("authoritative_session_id"),
+                session_id=authoritative_session_id,
                 resolved_scope=authoritative_scope.get("resolved_scope"),
                 mirror_global=False,
             )
-        except Exception as exc:  # pragma: no cover - defensive state sync
-            reload_warning = (
-                f"Registration persisted for '{doc_name}', but context reload failed: {exc}"
-            )
-            logger.warning(reload_warning)
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot bind project for authoritative session during registration: {exc}"
+            ) from exc
+
+    await backend.update_project_docs(project_name, docs_json)
 
     try:
         registry_call = project_registry.record_doc_update(
@@ -371,7 +377,7 @@ async def register_document_path(
     except Exception as exc:  # pragma: no cover - non-fatal logging path
         logger.warning("Failed to log auto-registration event: %s", exc)
 
-    return reload_warning
+    return None
 
 
 async def handle_manage_docs_request(
@@ -731,6 +737,7 @@ async def handle_manage_docs_request(
         "agent_id": agent_id,
         "helper": helper,
         "context": context,
+        "execution_context": execution_context,
         "deprecation_warning": deprecation_warning,
         "apply_doc_change": apply_doc_change,
         "get_or_create_storage_project": get_or_create_storage_project,

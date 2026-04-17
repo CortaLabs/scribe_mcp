@@ -844,8 +844,11 @@ class ProjectRegistry:
 class RuntimeProjectRegistry:
     """Runtime-safe facade around the SQLite-first registry helper."""
 
-    def __init__(self, registry: Optional[ProjectRegistry]) -> None:
+    def __init__(self, registry: Optional[ProjectRegistry], advisory_context: Optional[Dict[str, Any]] = None) -> None:
         self._registry = registry
+        context = dict(advisory_context or {})
+        context.setdefault("available", registry is not None)
+        self._advisory_context = context
 
     @property
     def available(self) -> bool:
@@ -889,8 +892,31 @@ class RuntimeProjectRegistry:
 
     def get_planning_advisories(self, project_name: str) -> Dict[str, Any]:
         if self._registry is None:
-            return {}
+            advisory = {
+                "code": "planning_registry_unavailable",
+                "severity": "info",
+                "classification": self._advisory_context.get("classification", "environment_mismatch"),
+                "message": self._advisory_context.get(
+                    "message",
+                    "Planning-doc drift advisories are unavailable in this runtime.",
+                ),
+                "provenance": {
+                    "source": "runtime.project_registry",
+                    "fields": ["available", "reason_code", "classification", "mode", "storage_backend"],
+                },
+            }
+            return {
+                "available": False,
+                "reason_code": self._advisory_context.get("reason_code", "runtime_registry_unavailable"),
+                "classification": self._advisory_context.get("classification", "environment_mismatch"),
+                "mode": self._advisory_context.get("mode"),
+                "storage_backend": self._advisory_context.get("storage_backend"),
+                "advisories": [advisory],
+            }
         return self._registry.get_planning_advisories(project_name)
+
+    def get_registry_advisory_context(self) -> Dict[str, Any]:
+        return dict(self._advisory_context)
 
 
 def build_planning_advisories(project_info: ProjectInfo) -> Dict[str, Any]:
@@ -963,16 +989,56 @@ def get_runtime_project_registry() -> RuntimeProjectRegistry:
         return _RUNTIME_REGISTRY
 
     registry: Optional[ProjectRegistry] = None
+    advisory_context: Dict[str, Any] = {
+        "available": False,
+        "classification": "environment_mismatch",
+        "reason_code": "runtime_registry_unavailable",
+        "message": "Planning-doc drift advisories are unavailable in this runtime.",
+    }
     try:
         from scribe_mcp.config.mode_detection import OperatingMode, resolve_configured_mode
 
         mode = resolve_configured_mode(settings)
-        if mode == OperatingMode.STANDALONE and str(settings.storage_backend).strip().lower() == "sqlite":
+        backend = str(settings.storage_backend).strip().lower()
+        advisory_context["mode"] = getattr(mode, "value", str(mode))
+        advisory_context["storage_backend"] = backend
+        if mode == OperatingMode.STANDALONE and backend == "sqlite":
             registry = ProjectRegistry()
+            advisory_context.update(
+                {
+                    "available": True,
+                    "classification": "healthy",
+                    "reason_code": "runtime_registry_enabled",
+                    "message": "Planning-doc drift advisories are active.",
+                }
+            )
+        elif mode != OperatingMode.STANDALONE:
+            advisory_context.update(
+                {
+                    "classification": "environment_mismatch",
+                    "reason_code": "runtime_mode_non_standalone",
+                    "message": "Planning-doc drift advisories require standalone runtime mode.",
+                }
+            )
+        else:
+            advisory_context.update(
+                {
+                    "classification": "environment_mismatch",
+                    "reason_code": "runtime_backend_non_sqlite",
+                    "message": "Planning-doc drift advisories require sqlite storage backend in standalone mode.",
+                }
+            )
     except Exception:
         registry = None
+        advisory_context.update(
+            {
+                "classification": "repo_defect",
+                "reason_code": "runtime_registry_bootstrap_error",
+                "message": "Planning-doc drift advisories failed to initialize due to runtime bootstrap error.",
+            }
+        )
 
-    _RUNTIME_REGISTRY = RuntimeProjectRegistry(registry)
+    _RUNTIME_REGISTRY = RuntimeProjectRegistry(registry, advisory_context=advisory_context)
     return _RUNTIME_REGISTRY
 
 

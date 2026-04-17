@@ -18,6 +18,7 @@ from scribe_mcp.utils.entry_limit import EntryLimitManager
 from scribe_mcp.utils.error_handler import HealingErrorHandler
 from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
+    build_resolution_metadata,
     resolve_logging_context,
 )
 from scribe_mcp.shared.project_registry import get_runtime_project_registry
@@ -154,6 +155,17 @@ _READ_RECENT_HELPER = _ReadRecentHelper()
 _PROJECT_REGISTRY = get_runtime_project_registry()
 
 
+def _attach_resolution_metadata(response: Dict[str, Any], context: Any) -> None:
+    """Attach readable project-resolution metadata to tool responses."""
+    if not context:
+        return
+    resolution_payload = build_resolution_metadata(context)
+    response["project"] = resolution_payload.get("project")
+    response["project_resolution"] = {
+        key: value for key, value in resolution_payload.items() if key != "project"
+    }
+
+
 @app.tool(**read_only_local_tool(title="Read Recent Entries", tags=("logs", "inspection", "read-only")))
 async def read_recent(
     agent: str,
@@ -242,6 +254,7 @@ async def read_recent(
             context=context,
             extra={"warning": "sentinel_mode_no_project"},
         )
+        _attach_resolution_metadata(base_response, context)
         # Add healing information if parameters were healed
         if healing_applied:
             base_response["parameter_healing"] = {
@@ -267,6 +280,7 @@ async def read_recent(
         base_response = _READ_RECENT_HELPER.translate_project_error(exc)
         base_response["suggestion"] = "Invoke set_project before reading logs"
         base_response.setdefault("reminders", [])
+        _attach_resolution_metadata(base_response, context=None)
 
         # Add healing information if parameters were healed
         if healing_applied:
@@ -339,11 +353,8 @@ async def read_recent(
                 pagination=pagination_info,
                 extra_data={},
             )
-            _attach_planning_advisories(response, project.get("name"))
-
-            # Add project name for concurrent session clarity
-            if context and context.project:
-                response["project_name"] = context.project.get("name", "")
+            _attach_planning_advisories(response, project.get("name"), context=context)
+            _attach_resolution_metadata(response, context)
 
             # For readable format, skip token budget truncation (full content needed)
             # Token budget only applies to structured/compact formats
@@ -443,11 +454,8 @@ async def read_recent(
         pagination=pagination_info,
         extra_data={},
     )
-    _attach_planning_advisories(response, project.get("name"))
-
-    # Add project name for concurrent session clarity
-    if context and context.project:
-        response["project_name"] = context.project.get("name", "")
+    _attach_planning_advisories(response, project.get("name"), context=context)
+    _attach_resolution_metadata(response, context)
 
     # For readable format, skip token budget truncation (full content needed)
     if format == "readable":
@@ -528,12 +536,52 @@ def _normalise_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
     return normalised
 
 
-def _attach_planning_advisories(response: Dict[str, Any], project_name: Optional[str]) -> None:
+def _attach_planning_advisories(
+    response: Dict[str, Any],
+    project_name: Optional[str],
+    *,
+    context: Optional[Any] = None,
+) -> None:
     if not project_name:
         return
+    if context is not None:
+        resolution_source = str(getattr(context, "resolution_source", "") or "").strip().lower()
+        if not resolution_source or resolution_source == "unresolved":
+            return
     advisories = _PROJECT_REGISTRY.get_planning_advisories(project_name)
     if advisories:
         response["planning_advisories"] = advisories
+        return
+    get_context = getattr(_PROJECT_REGISTRY, "get_registry_advisory_context", None)
+    if not callable(get_context):
+        return
+    try:
+        registry_context = dict(get_context() or {})
+    except Exception:
+        return
+    if registry_context and not registry_context.get("available", False):
+        response["planning_advisories"] = {
+            "available": False,
+            "classification": registry_context.get("classification", "environment_mismatch"),
+            "reason_code": registry_context.get("reason_code", "runtime_registry_unavailable"),
+            "mode": registry_context.get("mode"),
+            "storage_backend": registry_context.get("storage_backend"),
+            "advisories": [
+                {
+                    "code": "planning_registry_unavailable",
+                    "severity": "info",
+                    "classification": registry_context.get("classification", "environment_mismatch"),
+                    "message": registry_context.get(
+                        "message",
+                        "Planning-doc drift advisories are unavailable in this runtime.",
+                    ),
+                    "provenance": {
+                        "source": "runtime.project_registry",
+                        "fields": ["available", "reason_code", "classification", "mode", "storage_backend"],
+                    },
+                }
+            ],
+        }
 
 
 def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:

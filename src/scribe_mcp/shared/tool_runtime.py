@@ -404,9 +404,13 @@ async def execute_tool_call(
             call_arguments.get("root") or call_arguments.get("repo_root"),
             settings.project_root,
         )
-        if repo_root_hint:
+        if repo_root_hint and name != "set_project":
             context_payload["repo_root"] = repo_root_hint
             _set_scope_provenance(context_payload, field="repo_root", label="claimed")
+
+    if not context_payload.get("repo_root") and name == "set_project":
+        context_payload["repo_root"] = _normalize_repo_root(settings.project_root, settings.project_root)
+        _set_scope_provenance(context_payload, field="repo_root", label="verified")
 
     if not context_payload.get("project_name"):
         project_hint = call_arguments.get("project") or call_arguments.get("name")

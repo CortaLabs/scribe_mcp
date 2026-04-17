@@ -30,6 +30,7 @@ from scribe_mcp.tools.config.query_entries_config import QueryEntriesConfig
 from scribe_mcp.shared.logging_utils import (
     LoggingContext,
     ProjectResolutionError,
+    build_resolution_metadata,
     clean_list as shared_clean_list,
     normalize_meta_filters,
     resolve_logging_context,
@@ -60,6 +61,27 @@ class _QueryEntriesHelper(LoggingToolMixin):
 
 
 _HELPER = _QueryEntriesHelper()
+
+
+def _attach_resolution_metadata(response: Dict[str, Any], context: Optional[Any]) -> None:
+    """Attach readable project-resolution metadata to query responses."""
+    if context is None:
+        return
+    if isinstance(context, LoggingContext):
+        resolution_payload = build_resolution_metadata(context)
+    else:
+        project_data = getattr(context, "project", None)
+        resolution_payload = {
+            "project": project_data.get("name") if isinstance(project_data, dict) else None,
+            "resolution_source": getattr(context, "resolution_source", "unresolved"),
+            "fallback_used": bool(getattr(context, "fallback_used", False)),
+            "fallback_chain": list(getattr(context, "fallback_chain", []) or []),
+            "resolution_summary": f"Resolved via '{getattr(context, 'resolution_source', 'unresolved')}'",
+        }
+    response["project"] = resolution_payload.get("project")
+    response["project_resolution"] = {
+        key: value for key, value in resolution_payload.items() if key != "project"
+    }
 
 
 def _validate_search_parameters(
@@ -1275,6 +1297,25 @@ async def query_entries(
                 require_project=False,  # query_entries can work without active project
                 state_snapshot=state_snapshot,
             )
+        except ProjectResolutionError as context_error:
+            translated = _HELPER.translate_project_error(context_error)
+            translated.update(
+                {
+                    "search_params": {
+                        "project": final_config.project,
+                        "search_scope": final_config.search_scope,
+                    },
+                    "entries": [],
+                    "pagination": {
+                        "page": final_config.page,
+                        "page_size": final_config.page_size,
+                        "total_count": 0,
+                        "has_next": False,
+                        "has_prev": False,
+                    },
+                }
+            )
+            return translated
         except Exception as context_error:
             # Apply Phase 2 ExceptionHealer for context resolution errors
             healed_context = _EXCEPTION_HEALER.heal_parameter_validation_error(
@@ -1283,24 +1324,34 @@ async def query_entries(
 
             if healed_context and healed_context.get("success"):
                 # Create minimal fallback context
-                context = type('obj', (object,), {
-                    'project': None,
-                    'recent_projects': [],
-                    'reminders': []
-                })()
+                context = LoggingContext(
+                    tool_name="query_entries",
+                    project=None,
+                    recent_projects=[],
+                    state_snapshot=state_snapshot,
+                    reminders=[],
+                    resolution_source="context_resolution_error",
+                    fallback_used=False,
+                    fallback_chain=[],
+                )
             else:
                 # Continue with empty context
-                context = type('obj', (object,), {
-                    'project': None,
-                    'recent_projects': [],
-                    'reminders': []
-                })()
+                context = LoggingContext(
+                    tool_name="query_entries",
+                    project=None,
+                    recent_projects=[],
+                    state_snapshot=state_snapshot,
+                    reminders=[],
+                    resolution_source="context_resolution_error",
+                    fallback_used=False,
+                    fallback_chain=[],
+                )
 
         project = context.project or {}
 
         explicit_project_requested = bool(final_config.project and str(final_config.project).strip())
         if explicit_project_requested and not context.project:
-            return {
+            response = {
                 "ok": False,
                 "error": f"Explicit project '{final_config.project}' was not found. Invoke set_project or pass a valid project name.",
                 "search_params": {
@@ -1315,9 +1366,11 @@ async def query_entries(
                     "has_next": False,
                     "has_prev": False,
                 },
-                "recent_projects": getattr(context, "recent_projects", []),
-                "reminders": getattr(context, "reminders", []),
+                "recent_projects": list(context.recent_projects),
+                "reminders": list(context.reminders),
             }
+            _attach_resolution_metadata(response, context)
+            return response
 
         # === ENHANCED SEARCH QUERY BUILDING ===
         search_query = _build_search_query(final_config, context, project)
@@ -1377,6 +1430,7 @@ async def query_entries(
 
         if context.reminders:
             search_result["reminders"] = list(context.reminders)
+        _attach_resolution_metadata(search_result, context)
         # Route through formatter for readable/structured/compact output
         return await default_formatter.finalize_tool_response(
             data=search_result,

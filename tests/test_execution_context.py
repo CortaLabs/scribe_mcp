@@ -263,7 +263,7 @@ async def test_execute_tool_call_injects_project_for_project_aware_tool():
     result = await execute_tool_call(
         name="read_recent",
         arguments={"agent": "codex"},
-        kwargs={},
+        kwargs={"context": {"repo_root": "/tmp"}},
         registry={"read_recent": read_recent_stub},
         app=SimpleNamespace(request_context=None),
         storage_backend=None,

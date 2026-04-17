@@ -158,6 +158,9 @@ async def test_read_recent_exposes_planning_advisories(monkeypatch, tmp_path: Pa
             recent_projects=[project_name],
             state_snapshot={},
             reminders=[],
+            resolution_source="session_binding",
+            fallback_used=False,
+            fallback_chain=[],
         )
 
     fake_backend = SimpleNamespace(
