@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import re
+import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from pathlib import Path
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -85,7 +87,7 @@ def _unwrap_result(result: Any) -> Dict[str, Any]:
 
 
 def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
-    """Generate a case ID for project mode by scanning recent entries.
+    """Generate a case ID for project mode using a per-project atomic counter.
 
     Args:
         kind: "BUG" or "SEC"
@@ -97,36 +99,102 @@ def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     prefix = f"{kind}-{today}-"
 
-    # Try to scan the log file for existing case IDs with this prefix
-    last_seq = 0
     paths = result.get("paths", [])
     primary_path = result.get("path")
     if primary_path:
         paths = [primary_path] + [p for p in paths if p != primary_path]
 
-    case_id_pattern = re.compile(rf"{re.escape(prefix)}(\d+)")
-
+    project_dir: Optional[Path] = None
     for log_path in paths:
         try:
-            from pathlib import Path
-            path = Path(log_path)
-            if not path.exists():
-                continue
-            # Read last 64KB to find recent case IDs
-            size = path.stat().st_size
-            read_size = min(size, 65536)
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                if size > read_size:
-                    f.seek(size - read_size)
-                content = f.read()
-                for match in case_id_pattern.finditer(content):
-                    seq = int(match.group(1))
-                    if seq > last_seq:
-                        last_seq = seq
+            candidate = Path(log_path).resolve().parent
+            if candidate.exists() and candidate.is_dir():
+                project_dir = candidate
+                break
         except Exception:
             continue
 
-    return f"{prefix}{last_seq + 1:04d}"
+    if project_dir is None:
+        raise RuntimeError(
+            "case-id allocation failed: unable to resolve project directory from append_entry result paths"
+        )
+
+    counter_file = project_dir / ".sentinel_case_id_counters.json"
+    lock_file = project_dir / ".sentinel_case_id_counters.lock"
+    lock_fd: Optional[int] = None
+    deadline = time.monotonic() + 2.0
+
+    while True:
+        try:
+            lock_fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("case-id allocation failed: timeout acquiring counter lock")
+            time.sleep(0.01)
+        except Exception as exc:
+            raise RuntimeError(f"case-id allocation failed: lock acquisition error: {exc}") from exc
+
+    try:
+        counters: Dict[str, Dict[str, int]] = {}
+        if counter_file.exists():
+            try:
+                import json
+                loaded = json.loads(counter_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"case-id allocation failed: unable to read persisted counter state: {exc}"
+                ) from exc
+            if not isinstance(loaded, dict):
+                raise RuntimeError(
+                    "case-id allocation failed: persisted counter state is malformed (expected JSON object)"
+                )
+            counters = loaded
+
+        day_counters = counters.get(today)
+        if day_counters is None:
+            day_counters = {}
+            counters[today] = day_counters
+        elif not isinstance(day_counters, dict):
+            raise RuntimeError(
+                "case-id allocation failed: persisted counter state is malformed "
+                f"(expected object at date bucket '{today}')"
+            )
+
+        for counter_kind in ("BUG", "SEC"):
+            if counter_kind not in day_counters:
+                continue
+            persisted_value = day_counters[counter_kind]
+            if not isinstance(persisted_value, int) or isinstance(persisted_value, bool) or persisted_value < 0:
+                raise RuntimeError(
+                    "case-id allocation failed: persisted counter state is malformed "
+                    f"(expected non-negative integer at date bucket '{today}' for kind '{counter_kind}')"
+                )
+
+        persisted_seq = day_counters.get(kind, 0)
+        if not isinstance(persisted_seq, int) or isinstance(persisted_seq, bool) or persisted_seq < 0:
+            raise RuntimeError(
+                "case-id allocation failed: persisted counter state is malformed "
+                f"(expected non-negative integer at date bucket '{today}' for kind '{kind}')"
+            )
+        next_seq = persisted_seq + 1
+        day_counters[kind] = next_seq
+
+        import json
+        tmp_file = counter_file.with_suffix(f"{counter_file.suffix}.tmp")
+        tmp_file.write_text(json.dumps(counters, sort_keys=True), encoding="utf-8")
+        tmp_file.replace(counter_file)
+
+        return f"{prefix}{next_seq:04d}"
+    finally:
+        try:
+            if lock_fd is not None:
+                os.close(lock_fd)
+        finally:
+            try:
+                lock_file.unlink()
+            except Exception:
+                pass
 
 
 def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[str, Any]]) -> str:
@@ -364,7 +432,16 @@ async def open_bug(
             return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
 
         # Generate case ID after entry is written (so we can scan for existing IDs)
-        case_id = _next_case_id_for_project("BUG", result)
+        try:
+            case_id = _next_case_id_for_project("BUG", result)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"Failed to allocate BUG case ID: {exc}",
+                "entry_id": str(result.get("id", "")),
+                "path": str(result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            }
 
         # Create detailed bug report document
         # Build metadata dict (used for both doc creation and completeness scoring)
@@ -533,7 +610,16 @@ async def open_security(
             return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
 
         # Generate case ID after entry is written (so we can scan for existing IDs)
-        case_id = _next_case_id_for_project("SEC", result)
+        try:
+            case_id = _next_case_id_for_project("SEC", result)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"Failed to allocate SEC case ID: {exc}",
+                "entry_id": str(result.get("id", "")),
+                "path": str(result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            }
 
         # Create detailed security report document
         # Build metadata dict (used for both doc creation and completeness scoring)
