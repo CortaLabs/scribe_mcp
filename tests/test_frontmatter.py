@@ -63,6 +63,9 @@ async def test_frontmatter_created_and_updated(tmp_path: Path) -> None:
     assert parsed.has_frontmatter
     assert parsed.frontmatter_data.get("title") == "Title"
     assert parsed.frontmatter_data.get("doc_type") == "architecture"
+    assert parsed.frontmatter_data.get("created_by") == "Scribe"
+    assert parsed.frontmatter_data.get("maintained_by") == "Scribe"
+    assert parsed.frontmatter_data.get("edit_trace", {}).get("tool") == "manage_docs"
     last_updated = str(parsed.frontmatter_data.get("last_updated") or "")
     assert last_updated
     assert last_updated.endswith("UTC")
@@ -270,3 +273,63 @@ async def test_replace_range_uses_body_relative_lines(tmp_path: Path) -> None:
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert parsed.frontmatter_data.get("id") == "body-relative-test"
     assert "Line A Updated" in parsed.body
+
+
+@pytest.mark.asyncio
+async def test_edit_preserves_created_by_updates_maintained_by_and_trace(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                "id: keep-created-by",
+                'title: "Title"',
+                "doc_type: architecture",
+                "created_by: LegacyCreator",
+                "maintained_by: LegacyMaintainer",
+                "edit_trace:",
+                "  tool: manage_docs",
+                "  created_at: 2026-01-01 00:00:00 UTC",
+                "  created_via: create_doc",
+                "  last_edited_at: 2026-01-01 00:00:00 UTC",
+                "  last_edited_by: LegacyMaintainer",
+                "  last_action: create_doc",
+                "  run_id: prior-run",
+                "---",
+                "# Title",
+                "",
+                "Body",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="# Title\n\nBody updated\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={
+            "agent_id": "CoderAgent-Phase1",
+            "created_by": "ShouldBeIgnored",
+            "run_id": "new-run",
+        },
+        dry_run=False,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    fm = parsed.frontmatter_data
+    assert fm.get("created_by") == "LegacyCreator"
+    assert fm.get("maintained_by") == "CoderAgent-Phase1"
+    assert fm.get("edit_trace", {}).get("created_via") == "create_doc"
+    assert fm.get("edit_trace", {}).get("last_edited_by") == "CoderAgent-Phase1"
+    assert fm.get("edit_trace", {}).get("run_id") == "new-run"

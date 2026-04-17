@@ -18,6 +18,21 @@ from typing import Any, Dict, Iterable, List, Optional
 
 
 COMPARISON_REGEX = re.compile(r"\b\d+(?:\.\d+)?\s*(?:<=|>=|<|>)\s*\d+(?:\.\d+)?\b")
+SUPPORTED_WORKFLOW_METADATA_KEYS = (
+    "summary",
+    "tags",
+    "owners",
+    "category",
+    "status",
+    "version",
+    "related_docs",
+    "maintained_by",
+    "run_id",
+    "stage",
+    "session_id",
+    "work_item_id",
+)
+RESERVED_LIFECYCLE_FIELDS = ("created_by", "edit_trace")
 
 
 def _validate_comparison_symbols(text: str) -> bool:
@@ -167,6 +182,60 @@ class EnhancedManageDocsValidator:
 
 def create_manage_docs_validator() -> EnhancedManageDocsValidator:
     return EnhancedManageDocsValidator()
+
+
+def summarize_frontmatter_metadata_hints(
+    metadata: Dict[str, Any],
+    *,
+    action: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    """Return additive hints for supported/ignored generic workflow metadata fields."""
+    hints: List[Dict[str, str]] = []
+    if not isinstance(metadata, dict):
+        return hints
+
+    if action == "create_doc" and not str(metadata.get("summary", "")).strip():
+        hints.append(
+            {
+                "code": "summary_missing_on_create",
+                "message": "summary is recommended on create for workflow routing context.",
+            }
+        )
+
+    if isinstance(metadata.get("tags"), str):
+        hints.append(
+            {
+                "code": "tags_scalar_normalized_to_list",
+                "message": "tags scalar input will be normalized to a single-item list.",
+            }
+        )
+    if isinstance(metadata.get("owners"), str):
+        hints.append(
+            {
+                "code": "owners_scalar_normalized_to_list",
+                "message": "owners scalar input will be normalized to a single-item list.",
+            }
+        )
+
+    if "edit_trace" in metadata or (
+        isinstance(metadata.get("frontmatter"), dict) and "edit_trace" in metadata["frontmatter"]
+    ):
+        hints.append(
+            {"code": "edit_trace_ignored", "message": "edit_trace is reserved and authored by manage_docs."}
+        )
+
+    if action and action != "create_doc":
+        if "created_by" in metadata or (
+            isinstance(metadata.get("frontmatter"), dict) and "created_by" in metadata["frontmatter"]
+        ):
+            hints.append(
+                {
+                    "code": "created_by_edit_override_ignored",
+                    "message": "created_by is immutable after create in the generic frontmatter contract.",
+                }
+            )
+
+    return hints
 
 
 def _validate_inputs(
