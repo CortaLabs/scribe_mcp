@@ -27,7 +27,7 @@ Coverage: **v2.5 compatibility baseline**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.1` and CLI scripts. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.2` and CLI scripts. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -54,7 +54,15 @@ Coverage: **v2.5 compatibility baseline**
 
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `packages/scribe_council/pyproject.toml` | Shipped package source | Defines optional package at `2.2.1`. |
+| `packages/scribe_council/pyproject.toml` | Shipped package source | Defines optional package at `2.2.2`. |
+
+## Versioning contract
+
+| Rule | Why it exists |
+| --- | --- |
+| Release-bound pushes to `main` must include a fresh package version in `pyproject.toml`. | `main` auto-triggers PyPI publishing for package/release-surface changes. |
+| Compatibility docs must be updated in the same change as the version bump. | Prevents repo docs from lagging the published package contract. |
+| If `scribe-council` stays lockstep with `scribe-mcp`, bump `packages/scribe_council/pyproject.toml` too. | Keeps the optional package dependency contract truthful. |
 | `packages/scribe_council/src/scribe_council/**` | Shipped package source | Optional template bundle and assets. |
 | `packages/scribe_council/src/scribe_council/council_templates/**` | Shipped package source | Optional `council.templates` provider surface. |
 
