@@ -1,4 +1,20 @@
 # Keep the rebuilt sdist aligned with tracked release truth only.
+include README.md
+include docs/INSTALL_AND_BOOTSTRAP.md
+include docs/COMPATIBILITY_MATRIX.md
+include docs/RELEASE_SURFACE.md
+include docs/RELEASE_FILE_MAP.md
+include docs/Scribe_Usage.md
+include docs/mcp_server_guide.md
+include docs/REMOTE_CLIENT.md
+include docs/BRIDGE_DEVELOPMENT.md
+include docs/TEMPLATE_VARIABLES.md
+include docs/GLOBAL_DEPLOYMENT_GUIDE.md
+include deploy/README.md
+include docs/examples/mcp.json.example
+include docs/examples/opencode.json.example
+include docs/whitepapers/scribe_mcp_whitepaper.md
+
 prune build
 prune dist
 prune .council

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.2.4"
+version = "2.2.5"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -62,6 +62,29 @@ include = ["scribe_mcp*"]
   "plugins/*.json",
   "templates/*",
   "templates/**/*",
+]
+
+[tool.setuptools.data-files]
+"share/doc/scribe-mcp" = [
+  "README.md",
+  "docs/INSTALL_AND_BOOTSTRAP.md",
+  "docs/COMPATIBILITY_MATRIX.md",
+  "docs/RELEASE_SURFACE.md",
+  "docs/RELEASE_FILE_MAP.md",
+  "docs/Scribe_Usage.md",
+  "docs/mcp_server_guide.md",
+  "docs/REMOTE_CLIENT.md",
+  "docs/BRIDGE_DEVELOPMENT.md",
+  "docs/TEMPLATE_VARIABLES.md",
+  "docs/GLOBAL_DEPLOYMENT_GUIDE.md",
+  "deploy/README.md",
+]
+"share/doc/scribe-mcp/examples" = [
+  "docs/examples/mcp.json.example",
+  "docs/examples/opencode.json.example",
+]
+"share/doc/scribe-mcp/whitepapers" = [
+  "docs/whitepapers/scribe_mcp_whitepaper.md",
 ]
 
 [tool.setuptools.exclude-package-data]

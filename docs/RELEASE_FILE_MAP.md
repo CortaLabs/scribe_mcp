@@ -27,7 +27,7 @@ Coverage: **v2.5 compatibility baseline**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.4` and CLI scripts. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.5` and CLI scripts. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -54,7 +54,7 @@ Coverage: **v2.5 compatibility baseline**
 
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `packages/scribe_council/pyproject.toml` | Shipped package source | Defines optional package at `2.2.4`. |
+| `packages/scribe_council/pyproject.toml` | Shipped package source | Defines optional package at `2.2.5`. |
 
 ## Versioning contract
 
