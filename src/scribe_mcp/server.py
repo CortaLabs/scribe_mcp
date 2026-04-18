@@ -88,6 +88,8 @@ from scribe_mcp.shared.execution_context import (
     resolve_bootstrap_execution_context,
 )
 from scribe_mcp.shared.tool_runtime import execute_tool_call
+from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
+from scribe_mcp.shared.repo_authority import build_repo_authority_snapshot, project_root_is_first_party
 from scribe_mcp.utils.sentinel_logs import log_scope_violation
 from scribe_mcp.state.agent_manager import init_agent_context_manager
 from scribe_mcp.state.agent_identity import init_agent_identity
@@ -129,6 +131,35 @@ _journal_replay_complete = False  # Tracks background journal replay status
 # Background task management (prevents garbage collection of fire-and-forget tasks)
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 background_tasks: set[asyncio.Task] = set()
+_transport_shutdown_lock = asyncio.Lock()
+_transport_shutdown_phase = "running"  # running|draining|backend_close|closed
+_transport_inflight_operations = 0
+
+
+async def begin_transport_operation() -> str:
+    """Mark an in-flight transport request or return the active shutdown phase."""
+    global _transport_inflight_operations
+    async with _transport_shutdown_lock:
+        if _transport_shutdown_phase != "running":
+            return _transport_shutdown_phase
+        _transport_inflight_operations += 1
+        return "running"
+
+
+async def end_transport_operation() -> None:
+    """Release a previously tracked in-flight transport request."""
+    global _transport_inflight_operations
+    async with _transport_shutdown_lock:
+        if _transport_inflight_operations > 0:
+            _transport_inflight_operations -= 1
+
+
+def get_transport_shutdown_state() -> dict[str, Any]:
+    """Return a snapshot of transport shutdown progress."""
+    return {
+        "phase": _transport_shutdown_phase,
+        "inflight": _transport_inflight_operations,
+    }
 
 
 def _rebind_storage_backend_for_mode(mode: OperatingMode):
@@ -172,6 +203,7 @@ _SENTINEL_ALLOWED_TOOLS = _SENTINEL_ONLY_TOOLS | {
     "open_bug",
     "open_security",
     "link_fix",
+    "list_open_cases",
     "read_file",
     "query_entries",
     "read_recent",
@@ -654,6 +686,7 @@ async def _replay_journals_background() -> None:
 
     from scribe_mcp.utils.files import WriteAheadLog
     from scribe_mcp.tools.list_projects import list_projects
+    from scribe_mcp.tools.project_utils import list_project_configs
     import glob
 
     try:
@@ -674,17 +707,31 @@ async def _replay_journals_background() -> None:
                 global_mode=True,
             )
             available_projects = projects_result.get("projects", [])
-            local_repo_root = settings.project_root.resolve()
+            try:
+                current_context = get_execution_context()
+            except Exception:
+                current_context = None
+            enrolled_first_party_roots = tuple(
+                str(Path(str(project.get("root", ""))).expanduser().resolve())
+                for project in list_project_configs().values()
+                if project.get("root")
+            )
+            authority_snapshot = build_repo_authority_snapshot(
+                current_context=current_context,
+                app=app,
+                scribe_user=os.environ.get("SCRIBE_USER"),
+                authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+                enrolled_first_party_roots=enrolled_first_party_roots,
+            )
             for project_info in available_projects:
                 project_name = project_info.get("name")
                 project_root_value = project_info.get("root")
-                if project_root_value:
-                    try:
-                        project_root = Path(project_root_value).resolve()
-                        if project_root != local_repo_root:
-                            continue
-                    except Exception:
-                        continue
+                visible, _authority_source, _reason_code, _normalized_root = project_root_is_first_party(
+                    project_root=project_root_value,
+                    snapshot=authority_snapshot,
+                )
+                if not visible:
+                    continue
                 if not (project_name and project_info.get("progress_log")):
                     continue
 
@@ -893,8 +940,10 @@ async def _startup() -> None:
     """Initialise shared resources before handling requests."""
     global agent_context_manager, agent_identity, _startup_complete
     global storage_backend, state_manager, router_context_manager
+    global _transport_shutdown_phase
     if _startup_complete:
         return
+    _transport_shutdown_phase = "running"
     _startup_complete = True
     startup_started = perf_counter()
 
@@ -1015,6 +1064,30 @@ async def _startup() -> None:
 
 async def _shutdown() -> None:
     """Ensure resources are released when the server stops."""
+    global _transport_shutdown_phase
+
+    async with _transport_shutdown_lock:
+        if _transport_shutdown_phase == "closed":
+            return
+        _transport_shutdown_phase = "draining"
+
+    shutdown_deadline = perf_counter() + max(float(settings.storage_timeout_seconds), 0.0)
+    while True:
+        async with _transport_shutdown_lock:
+            inflight = _transport_inflight_operations
+        if inflight <= 0:
+            break
+        if perf_counter() >= shutdown_deadline:
+            logger.warning(
+                "Transport shutdown proceeding with %d in-flight operation(s) after timeout.",
+                inflight,
+            )
+            break
+        await asyncio.sleep(0.01)
+
+    async with _transport_shutdown_lock:
+        _transport_shutdown_phase = "backend_close"
+
     if background_tasks:
         for task in list(background_tasks):
             task.cancel()
@@ -1037,6 +1110,9 @@ async def _shutdown() -> None:
             await doc_store.close()
         except Exception:
             pass
+
+    async with _transport_shutdown_lock:
+        _transport_shutdown_phase = "closed"
 
 
 if _HAS_LIFECYCLE_HOOKS:

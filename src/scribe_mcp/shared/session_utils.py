@@ -10,11 +10,10 @@ CRITICAL: All code that needs a session key MUST use get_canonical_session_key()
 DO NOT derive session keys inline anywhere else in the codebase.
 """
 
-from typing import Optional
-from scribe_mcp.shared.execution_context import ExecutionContext
+from typing import Any, Optional
 
 
-def get_canonical_session_key(exec_context: Optional[ExecutionContext]) -> Optional[str]:
+def get_canonical_session_key(exec_context: Optional[Any]) -> Optional[str]:
     """
     Return THE canonical session key for this execution context.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -122,7 +123,16 @@ async def test_set_project_respects_auto_create_dirs_false(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_set_project_require_explicit_root_missing_root_fails_closed(monkeypatch):
-    monkeypatch.setattr(set_project, "_get_context_repo_root", lambda: None)
+    monkeypatch.setattr(
+        set_project,
+        "_get_context_repo_root_details",
+        lambda: {
+            "trusted_path": None,
+            "claimed_path": None,
+            "provenance": "missing",
+            "authoritative_session_key": None,
+        },
+    )
 
     result = await set_project.set_project(
         agent="test_agent",
@@ -163,6 +173,55 @@ async def test_set_project_rejected_root_leaves_binding_and_docs_untouched(tmp_p
 
     state_after = await set_project.server_module.state_manager.load()
     assert state_after.current_project == current_before
+
+
+@pytest.mark.asyncio
+async def test_resolve_existing_project_alias_name_prefers_existing_repo_name(tmp_path: Path):
+    class _Backend:
+        async def fetch_project(self, _name: str, *, repo_root: str | None = None):
+            assert repo_root == str(tmp_path.resolve())
+            return SimpleNamespace(name="cortalabs-shared-context")
+
+    resolved_name, alias_resolution = await set_project._resolve_existing_project_alias_name(
+        "cortalabs_shared_context",
+        _Backend(),
+        tmp_path,
+    )
+
+    assert resolved_name == "cortalabs-shared-context"
+    assert alias_resolution == {
+        "requested_name": "cortalabs_shared_context",
+        "resolved_name": "cortalabs-shared-context",
+        "canonical_slug": "cortalabs_shared_context",
+        "reason": "repo_scoped_canonical_alias_match",
+    }
+
+
+@pytest.mark.asyncio
+async def test_validate_project_paths_allows_same_repo_canonical_alias(tmp_path: Path, monkeypatch):
+    root = tmp_path / "repo"
+    docs_dir = root / ".scribe" / "docs" / "dev_plans" / "cortalabs_shared_context"
+    progress_log = docs_dir / "PROGRESS_LOG.md"
+
+    async def _known_projects(*, skip: str | None):
+        return {
+            "cortalabs_shared_context": {
+                "root": root.resolve(),
+                "docs_dir": docs_dir.resolve(),
+                "progress_log": progress_log.resolve(),
+            }
+        }
+
+    monkeypatch.setattr(set_project, "_gather_known_projects", _known_projects)
+
+    result = await set_project._validate_project_paths(
+        name="cortalabs-shared-context",
+        root_path=root,
+        docs_dir=docs_dir,
+        progress_log=progress_log,
+    )
+
+    assert result["ok"] is True
 
 
 @pytest.mark.asyncio

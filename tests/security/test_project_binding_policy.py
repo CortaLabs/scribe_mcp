@@ -359,6 +359,45 @@ async def test_project_mode_rejects_explicit_project_override_even_outside_publi
 
 
 @pytest.mark.asyncio
+async def test_set_project_allows_explicit_rebind_outside_current_session_project(monkeypatch) -> None:
+    monkeypatch.delenv("SCRIBE_RELEASE_PROFILE", raising=False)
+    server_module = SimpleNamespace(
+        state_manager=SimpleNamespace(
+            record_tool=lambda _tool: {"tool": "set_project"},
+            load=lambda: _BindingState(),
+        ),
+        storage_backend=_ExplicitOverrideBackend(),
+        get_execution_context=lambda: SimpleNamespace(
+            mode="project",
+            stable_session_id="session-security",
+            session_id="session-security",
+        ),
+        get_agent_identity=lambda: None,
+    )
+
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return _BindingState()
+
+    server_module.state_manager.record_tool = _record_tool
+    server_module.state_manager.load = _load_state
+
+    context = await resolve_logging_context(
+        tool_name="set_project",
+        server_module=server_module,
+        explicit_project="other-project",
+        require_project=False,
+        recovery_mode="none",
+    )
+
+    assert context.project is not None
+    assert context.project["name"] == "other-project"
+    assert context.resolution_source == "explicit_project"
+
+
+@pytest.mark.asyncio
 async def test_public_release_rejects_global_current_recent_fallback_rehydration(monkeypatch) -> None:
     monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "public")
 
@@ -394,6 +433,46 @@ async def test_public_release_rejects_global_current_recent_fallback_rehydration
 
     assert context.project is None
     assert context.fallback_used is False
+
+
+@pytest.mark.asyncio
+async def test_compat_recovery_emits_hints_but_does_not_rebind_operational_authority(monkeypatch) -> None:
+    monkeypatch.delenv("SCRIBE_RELEASE_PROFILE", raising=False)
+
+    class _FallbackState:
+        current_project = "global-fallback"
+        recent_projects = ["global-fallback", "recent-fallback"]
+
+        def get_session_project(self, _session_key: str):
+            return None
+
+        def get_project(self, _name: str):
+            return {"name": "global-fallback", "root": "/tmp/global", "progress_log": "/tmp/global/PROGRESS_LOG.md"}
+
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return _FallbackState()
+
+    server_module = SimpleNamespace(
+        state_manager=SimpleNamespace(record_tool=_record_tool, load=_load_state),
+        storage_backend=SimpleNamespace(fetch_project=lambda _name: None, list_projects=lambda: []),
+        get_execution_context=lambda: None,
+        get_agent_identity=lambda: None,
+    )
+
+    context = await resolve_logging_context(
+        tool_name="query_entries",
+        server_module=server_module,
+        require_project=False,
+        recovery_mode="compat_all",
+    )
+
+    assert context.project is None
+    assert context.fallback_used is True
+    assert "compat_active_project_hint" in (context.fallback_chain or [])
+    assert "global-fallback" in context.recent_projects
 
 
 @pytest.mark.asyncio

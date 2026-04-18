@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 import pytest
 import shutil
+from types import SimpleNamespace
 import uuid
 
 from scribe_mcp.tools import set_project as set_project_module
@@ -156,7 +157,7 @@ class TestSlugCollisionDetection:
     """Test suite for slug collision detection in set_project (Task Package 1.8)."""
 
     @pytest.mark.asyncio
-    async def test_collision_different_names_same_slug(self):
+    async def test_collision_different_names_same_slug(self, monkeypatch: pytest.MonkeyPatch):
         """
         Verify that creating 'my-project' after 'my_project' is rejected with clear error.
 
@@ -167,6 +168,15 @@ class TestSlugCollisionDetection:
             unique_id = str(uuid.uuid4())[:8]
             agent_name = f"TestAgent-Collision-{unique_id}"
             project_root = Path(tmpdir)
+            (project_root / ".git").mkdir()
+
+            async def _resolve_root_stub(*_args, **_kwargs):
+                return project_root.resolve(), {
+                    "resolved_root": str(project_root.resolve()),
+                    "reason_code": "test_stubbed_root",
+                }
+
+            monkeypatch.setattr(set_project_module, "_resolve_root", _resolve_root_stub)
 
             # Create first project: 'my_project'
             result1 = await set_project(
@@ -214,7 +224,7 @@ class TestSlugCollisionDetection:
                     "Collision should show canonical slug both normalize to"
 
     @pytest.mark.asyncio
-    async def test_no_collision_same_name_update(self):
+    async def test_no_collision_same_name_update(self, monkeypatch: pytest.MonkeyPatch):
         """
         Verify that updating a project with the same exact name is allowed (not a collision).
 
@@ -225,6 +235,15 @@ class TestSlugCollisionDetection:
             unique_id = str(uuid.uuid4())[:8]
             agent_name = f"TestAgent-NoCollision-{unique_id}"
             project_root = Path(tmpdir)
+            (project_root / ".git").mkdir()
+
+            async def _resolve_root_stub(*_args, **_kwargs):
+                return project_root.resolve(), {
+                    "resolved_root": str(project_root.resolve()),
+                    "reason_code": "test_stubbed_root",
+                }
+
+            monkeypatch.setattr(set_project_module, "_resolve_root", _resolve_root_stub)
 
             # Create project
             result1 = await set_project(
@@ -251,7 +270,7 @@ class TestSlugCollisionDetection:
                 f"Updating project with same name should succeed. Got: {result2}"
 
     @pytest.mark.asyncio
-    async def test_collision_multiple_variants(self):
+    async def test_collision_multiple_variants(self, monkeypatch: pytest.MonkeyPatch):
         """
         Verify collision detection works with various slug variants.
 
@@ -262,6 +281,15 @@ class TestSlugCollisionDetection:
             unique_id = str(uuid.uuid4())[:8]
             agent_name = f"TestAgent-MultiVariant-{unique_id}"
             project_root = Path(tmpdir)
+            (project_root / ".git").mkdir()
+
+            async def _resolve_root_stub(*_args, **_kwargs):
+                return project_root.resolve(), {
+                    "resolved_root": str(project_root.resolve()),
+                    "reason_code": "test_stubbed_root",
+                }
+
+            monkeypatch.setattr(set_project_module, "_resolve_root", _resolve_root_stub)
 
             # Create base project
             result1 = await set_project(
@@ -290,6 +318,47 @@ class TestSlugCollisionDetection:
                     f"Variant '{variant}' should collide with 'my_project'"
                 assert "collision" in result or "error" in result, \
                     f"Variant '{variant}' should have collision/error in response"
+
+    @pytest.mark.asyncio
+    async def test_slug_collision_precheck_ignores_other_repo(self):
+        class FakeBackend:
+            async def fetch_project(self, _name):
+                return None
+
+            async def list_projects(self):
+                return [
+                    SimpleNamespace(name="my_project", repo_root="/tmp/other_repo"),
+                ]
+
+        collision = await set_project_module._check_slug_collision(
+            "my-project",
+            FakeBackend(),
+            Path("/tmp/current_repo"),
+        )
+
+        assert collision is None
+
+    @pytest.mark.asyncio
+    async def test_slug_collision_precheck_blocks_same_repo(self):
+        class FakeBackend:
+            async def fetch_project(self, _name):
+                return None
+
+            async def list_projects(self):
+                return [
+                    SimpleNamespace(name="my_project", repo_root="/tmp/current_repo"),
+                ]
+
+        collision = await set_project_module._check_slug_collision(
+            "my-project",
+            FakeBackend(),
+            Path("/tmp/current_repo"),
+        )
+
+        assert collision is not None
+        assert collision["collision"]["existing_name"] == "my_project"
+        assert collision["collision"]["new_name"] == "my-project"
+        assert collision["collision"]["canonical_slug"] == "my_project"
 
 
 @pytest.mark.asyncio

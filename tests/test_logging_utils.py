@@ -15,6 +15,7 @@ from scribe_mcp.shared.logging_utils import (
     LoggingContext,
     ProjectResolutionError,
     _sanitize_log_field,
+    build_resolution_metadata,
     clean_list,
     compose_log_line,
     default_status_emoji,
@@ -25,6 +26,14 @@ from scribe_mcp.shared.logging_utils import (
 )
 from scribe_mcp.storage.models import ProjectRecord
 from scribe_mcp.config import repo_config as repo_config_module
+
+
+@pytest.fixture(autouse=True)
+def _stub_reminders(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fake_get_reminders(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr("scribe_mcp.shared.logging_utils.reminders.get_reminders", _fake_get_reminders)
 
 
 def test_normalize_metadata_with_dict() -> None:
@@ -95,6 +104,32 @@ def test_compose_log_line_includes_metadata() -> None:
         entry_id="abc123",
     )
     assert line == "[✅] [2025-10-31 17:00:00 UTC] [Agent: Scribe] [Project: demo] [ID: abc123] Task complete | phase=alpha"
+
+
+def test_build_resolution_metadata_includes_compatibility_and_denied_fallbacks() -> None:
+    context = LoggingContext(
+        tool_name="query_entries",
+        project={"name": "demo"},
+        recent_projects=["demo"],
+        state_snapshot={},
+        reminders=[],
+        resolution_source="session_binding",
+        fallback_used=False,
+        fallback_chain=[],
+        denied_fallback_attempts=["compat_recent_project:public_release_blocked"],
+        compatibility_usage={
+            "requested": True,
+            "requested_mode": "compat_recent_project",
+            "applied": False,
+        },
+    )
+
+    payload = build_resolution_metadata(context)
+    assert payload["denied_fallback_attempts"] == [
+        "compat_recent_project:public_release_blocked"
+    ]
+    assert payload["compatibility_usage"]["requested"] is True
+    assert payload["compatibility_usage"]["applied"] is False
 
 
 def test_sanitize_log_field_strips_newlines() -> None:
@@ -207,6 +242,58 @@ async def test_resolve_logging_context_with_agent(monkeypatch: pytest.MonkeyPatc
     assert context.project and context.project["name"] == "demo"
     assert context.reminders == [{"message": "hi", "tool": "append_entry"}]
     assert recorded_tools == ["append_entry"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_logging_context_prefers_canonical_stable_session_key() -> None:
+    class DummyStateManager:
+        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
+            return {"tool": tool_name}
+
+        async def load(self) -> Any:
+            return SimpleNamespace(recent_projects=["demo"], current_project="demo")
+
+    class DummyBackend:
+        def __init__(self) -> None:
+            self.session_keys: list[str] = []
+
+        async def get_session_project(self, session_key: str) -> Optional[str]:
+            self.session_keys.append(session_key)
+            if session_key == "stable-session-001":
+                return "demo"
+            return None
+
+        async def fetch_project(self, _name: str) -> ProjectRecord:
+            return ProjectRecord(
+                id=1,
+                name="demo",
+                repo_root="/tmp/demo",
+                progress_log_path="/tmp/demo/PROGRESS_LOG.md",
+                docs_json=None,
+            )
+
+    class DummyServerModule:
+        state_manager = DummyStateManager()
+        storage_backend = DummyBackend()
+
+        @staticmethod
+        def get_execution_context() -> Any:
+            return SimpleNamespace(
+                mode="project",
+                stable_session_id="stable-session-001",
+                session_id="transport-session-001",
+            )
+
+    context = await resolve_logging_context(
+        tool_name="list_projects",
+        server_module=DummyServerModule(),
+        require_project=False,
+    )
+
+    assert context.project is not None
+    assert context.project["name"] == "demo"
+    assert context.resolution_source == "session_binding"
+    assert DummyServerModule.storage_backend.session_keys == ["stable-session-001"]
 
 
 @pytest.mark.asyncio

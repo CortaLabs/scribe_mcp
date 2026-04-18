@@ -5,13 +5,18 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Mapping, MutableMapping, Optional, Set, cast
 
+from scribe_mcp.shared.repo_authority import build_repo_authority_snapshot
+from scribe_mcp.shared.session_utils import get_canonical_session_key
+
 ToolCallable = Callable[..., Any]
 BridgeToolResolver = Callable[[str], Optional[ToolCallable]]
 ScopeViolationLogger = Callable[..., None]
+logger = logging.getLogger(__name__)
 _PROVENANCE_VALUES = {"verified", "claimed", "inferred", "anonymous"}
 _PROVENANCE_RANK = {
     "anonymous": 0,
@@ -25,7 +30,7 @@ _UNTRUSTED_CALLER_SESSION_KEYS = (
     "connection_id",
     "transport_session_id",
 )
-_UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor"}
+_UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor", "list_projects"}
 
 
 def resolve_context_authoritative_session_key(context: Any) -> Optional[str]:
@@ -37,10 +42,7 @@ def resolve_context_authoritative_session_key(context: Any) -> Optional[str]:
     for candidate in (
         getattr(resolved_scope, "authoritative_session_key", None),
         getattr(context, "authoritative_session_key", None),
-        getattr(resolved_scope, "stable_session_id", None),
-        getattr(context, "stable_session_id", None),
-        getattr(resolved_scope, "transport_session_id", None),
-        getattr(context, "session_id", None),
+        get_canonical_session_key(context),
     ):
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
@@ -541,30 +543,25 @@ async def execute_tool_call(
         current_session_id = getattr(current_context, "session_id", None)
         if current_session_id:
             context_payload["session_id"] = str(current_session_id)
+            context_payload["_server_derived_session_id"] = True
         current_execution_id = getattr(current_context, "execution_id", None)
         if current_execution_id:
             context_payload["parent_execution_id"] = str(current_execution_id)
+        if current_stable_session_id and not context_payload.get("_server_derived_session_id"):
+            context_payload["_server_derived_session_id"] = True
     else:
         context_payload.pop("parent_execution_id", None)
 
-    if not context_payload.get("repo_root"):
-        request_repo_root = _extract_request_repo_root(app)
-        if request_repo_root:
-            try:
-                request_path = Path(request_repo_root).expanduser()
-                if request_path.is_absolute():
-                    from scribe_mcp.config.repo_config import RepoDiscovery
-
-                    candidate_root = RepoDiscovery.find_repo_root(request_path)
-                    if candidate_root and candidate_root.exists():
-                        context_payload["repo_root"] = str(candidate_root.resolve())
-                        _set_scope_provenance(
-                            context_payload,
-                            field="repo_root",
-                            label="inferred",
-                        )
-            except Exception:
-                pass
+    repo_authority = build_repo_authority_snapshot(
+        current_context=current_context,
+        app=app,
+        scribe_user=kwargs.get("_scribe_user"),
+        authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+    )
+    context_payload["repo_authority"] = repo_authority.as_dict()
+    if not context_payload.get("repo_root") and repo_authority.verified_request_root:
+        context_payload["repo_root"] = repo_authority.verified_request_root
+        _set_scope_provenance(context_payload, field="repo_root", label="verified")
 
     session_id_claimed = bool(context_payload.get("session_id"))
 
@@ -573,28 +570,33 @@ async def execute_tool_call(
         fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
         kwargs={},
         allow_untrusted_sources=False,
-        allow_process_fallback=False,
+        allow_process_fallback=public_release,
     )
     has_runtime_transport_identity = bool(runtime_transport_session_id) and not str(
         runtime_transport_session_id
     ).startswith("process:")
 
     repo_root_hint = _normalize_repo_root(context_payload.get("repo_root"), settings.project_root)
+    existing_repo_root_provenance = (
+        (context_payload.get("scope_provenance") or {}).get("repo_root")
+        if isinstance(context_payload.get("scope_provenance"), dict)
+        else None
+    )
     if repo_root_hint:
         context_payload["repo_root"] = repo_root_hint
-        _set_scope_provenance(context_payload, field="repo_root", label="claimed")
+        if existing_repo_root_provenance != "verified":
+            _set_scope_provenance(context_payload, field="repo_root", label="claimed")
     else:
         repo_root_hint = _normalize_repo_root(
             call_arguments.get("root") or call_arguments.get("repo_root"),
             settings.project_root,
         )
-        if repo_root_hint and name != "set_project":
+        if repo_root_hint and name == "set_project":
             context_payload["repo_root"] = repo_root_hint
             _set_scope_provenance(context_payload, field="repo_root", label="claimed")
-
-    if not context_payload.get("repo_root") and name == "set_project":
-        context_payload["repo_root"] = _normalize_repo_root(settings.project_root, settings.project_root)
-        _set_scope_provenance(context_payload, field="repo_root", label="verified")
+        elif repo_root_hint:
+            context_payload["repo_root"] = repo_root_hint
+            _set_scope_provenance(context_payload, field="repo_root", label="claimed")
 
     if not context_payload.get("project_name"):
         project_hint = call_arguments.get("project") or call_arguments.get("name")
@@ -602,10 +604,10 @@ async def execute_tool_call(
             context_payload["project_name"] = str(project_hint)
             _set_scope_provenance(context_payload, field="project_name", label="claimed")
 
-    if has_runtime_transport_identity:
+    if runtime_transport_session_id:
         context_payload["transport_session_id"] = runtime_transport_session_id
         _set_scope_provenance(context_payload, field="transport_session_id", label="verified")
-        if context_payload.get("session_id"):
+        if has_runtime_transport_identity and context_payload.get("session_id"):
             context_payload["compat_session_id"] = str(context_payload.get("session_id"))
             context_payload.pop("session_id", None)
             session_id_claimed = False
@@ -618,7 +620,15 @@ async def execute_tool_call(
             allow_process_fallback=not public_release,
         )
 
-    if context_payload.get("transport_session_id") and not has_runtime_transport_identity:
+    if (
+        context_payload.get("transport_session_id")
+        and not has_runtime_transport_identity
+        and (
+            (context_payload.get("scope_provenance") or {}).get("transport_session_id")
+            if isinstance(context_payload.get("scope_provenance"), dict)
+            else None
+        ) != "verified"
+    ):
         _set_scope_provenance(context_payload, field="transport_session_id", label="claimed")
 
     if public_release and not str(context_payload.get("transport_session_id") or "").strip():
@@ -649,7 +659,9 @@ async def execute_tool_call(
 
     if not context_payload.get("repo_root") and storage_backend and hasattr(storage_backend, "fetch_project"):
         explicit_project = call_arguments.get("project") or call_arguments.get("name")
-        if explicit_project:
+        explicit_root = call_arguments.get("root") or call_arguments.get("repo_root")
+        process_fallback_transport = str(context_payload.get("transport_session_id") or "").startswith("process:")
+        if name != "set_project" and explicit_project:
             context_payload["project_name"] = str(explicit_project)
             _set_scope_provenance(context_payload, field="project_name", label="claimed")
             project_record = await storage_backend.fetch_project(str(explicit_project))
@@ -663,7 +675,7 @@ async def execute_tool_call(
         if (
             not context_payload.get("repo_root")
             and context_payload.get("session_id")
-            and session_id_claimed
+            and (session_id_claimed or has_runtime_transport_identity or process_fallback_transport)
         ):
             project_name = None
             if hasattr(storage_backend, "get_session_project"):
@@ -749,8 +761,13 @@ async def execute_tool_call(
                 repo_root=context_payload.get("repo_root"),
                 mode=context_payload.get("mode"),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist runtime session binding for tool '%s': %s",
+                name,
+                exc,
+            )
+            raise
 
     identity_hash, identity_parts = _derive_session_identity_preview(context_payload, call_arguments)
     derived_scoped_reuse_key = _derive_scoped_reuse_key(
@@ -806,8 +823,19 @@ async def execute_tool_call(
         else:
             context_payload["session_reuse_status"] = "reused"
 
-    if context_payload.get("stable_session_id"):
-        context_payload["authoritative_session_key"] = str(context_payload["stable_session_id"])
+    canonical_session_key = resolve_context_authoritative_session_key(current_context)
+    if not canonical_session_key:
+        canonical_session_key = (
+            str(context_payload.get("stable_session_id")).strip()
+            if str(context_payload.get("stable_session_id") or "").strip()
+            else None
+        ) or (
+            str(context_payload.get("session_id")).strip()
+            if str(context_payload.get("session_id") or "").strip()
+            else None
+        )
+    if canonical_session_key:
+        context_payload["authoritative_session_key"] = canonical_session_key
 
     if agent_session_id:
         context_payload["agent_session_id"] = agent_session_id

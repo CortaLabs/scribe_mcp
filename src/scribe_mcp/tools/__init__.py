@@ -11,6 +11,7 @@ from types import ModuleType
 from typing import Dict, List, Optional, Set
 
 _TOOL_MODULES: Dict[str, str] = {
+    "authorize_repo_root": "scribe_mcp.tools.authorize_repo_root",
     "append_entry": "scribe_mcp.tools.append_entry",
     "delete_project": "scribe_mcp.tools.delete_project",
     "doctor": "scribe_mcp.tools.doctor",
@@ -18,6 +19,7 @@ _TOOL_MODULES: Dict[str, str] = {
     "generate_doc_templates": "scribe_mcp.tools.generate_doc_templates",
     "get_project": "scribe_mcp.tools.get_project",
     "list_projects": "scribe_mcp.tools.list_projects",
+    "list_open_cases": "scribe_mcp.tools.list_open_cases",
     "manage_docs": "scribe_mcp.tools.manage_docs",
     "manage_docs_validation": "scribe_mcp.tools.manage_docs_validation",
     "query_entries": "scribe_mcp.tools.query_entries",
@@ -31,6 +33,7 @@ _TOOL_MODULES: Dict[str, str] = {
 }
 
 _TOOL_NAME_TO_MODULE: Dict[str, str] = {
+    "authorize_repo_root": "authorize_repo_root",
     "append_entry": "append_entry",
     "append_event": "sentinel_tools",
     "configure_reminders": "reminder_tools",
@@ -40,6 +43,7 @@ _TOOL_NAME_TO_MODULE: Dict[str, str] = {
     "get_project": "get_project",
     "link_fix": "sentinel_tools",
     "list_projects": "list_projects",
+    "list_open_cases": "list_open_cases",
     "manage_docs": "manage_docs",
     "open_bug": "sentinel_tools",
     "open_security": "sentinel_tools",

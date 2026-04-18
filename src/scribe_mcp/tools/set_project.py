@@ -30,6 +30,15 @@ from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionErr
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.shared.project_utils import detect_project_state, merge_project_inventory_authority
+from scribe_mcp.shared.tool_runtime import (
+    resolve_context_authoritative_session_key,
+    validate_repo_root_grant,
+)
+from scribe_mcp.shared.repo_authority import (
+    RepoAuthorityResolutionError,
+    build_repo_authority_snapshot,
+    resolve_authorized_project_root,
+)
 
 
 class _SetProjectHelper(LoggingToolMixin):
@@ -251,6 +260,7 @@ async def _build_existing_project_activity(
 async def _check_slug_collision(
     name: str,
     backend: Any,
+    repo_root: Path,
 ) -> Optional[Dict[str, Any]]:
     """Check if a new project name would collide with an existing project's canonical slug.
 
@@ -271,7 +281,10 @@ async def _check_slug_collision(
         return None  # Invalid name, will be caught elsewhere
 
     # Check if a project with this exact name already exists (update case, not a collision)
-    existing = await backend.fetch_project(name)
+    try:
+        existing = await backend.fetch_project(name, repo_root=str(repo_root.resolve()))
+    except TypeError:
+        existing = await backend.fetch_project(name)
     if existing:
         return None  # Same name update is allowed, not a collision
 
@@ -283,8 +296,18 @@ async def _check_slug_collision(
         # (backend errors should be caught at upsert time)
         return None
 
-    # Check if any existing project has the same canonical slug but different raw name
+    resolved_repo_root = repo_root.resolve()
+
+    # Check if any existing project in this repo has the same canonical slug but different raw name
     for project in all_projects:
+        project_repo_root = getattr(project, "repo_root", None)
+        if not project_repo_root:
+            continue
+        try:
+            if Path(project_repo_root).resolve() != resolved_repo_root:
+                continue
+        except Exception:
+            continue
         existing_slug = normalize_project_input(project.name)
         if existing_slug == canonical_slug and project.name != name:
             # Collision detected!
@@ -305,11 +328,60 @@ async def _check_slug_collision(
     return None  # No collision detected
 
 
+async def _resolve_existing_project_alias_name(
+    name: str,
+    backend: Any,
+    repo_root: Path,
+) -> tuple[str, Optional[Dict[str, Any]]]:
+    """Prefer the existing repo-scoped project name for canonical alias matches.
+
+    Legacy data can contain both `my-project` and `my_project` rows for the same
+    repository. `fetch_project(name, repo_root=...)` resolves by canonical
+    project_key, so if that returns a different raw name we should bind to the
+    existing stored name instead of attempting a second insert/update cycle.
+    """
+    if not name or not backend or not hasattr(backend, "fetch_project"):
+        return name, None
+
+    try:
+        existing = await backend.fetch_project(name, repo_root=str(repo_root.resolve()))
+    except TypeError:
+        return name, None
+    except Exception:
+        return name, None
+
+    if not existing:
+        return name, None
+
+    existing_name = getattr(existing, "name", None)
+    if not existing_name or existing_name == name:
+        return name, None
+
+    requested_slug = normalize_project_input(name)
+    existing_slug = normalize_project_input(str(existing_name))
+    if not requested_slug or requested_slug != existing_slug:
+        return name, None
+
+    return str(existing_name), {
+        "requested_name": name,
+        "resolved_name": str(existing_name),
+        "canonical_slug": requested_slug,
+        "reason": "repo_scoped_canonical_alias_match",
+    }
+
+
+def _project_names_share_canonical_alias(left: str, right: str) -> bool:
+    left_slug = normalize_project_input(left)
+    right_slug = normalize_project_input(right)
+    return bool(left_slug and right_slug and left_slug == right_slug)
+
+
 @app.tool(**stateful_local_tool(title="Set Project Context", tags=("projects", "context", "write")))
 async def set_project(
     agent: str = "Codex",  # REQUIRED: Agent name for session identity (e.g., "Coder-1", "ResearchAgent")
     name: str = "",
     root: str = "",  # REQUIRED: Repository root path
+    grant_id: Optional[str] = None,
     progress_log: Optional[str] = None,
     defaults: Optional[Dict[str, Any]] = None,
     author: Optional[str] = None,
@@ -411,12 +483,29 @@ async def set_project(
 
     _mark("prepare_context")
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
-    context_root_details = _get_context_repo_root_details()
     try:
-        resolved_root, root_authorization = _resolve_root(
+        current_context = server_module.get_execution_context()
+    except Exception:
+        current_context = None
+    enrolled_first_party_roots = tuple(
+        str(Path(str(project.get("root", ""))).expanduser().resolve())
+        for project in list_project_configs().values()
+        if project.get("root")
+    )
+    authority_snapshot = build_repo_authority_snapshot(
+        current_context=current_context,
+        app=app,
+        scribe_user=trusted_workspace_user,
+        authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+        enrolled_first_party_roots=enrolled_first_party_roots,
+    )
+    try:
+        resolved_root, root_authorization = await _resolve_root(
             root,
-            context_root_details,
+            authority_snapshot,
             skip_validation,
+            grant_id=grant_id,
+            storage_backend=server_module.storage_backend,
             scribe_user=trusted_workspace_user,
         )
     except ProjectRootAuthorizationError as exc:
@@ -428,19 +517,20 @@ async def set_project(
             base_context,
         )
 
-    trusted_roots: List[Path] = [settings.project_root.resolve()]
-    context_root = context_root_details.get("trusted_path")
-    if context_root is not None:
-        try:
-            trusted_roots.append(context_root.resolve())
-        except (TypeError, ValueError):
-            pass
-
     # Detect if a path mapping occurred (for metadata).
     from scribe_mcp.config.paths import map_client_root as _mcr
 
-    _, client_root_original = _mcr(root or str(context_root or ""), user=trusted_workspace_user)
+    _, client_root_original = _mcr(root or str(authority_snapshot.verified_binding_root or ""), user=trusted_workspace_user)
     # client_root_original is non-None only when a mapping happened.
+
+    alias_resolution: Optional[Dict[str, Any]] = None
+    backend = server_module.storage_backend
+    if backend:
+        name, alias_resolution = await _resolve_existing_project_alias_name(
+            name,
+            backend,
+            resolved_root,
+        )
 
     docs_dir = _resolve_docs_dir(name, resolved_root)
     try:
@@ -527,6 +617,9 @@ async def set_project(
     if client_root_original:
         project_data.setdefault("meta", {})
         project_data["meta"]["client_root"] = client_root_original
+    if alias_resolution:
+        project_data.setdefault("meta", {})
+        project_data["meta"]["alias_resolution"] = alias_resolution
 
     # Optional: allow agents to clear reminder cooldowns if they're confused.
     # This is scoped to (project_root + agent_id) to avoid impacting other agents.
@@ -545,24 +638,56 @@ async def set_project(
 
     _mark("build_project_data")
     # Create/upsert project in database first
-    backend = server_module.storage_backend
     project_record = None
     if backend:
         # Check for slug collisions before creating new project
-        collision = await _check_slug_collision(name, backend)
+        collision = await _check_slug_collision(name, backend, resolved_root)
         if collision:
             return _SET_PROJECT_HELPER.apply_context_payload(collision, base_context)
 
         _mark("check_slug_collision")
         import json as _json
-        project_record = await backend.upsert_project(
-            name=name,
-            repo_root=str(resolved_root),
-            progress_log_path=str(resolved_log),
-            docs_json=_json.dumps(docs),  # Persist docs mapping to DB
-            bridge_id=bridge_id,
-            bridge_managed=bridge_managed,
-        )
+        try:
+            project_record = await backend.upsert_project(
+                name=name,
+                repo_root=str(resolved_root),
+                progress_log_path=str(resolved_log),
+                docs_json=_json.dumps(docs),  # Persist docs mapping to DB
+                bridge_id=bridge_id,
+                bridge_managed=bridge_managed,
+            )
+        except Exception as exc:
+            exc_text = str(exc)
+            duplicate_alias_conflict = (
+                "idx_scribe_projects_project_key_unique" in exc_text
+                or "scribe_projects_name_key" in exc_text
+            )
+            if not duplicate_alias_conflict:
+                raise
+
+            retry_name, retry_alias_resolution = await _resolve_existing_project_alias_name(
+                name,
+                backend,
+                resolved_root,
+            )
+            if retry_name == name:
+                raise
+
+            name = retry_name
+            project_data["name"] = name
+            alias_resolution = alias_resolution or retry_alias_resolution
+            if alias_resolution:
+                project_data.setdefault("meta", {})
+                project_data["meta"]["alias_resolution"] = alias_resolution
+
+            project_record = await backend.upsert_project(
+                name=name,
+                repo_root=str(resolved_root),
+                progress_log_path=str(resolved_log),
+                docs_json=_json.dumps(docs),
+                bridge_id=bridge_id,
+                bridge_managed=bridge_managed,
+            )
 
         _mark("upsert_project")
         # Parse docs_json from project_record and populate project_data meta
@@ -931,6 +1056,7 @@ def _get_context_repo_root_details() -> Dict[str, Any]:
             "trusted_path": None,
             "claimed_path": None,
             "provenance": "missing",
+            "authoritative_session_key": None,
         }
     repo_root_provenance = None
     try:
@@ -943,6 +1069,7 @@ def _get_context_repo_root_details() -> Dict[str, Any]:
                 repo_root_provenance = raw_scope_provenance.get("repo_root")
     except Exception:
         repo_root_provenance = None
+    authoritative_session_key = resolve_context_authoritative_session_key(context)
     try:
         resolved_path = Path(str(context.repo_root)).expanduser().resolve()
     except (TypeError, ValueError):
@@ -950,191 +1077,68 @@ def _get_context_repo_root_details() -> Dict[str, Any]:
             "trusted_path": None,
             "claimed_path": None,
             "provenance": "invalid",
+            "authoritative_session_key": authoritative_session_key,
         }
 
     provenance_label = str(repo_root_provenance or "unknown").strip().lower() or "unknown"
-    if provenance_label == "claimed":
+    if provenance_label == "verified":
+        return {
+            "trusted_path": resolved_path,
+            "claimed_path": None,
+            "provenance": provenance_label,
+            "authoritative_session_key": authoritative_session_key,
+        }
+    if provenance_label in {"claimed", "inferred", "unknown", "anonymous", "missing"}:
         return {
             "trusted_path": None,
             "claimed_path": resolved_path,
             "provenance": provenance_label,
+            "authoritative_session_key": authoritative_session_key,
         }
     return {
-        "trusted_path": resolved_path,
-        "claimed_path": None,
+        "trusted_path": None,
+        "claimed_path": resolved_path,
         "provenance": provenance_label,
+        "authoritative_session_key": authoritative_session_key,
     }
 
 
-def _looks_like_local_repo_root(path: Path) -> bool:
-    """Treat a claimed repo_root as locally trustworthy only when it looks real."""
-    try:
-        git_marker = path / ".git"
-        return path.exists() and path.is_dir() and git_marker.exists()
-    except OSError:
-        return False
-
-
-def _resolve_root(
+async def _resolve_root(
     root: Optional[str],
-    context_root_details: Dict[str, Any],
+    authority_snapshot: Any,
     skip_validation: bool,
+    grant_id: Optional[str],
+    storage_backend: Any,
     scribe_user: Optional[str] = None,
 ) -> tuple[Path, Dict[str, Any]]:
     base = settings.project_root.resolve()
-    trusted_roots: List[Path] = [base]
-    trusted_context_root = context_root_details.get("trusted_path")
-    claimed_context_root = context_root_details.get("claimed_path")
-    context_repo_root_provenance = str(context_root_details.get("provenance") or "unknown")
-    if trusted_context_root is not None:
-        try:
-            trusted_roots.append(trusted_context_root.resolve())
-        except (TypeError, ValueError):
-            pass
 
-    if not root:
-        for trusted_root in trusted_roots:
-            if trusted_root != base:
-                return trusted_root, {
-                    "skip_validation_requested": bool(skip_validation),
-                    "compatibility_override_used": False,
-                    "authorization_mode": "trusted_scope",
-                    "reason_code": "trusted_context_root",
-                    "resolved_root": str(trusted_root),
-                    "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
-                    "context_repo_root_provenance": context_repo_root_provenance,
-                    "trusted_roots": [str(item) for item in trusted_roots],
-                }
-        if skip_validation:
-            return base, {
-                "skip_validation_requested": True,
-                "compatibility_override_used": True,
-                "authorization_mode": "compatibility_opt_in",
-                "reason_code": "skip_validation_without_explicit_root",
-                "resolved_root": str(base),
-                "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
-                "context_repo_root_provenance": context_repo_root_provenance,
-                "trusted_roots": [str(item) for item in trusted_roots],
-            }
-        raise ProjectRootAuthorizationError(
-            "Explicit trusted project root required. Pass root=... within workspace scope or provide a valid runtime repo_root.",
-            payload={
-                "reason_code": "missing_explicit_root_no_trusted_context",
-                "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
-                "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
-                "context_repo_root_provenance": context_repo_root_provenance,
-                "trusted_roots": [str(item) for item in trusted_roots],
-            },
+    async def _validate_grant(
+        backend: Any,
+        grant: str,
+        repo_root: str,
+        session_key: Optional[str],
+    ) -> tuple[bool, dict[str, Any]]:
+        return await validate_repo_root_grant(
+            storage_backend=backend,
+            grant_id=grant,
+            repo_root=repo_root,
+            authoritative_session_key=session_key,
         )
 
-    root_path = Path(root).expanduser()
-    if not root_path.is_absolute():
-        # Preserve relative-path compatibility while allowing roots outside the server repo
-        root_path = (base / root_path).resolve()
-    else:
-        root_path = root_path.resolve()
-
-    requested_root_path = root_path
-
-    # Server-side path mapping for remote clients (Docker/SSE).
-    # No-op when the path exists on this filesystem (local dev).
-    from scribe_mcp.config.paths import map_client_root
-
-    mapped, original_client_root = map_client_root(str(root_path), user=scribe_user)
-    root_path = Path(mapped).expanduser().resolve()
-
-    mapped_outside_trusted_scope = False
-    if original_client_root:
-        mapped_outside_trusted_scope = not any(
-            requested_root_path == trusted_root or _is_within(requested_root_path, trusted_root)
-            for trusted_root in trusted_roots
+    try:
+        return await resolve_authorized_project_root(
+            root=root,
+            skip_validation=skip_validation,
+            grant_id=grant_id,
+            snapshot=authority_snapshot,
+            base_root=base,
+            scribe_user=scribe_user,
+            validate_repo_root_grant=_validate_grant,
+            storage_backend=storage_backend,
         )
-        if mapped_outside_trusted_scope and not skip_validation:
-            raise ProjectRootAuthorizationError(
-                "Mapped project root requires explicit compatibility opt-in.",
-                payload={
-                    "reason_code": "mapped_root_requires_explicit_compatibility_opt_in",
-                    "requested_root": str(root or ""),
-                    "resolved_root": str(root_path),
-                    "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
-                    "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
-                    "context_repo_root_provenance": context_repo_root_provenance,
-                    "trusted_roots": [str(item) for item in trusted_roots],
-                    "suggestion": "Retry with a trusted local root, or set skip_validation=true only for an intentional compatibility override.",
-                },
-            )
-
-    for trusted_root in trusted_roots:
-        if root_path == trusted_root or _is_within(root_path, trusted_root):
-            return root_path, {
-                "skip_validation_requested": bool(skip_validation),
-                "compatibility_override_used": False,
-                "authorization_mode": "trusted_scope",
-                "reason_code": "trusted_scope_match",
-                "resolved_root": str(root_path),
-                "matched_trusted_root": str(trusted_root),
-                "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
-                "context_repo_root_provenance": context_repo_root_provenance,
-                "trusted_roots": [str(item) for item in trusted_roots],
-            }
-
-    if claimed_context_root is not None and (
-        root_path == claimed_context_root or _is_within(root_path, claimed_context_root)
-    ):
-        if _looks_like_local_repo_root(claimed_context_root):
-            return root_path, {
-                "skip_validation_requested": bool(skip_validation),
-                "compatibility_override_used": False,
-                "authorization_mode": "context_repo_claim_verified_local",
-                "reason_code": "claimed_context_repo_verified_local",
-                "resolved_root": str(root_path),
-                "claimed_context_root": str(claimed_context_root),
-                "context_repo_root_provenance": context_repo_root_provenance,
-                "trusted_roots": [str(item) for item in trusted_roots],
-            }
-        if not skip_validation:
-            raise ProjectRootAuthorizationError(
-                "Project root matches the active runtime repo_root claim, but that claim could not be verified as a local repository.",
-                payload={
-                    "reason_code": "claimed_context_repo_unverified",
-                    "requested_root": str(root or ""),
-                    "resolved_root": str(root_path),
-                    "claimed_context_root": str(claimed_context_root),
-                    "context_repo_root_provenance": context_repo_root_provenance,
-                    "trusted_roots": [str(item) for item in trusted_roots],
-                    "suggestion": "Retry after the workspace/runtime repo_root is refreshed, or use skip_validation=true only if you intentionally trust this root.",
-                },
-            )
-    if skip_validation:
-        return root_path, {
-            "skip_validation_requested": True,
-            "compatibility_override_used": True,
-            "authorization_mode": "compatibility_opt_in",
-            "reason_code": (
-                "skip_validation_mapped_outside_trusted_scope"
-                if mapped_outside_trusted_scope
-                else "skip_validation_outside_trusted_scope"
-            ),
-            "resolved_root": str(root_path),
-            "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
-            "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
-            "context_repo_root_provenance": context_repo_root_provenance,
-            "trusted_roots": [str(item) for item in trusted_roots],
-        }
-
-    raise ProjectRootAuthorizationError(
-        "Project root is outside trusted workspace scope.",
-        payload={
-            "reason_code": "requested_root_outside_trusted_scope",
-            "requested_root": str(root or ""),
-            "resolved_root": str(root_path),
-            "trusted_context_root": str(trusted_context_root) if trusted_context_root else None,
-            "claimed_context_root": str(claimed_context_root) if claimed_context_root else None,
-            "context_repo_root_provenance": context_repo_root_provenance,
-            "trusted_roots": [str(item) for item in trusted_roots],
-            "suggestion": "Use a root inside the trusted workspace scope, or pass skip_validation=true only for an intentional compatibility override.",
-        },
-    )
+    except RepoAuthorityResolutionError as exc:
+        raise ProjectRootAuthorizationError(str(exc), payload=exc.payload) from exc
 
 
 def _resolve_docs_dir(name: str, root_path: Path) -> Path:
@@ -1282,6 +1286,8 @@ async def _validate_project_paths(
     log_resolved = progress_log.resolve()
 
     for other_name, paths in existing.items():
+        if _project_names_share_canonical_alias(other_name, name) and paths["root"] == root_resolved:
+            continue
         if paths["progress_log"] == log_resolved:
             return {
                 "ok": False,
