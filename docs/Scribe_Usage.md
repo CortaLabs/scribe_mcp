@@ -1,135 +1,186 @@
-# Scribe MCP Usage Guide (v2.5)
+# Scribe MCP Usage Guide
 
-Version: 2.5  
-Updated: 2026-04-18
+Release line: `2.2.7`  
+Updated: `2026-04-18`
 
-## Overview
+This guide is about day-to-day usage once Scribe is installed.
 
-Scribe MCP is the execution record and documentation governance layer for agent-driven software work.
-This guide explains day-to-day usage of Scribe tools and runtime posture.
+If you have not installed or bootstrapped Scribe yet, start with [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md). If you want the fast artifact tour first, start with [TOUR.md](TOUR.md).
 
-For canonical setup and onboarding, use [Install and Bootstrap](INSTALL_AND_BOOTSTRAP.md).
+## The short mental model
 
-## Table of contents
+Scribe is easiest to understand as a loop:
 
-1. [What Scribe is for](#what-scribe-is-for)
-2. [Install and bootstrap](#install-and-bootstrap)
-3. [Core workflow](#core-workflow)
-4. [Tool families](#tool-families)
-5. [Storage and runtime modes](#storage-and-runtime-modes)
-6. [Configuration reference](#configuration-reference)
-7. [Troubleshooting](#troubleshooting)
-8. [Related docs](#related-docs)
+1. bind a project
+2. read the current record
+3. do work
+4. log what happened
+5. keep the governed docs current
 
-## What Scribe is for
+The point is not just "have logs" or "have docs." The point is to keep execution history and project artifacts connected strongly enough that an agent or operator can reconstruct what happened later.
 
-Use Scribe when you need:
+## The first useful workflow
 
-- durable, queryable audit logs for agent and operator activity
-- governed document updates for plans, architecture, and execution artifacts
-- automation-safe file/search/edit contracts for programmatic workflows
-- explicit runtime posture controls (Postgres default, standalone SQLite opt-in)
-
-## Install and bootstrap
-
-1. Install:
+Once your runtime is configured, the smallest meaningful loop looks like this:
 
 ```bash
-pip install scribe-mcp
+scribe call set_project \
+  --agent demo-agent \
+  --repo-root "$PWD" \
+  --arg name=demo_docs \
+  --arg root="$PWD" \
+  --arg format=structured \
+  --pretty
 ```
 
-2. Validate CLI availability:
+Then:
 
 ```bash
-scribe --help
-scribe-server --help
+scribe call read_recent \
+  --agent demo-agent \
+  --repo-root "$PWD" \
+  --arg limit=5 \
+  --pretty
 ```
 
-3. Complete onboarding with the canonical guide:
+Then start leaving an audit trail:
 
-- [Install and Bootstrap](INSTALL_AND_BOOTSTRAP.md)
+```bash
+scribe call append_entry \
+  --agent demo-agent \
+  --repo-root "$PWD" \
+  --arg message="Validated bootstrap and created governed docs scaffold." \
+  --arg status=success \
+  --pretty
+```
 
-## Core workflow
+That loop is intentionally simple:
 
-The standard operating loop:
+- `set_project` gives the session a repo/project boundary
+- `read_recent` rehydrates context
+- `append_entry` records meaningful milestones
 
-1. Set project context with `set_project`.
-2. Read existing history with `read_recent` or `query_entries`.
-3. Perform work and log outcomes with `append_entry`.
-4. Update governed docs with `manage_docs` when plans/specs/checklists change.
-5. Use `read_file`, `search`, and `edit_file` for targeted operations.
-6. Close out with a success/failure log entry.
+## What `set_project` actually does
 
-## Tool families
+On a fresh project, `set_project` can do more than bind context. It can scaffold the governed docs surface too:
 
-### Project and session context
+```text
+.scribe/docs/dev_plans/<project>/
+  ARCHITECTURE_GUIDE.md
+  PHASE_PLAN.md
+  CHECKLIST.md
+  PROGRESS_LOG.md
+  DOC_LOG.md
+  SECURITY_LOG.md
+  BUG_LOG.md
+```
+
+That is why `set_project` is such an important starting point. It creates the workspace where later `manage_docs`, `append_entry`, and query tools can operate coherently.
+
+It also sets up the basis for the project-registry view later. Scribe is not just creating files; it is creating a project the runtime can inspect for lifecycle, activity, and doc-health signals.
+
+## The tool families you will actually use
+
+### Project and session tools
+
+Use these first.
 
 #### `set_project`
 
-Bind the active project and repository root for an agent session.
+Bind the active project and repo root for the current session.
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `agent` | string | Yes | — | Agent identity for session isolation |
-| `name` | string | No | active/default | Project name |
-| `root` | string | Yes (recommended) | repo cwd | Absolute repository root |
-| `format` | string | No | `readable` | `readable`, `structured`, or `compact` |
+Important parameters:
+
+- `agent`: required agent identity
+- `name`: project name
+- `root`: repo root
+- `format`: `readable`, `structured`, or `compact`
 
 #### `read_recent`
 
-Read recent project log entries.
+Read the most recent entries for the active project.
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `agent` | string | Yes | — | Agent identity |
-| `project` | string | No | active project | Project override |
-| `limit` / `n` | string | No | `10` | Number of entries |
-| `format` | string | No | `readable` | Output format |
+Common parameters:
 
-### Logging and audit trail
+- `agent`
+- `project` override when needed
+- `limit` or `n`
+- `format`
+
+### Logging and audit tools
+
+Use these continuously, not just at the end.
 
 #### `append_entry`
 
-Append one or more audit log entries with optional metadata.
+Append a structured audit entry with optional metadata.
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `agent` | string | Yes | — | Entry author identity |
-| `message` | string | Yes | — | Log message |
-| `status` | string | No | `info` | `info`, `success`, `warn`, `error`, etc. |
-| `meta` | object/string | No | `{}` | Structured metadata |
-| `log_type` | string | No | `progress` | Alternate log stream |
+Common parameters:
 
-### Document governance
+- `agent`
+- `message`
+- `status`
+- `meta`
+- `log_type`
+
+#### `query_entries`
+
+Use this when `read_recent` is not enough and you need historical truth:
+
+- search by message substring
+- filter by agent or status
+- narrow to a project or widen to a broader scope
+
+#### `list_projects`
+
+Use this when you want the project inventory surface instead of a raw log slice.
+
+Depending on runtime and available registry data, this can surface:
+
+- lifecycle timestamps
+- entry and file counters
+- staleness buckets such as `fresh`, `warming`, `stale`, and `frozen`
+- doc-health hints such as `doc_drift_suspected` and `drift_score`
+
+### Governed document tools
 
 #### `manage_docs`
 
-Create, update, and patch governed documents.
+This is the main managed-doc surface.
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `agent` | string | Yes | — | Agent identity |
-| `action` | string | Yes | — | Operation (`create`, `replace_section`, `status_update`, etc.) |
-| `doc_name` | string | Usually | — | Target document key/name |
-| `section` | string | Action-dependent | — | Section identifier |
-| `content` | string | Action-dependent | — | Replacement/append content |
+Typical operations:
 
-### File and search operations
+- `create`
+- `list_sections`
+- `replace_section`
+- `apply_patch`
+- `status_update`
+
+The key idea is that Scribe does not treat project docs as loose markdown blobs. It gives them stable editable structure, including anchor IDs such as:
+
+```md
+<!-- ID: problem_statement -->
+<!-- ID: phase_0 -->
+```
+
+That is what makes later updates more reliable than heading-text guesswork.
+
+Scribe also exposes health-oriented managed-doc actions such as `project_health`, which are useful when you want to inspect the recent doc surface for the active project before mutating it.
+
+### File and search tools
 
 #### `read_file`
 
-Repository-safe file reader with multiple modes.
+Repo-safe file reads with modes such as:
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `agent` | string | Yes | — | Agent identity |
-| `path` | string | Yes | — | File path |
-| `mode` | string | No | `full_stream` | `scan_only`, `line_range`, `search`, etc. |
-| `start_line`/`end_line` | int | Mode-dependent | — | Line bounds for targeted reads |
+- `scan_only`
+- `line_range`
+- `search`
+- `full_stream`
 
 #### `search`
 
-Cross-file search with literal or regex matching.
+Cross-file search under the repo boundary.
 
 #### `edit_file`
 
@@ -139,36 +190,45 @@ Safe exact-string replacement with dry-run support.
 
 #### `scribe_doctor`
 
-Check runtime/config health for the current environment.
+Use this when the environment, config, or runtime posture looks suspicious.
 
-## Storage and runtime modes
+#### Reminder and drift governance
 
-### PostgreSQL-backed mode (default posture)
+Scribe can track more than "did someone append a log line." The runtime also computes project and doc-health signals such as:
 
-Postgres is the default backend when `SCRIBE_STORAGE_BACKEND` is unset.
-Use Postgres with `SCRIBE_DB_URL` for server/runtime posture.
+- `days_since_last_entry`
+- `days_since_last_access`
+- `staleness_level`
+- `activity_score`
+- `doc_drift_days_since_update`
+- `drift_score`
+
+Those signals matter because they let you ask "is this project healthy?" instead of only "does this file exist?"
+
+## Runtime modes in practice
+
+### PostgreSQL-backed mode
+
+This is the normal shared/team posture and the recommended public runtime path.
 
 ```bash
 export SCRIBE_STORAGE_BACKEND=postgres
 export SCRIBE_DB_URL="postgresql://user:pass@host:5432/scribe"
 ```
 
-### Standalone SQLite mode (explicit local-only opt-in)
+### Standalone SQLite mode
 
-SQLite is supported when you explicitly run standalone mode.
+This is the easiest local-only path for demos and one-user experimentation.
 
 ```bash
 export SCRIBE_MODE=standalone
 export SCRIBE_STORAGE_BACKEND=sqlite
-# Optional path override:
-# export SCRIBE_DB_PATH=".scribe/scribe.db"
+export SCRIBE_DB_PATH=".scribe/state/scribe.db"
 ```
 
-### Authenticated remote/client mode (internal compatibility only)
+### Authenticated remote/client mode
 
-Remote/client mode is excluded by `SCRIBE_RELEASE_PROFILE=public` in this release line.
-When used internally, `SCRIBE_REMOTE_URL` is the service root URL.
-Mode detection probes `<root>/health`; SSE transport connects at `<root>/sse`.
+This is internal compatibility only for this release line.
 
 ```bash
 export SCRIBE_MODE=client
@@ -181,20 +241,19 @@ export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-token"
 ### Core runtime variables
 
 | Variable | Required | Description |
-|---|---|---|
-| `SCRIBE_STORAGE_BACKEND` | No | `postgres` (default) or `sqlite` (standalone only) |
-| `SCRIBE_DB_PATH` | No | SQLite path override for standalone mode |
-| `SCRIBE_DB_URL` | Server/Postgres mode | Postgres connection URL |
-| `SCRIBE_POSTGRES_SCHEMA` | No | Postgres schema override |
-| `SCRIBE_MODE` | No | `auto` (default), `server`, `client`, `standalone` |
-| `SCRIBE_REMOTE_URL` | Client mode | Remote service root URL; health probe uses `/health` |
-| `SCRIBE_REMOTE_AUTH_TOKEN` | Client mode | Authentication token for remote client auth |
+| --- | --- | --- |
+| `SCRIBE_STORAGE_BACKEND` | No | `postgres` by default, or `sqlite` in standalone mode |
+| `SCRIBE_DB_URL` | Postgres mode | Postgres connection URL |
+| `SCRIBE_DB_PATH` | Standalone SQLite | SQLite database path |
+| `SCRIBE_MODE` | No | `auto`, `server`, `client`, or `standalone` |
+| `SCRIBE_REMOTE_URL` | Client mode | Remote service root URL |
+| `SCRIBE_REMOTE_AUTH_TOKEN` | Client mode | Auth token for remote client mode |
 | `SCRIBE_RELEASE_PROFILE` | No | `public` fail-closes remote/client; `internal` allows compatibility behavior |
 
 ### Compatibility aliases
 
 | Alias | Canonical variable |
-|---|---|
+| --- | --- |
 | `SCRIBE_SQLITE_PATH` | `SCRIBE_DB_PATH` |
 | `SCRIBE_DB_SCHEMA` | `SCRIBE_POSTGRES_SCHEMA` |
 
@@ -202,24 +261,33 @@ export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-token"
 
 ### "No active project" errors
 
-Set project context first with `set_project`.
+Run `set_project` first.
+
+### I can install Scribe, but I do not know what to do next
+
+Do not start by reading every reference doc. Start with:
+
+1. [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md)
+2. [TOUR.md](TOUR.md)
+3. one real `set_project` call in a test repo
 
 ### Empty or incomplete query results
 
 - verify you are pointed at the intended project
 - widen filters in `query_entries`
-- check time-range and status/category filters
+- check status or time-range filters
 
 ### Connection errors in remote mode
 
-- verify `SCRIBE_REMOTE_URL` points to service root and `<root>/health` is reachable
-- verify auth token value and server-side acceptance
-- run `scribe_doctor` for environment diagnostics
+- verify `SCRIBE_REMOTE_URL` points to the service root and `<root>/health` is reachable
+- verify the auth token value
+- run `scribe_doctor`
 
 ## Related docs
 
-- [Install and Bootstrap](INSTALL_AND_BOOTSTRAP.md)
-- [MCP Server Guide](mcp_server_guide.md)
-- [Remote Client Contract](REMOTE_CLIENT.md)
-- [Template Variables Reference](TEMPLATE_VARIABLES.md)
-- [Scribe MCP Whitepaper](whitepapers/scribe_mcp_whitepaper.md)
+- [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md)
+- [TOUR.md](TOUR.md)
+- [mcp_server_guide.md](mcp_server_guide.md)
+- [REMOTE_CLIENT.md](REMOTE_CLIENT.md)
+- [TEMPLATE_VARIABLES.md](TEMPLATE_VARIABLES.md)
+- [whitepapers/scribe_mcp_whitepaper.md](whitepapers/scribe_mcp_whitepaper.md)

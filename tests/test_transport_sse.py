@@ -496,7 +496,7 @@ class TestCLIMainFunction:
 
         mock_server_main = MagicMock(return_value="server-main-coro")
         with patch("scribe_mcp.__main__.asyncio") as mock_asyncio, \
-             patch("scribe_mcp.__main__.server_main", mock_server_main):
+             patch("scribe_mcp.server.main", mock_server_main):
             main(["--transport", "stdio"])
             # asyncio.run should be called once with a coroutine from server_main
             mock_asyncio.run.assert_called_once()

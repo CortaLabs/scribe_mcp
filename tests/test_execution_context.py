@@ -12,6 +12,7 @@ from scribe_mcp.cli.main import (
     _load_tracked_reads,
     _normalize_tracked_path,
     _rehydrate_file_reads,
+    _refresh_context_after_set_project,
     _result_is_success,
 )
 from scribe_mcp.config.paths import templates_dir
@@ -246,6 +247,38 @@ def test_resolve_context_authoritative_session_key_ignores_transport_only_identi
     )
 
     assert resolve_context_authoritative_session_key(context) is None
+
+
+def test_refresh_context_after_set_project_marks_repo_scope_verified(tmp_path: Path) -> None:
+    context = {
+        "repo_root": str(tmp_path),
+        "scope_provenance": {
+            "project_name": "claimed",
+            "repo_root": "claimed",
+        },
+        "session_scope_state": "pre_binding",
+    }
+    result = {
+        "ok": True,
+        "project": {
+            "name": "demo_docs",
+            "root": str(tmp_path),
+        },
+    }
+
+    _refresh_context_after_set_project(
+        context=context,
+        result=result,
+        repo_root=tmp_path,
+    )
+
+    assert context["project_name"] == "demo_docs"
+    assert context["repo_root"] == str(tmp_path.resolve())
+    assert context["scope_provenance"]["project_name"] == "verified"
+    assert context["scope_provenance"]["repo_root"] == "verified"
+    assert context["session_scope_state"] == "project_bound"
+    assert context["scoped_reuse_key"] == f"{tmp_path.resolve()}:demo_docs"
+    assert context["session_reuse_scope"] == f"{tmp_path.resolve()}:demo_docs"
 
 
 class _DummyRuntimeRouter:

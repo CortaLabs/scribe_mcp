@@ -1,51 +1,37 @@
 # MCP Server Guide
 
-Last updated: **2026-04-08**  
-Baseline: **v2.5 compatibility baseline**
+Release line: `2.2.7`  
+Updated: `2026-04-18`
 
-## What This Guide Is For
+This guide shows how to run Scribe as an MCP server for hosts such as Codex or Claude-compatible clients.
 
-This guide explains how to run and configure **Scribe MCP as an MCP server** for client tools such as Codex or Claude-compatible hosts.
+If you have not installed or bootstrapped Scribe yet, start with [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md).
 
-This is a product usage guide for Scribe, not a generic tutorial for building arbitrary MCP servers from scratch.
+## The short version
 
-## Quick Start
-
-Install from PyPI:
-
-```bash
-pip install scribe-mcp
-```
-
-Validate entry points:
-
-```bash
-scribe --help
-scribe-server --help
-```
-
-Run server:
+The usual public entry point is:
 
 ```bash
 scribe-server
 ```
 
-## Runtime Modes
+For most real installs, that means:
 
-Server and public-release runtime posture is Postgres-only. SQLite is supported only as an explicit standalone local fallback.
+- install `scribe-mcp`
+- run `scribe bootstrap`
+- load the resulting `.env`
+- point your MCP host at `scribe-server`
 
-| Mode | Status | Description |
-| --- | --- | --- |
-| Local/core runtime (Postgres) | Default and recommended | Runs Scribe locally for standard MCP usage; this is the required backend for server/public-release runtime |
-| Authenticated remote/client runtime | Supported optional posture | Client connects to managed remote Scribe endpoint |
-| Explicit standalone SQLite | Supported (opt-in local fallback) | Local-only usage when `SCRIBE_MODE=standalone` and `SCRIBE_STORAGE_BACKEND=sqlite` are set |
-| Open unauthenticated internet exposure | Unsupported | Not a supported deployment posture |
+The package also ships a broader operational surface than just one stdio entry point:
 
-## Client Configuration
+- `scribe-server` for stdio MCP
+- `scribe-server-sse` for SSE transport
+- `scribe_doctor` and startup probes for diagnostics
+- bundled plugin assets under `plugins/` plus `scribe plugins project-codex` for Codex projection
 
-Use `scribe-server` in your MCP client config.
+## Quick host examples
 
-### Example: Generic `mcp.json`
+### Generic `mcp.json`
 
 ```json
 {
@@ -53,7 +39,6 @@ Use `scribe-server` in your MCP client config.
     "scribe": {
       "command": "scribe-server",
       "env": {
-        "SCRIBE_ROOT": "/absolute/path/to/project",
         "SCRIBE_STORAGE_BACKEND": "postgres",
         "SCRIBE_DB_URL": "postgresql://scribe_app:pass@127.0.0.1:5432/scribe"
       }
@@ -62,75 +47,119 @@ Use `scribe-server` in your MCP client config.
 }
 ```
 
-### Example: Codex CLI
+### Codex CLI
 
 ```bash
 codex mcp add scribe \
-  --env SCRIBE_ROOT=/absolute/path/to/project \
   --env SCRIBE_STORAGE_BACKEND=postgres \
   --env SCRIBE_DB_URL=postgresql://scribe_app:pass@127.0.0.1:5432/scribe \
   -- scribe-server
 ```
 
-## Core Environment Variables
+### Codex projection path
+
+If you want Scribe's bundled Codex plugin projected into native Codex config surfaces:
+
+```bash
+scribe plugins project-codex --repo-root /absolute/path/to/repo
+```
+
+## Runtime modes
+
+Scribe supports several runtime postures, but they are not equally important for public users.
+
+| Mode | Status | What it is for |
+| --- | --- | --- |
+| Local/core Postgres runtime | Default and recommended | The main public MCP-server posture |
+| Explicit standalone SQLite | Supported local-only opt-in | Small local demos or one-user experimentation |
+| Authenticated remote/client runtime | Internal compatibility only | Managed internal service access |
+| Open unauthenticated internet exposure | Unsupported | Not a supported deployment posture |
+
+## Environment variables you will care about
 
 | Variable | Required | Typical value | Purpose |
 | --- | --- | --- | --- |
-| `SCRIBE_ROOT` | Recommended | `/absolute/path/to/project` | Project root Scribe operates against |
-| `SCRIBE_STORAGE_BACKEND` | Optional | `postgres` (server/default) or `sqlite` (standalone local-only) | Select storage backend |
-| `SCRIBE_DB_PATH` | Optional (sqlite standalone local-only) | `/path/to/.scribe/state/scribe.db` | SQLite database path |
-| `SCRIBE_DB_URL` | Required for postgres | `postgresql://...` | Postgres connection string |
-| `SCRIBE_REMOTE_URL` | Required in remote client mode | `https://...` | Remote Scribe endpoint |
-| `SCRIBE_REMOTE_AUTH_TOKEN` | Required in remote client mode | token string | Client bearer token |
+| `SCRIBE_STORAGE_BACKEND` | Optional | `postgres` or `sqlite` | Select storage backend |
+| `SCRIBE_DB_URL` | Required for Postgres | `postgresql://...` | Postgres connection string |
+| `SCRIBE_DB_PATH` | Standalone SQLite only | `/path/to/.scribe/state/scribe.db` | SQLite database path |
+| `SCRIBE_REMOTE_URL` | Client mode | `https://...` | Remote Scribe service root |
+| `SCRIBE_REMOTE_AUTH_TOKEN` | Client mode | token string | Remote client auth token |
 
-## Remote Client Naming (Public Canonical)
+`SCRIBE_ROOT` can still be useful in some setups, but it is not the most important thing for new users to learn first. The key decision is runtime posture plus storage configuration.
 
-For v2.5 public docs, use:
+## A good first-run verification
+
+After configuring the environment:
+
+1. start `scribe-server`
+2. connect your MCP host
+3. run one real project-binding call such as `set_project`
+4. verify that the governed docs scaffold and progress log appear under `.scribe/docs/dev_plans/<project>/`
+5. verify that project inventory and health surfaces respond the way you expect
+
+That is a stronger proof than just checking that the process launches.
+
+Good follow-up checks include:
+
+- `list_projects` for the project inventory surface
+- `read_recent` for immediate context rehydration
+- `manage_docs` / `project_health` to confirm the governed-doc surface is visible
+
+## Remote/client naming
+
+For this release line, the public naming story is:
+
 - `SCRIBE_REMOTE_URL`
 - `SCRIBE_REMOTE_AUTH_TOKEN`
-- `SCRIBE_TRANSPORT_AUTH_TOKEN` (server-side enforcement variable)
+- `SCRIBE_TRANSPORT_AUTH_TOKEN` for server-side transport enforcement
 
-Compatibility aliases may exist for mixed environments, but they are not the primary public naming story.
+Compatibility aliases may exist, but these are the names public docs should lead with.
 
-## Verification
+## Troubleshooting
 
-After configuration:
+### `scribe-server` command not found
 
-1. Start `scribe-server` with your selected env vars.
-2. Confirm MCP client can initialize the server process.
-3. Run one simple tool call (for example project set/read flow) from the client.
-4. If remote mode is enabled, verify requests fail when auth token is missing or invalid.
+Cause: package not installed in the active environment.
 
-## Troubleshooting (Public-Scope)
-
-### Server command not found
-
-Cause: package not installed in current environment.  
 Fix:
 
 ```bash
 pip install scribe-mcp
 ```
 
+### Server starts but Postgres connection fails
+
+Cause: invalid `SCRIBE_DB_URL`, unreachable database, or incomplete bootstrap.
+
+Fix:
+
+- rerun `scribe bootstrap`
+- verify the connection string
+- verify local network/database access
+
 ### SQLite path errors
 
-Cause: `SCRIBE_DB_PATH` points to a non-writable or missing parent directory.  
+Cause: `SCRIBE_DB_PATH` points at a missing or non-writable parent directory.
+
 Fix: choose a writable path under your project and retry.
-
-### Postgres connection failures
-
-Cause: invalid `SCRIBE_DB_URL` or unreachable database.  
-Fix: verify URL, credentials, and network path.
 
 ### Remote auth failures
 
-Cause: token mismatch or missing auth variables.  
-Fix: set `SCRIBE_REMOTE_AUTH_TOKEN` on client and corresponding server token configuration.
+Cause: missing or invalid auth token.
 
-## Related Documentation
+Fix: verify `SCRIBE_REMOTE_AUTH_TOKEN` on the client and the matching server-side token configuration.
 
-- [README.md](../README.md)
-- [Global deployment guide](GLOBAL_DEPLOYMENT_GUIDE.md)
-- [Remote client contract](REMOTE_CLIENT.md)
-- [Compatibility matrix](COMPATIBILITY_MATRIX.md)
-- [Release surface](RELEASE_SURFACE.md)
+### You installed Scribe, but the docs still feel abstract
+
+Cause: the MCP server guide is not the best first product walkthrough.
+
+Fix: start with [TOUR.md](TOUR.md), then come back here once you are ready to wire a real host.
+
+## Related docs
+
+- [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md)
+- [TOUR.md](TOUR.md)
+- [Scribe_Usage.md](Scribe_Usage.md)
+- [REMOTE_CLIENT.md](REMOTE_CLIENT.md)
+- [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md)
+- [RELEASE_SURFACE.md](RELEASE_SURFACE.md)

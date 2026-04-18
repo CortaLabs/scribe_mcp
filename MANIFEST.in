@@ -1,6 +1,7 @@
 # Keep the rebuilt sdist aligned with tracked release truth only.
 include README.md
 include docs/INSTALL_AND_BOOTSTRAP.md
+include docs/TOUR.md
 include docs/COMPATIBILITY_MATRIX.md
 include docs/RELEASE_SURFACE.md
 include docs/RELEASE_FILE_MAP.md
@@ -10,9 +11,17 @@ include docs/REMOTE_CLIENT.md
 include docs/BRIDGE_DEVELOPMENT.md
 include docs/TEMPLATE_VARIABLES.md
 include docs/GLOBAL_DEPLOYMENT_GUIDE.md
+include docs/STARTUP_PROBE_CONTRACT.md
+include docs/next_steps.md
 include deploy/README.md
 include docs/examples/mcp.json.example
 include docs/examples/opencode.json.example
+include docs/guides/CODEX_APPROVAL_ALIGNMENT_HANDOFF_2026-03-30.md
+include docs/guides/LIVE_MCP_IMPACT_REPORT_2026-04-17.md
+include docs/guides/hooks_setup.md
+include docs/guides/manage_docs_agent_guide.md
+include docs/guides/manage_docs_troubleshooting.md
+include docs/guides/scribe_onboarding_prompt.md
 include docs/whitepapers/scribe_mcp_whitepaper.md
 
 prune build

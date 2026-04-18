@@ -13,6 +13,7 @@ from typing import Any, Dict, Sequence
 
 from scribe_mcp.cli.session_store import (
     CliSessionState,
+    build_scoped_reuse_key,
     load_session_state,
     save_session_state,
 )
@@ -371,6 +372,43 @@ def _session_record_value(record: Any, field: str) -> Any:
     return getattr(record, field, None)
 
 
+def _refresh_context_after_set_project(
+    *,
+    context: Dict[str, Any],
+    result: Any,
+    repo_root: Path,
+) -> None:
+    """Persist verified project binding details after a successful set_project."""
+    if not (_result_is_success(result) and isinstance(result, dict)):
+        return
+
+    project = result.get("project")
+    if not isinstance(project, dict):
+        return
+
+    project_name_raw = project.get("name") or result.get("project_name")
+    project_name = str(project_name_raw).strip() if project_name_raw is not None else ""
+    if not project_name:
+        return
+
+    project_root_raw = project.get("root") or context.get("repo_root") or str(repo_root.resolve())
+    project_root = str(Path(str(project_root_raw)).expanduser().resolve())
+
+    scope_provenance = context.get("scope_provenance")
+    if not isinstance(scope_provenance, dict):
+        scope_provenance = {}
+    scope_provenance["project_name"] = "verified"
+    scope_provenance["repo_root"] = "verified"
+
+    scoped_reuse_key = build_scoped_reuse_key(repo_root, project_name)
+    context["project_name"] = project_name
+    context["repo_root"] = project_root
+    context["scope_provenance"] = scope_provenance
+    context["session_scope_state"] = "project_bound"
+    context["scoped_reuse_key"] = scoped_reuse_key
+    context["session_reuse_scope"] = scoped_reuse_key
+
+
 async def _run_tools_command(args: argparse.Namespace) -> int:
     from scribe_mcp import server as server_module
 
@@ -448,6 +486,11 @@ async def _run_call_command(args: argparse.Namespace, passthrough_options: Dict[
 
     if args.tool == "set_project":
         context["mode"] = "project"
+        _refresh_context_after_set_project(
+            context=context,
+            result=result,
+            repo_root=repo_root,
+        )
 
     if args.tool == "read_file" and _result_is_success(result):
         tracked_path = _normalize_tracked_path(repo_root, call_args.get("path"))

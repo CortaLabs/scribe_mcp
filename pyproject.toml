@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.2.6"
+version = "2.2.7"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -74,6 +74,7 @@ include = ["scribe_mcp*"]
 "share/doc/scribe-mcp" = [
   "README.md",
   "docs/INSTALL_AND_BOOTSTRAP.md",
+  "docs/TOUR.md",
   "docs/COMPATIBILITY_MATRIX.md",
   "docs/RELEASE_SURFACE.md",
   "docs/RELEASE_FILE_MAP.md",
@@ -83,11 +84,21 @@ include = ["scribe_mcp*"]
   "docs/BRIDGE_DEVELOPMENT.md",
   "docs/TEMPLATE_VARIABLES.md",
   "docs/GLOBAL_DEPLOYMENT_GUIDE.md",
+  "docs/STARTUP_PROBE_CONTRACT.md",
+  "docs/next_steps.md",
   "deploy/README.md",
 ]
 "share/doc/scribe-mcp/examples" = [
   "docs/examples/mcp.json.example",
   "docs/examples/opencode.json.example",
+]
+"share/doc/scribe-mcp/guides" = [
+  "docs/guides/CODEX_APPROVAL_ALIGNMENT_HANDOFF_2026-03-30.md",
+  "docs/guides/LIVE_MCP_IMPACT_REPORT_2026-04-17.md",
+  "docs/guides/hooks_setup.md",
+  "docs/guides/manage_docs_agent_guide.md",
+  "docs/guides/manage_docs_troubleshooting.md",
+  "docs/guides/scribe_onboarding_prompt.md",
 ]
 "share/doc/scribe-mcp/whitepapers" = [
   "docs/whitepapers/scribe_mcp_whitepaper.md",
