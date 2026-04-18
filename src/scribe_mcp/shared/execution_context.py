@@ -54,6 +54,7 @@ class ExecutionContext:
     security_id: Optional[str] = None
     parent_execution_id: Optional[str] = None
     toolchain: Optional[str] = None
+    authoritative_session_key: Optional[str] = None
 
 
 class RouterContextManager:
@@ -248,21 +249,23 @@ class RouterContextManager:
         if session_id is not None and not isinstance(session_id, str):
             raise ValueError("ExecutionContext session_id must be a string")
         trusted_session_id = bool(payload.get("_server_derived_session_id"))
+        transport_session_id = payload.get("transport_session_id")
+        if transport_session_id is not None and not isinstance(transport_session_id, str):
+            raise ValueError("ExecutionContext transport_session_id must be a string")
         if public_release and session_id and not trusted_session_id:
             raise ValueError("ExecutionContext session_id is server-owned in public_release")
-        if not session_id:
-            transport_session_id = payload.get("transport_session_id")
-            if transport_session_id is not None and not isinstance(transport_session_id, str):
-                raise ValueError("ExecutionContext transport_session_id must be a string")
-            if not transport_session_id:
-                raise ValueError("ExecutionContext requires transport_session_id or session_id")
+        has_transport_session = bool(transport_session_id)
+        has_stable_scope_identity = bool(payload.get("stable_session_id"))
+        if has_transport_session and (
+            not session_id or (not trusted_session_id and not has_stable_scope_identity)
+        ):
             if public_release and not str(transport_session_id).startswith("process:"):
                 raise ValueError(
                     "ExecutionContext requires trusted runtime-derived transport_session_id in public_release"
                 )
             session_id = await self.get_or_create_session_id(transport_session_id)
-        else:
-            transport_session_id = payload.get("transport_session_id")
+        elif not session_id:
+            raise ValueError("ExecutionContext requires transport_session_id or session_id")
         execution_id = str(uuid.uuid4())
         timestamp_utc = _utc_now_iso()
 
@@ -271,6 +274,8 @@ class RouterContextManager:
             sentinel_day = timestamp_utc.split("T", 1)[0]
 
         agent_identity = self._build_agent_identity(payload)
+
+        resolved_scope = build_resolved_scope(payload)
 
         return ExecutionContext(
             repo_root=repo_root,
@@ -284,7 +289,7 @@ class RouterContextManager:
             sentinel_day=sentinel_day,
             transport_session_id=transport_session_id,
             stable_session_id=payload.get("stable_session_id"),  # NEW - pass through stable session
-            resolved_scope=build_resolved_scope(payload),
+            resolved_scope=resolved_scope,
             session_reuse_status=payload.get("session_reuse_status"),
             session_reuse_scope=payload.get("session_reuse_scope")
             or payload.get("scoped_reuse_key")
@@ -293,6 +298,7 @@ class RouterContextManager:
             security_id=payload.get("security_id"),
             parent_execution_id=payload.get("parent_execution_id"),
             toolchain=payload.get("toolchain"),
+            authoritative_session_key=resolved_scope.authoritative_session_key,
         )
 
     def set_current(self, context: ExecutionContext) -> contextvars.Token:
@@ -342,8 +348,10 @@ def resolve_bootstrap_execution_context(
     if downgraded_scope is None:
         downgraded_scope = ResolvedScope(
             transport_session_id=candidate.transport_session_id,
-            stable_session_id=candidate.session_id,
-            agent_session_id=candidate.stable_session_id,
+            stable_session_id=candidate.stable_session_id,
+            agent_session_id=getattr(candidate.resolved_scope, "agent_session_id", None)
+            if candidate.resolved_scope
+            else None,
             repo_root=candidate.repo_root,
             project_name=None,
             scoped_reuse_key=None,
@@ -356,6 +364,9 @@ def resolve_bootstrap_execution_context(
                 repo_root="inferred",
                 project_name="anonymous",
             ),
+            authoritative_session_key=candidate.authoritative_session_key
+            or candidate.stable_session_id
+            or candidate.session_id,
         )
     else:
         downgraded_scope = replace(

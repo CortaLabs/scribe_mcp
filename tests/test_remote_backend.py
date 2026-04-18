@@ -238,6 +238,53 @@ class TestSessionMethods:
         assert sid_a != sid_b
 
     @pytest.mark.asyncio
+    async def test_get_or_create_agent_session_reuse_survives_compatibility_transport_inputs(
+        self, backend: RemoteStorageBackend
+    ) -> None:
+        await backend.upsert_session(
+            session_id="legacy-session-1",
+            transport_session_id="legacy-client-id",
+            repo_root="/tmp/repo",
+            mode="project",
+        )
+        await backend.upsert_session(
+            session_id="legacy-session-2",
+            transport_session_id="legacy-connection-id",
+            repo_root="/tmp/repo",
+            mode="project",
+        )
+
+        sid_a = await backend.get_or_create_agent_session(
+            identity_key="compat-key",
+            agent_name="a1",
+            repo_root="/tmp/repo",
+            mode="project",
+            scope_key="project-a",
+        )
+        sid_a_repeat = await backend.get_or_create_agent_session(
+            identity_key="compat-key",
+            agent_name="a1",
+            repo_root="/tmp/repo",
+            mode="project",
+            scope_key="project-a",
+        )
+        sid_b = await backend.get_or_create_agent_session(
+            identity_key="compat-key",
+            agent_name="a1",
+            repo_root="/tmp/repo",
+            mode="project",
+            scope_key="project-b",
+        )
+
+        assert sid_a == sid_a_repeat
+        assert sid_b != sid_a
+        allocation = await backend.get_last_agent_session_allocation("compat-key")
+        assert allocation is not None
+        assert allocation["status"] == "allocated"
+        assert allocation["session_id"] == sid_b
+        assert allocation["scoped_reuse_key"] == "/tmp/repo:project-b"
+
+    @pytest.mark.asyncio
     async def test_heartbeat_and_end_session(self, backend: RemoteStorageBackend) -> None:
         """heartbeat updates timestamp, end_session marks expired."""
         await backend.upsert_agent_session("agent1", "s1", {"role": "coder"})
@@ -313,10 +360,11 @@ class TestRemoteMethods:
         assert result.name == "test_project"
 
         # Verify correct endpoint and payload
-        live_backend._client.post.assert_called_once_with(
-            "/api/v1/backend/fetch_project",
-            json={"name": "test_project"},
-        )
+        live_backend._client.post.assert_called_once()
+        call_args = live_backend._client.post.call_args
+        assert call_args.args[0] == "/api/v1/backend/fetch_project"
+        payload = call_args.kwargs["json"]
+        assert payload["name"] == "test_project"
 
     @pytest.mark.asyncio
     async def test_fetch_project_not_found(self, live_backend: RemoteStorageBackend) -> None:

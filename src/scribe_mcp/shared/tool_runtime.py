@@ -25,6 +25,129 @@ _UNTRUSTED_CALLER_SESSION_KEYS = (
     "connection_id",
     "transport_session_id",
 )
+_UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor"}
+
+
+def resolve_context_authoritative_session_key(context: Any) -> Optional[str]:
+    """Resolve the canonical authoritative session key from runtime context."""
+    if context is None:
+        return None
+
+    resolved_scope = getattr(context, "resolved_scope", None)
+    for candidate in (
+        getattr(resolved_scope, "authoritative_session_key", None),
+        getattr(context, "authoritative_session_key", None),
+        getattr(resolved_scope, "stable_session_id", None),
+        getattr(context, "stable_session_id", None),
+        getattr(resolved_scope, "transport_session_id", None),
+        getattr(context, "session_id", None),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+async def issue_repo_root_grant(
+    *,
+    storage_backend: Any,
+    repo_root: str,
+    reason: str,
+    ttl_minutes: int,
+    authoritative_session_key: str,
+) -> Dict[str, str]:
+    """Create a short-lived repo-root authorization grant."""
+    if (
+        storage_backend is None
+        or not hasattr(storage_backend, "create_repo_scope_grant")
+    ):
+        raise ValueError("repo-scope grant storage backend is unavailable")
+
+    normalized_root = str(Path(repo_root).expanduser().resolve())
+    grant = await storage_backend.create_repo_scope_grant(
+        authoritative_session_key=str(authoritative_session_key),
+        repo_root=normalized_root,
+        reason=str(reason),
+        ttl_minutes=int(ttl_minutes),
+    )
+    return {
+        "grant_id": str(grant.grant_id),
+        "repo_root": str(grant.repo_root),
+        "repo_id": str(grant.repo_id),
+        "expires_at": grant.expires_at.isoformat(),
+        "authoritative_session_key": str(grant.authoritative_session_key),
+    }
+
+
+async def validate_repo_root_grant(
+    *,
+    storage_backend: Any,
+    grant_id: Optional[str],
+    repo_root: str,
+    authoritative_session_key: Optional[str],
+) -> tuple[bool, Dict[str, str]]:
+    """Validate a repo-root authorization grant against root and session."""
+    if (
+        storage_backend is None
+        or not hasattr(storage_backend, "fetch_repo_scope_grant")
+    ):
+        return False, {"reason_code": "repo_scope_grant_storage_unavailable"}
+    if not isinstance(grant_id, str) or not grant_id.strip():
+        return False, {"reason_code": "missing_grant_id"}
+
+    grant = await storage_backend.fetch_repo_scope_grant(grant_id.strip())
+    if grant is None:
+        return False, {"reason_code": "grant_not_found", "grant_id": grant_id.strip()}
+
+    normalized_root = str(Path(repo_root).expanduser().resolve())
+    grant_root = str(Path(str(grant.repo_root)).expanduser().resolve())
+    if normalized_root != grant_root:
+        return False, {
+            "reason_code": "grant_root_mismatch",
+            "grant_id": str(grant.grant_id),
+            "requested_repo_root": normalized_root,
+            "grant_repo_root": grant_root,
+            "repo_id": str(grant.repo_id),
+            "expires_at": grant.expires_at.isoformat(),
+            "authoritative_session_key": str(grant.authoritative_session_key),
+        }
+
+    requested_session_key = (
+        str(authoritative_session_key).strip()
+        if isinstance(authoritative_session_key, str) and authoritative_session_key.strip()
+        else None
+    )
+    if requested_session_key and requested_session_key != str(grant.authoritative_session_key):
+        return False, {
+            "reason_code": "grant_session_mismatch",
+            "grant_id": str(grant.grant_id),
+            "repo_root": grant_root,
+            "repo_id": str(grant.repo_id),
+            "expires_at": grant.expires_at.isoformat(),
+            "authoritative_session_key": str(grant.authoritative_session_key),
+            "requested_authoritative_session_key": requested_session_key,
+        }
+
+    return True, {
+        "grant_id": str(grant.grant_id),
+        "repo_root": grant_root,
+        "repo_id": str(grant.repo_id),
+        "expires_at": grant.expires_at.isoformat(),
+        "authoritative_session_key": str(grant.authoritative_session_key),
+    }
+
+
+def repo_root_grant_diagnostics(*, storage_backend: Any) -> Dict[str, Any]:
+    """Return basic diagnostics about repo-scope grant support."""
+    backend_supports_grants = bool(
+        storage_backend
+        and hasattr(storage_backend, "create_repo_scope_grant")
+        and hasattr(storage_backend, "fetch_repo_scope_grant")
+    )
+    return {
+        "grant_storage_source": "backend" if backend_supports_grants else "unavailable",
+        "grant_storage_ready": backend_supports_grants,
+        "grant_metrics_available": False,
+    }
 
 
 def _normalize_repo_root(value: Any, project_root: Path) -> Optional[str]:
@@ -70,18 +193,14 @@ def _derive_transport_session_id(
     fallback_process_id: str,
     kwargs: Mapping[str, Any],
     allow_untrusted_sources: bool = True,
+    allow_process_fallback: bool = True,
 ) -> str:
-    if allow_untrusted_sources:
-        fallback = kwargs.get("session_id") or kwargs.get("client_id") or kwargs.get("connection_id")
-        if fallback:
-            return str(fallback)
-
     try:
         request_context = app.request_context
     except Exception:
         request_context = None
 
-    if request_context and allow_untrusted_sources:
+    if request_context:
         request = getattr(request_context, "request", None)
         if request is not None:
             headers = getattr(request, "headers", None)
@@ -90,9 +209,25 @@ def _derive_transport_session_id(
                 if header_val:
                     return str(header_val)
         meta = getattr(request_context, "meta", None)
-        client_id = getattr(meta, "client_id", None) if meta else None
-        if client_id:
-            return str(client_id)
+        if meta:
+            if isinstance(meta, dict):
+                for key in ("transport_session_id", "session_id", "client_id", "connection_id"):
+                    value = meta.get(key)
+                    if value:
+                        return str(value)
+            else:
+                for key in ("transport_session_id", "session_id", "client_id", "connection_id"):
+                    value = getattr(meta, key, None)
+                    if value:
+                        return str(value)
+
+    if allow_untrusted_sources:
+        fallback = kwargs.get("session_id") or kwargs.get("client_id") or kwargs.get("connection_id")
+        if fallback:
+            return str(fallback)
+
+    if not allow_process_fallback:
+        return ""
 
     return f"process:{fallback_process_id}"
 
@@ -358,6 +493,12 @@ async def execute_tool_call(
     context_payload["_server_derived_session_id"] = False
     public_release = bool(getattr(settings, "public_release", False))
     context_payload["public_release"] = public_release
+    current_context = None
+    if hasattr(router_context_manager, "get_current"):
+        try:
+            current_context = router_context_manager.get_current()
+        except Exception:
+            current_context = None
 
     if public_release:
         caller_claims = _collect_public_release_session_claims(
@@ -375,6 +516,36 @@ async def execute_tool_call(
         for key in _UNTRUSTED_CALLER_SESSION_KEYS:
             context_payload.pop(key, None)
         context_payload.pop("stable_session_id", None)
+
+    if current_context is not None:
+        current_scope = getattr(current_context, "resolved_scope", None)
+        current_repo_root = getattr(current_scope, "repo_root", None)
+        current_project_name = getattr(current_scope, "project_name", None)
+        current_transport_session_id = getattr(current_scope, "transport_session_id", None)
+        current_stable_session_id = (
+            getattr(current_scope, "stable_session_id", None)
+            or getattr(current_context, "stable_session_id", None)
+        )
+        if current_repo_root:
+            context_payload["repo_root"] = str(current_repo_root)
+            _set_scope_provenance(context_payload, field="repo_root", label="verified")
+        if current_project_name:
+            context_payload["project_name"] = str(current_project_name)
+            _set_scope_provenance(context_payload, field="project_name", label="verified")
+        if current_transport_session_id:
+            context_payload["transport_session_id"] = str(current_transport_session_id)
+            _set_scope_provenance(context_payload, field="transport_session_id", label="verified")
+        if current_stable_session_id:
+            context_payload["stable_session_id"] = str(current_stable_session_id)
+            _set_scope_provenance(context_payload, field="stable_session_id", label="verified")
+        current_session_id = getattr(current_context, "session_id", None)
+        if current_session_id:
+            context_payload["session_id"] = str(current_session_id)
+        current_execution_id = getattr(current_context, "execution_id", None)
+        if current_execution_id:
+            context_payload["parent_execution_id"] = str(current_execution_id)
+    else:
+        context_payload.pop("parent_execution_id", None)
 
     if not context_payload.get("repo_root"):
         request_repo_root = _extract_request_repo_root(app)
@@ -394,6 +565,19 @@ async def execute_tool_call(
                         )
             except Exception:
                 pass
+
+    session_id_claimed = bool(context_payload.get("session_id"))
+
+    runtime_transport_session_id = _derive_transport_session_id(
+        app=app,
+        fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
+        kwargs={},
+        allow_untrusted_sources=False,
+        allow_process_fallback=False,
+    )
+    has_runtime_transport_identity = bool(runtime_transport_session_id) and not str(
+        runtime_transport_session_id
+    ).startswith("process:")
 
     repo_root_hint = _normalize_repo_root(context_payload.get("repo_root"), settings.project_root)
     if repo_root_hint:
@@ -418,15 +602,30 @@ async def execute_tool_call(
             context_payload["project_name"] = str(project_hint)
             _set_scope_provenance(context_payload, field="project_name", label="claimed")
 
-    if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
+    if has_runtime_transport_identity:
+        context_payload["transport_session_id"] = runtime_transport_session_id
+        _set_scope_provenance(context_payload, field="transport_session_id", label="verified")
+        if context_payload.get("session_id"):
+            context_payload["compat_session_id"] = str(context_payload.get("session_id"))
+            context_payload.pop("session_id", None)
+            session_id_claimed = False
+    elif not context_payload.get("transport_session_id"):
         context_payload["transport_session_id"] = _derive_transport_session_id(
             app=app,
             fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
             kwargs=kwargs,
             allow_untrusted_sources=not public_release,
+            allow_process_fallback=not public_release,
         )
-    if context_payload.get("transport_session_id"):
+
+    if context_payload.get("transport_session_id") and not has_runtime_transport_identity:
         _set_scope_provenance(context_payload, field="transport_session_id", label="claimed")
+
+    if public_release and not str(context_payload.get("transport_session_id") or "").strip():
+        raise ValueError(
+            "Public release requires trusted runtime-derived transport_session_id "
+            "for session isolation"
+        )
 
     if not context_payload.get("session_id") and context_payload.get("transport_session_id"):
         if storage_backend and hasattr(storage_backend, "get_session_by_transport"):
@@ -435,25 +634,16 @@ async def execute_tool_call(
             )
             if existing and existing.get("session_id"):
                 context_payload["session_id"] = existing["session_id"]
+                context_payload["stable_session_id"] = existing["session_id"]
                 context_payload["_server_derived_session_id"] = True
                 _set_scope_provenance(context_payload, field="stable_session_id", label="verified")
                 context_payload["trust_level"] = "verified"
-            if existing and existing.get("session_id") and hasattr(storage_backend, "get_session_project"):
-                bound_project = await storage_backend.get_session_project(str(existing["session_id"]))
-                if bound_project and not context_payload.get("project_name"):
-                    context_payload["project_name"] = str(bound_project)
-                    _set_scope_provenance(context_payload, field="project_name", label="verified")
-                if bound_project and not context_payload.get("repo_root"):
-                    context_payload["repo_root"] = _normalize_repo_root(
-                        existing.get("repo_root"),
-                        settings.project_root,
-                    )
-                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
         if not context_payload.get("session_id"):
             session_id = await router_context_manager.get_or_create_session_id(
                 context_payload["transport_session_id"]
             )
             context_payload["session_id"] = session_id
+            context_payload["stable_session_id"] = session_id
             context_payload["_server_derived_session_id"] = True
             _set_scope_provenance(context_payload, field="stable_session_id", label="inferred")
 
@@ -470,7 +660,11 @@ async def execute_tool_call(
                 )
                 _set_scope_provenance(context_payload, field="repo_root", label="verified")
                 _set_scope_provenance(context_payload, field="project_name", label="verified")
-        if not context_payload.get("repo_root") and context_payload.get("session_id"):
+        if (
+            not context_payload.get("repo_root")
+            and context_payload.get("session_id")
+            and session_id_claimed
+        ):
             project_name = None
             if hasattr(storage_backend, "get_session_project"):
                 project_name = await storage_backend.get_session_project(context_payload.get("session_id"))
@@ -485,7 +679,31 @@ async def execute_tool_call(
                     )
                     _set_scope_provenance(context_payload, field="repo_root", label="verified")
 
+    repo_root_provenance = (
+        (context_payload.get("scope_provenance") or {}).get("repo_root")
+        if isinstance(context_payload.get("scope_provenance"), dict)
+        else None
+    )
+    if (
+        context_payload.get("repo_root")
+        and name != "set_project"
+        and repo_root_provenance != "verified"
+    ):
+        context_payload.pop("repo_root", None)
+
+    if not context_payload.get("repo_root") and name in _UNBOUND_REPO_SAFE_TOOLS:
+        diagnostic_repo_root = _normalize_repo_root(settings.project_root, settings.project_root)
+        if diagnostic_repo_root:
+            context_payload["repo_root"] = diagnostic_repo_root
+            context_payload["resolution_source"] = "diagnostic_server_root"
+            _set_scope_provenance(context_payload, field="repo_root", label="anonymous")
+
     if not context_payload.get("repo_root"):
+        if str(context_payload.get("mode", "")) == "sentinel" and name not in sentinel_allowed:
+            raise ValueError(
+                f"Tool '{name}' requires an active Scribe project. "
+                "No project is active in sentinel mode; run set_project first."
+            )
         context_payload["resolution_source"] = "unresolved_repo_scope"
         context_payload["scope_resolution_status"] = "unresolved"
         context_payload["scope_resolution_reason"] = (
@@ -494,7 +712,7 @@ async def execute_tool_call(
         _set_scope_provenance(context_payload, field="repo_root", label="anonymous")
         raise ValueError(
             "ExecutionContext repo scope unresolved: no verified project binding "
-            "or explicit repo_root was provided."
+            "for this request/session was available."
         )
 
     _set_scope_defaults(context_payload)
@@ -541,20 +759,20 @@ async def execute_tool_call(
     )
     context_payload["scoped_reuse_key"] = derived_scoped_reuse_key
     context_payload["session_reuse_scope"] = derived_scoped_reuse_key
-    stable_session_id = context_payload.get("stable_session_id")
-    stable_session_source = "context" if stable_session_id else None
+    agent_session_id = context_payload.get("agent_session_id")
+    agent_session_source = "context" if agent_session_id else None
 
-    if not stable_session_id and hasattr(router_context_manager, "get_cached_agent_session_id"):
-        stable_session_id = await router_context_manager.get_cached_agent_session_id(identity_hash)
-        if stable_session_id:
-            stable_session_source = "cache"
+    if not agent_session_id and hasattr(router_context_manager, "get_cached_agent_session_id"):
+        agent_session_id = await router_context_manager.get_cached_agent_session_id(identity_hash)
+        if agent_session_id:
+            agent_session_source = "cache"
 
     if (
-        not stable_session_id
+        not agent_session_id
         and storage_backend
         and hasattr(storage_backend, "get_or_create_agent_session")
     ):
-        stable_session_id = await storage_backend.get_or_create_agent_session(
+        agent_session_id = await storage_backend.get_or_create_agent_session(
             identity_key=identity_hash,
             agent_name=identity_parts["agent_key"],
             agent_key=identity_parts["agent_key"],
@@ -562,34 +780,37 @@ async def execute_tool_call(
             mode=identity_parts["mode"],
             scope_key=identity_parts["scope_key"],
         )
-        if stable_session_id:
-            stable_session_source = "allocator"
-        if stable_session_id and hasattr(router_context_manager, "cache_agent_session_id"):
-            await router_context_manager.cache_agent_session_id(identity_hash, stable_session_id)
-        if stable_session_id and not context_payload.get("session_reuse_status"):
+        if agent_session_id:
+            agent_session_source = "allocator"
+        if agent_session_id and hasattr(router_context_manager, "cache_agent_session_id"):
+            await router_context_manager.cache_agent_session_id(identity_hash, agent_session_id)
+        if agent_session_id and not context_payload.get("session_reuse_status"):
             context_payload["session_reuse_status"] = "allocated"
 
-    if stable_session_id and storage_backend and hasattr(storage_backend, "get_last_agent_session_allocation"):
+    if agent_session_id and storage_backend and hasattr(storage_backend, "get_last_agent_session_allocation"):
         allocation = await storage_backend.get_last_agent_session_allocation(identity_hash)
         if isinstance(allocation, Mapping):
             status = allocation.get("status")
             scope = allocation.get("scoped_reuse_key")
             allocation_session_id = allocation.get("session_id")
             if isinstance(status, str) and status:
-                if allocation_session_id is None or str(allocation_session_id) == str(stable_session_id):
+                if allocation_session_id is None or str(allocation_session_id) == str(agent_session_id):
                     context_payload["session_reuse_status"] = status
             if isinstance(scope, str) and scope:
                 context_payload["scoped_reuse_key"] = scope
                 context_payload["session_reuse_scope"] = scope
 
-    if stable_session_id and not context_payload.get("session_reuse_status"):
-        if stable_session_source == "cache":
+    if agent_session_id and not context_payload.get("session_reuse_status"):
+        if agent_session_source == "cache":
             context_payload["session_reuse_status"] = "cache_hit_unverified"
         else:
             context_payload["session_reuse_status"] = "reused"
 
-    if stable_session_id:
-        context_payload["stable_session_id"] = stable_session_id
+    if context_payload.get("stable_session_id"):
+        context_payload["authoritative_session_key"] = str(context_payload["stable_session_id"])
+
+    if agent_session_id:
+        context_payload["agent_session_id"] = agent_session_id
         _set_scope_provenance(context_payload, field="agent_session_id", label="verified")
 
     exec_context = await router_context_manager.build_execution_context(context_payload)

@@ -20,9 +20,7 @@ def build_scoped_reuse_key(repo_root: Path, project_name: str | None) -> str:
     """Build deterministic repo/project scoped key for session reuse boundaries."""
     normalized_repo_root = str(repo_root.resolve())
     normalized_project = (project_name or "").strip() or "__prebinding__"
-    source = f"{normalized_repo_root}:{normalized_project}"
-    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    return f"scope:{digest}"
+    return f"{normalized_repo_root}:{normalized_project}"
 
 
 def build_transport_session_id(
