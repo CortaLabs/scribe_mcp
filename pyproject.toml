@@ -31,6 +31,12 @@ dev = [
 ]
 s3 = ["boto3>=1.28"]
 
+[project.urls]
+Homepage = "https://github.com/CortaLabs/scribe_mcp"
+Documentation = "https://github.com/CortaLabs/scribe_mcp/blob/main/docs/INSTALL_AND_BOOTSTRAP.md"
+Repository = "https://github.com/CortaLabs/scribe_mcp"
+Issues = "https://github.com/CortaLabs/scribe_mcp/issues"
+
 [project.scripts]
 scribe = "scribe_mcp.cli.main:main"
 scribe-mcp = "scribe_mcp.__main__:main"
