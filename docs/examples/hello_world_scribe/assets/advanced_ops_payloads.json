@@ -1,0 +1,16 @@
+{
+  "scenario": "advanced_ops",
+  "payloads": {
+    "ops_check_reminder_intelligence": {
+      "query_reminders": {
+        "agent": "demo-agent",
+        "project": "demo_project"
+      }
+    },
+    "ops_check_runtime_diagnostics": {
+      "scribe_doctor": {
+        "agent": "demo-agent"
+      }
+    }
+  }
+}
