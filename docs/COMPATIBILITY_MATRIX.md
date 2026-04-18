@@ -1,6 +1,6 @@
 # Compatibility Matrix
 
-Baseline date: **2026-04-08**  
+Baseline date: **2026-04-18**  
 Release framing: **v2.5 compatibility baseline**
 
 ## Baseline contract
@@ -9,8 +9,9 @@ This baseline keeps compatibility posture for the 2.5 documentation wave:
 
 - **Core package version:** `scribe-mcp==2.2.4`
 - **Optional template package:** `scribe-council==2.2.4`
-- **Default runtime posture:** local/core
-- **Remote posture:** optional and authenticated
+- **Default runtime posture:** Postgres-backed runtime contract
+- **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
+- **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
 
 `v3` is out of scope for this baseline.
 
@@ -26,6 +27,8 @@ This baseline keeps compatibility posture for the 2.5 documentation wave:
 | Combination / practice | Status | Why |
 | --- | --- | --- |
 | `scribe-council` without `scribe-mcp==2.2.4` | Unsupported | Optional package explicitly depends on `scribe-mcp==2.2.4`. |
+| Public onboarding that treats remote/client as generally available | Unsupported | Public release profile fail-closes remote/client startup. |
+| Standalone SQLite presented as default runtime posture | Unsupported | Runtime settings default storage backend to Postgres. |
 | Guidance that depends on repo-local/operator files as public setup | Unsupported | Those files are local convenience, not release contract. |
 | Unversioned or mixed versions outside the baseline above | Not signed off | This baseline only certifies the combinations listed in this document. |
 

@@ -1,6 +1,6 @@
 # Release Surface
 
-Baseline date: **2026-04-08**  
+Baseline date: **2026-04-18**  
 Applies to: **v2.5 compatibility baseline**
 
 ## Public contract
@@ -16,6 +16,16 @@ Treat these as public release truth:
   - `README.md`
   - `docs/**`
   - `docs/examples/**`
+
+## Runtime truth in public docs
+
+Public docs must keep these runtime truths aligned with current source:
+
+- Postgres is the default storage posture.
+- Standalone SQLite is explicit local-only opt-in.
+- Remote/client remains internal compatibility only for this release line and is excluded by public-release posture.
+- `SCRIBE_REMOTE_URL` is documented as service root; `/health` and `/sse` are distinct paths with different roles.
+- Codex projection is documented through `scribe plugins project-codex`.
 
 ## Local/operator boundary
 

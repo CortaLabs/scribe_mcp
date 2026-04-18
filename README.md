@@ -1,81 +1,32 @@
 # Scribe MCP
 
-Scribe MCP is a production documentation and audit platform for agent-driven software work.
-It gives teams a durable execution record, governed planning artifacts, and tool contracts that
-make multi-agent development observable, reviewable, and reproducible.
+Scribe MCP is a documentation-governance and execution-record system for agent-driven software work.
 
-If your system depends on agents making changes over time, Scribe is the layer that preserves truth.
+This README is a landing page. For install and onboarding truth, use:
+- [Install and Bootstrap](docs/INSTALL_AND_BOOTSTRAP.md)
 
 ## Overview
 
-Scribe is designed to solve four hard problems in one package:
+Scribe provides:
 
 - persistent audit logging for agent and operator actions
 - governed document workflows for architecture, planning, and execution tracking
 - consistent file/search/edit tool contracts for automation-safe operations
-- portable runtime modes for local usage and authenticated remote access
+- a Postgres-first runtime contract with explicit local-only SQLite opt-in
 
-This repository ships the public package, public docs, and public plugin bundles needed to run Scribe in real projects.
+## Runtime posture (public onboarding)
 
-## Core capabilities
-
-- **Structured audit trail:** project-aware entries with queryable history
-- **Governed docs engine:** architecture/phase/checklist/progress workflows with managed updates
-- **Operator tooling:** file read/search/edit helpers and diagnostics for day-to-day execution
-- **Storage posture:** Postgres-first server/runtime contract with explicit standalone SQLite support
-- **Plugin bundles:** ready-to-use Codex and Claude plugin surfaces under `plugins/`
-
-## Install and start
-
-Install from PyPI:
-
-```bash
-pip install scribe-mcp
-```
-
-Quick sanity check:
-
-```bash
-scribe --help
-scribe-server --help
-```
-
-Minimal local run (Postgres server/runtime):
-
-```bash
-export SCRIBE_STORAGE_BACKEND=postgres
-export SCRIBE_DB_URL="postgresql://scribe_app:pass@127.0.0.1:5432/scribe"
-scribe-server
-```
-
-Explicit standalone SQLite run (local-only):
-
-```bash
-export SCRIBE_MODE=standalone
-export SCRIBE_STORAGE_BACKEND=sqlite
-scribe-server
-```
-
-## Runtime postures
-
-| Posture | Status | Usage |
+| Posture | Status | Notes |
 | --- | --- | --- |
-| Postgres server/runtime | Default, recommended, and required for public-release/server usage | Day-to-day usage, local development, managed deployments, and all server/public-release runtime postures |
-| Explicit standalone SQLite | Supported (opt-in local fallback) | Standalone local-only usage when `SCRIBE_MODE=standalone` and `SCRIBE_STORAGE_BACKEND=sqlite` are set |
-| Authenticated remote/client runtime | Supported | Managed/private deployments that require centralized access |
-| Open unauthenticated internet exposure | Unsupported | Not a supported security posture |
+| Postgres runtime | Default and recommended | `SCRIBE_STORAGE_BACKEND` defaults to `postgres`; server/runtime requires `SCRIBE_DB_URL` in server posture |
+| Standalone SQLite | Supported, opt-in local-only | Explicitly set `SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite` |
+| Remote/client | Internal compatibility only for this release line | Excluded by `SCRIBE_RELEASE_PROFILE=public` |
 
-For authenticated remote clients:
-
-```bash
-export SCRIBE_REMOTE_URL="https://your-scribe-endpoint.example"
-export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-token"
-```
-
-## Documentation index
+## Documentation
 
 Start here for product truth and boundaries:
 
+- [Install and Bootstrap](docs/INSTALL_AND_BOOTSTRAP.md)
 - [Compatibility matrix](docs/COMPATIBILITY_MATRIX.md)
 - [Release surface](docs/RELEASE_SURFACE.md)
 - [Release file map](docs/RELEASE_FILE_MAP.md)
@@ -83,8 +34,8 @@ Start here for product truth and boundaries:
 Usage and operator references:
 
 - [Scribe usage guide](docs/Scribe_Usage.md)
-- [MCP server guide](docs/mcp_server_guide.md)
 - [Remote client contract](docs/REMOTE_CLIENT.md)
+- [MCP server guide](docs/mcp_server_guide.md)
 - [Bridge development](docs/BRIDGE_DEVELOPMENT.md)
 - [Template variables reference](docs/TEMPLATE_VARIABLES.md)
 
@@ -101,15 +52,6 @@ Examples:
 Background and context:
 
 - [Scribe MCP whitepaper](docs/whitepapers/scribe_mcp_whitepaper.md)
-
-## Plugins and integrations
-
-Public plugin bundles are included in this repository:
-
-- `plugins/codex/`
-- `plugins/claude/`
-
-These are packaged as public integration surfaces for downstream users.
 
 ## License
 

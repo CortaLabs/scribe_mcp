@@ -1,19 +1,19 @@
 # Scribe MCP Usage Guide (v2.5)
 
 Version: 2.5  
-Updated: 2026-04-08
+Updated: 2026-04-18
 
 ## Overview
 
 Scribe MCP is the execution record and documentation governance layer for agent-driven software work.
-This guide explains how to use Scribe as a product: initialize a project, capture work, manage governed docs, and retrieve high-signal history.
+This guide explains day-to-day usage of Scribe tools and runtime posture.
 
-This document is for public users integrating Scribe into real projects. It focuses on stable usage patterns and tool contracts.
+For canonical setup and onboarding, use [Install and Bootstrap](INSTALL_AND_BOOTSTRAP.md).
 
 ## Table of contents
 
 1. [What Scribe is for](#what-scribe-is-for)
-2. [Quickstart](#quickstart)
+2. [Install and bootstrap](#install-and-bootstrap)
 3. [Core workflow](#core-workflow)
 4. [Tool families](#tool-families)
 5. [Storage and runtime modes](#storage-and-runtime-modes)
@@ -28,59 +28,26 @@ Use Scribe when you need:
 - durable, queryable audit logs for agent and operator activity
 - governed document updates for plans, architecture, and execution artifacts
 - automation-safe file/search/edit contracts for programmatic workflows
-- flexible runtime posture (local-first or authenticated remote)
+- explicit runtime posture controls (Postgres default, standalone SQLite opt-in)
 
-Scribe is not a generic note app. It is designed for engineering execution that must remain reviewable and reproducible over time.
+## Install and bootstrap
 
-## Quickstart
-
-### 1. Install
+1. Install:
 
 ```bash
 pip install scribe-mcp
 ```
 
-### 2. Validate CLI availability
+2. Validate CLI availability:
 
 ```bash
 scribe --help
 scribe-server --help
 ```
 
-### 3. Start local server
+3. Complete onboarding with the canonical guide:
 
-```bash
-scribe-server
-```
-
-### 4. Initialize project context
-
-Every session should start by binding an agent name + project + repo root:
-
-```python
-set_project(
-  agent="MyAgent",
-  name="my_project",
-  root="/absolute/path/to/repo"
-)
-```
-
-### 5. Rehydrate recent context
-
-```python
-read_recent(agent="MyAgent", limit="5")
-```
-
-### 6. Log meaningful work
-
-```python
-append_entry(
-  agent="MyAgent",
-  status="info",
-  message="Started implementation of auth token refresh",
-  meta={"area": "auth", "ticket": "AUTH-142"}
-)
-```
+- [Install and Bootstrap](INSTALL_AND_BOOTSTRAP.md)
 
 ## Core workflow
 
@@ -90,7 +57,7 @@ The standard operating loop:
 2. Read existing history with `read_recent` or `query_entries`.
 3. Perform work and log outcomes with `append_entry`.
 4. Update governed docs with `manage_docs` when plans/specs/checklists change.
-5. Use `read_file`, `search`, and `edit_file` for targeted code/document operations.
+5. Use `read_file`, `search`, and `edit_file` for targeted operations.
 6. Close out with a success/failure log entry.
 
 ## Tool families
@@ -108,12 +75,6 @@ Bind the active project and repository root for an agent session.
 | `root` | string | Yes (recommended) | repo cwd | Absolute repository root |
 | `format` | string | No | `readable` | `readable`, `structured`, or `compact` |
 
-Example:
-
-```python
-set_project(agent="MyAgent", name="payments", root="/workspace/payments-api")
-```
-
 #### `read_recent`
 
 Read recent project log entries.
@@ -124,12 +85,6 @@ Read recent project log entries.
 | `project` | string | No | active project | Project override |
 | `limit` / `n` | string | No | `10` | Number of entries |
 | `format` | string | No | `readable` | Output format |
-
-Example:
-
-```python
-read_recent(agent="MyAgent", limit="10")
-```
 
 ### Logging and audit trail
 
@@ -145,17 +100,6 @@ Append one or more audit log entries with optional metadata.
 | `meta` | object/string | No | `{}` | Structured metadata |
 | `log_type` | string | No | `progress` | Alternate log stream |
 
-Example:
-
-```python
-append_entry(
-  agent="MyAgent",
-  status="success",
-  message="Completed migration validation",
-  meta={"migrations": 3, "duration_seconds": 41}
-)
-```
-
 ### Document governance
 
 #### `manage_docs`
@@ -170,19 +114,6 @@ Create, update, and patch governed documents.
 | `section` | string | Action-dependent | — | Section identifier |
 | `content` | string | Action-dependent | — | Replacement/append content |
 
-Common pattern:
-
-```python
-manage_docs(agent="MyAgent", action="create", doc_name="PHASE_PLAN")
-manage_docs(
-  agent="MyAgent",
-  action="replace_section",
-  doc_name="PHASE_PLAN",
-  section="phase_1",
-  content="Deliver API contract stabilization and migration tests."
-)
-```
-
 ### File and search operations
 
 #### `read_file`
@@ -196,34 +127,13 @@ Repository-safe file reader with multiple modes.
 | `mode` | string | No | `full_stream` | `scan_only`, `line_range`, `search`, etc. |
 | `start_line`/`end_line` | int | Mode-dependent | — | Line bounds for targeted reads |
 
-Example:
-
-```python
-read_file(agent="MyAgent", path="src/server.py", mode="scan_only")
-read_file(agent="MyAgent", path="src/server.py", mode="line_range", start_line=120, end_line=220)
-```
-
 #### `search`
 
 Cross-file search with literal or regex matching.
 
-```python
-search(agent="MyAgent", pattern="set_project", glob="**/*.py")
-```
-
 #### `edit_file`
 
 Safe exact-string replacement with dry-run support.
-
-```python
-edit_file(
-  agent="MyAgent",
-  path="README.md",
-  old_string="legacy phrasing",
-  new_string="updated phrasing",
-  dry_run=True
-)
-```
 
 ### Diagnostics
 
@@ -231,33 +141,34 @@ edit_file(
 
 Check runtime/config health for the current environment.
 
-```python
-scribe_doctor(agent="MyAgent")
-```
-
 ## Storage and runtime modes
 
-### Local mode (default)
+### PostgreSQL-backed mode (default posture)
 
-Best for most users and local development.
-
-```bash
-# Optional explicit setting
-export SCRIBE_STORAGE_BACKEND=sqlite
-```
-
-### PostgreSQL-backed mode
-
-Best for shared/team deployments requiring centralized persistence.
+Postgres is the default backend when `SCRIBE_STORAGE_BACKEND` is unset.
+Use Postgres with `SCRIBE_DB_URL` for server/runtime posture.
 
 ```bash
 export SCRIBE_STORAGE_BACKEND=postgres
 export SCRIBE_DB_URL="postgresql://user:pass@host:5432/scribe"
 ```
 
-### Authenticated remote/client mode
+### Standalone SQLite mode (explicit local-only opt-in)
 
-Use when connecting to a managed Scribe endpoint.
+SQLite is supported when you explicitly run standalone mode.
+
+```bash
+export SCRIBE_MODE=standalone
+export SCRIBE_STORAGE_BACKEND=sqlite
+# Optional path override:
+# export SCRIBE_DB_PATH=".scribe/scribe.db"
+```
+
+### Authenticated remote/client mode (internal compatibility only)
+
+Remote/client mode is excluded by `SCRIBE_RELEASE_PROFILE=public` in this release line.
+When used internally, `SCRIBE_REMOTE_URL` is the service root URL.
+Mode detection probes `<root>/health`; SSE transport connects at `<root>/sse`.
 
 ```bash
 export SCRIBE_MODE=client
@@ -271,13 +182,14 @@ export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-token"
 
 | Variable | Required | Description |
 |---|---|---|
-| `SCRIBE_STORAGE_BACKEND` | No | `sqlite` (default) or `postgres` |
-| `SCRIBE_DB_PATH` | No | SQLite database path override |
-| `SCRIBE_DB_URL` | Postgres mode | Postgres connection URL |
+| `SCRIBE_STORAGE_BACKEND` | No | `postgres` (default) or `sqlite` (standalone only) |
+| `SCRIBE_DB_PATH` | No | SQLite path override for standalone mode |
+| `SCRIBE_DB_URL` | Server/Postgres mode | Postgres connection URL |
 | `SCRIBE_POSTGRES_SCHEMA` | No | Postgres schema override |
-| `SCRIBE_MODE` | Remote mode | Set to `client` for remote runtime |
-| `SCRIBE_REMOTE_URL` | Remote mode | Remote Scribe server URL |
-| `SCRIBE_REMOTE_AUTH_TOKEN` | Remote mode | Authentication token |
+| `SCRIBE_MODE` | No | `auto` (default), `server`, `client`, `standalone` |
+| `SCRIBE_REMOTE_URL` | Client mode | Remote service root URL; health probe uses `/health` |
+| `SCRIBE_REMOTE_AUTH_TOKEN` | Client mode | Authentication token for remote client auth |
+| `SCRIBE_RELEASE_PROFILE` | No | `public` fail-closes remote/client; `internal` allows compatibility behavior |
 
 ### Compatibility aliases
 
@@ -290,26 +202,23 @@ export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-token"
 
 ### "No active project" errors
 
-Set project context first:
-
-```python
-set_project(agent="MyAgent", name="my_project", root="/abs/repo")
-```
+Set project context first with `set_project`.
 
 ### Empty or incomplete query results
 
 - verify you are pointed at the intended project
 - widen filters in `query_entries`
-- check time-range filters and status/category filters
+- check time-range and status/category filters
 
 ### Connection errors in remote mode
 
-- verify `SCRIBE_REMOTE_URL`
+- verify `SCRIBE_REMOTE_URL` points to service root and `<root>/health` is reachable
 - verify auth token value and server-side acceptance
 - run `scribe_doctor` for environment diagnostics
 
 ## Related docs
 
+- [Install and Bootstrap](INSTALL_AND_BOOTSTRAP.md)
 - [MCP Server Guide](mcp_server_guide.md)
 - [Remote Client Contract](REMOTE_CLIENT.md)
 - [Template Variables Reference](TEMPLATE_VARIABLES.md)
