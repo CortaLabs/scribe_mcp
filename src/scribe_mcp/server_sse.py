@@ -45,6 +45,7 @@ import uvicorn
 import scribe_mcp.server as server_module
 from scribe_mcp.config.settings import Settings
 from scribe_mcp.server import app, _startup, _shutdown
+from scribe_mcp.state.agent_manager import SessionLeaseExpired
 from scribe_mcp.storage.base import ProjectRecord
 
 logger = logging.getLogger(__name__)
@@ -214,6 +215,42 @@ def _operation_is_permitted(operation: str, *, public_release: bool) -> bool:
     return operation in _LEGACY_OPERATION_ALLOWLIST
 
 
+def _shutdown_phase_response(phase: str) -> JSONResponse:
+    if phase == "backend_close" or phase == "closed":
+        return JSONResponse(
+            {"error": "Transport closed", "type": "TransportClosed"},
+            status_code=503,
+        )
+    return JSONResponse(
+        {"error": "Transport draining in-flight requests", "type": "TransportDraining"},
+        status_code=503,
+    )
+
+
+def _service_unavailable_response() -> JSONResponse:
+    shutdown_state = server_module.get_transport_shutdown_state()
+    phase = str(shutdown_state.get("phase") or "running")
+    if phase != "running":
+        return _shutdown_phase_response(phase)
+    return JSONResponse(
+        {"error": "Storage backend not yet initialised", "type": "ServiceUnavailable"},
+        status_code=503,
+    )
+
+
+def _stale_session_response(exc: SessionLeaseExpired) -> JSONResponse:
+    return JSONResponse(
+        {
+            "error": str(exc),
+            "type": "StaleSession",
+            "stale_session_reason": exc.reason,
+            "agent_id": exc.agent_id,
+            "session_id": exc.session_id,
+        },
+        status_code=409,
+    )
+
+
 # ---------------------------------------------------------------------------
 # REST API: serialisation helper
 # ---------------------------------------------------------------------------
@@ -300,52 +337,57 @@ async def handle_backend_operation(request: Request) -> JSONResponse:
 
         {"error": "<message>", "type": "<ExceptionClassName>"}
     """
-    operation: str = request.path_params["operation"]
-    public_release_transport = _is_public_release_transport()
-
-    # Guard: allowlist check
-    if not _operation_is_permitted(operation, public_release=public_release_transport):
-        return JSONResponse(
-            {"error": f"Operation '{operation}' is not permitted", "type": "ForbiddenOperation"},
-            status_code=403,
-        )
-
-    # Guard: backend availability
-    backend = getattr(server_module, "storage_backend", None)
-    if backend is None:
-        return JSONResponse(
-            {"error": "Storage backend not yet initialised", "type": "ServiceUnavailable"},
-            status_code=503,
-        )
-
-    # Resolve the method
-    method = getattr(backend, operation, None)
-    if method is None or not callable(method):
-        return JSONResponse(
-            {"error": f"Operation '{operation}' not found on backend", "type": "NotFound"},
-            status_code=404,
-        )
-
-    # Parse kwargs from request body
+    phase = await server_module.begin_transport_operation()
+    if phase != "running":
+        return _shutdown_phase_response(phase)
     try:
-        body: dict[str, Any] = await request.json()
-        if not isinstance(body, dict):
+        operation: str = request.path_params["operation"]
+        public_release_transport = _is_public_release_transport()
+
+        # Guard: allowlist check
+        if not _operation_is_permitted(operation, public_release=public_release_transport):
+            return JSONResponse(
+                {"error": f"Operation '{operation}' is not permitted", "type": "ForbiddenOperation"},
+                status_code=403,
+            )
+
+        # Guard: backend availability
+        backend = getattr(server_module, "storage_backend", None)
+        if backend is None:
+            return _service_unavailable_response()
+
+        # Resolve the method
+        method = getattr(backend, operation, None)
+        if method is None or not callable(method):
+            return JSONResponse(
+                {"error": f"Operation '{operation}' not found on backend", "type": "NotFound"},
+                status_code=404,
+            )
+
+        # Parse kwargs from request body
+        try:
+            body: dict[str, Any] = await request.json()
+            if not isinstance(body, dict):
+                body = {}
+        except Exception:
             body = {}
-    except Exception:
-        body = {}
 
-    # Deserialize ProjectRecord from dict if needed
-    _rehydrate_kwargs(body)
+        # Deserialize ProjectRecord from dict if needed
+        _rehydrate_kwargs(body)
 
-    # Execute
-    try:
-        result = await method(**body)
-        return JSONResponse({"result": _serialize(result)})
-    except Exception as exc:
-        return JSONResponse(
-            {"error": str(exc), "type": type(exc).__name__},
-            status_code=500,
-        )
+        # Execute
+        try:
+            result = await method(**body)
+            return JSONResponse({"result": _serialize(result)})
+        except SessionLeaseExpired as exc:
+            return _stale_session_response(exc)
+        except Exception as exc:
+            return JSONResponse(
+                {"error": str(exc), "type": type(exc).__name__},
+                status_code=500,
+            )
+    finally:
+        await server_module.end_transport_operation()
 
 
 async def handle_batch(request: Request) -> JSONResponse:
@@ -374,86 +416,100 @@ async def handle_batch(request: Request) -> JSONResponse:
     Each operation is executed independently.  A failure in one operation
     does not abort subsequent operations (partial success semantics).
     """
+    phase = await server_module.begin_transport_operation()
+    if phase != "running":
+        return _shutdown_phase_response(phase)
     try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            {"error": "Invalid JSON body", "type": "ParseError"},
-            status_code=400,
-        )
-
-    operations = body.get("operations")
-    if not isinstance(operations, list):
-        return JSONResponse(
-            {"error": "'operations' must be a list", "type": "ValidationError"},
-            status_code=400,
-        )
-    public_release_transport = _is_public_release_transport()
-    if public_release_transport:
-        batch_ops = [
-            item.get("op")
-            for item in operations
-            if isinstance(item, dict) and isinstance(item.get("op"), str)
-        ]
-        denied_in_batch = sorted({op for op in batch_ops if op in PUBLIC_RELEASE_DENIED_OPERATIONS})
-        if denied_in_batch:
-            denied_text = ", ".join(denied_in_batch)
+        try:
+            body = await request.json()
+        except Exception:
             return JSONResponse(
-                {
-                    "error": (
-                        "Batch rejected: contains denied operation(s): "
-                        f"{denied_text}. Public release fails closed with no partial execution."
-                    ),
-                    "type": "ForbiddenOperation",
-                },
-                status_code=403,
+                {"error": "Invalid JSON body", "type": "ParseError"},
+                status_code=400,
             )
 
-    backend = getattr(server_module, "storage_backend", None)
-    if backend is None:
-        return JSONResponse(
-            {"error": "Storage backend not yet initialised", "type": "ServiceUnavailable"},
-            status_code=503,
-        )
+        operations = body.get("operations")
+        if not isinstance(operations, list):
+            return JSONResponse(
+                {"error": "'operations' must be a list", "type": "ValidationError"},
+                status_code=400,
+            )
+        public_release_transport = _is_public_release_transport()
+        if public_release_transport:
+            batch_ops = [
+                item.get("op")
+                for item in operations
+                if isinstance(item, dict) and isinstance(item.get("op"), str)
+            ]
+            denied_in_batch = sorted({op for op in batch_ops if op in PUBLIC_RELEASE_DENIED_OPERATIONS})
+            if denied_in_batch:
+                denied_text = ", ".join(denied_in_batch)
+                return JSONResponse(
+                    {
+                        "error": (
+                            "Batch rejected: contains denied operation(s): "
+                            f"{denied_text}. Public release fails closed with no partial execution."
+                        ),
+                        "type": "ForbiddenOperation",
+                    },
+                    status_code=403,
+                )
 
-    results: list[dict[str, Any]] = []
+        backend = getattr(server_module, "storage_backend", None)
+        if backend is None:
+            return _service_unavailable_response()
 
-    for item in operations:
-        if not isinstance(item, dict):
-            results.append({"ok": False, "error": "Operation entry must be a dict", "type": "ValidationError"})
-            continue
+        results: list[dict[str, Any]] = []
 
-        op_name: str = item.get("op", "")
-        args: dict[str, Any] = item.get("args", {})
-        if not isinstance(args, dict):
-            args = {}
+        for item in operations:
+            if not isinstance(item, dict):
+                results.append({"ok": False, "error": "Operation entry must be a dict", "type": "ValidationError"})
+                continue
 
-        # Allowlist check per operation
-        if not _operation_is_permitted(op_name, public_release=public_release_transport):
-            results.append({
-                "ok": False,
-                "error": f"Operation '{op_name}' is not permitted",
-                "type": "ForbiddenOperation",
-            })
-            continue
+            op_name: str = item.get("op", "")
+            args: dict[str, Any] = item.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
 
-        method = getattr(backend, op_name, None)
-        if method is None or not callable(method):
-            results.append({
-                "ok": False,
-                "error": f"Operation '{op_name}' not found on backend",
-                "type": "NotFound",
-            })
-            continue
+            # Allowlist check per operation
+            if not _operation_is_permitted(op_name, public_release=public_release_transport):
+                results.append({
+                    "ok": False,
+                    "error": f"Operation '{op_name}' is not permitted",
+                    "type": "ForbiddenOperation",
+                })
+                continue
 
-        try:
-            _rehydrate_kwargs(args)
-            result = await method(**args)
-            results.append({"ok": True, "result": _serialize(result)})
-        except Exception as exc:
-            results.append({"ok": False, "error": str(exc), "type": type(exc).__name__})
+            method = getattr(backend, op_name, None)
+            if method is None or not callable(method):
+                results.append({
+                    "ok": False,
+                    "error": f"Operation '{op_name}' not found on backend",
+                    "type": "NotFound",
+                })
+                continue
 
-    return JSONResponse({"results": results})
+            try:
+                _rehydrate_kwargs(args)
+                result = await method(**args)
+                results.append({"ok": True, "result": _serialize(result)})
+            except SessionLeaseExpired as exc:
+                results.append(
+                    {
+                        "ok": False,
+                        "error": str(exc),
+                        "type": "StaleSession",
+                        "stale_session_reason": exc.reason,
+                        "agent_id": exc.agent_id,
+                        "session_id": exc.session_id,
+                    }
+                )
+            except Exception as exc:
+                results.append({"ok": False, "error": str(exc), "type": type(exc).__name__})
+
+        return JSONResponse({"results": results})
+    finally:
+        await server_module.end_transport_operation()
 
 
 # ---------------------------------------------------------------------------

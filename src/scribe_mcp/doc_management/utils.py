@@ -486,3 +486,224 @@ def resolve_custom_doc_path(
         return None
 
     return None
+
+
+def _normalize_case_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "_")
+    if normalized in {"", "unknown"}:
+        return "open"
+    if normalized in {"open", "investigating", "triage", "proposed", "in_progress", "active"}:
+        return "open"
+    if normalized in {"resolved", "closed", "fixed", "landed", "done", "completed"}:
+        return "closed"
+    return normalized
+
+
+def _derive_case_id_from_path(report_path: Path) -> Optional[str]:
+    # Expected governed layout: docs/{bugs|security}/{category}/{yyyy-mm-dd}_{slug}/report.md
+    report_dir = report_path.parent.name
+    if "_" not in report_dir:
+        return None
+    return _normalize_metadata_value(report_dir.split("_", 1)[1])
+
+
+def extract_case_registry_metadata_from_report(
+    report_path: Path,
+    *,
+    project_root: Optional[Path] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    project: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build normalized case-registry metadata from a governed bug/security report."""
+    resolved_path = report_path.resolve()
+    resolved_project_root = project_root.resolve() if project_root else None
+    classification = classify_scribe_source_document(
+        resolved_path,
+        metadata=metadata,
+        project_root=resolved_project_root,
+    )
+    if classification is None or classification.source_family != "case_report":
+        return None
+
+    payload_metadata: Dict[str, Any] = dict(classification.metadata or {})
+    if metadata:
+        payload_metadata.update(metadata)
+
+    case_type = "security" if classification.doc_type == "security_report" else "bug"
+    case_id = (
+        _extract_metadata_hint(payload_metadata, "case_id", "slug", "doc_name")
+        or classification.case_id
+        or _derive_case_id_from_path(resolved_path)
+    )
+    if not case_id:
+        return None
+
+    report_root: Optional[Path] = resolved_project_root
+    if report_root is None and project:
+        report_root = Path(str(project.get("root", ""))).resolve()
+    project_name = _normalize_metadata_value(payload_metadata.get("project_name"))
+    if project_name is None and project:
+        project_name = _normalize_metadata_value(project.get("name"))
+
+    repo_root = _normalize_metadata_value(payload_metadata.get("project_root"))
+    if repo_root is None and project:
+        repo_root = _normalize_metadata_value(project.get("root"))
+    if repo_root is None and report_root is not None:
+        repo_root = str(report_root)
+
+    return {
+        "case_id": case_id,
+        "case_type": case_type,
+        "status": _normalize_case_status(payload_metadata.get("status")),
+        "category": classification.category or _extract_metadata_hint(payload_metadata, "category"),
+        "title": _extract_metadata_hint(payload_metadata, "title"),
+        "severity": _extract_metadata_hint(payload_metadata, "severity"),
+        "report_path": str(resolved_path),
+        "doc_type": classification.doc_type,
+        "source_family": classification.source_family,
+        "project_name": project_name,
+        "project_key": _extract_metadata_hint(payload_metadata, "project_key")
+        or (_normalize_metadata_value(project.get("project_key")) if project else None),
+        "repo_id": _extract_metadata_hint(payload_metadata, "repo_id")
+        or (_normalize_metadata_value(project.get("repo_id")) if project else None),
+        "repo_root": repo_root,
+        "reported_at": _extract_metadata_hint(payload_metadata, "reported_at", "timestamp"),
+        "provenance": {
+            "source": "governed_report_doc",
+            "doc_path": str(resolved_path),
+        },
+    }
+
+
+def _record_like_value(record: Any, key: str) -> Any:
+    if record is None:
+        return None
+    if isinstance(record, dict):
+        return record.get(key)
+    return getattr(record, key, None)
+
+
+def merge_case_registry_metadata(
+    *,
+    existing: Optional[Dict[str, Any]],
+    updates: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Merge case metadata by namespace instead of replacing the full payload."""
+    merged: Dict[str, Any] = {}
+    if isinstance(existing, dict):
+        merged.update(existing)
+    if not isinstance(updates, dict):
+        return merged or None
+
+    for key, value in updates.items():
+        if value is None:
+            continue
+        if key in {"", None}:
+            continue
+        if key in {"category", "ownership", "execution_provenance", "fix_link", "reported_at"}:
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                nested = dict(merged.get(key) or {})
+                nested.update(value)
+                merged[key] = nested
+            else:
+                merged[key] = value
+            continue
+        merged[key] = value
+    return merged or None
+
+
+def build_case_registry_upsert_kwargs(
+    *,
+    extracted: Optional[Dict[str, Any]] = None,
+    existing_record: Optional[Any] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+    metadata_overrides: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build exact kwargs for StorageBackend.upsert_case_registry_record(...)."""
+    extracted_payload = extracted if isinstance(extracted, dict) else {}
+    override_payload = overrides if isinstance(overrides, dict) else {}
+
+    def _pick(*keys: str) -> Optional[str]:
+        for key in keys:
+            override_value = _normalize_metadata_value(override_payload.get(key))
+            if override_value is not None:
+                return override_value
+            extracted_value = _normalize_metadata_value(extracted_payload.get(key))
+            if extracted_value is not None:
+                return extracted_value
+            record_value = _normalize_metadata_value(_record_like_value(existing_record, key))
+            if record_value is not None:
+                return record_value
+        return None
+
+    case_id = _pick("case_id")
+    case_type = _pick("case_type")
+    project_name = _pick("project_name")
+    repo_root = _pick("repo_root")
+    doc_type = _pick("doc_type")
+    doc_name = _pick("doc_name") or case_id
+    doc_path = _pick("doc_path", "report_path")
+    if not all((case_id, case_type, project_name, repo_root, doc_type, doc_name, doc_path)):
+        return None
+
+    extracted_metadata: Dict[str, Any] = {}
+    if isinstance(extracted_payload.get("metadata"), dict):
+        extracted_metadata.update(extracted_payload["metadata"])
+    if extracted_payload.get("category") is not None:
+        extracted_metadata["category"] = extracted_payload.get("category")
+    if extracted_payload.get("reported_at") is not None:
+        extracted_metadata["reported_at"] = extracted_payload.get("reported_at")
+    if isinstance(extracted_payload.get("provenance"), dict):
+        extracted_metadata["provenance"] = extracted_payload.get("provenance")
+
+    merged_metadata = merge_case_registry_metadata(
+        existing=_record_like_value(existing_record, "metadata"),
+        updates=extracted_metadata,
+    )
+    merged_metadata = merge_case_registry_metadata(
+        existing=merged_metadata,
+        updates=metadata_overrides if isinstance(metadata_overrides, dict) else None,
+    )
+
+    return {
+        "case_id": case_id,
+        "case_type": case_type,
+        "project_name": project_name,
+        "repo_root": repo_root,
+        "doc_type": doc_type,
+        "doc_name": doc_name,
+        "doc_path": doc_path,
+        "title": _pick("title"),
+        "status": _pick("status"),
+        "severity": _pick("severity"),
+        "source_tool": _pick("source_tool"),
+        "metadata": merged_metadata,
+    }
+
+
+def build_case_registry_backfill_records(
+    project_root: Path,
+    *,
+    reports: Optional[List[Path]] = None,
+) -> List[Dict[str, Any]]:
+    """Enumerate existing governed bug/security reports into normalized registry rows."""
+    resolved_root = project_root.resolve()
+    candidates: List[Path]
+    if reports is not None:
+        candidates = sorted(path.resolve() for path in reports)
+    else:
+        candidates = []
+        for case_root in (resolved_root / "docs" / "bugs", resolved_root / "docs" / "security"):
+            if not case_root.exists():
+                continue
+            candidates.extend(sorted(path.resolve() for path in case_root.glob("*/*/report.md")))
+
+    records: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        extracted = extract_case_registry_metadata_from_report(
+            candidate,
+            project_root=resolved_root,
+        )
+        if extracted is not None:
+            records.append(extracted)
+    return records

@@ -11,13 +11,19 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
 from scribe_mcp.storage.base import ConflictError, RemoteUnavailableError, StorageBackend
-from scribe_mcp.storage.models import ProjectRecord
+from scribe_mcp.storage.models import (
+    CaseRegistryRecord,
+    ProjectRecord,
+    RepoScopeGrantRecord,
+    normalize_repo_root,
+)
+from scribe_mcp.state.agent_manager import SessionLeaseExpired
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +148,23 @@ class RemoteStorageBackend(StorageBackend):
             if headers:
                 request_kwargs["headers"] = headers
             resp = await self._client.post(path, **request_kwargs)
-            if resp.status_code in (401, 403):
+            if resp.status_code == 401:
+                raise RuntimeError(self._auth_failure_message(context, resp))
+            if resp.status_code == 403:
+                response_type = ""
+                response_error = ""
+                try:
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        response_type = str(data.get("type") or "").strip()
+                        response_error = str(data.get("error") or data.get("detail") or "").strip()
+                except ValueError:
+                    response_error = resp.text.strip()
+                if response_type == "ForbiddenOperation":
+                    message = f"Remote operation denied for {context}: HTTP 403 Forbidden."
+                    if response_error:
+                        message += f" {response_error}"
+                    raise PermissionError(message)
                 raise RuntimeError(self._auth_failure_message(context, resp))
             resp.raise_for_status()
             return resp.json()
@@ -164,7 +186,20 @@ class RemoteStorageBackend(StorageBackend):
             context=f"backend/{operation}",
         )
         if "error" in data:
-            raise RuntimeError(f"Remote operation {operation} failed: {data['error']}")
+            error_text = str(data.get("error") or "")
+            error_type = str(data.get("type") or "")
+            if error_type == "StaleSession":
+                raise SessionLeaseExpired(
+                    error_text or f"Remote stale session in operation {operation}",
+                    reason=str(data.get("stale_session_reason") or "stale_session"),
+                    agent_id=str(data.get("agent_id") or ""),
+                    session_id=(str(data.get("session_id")) if data.get("session_id") is not None else None),
+                )
+            if error_type == "ForbiddenOperation":
+                raise PermissionError(
+                    f"Remote operation {operation} forbidden: {error_text or 'operation denied'}"
+                )
+            raise RuntimeError(f"Remote operation {operation} failed: {error_text}")
         return data.get("result")
 
     async def execute_batch(self, operations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -201,6 +236,63 @@ class RemoteStorageBackend(StorageBackend):
                 bridge_managed=data.get("bridge_managed", False),
             )
         return data  # Already a ProjectRecord
+
+    def _to_repo_scope_grant_record(self, data: Any) -> Optional[RepoScopeGrantRecord]:
+        if data is None:
+            return None
+        if isinstance(data, RepoScopeGrantRecord):
+            return data
+        if not isinstance(data, dict):
+            return None
+
+        def _parse_time(value: Any) -> datetime:
+            if isinstance(value, datetime):
+                parsed = value
+            else:
+                text = str(value).strip()
+                if text.endswith("Z"):
+                    text = f"{text[:-1]}+00:00"
+                parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+
+        return RepoScopeGrantRecord(
+            grant_id=str(data.get("grant_id", "")),
+            authoritative_session_key=str(data.get("authoritative_session_key", "")),
+            repo_root=str(data.get("repo_root", "")),
+            repo_id=str(data.get("repo_id", "")),
+            reason=str(data.get("reason", "")),
+            expires_at=_parse_time(data.get("expires_at")),
+            created_at=_parse_time(data.get("created_at")) if data.get("created_at") else None,
+            updated_at=_parse_time(data.get("updated_at")) if data.get("updated_at") else None,
+        )
+
+    def _to_case_registry_record(self, data: Any) -> Optional[CaseRegistryRecord]:
+        if data is None:
+            return None
+        if isinstance(data, CaseRegistryRecord):
+            return data
+        if not isinstance(data, dict):
+            return None
+        return CaseRegistryRecord(
+            case_id=str(data.get("case_id", "")),
+            case_type=str(data.get("case_type", "")),
+            project_name=str(data.get("project_name", "")),
+            repo_root=str(data.get("repo_root", "")),
+            repo_id=str(data.get("repo_id", "")),
+            project_key=str(data.get("project_key", "")),
+            doc_type=str(data.get("doc_type", "")),
+            doc_name=str(data.get("doc_name", "")),
+            doc_path=str(data.get("doc_path", "")),
+            title=data.get("title"),
+            status=data.get("status"),
+            severity=data.get("severity"),
+            source_tool=data.get("source_tool"),
+            metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else None,
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
+        )
 
     # ------------------------------------------------------------------
     # Project record cache helpers
@@ -264,6 +356,100 @@ class RemoteStorageBackend(StorageBackend):
     async def get_session_project(self, session_id: str) -> Optional[str]:
         return self._session_projects.get(session_id)
 
+    async def create_repo_scope_grant(
+        self,
+        *,
+        authoritative_session_key: str,
+        repo_root: str,
+        reason: str,
+        ttl_minutes: int = 30,
+    ) -> RepoScopeGrantRecord:
+        result = await self._call(
+            "create_repo_scope_grant",
+            authoritative_session_key=authoritative_session_key,
+            repo_root=normalize_repo_root(repo_root),
+            reason=reason,
+            ttl_minutes=ttl_minutes,
+        )
+        record = self._to_repo_scope_grant_record(result)
+        if record is None:
+            raise RuntimeError("Remote operation create_repo_scope_grant returned invalid payload")
+        return record
+
+    async def fetch_repo_scope_grant(self, grant_id: str) -> Optional[RepoScopeGrantRecord]:
+        result = await self._call("fetch_repo_scope_grant", grant_id=grant_id)
+        return self._to_repo_scope_grant_record(result)
+
+    async def upsert_case_registry_record(
+        self,
+        *,
+        case_id: str,
+        case_type: str,
+        project_name: str,
+        repo_root: str,
+        doc_type: str,
+        doc_name: str,
+        doc_path: str,
+        title: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        source_tool: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CaseRegistryRecord:
+        result = await self._call(
+            "upsert_case_registry_record",
+            case_id=case_id,
+            case_type=case_type,
+            project_name=project_name,
+            repo_root=repo_root,
+            doc_type=doc_type,
+            doc_name=doc_name,
+            doc_path=doc_path,
+            title=title,
+            status=status,
+            severity=severity,
+            source_tool=source_tool,
+            metadata=metadata,
+        )
+        record = self._to_case_registry_record(result)
+        if record is None:
+            raise RuntimeError("Remote operation upsert_case_registry_record returned invalid payload")
+        return record
+
+    async def fetch_case_registry_record(
+        self,
+        case_id: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[CaseRegistryRecord]:
+        result = await self._call(
+            "fetch_case_registry_record",
+            case_id=case_id,
+            repo_root=repo_root,
+            project_name=project_name,
+        )
+        return self._to_case_registry_record(result)
+
+    async def query_case_registry_records(
+        self,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+        case_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[CaseRegistryRecord]:
+        result = await self._call(
+            "query_case_registry_records",
+            repo_root=repo_root,
+            project_name=project_name,
+            case_type=case_type,
+            limit=limit,
+            offset=offset,
+        )
+        return [self._to_case_registry_record(item) for item in (result or []) if item]
+
     async def upsert_agent_session(
         self, agent_id: str, session_id: str, metadata: Optional[Dict[str, Any]]
     ) -> None:
@@ -283,6 +469,28 @@ class RemoteStorageBackend(StorageBackend):
     async def end_session(self, session_id: str) -> None:
         if session_id in self._sessions:
             self._sessions[session_id]["state"] = "expired"
+        self._session_projects.pop(session_id, None)
+        self._session_modes.pop(session_id, None)
+        self._transport_sessions = {
+            transport_id: mapped_session
+            for transport_id, mapped_session in self._transport_sessions.items()
+            if mapped_session != session_id
+        }
+        self._agent_sessions = {
+            identity_key: record
+            for identity_key, record in self._agent_sessions.items()
+            if record.get("session_id") != session_id
+        }
+        self._last_agent_session_allocation = {
+            identity_key: allocation
+            for identity_key, allocation in self._last_agent_session_allocation.items()
+            if allocation.get("session_id") != session_id
+        }
+        self._agent_projects = {
+            agent_id: record
+            for agent_id, record in self._agent_projects.items()
+            if record.get("session_id") != session_id
+        }
 
     async def get_agent_project(self, agent_id: str) -> Optional[Dict[str, Any]]:
         return self._agent_projects.get(agent_id)
@@ -429,12 +637,24 @@ class RemoteStorageBackend(StorageBackend):
             self._cache_project(record)
         return record
 
-    async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
-        # Check cache first to avoid redundant HTTP calls
-        cached = self._get_cached_project(name)
-        if cached is not None:
-            return cached
-        result = await self._call("fetch_project", name=name)
+    async def fetch_project(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[ProjectRecord]:
+        # Name-only lookups can reuse cache; scoped lookups should hit source of truth.
+        if repo_root is None and project_key is None:
+            cached = self._get_cached_project(name)
+            if cached is not None:
+                return cached
+        result = await self._call(
+            "fetch_project",
+            name=name,
+            repo_root=repo_root,
+            project_key=project_key,
+        )
         record = self._to_project_record(result)
         if record:
             self._cache_project(record)
@@ -780,6 +1000,12 @@ class RemoteStorageBackend(StorageBackend):
 
     # --- Synchronous fetch fallback ---
 
-    async def fetch_project_sync(self, name: str) -> Optional[ProjectRecord]:
+    async def fetch_project_sync(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[ProjectRecord]:
         """Synchronous wrapper -- in remote mode, just calls async fetch_project."""
-        return await self.fetch_project(name)
+        return await self.fetch_project(name, repo_root=repo_root, project_key=project_key)

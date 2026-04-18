@@ -1466,6 +1466,22 @@ async def rotate_log(
         # Preserve explicit project spelling; context resolver handles alias normalization.
         normalized_project = project.strip() if isinstance(project, str) else project
 
+        exec_context = None
+        if hasattr(server_module, "get_execution_context"):
+            try:
+                exec_context = server_module.get_execution_context()
+            except Exception:
+                exec_context = None
+
+        effective_recovery_mode = None
+        if not normalized_project and not exec_context:
+            try:
+                state = await server_module.state_manager.load()
+            except Exception:
+                state = None
+            if state and getattr(state, "current_project", None):
+                effective_recovery_mode = "compat_active_project"
+
         # === CONTEXT RESOLUTION WITH ENHANCED ERROR HANDLING ===
         try:
             context = await _ROTATE_HELPER.prepare_context(
@@ -1474,6 +1490,7 @@ async def rotate_log(
                 explicit_project=normalized_project,
                 require_project=True,
                 state_snapshot=state_snapshot,
+                recovery_mode=effective_recovery_mode,
             )
         except ProjectResolutionError as exc:
             # Apply Phase 2 ExceptionHealer for project resolution errors
@@ -1489,6 +1506,7 @@ async def rotate_log(
                         agent_id=agent,
                         require_project=True,
                         state_snapshot=state_snapshot,
+                        recovery_mode=effective_recovery_mode,
                     )
                 except Exception:
                     # Fallback response

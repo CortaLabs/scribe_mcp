@@ -848,6 +848,14 @@ async def set_project(
             "reason": compatibility_path,
             "performed": False,
         }
+    elif not authoritative_session_id and context is None:
+        mirror_global = True
+        compatibility_path = compatibility_path or "no_runtime_context_global_compat"
+        write_side_effects["global_mirror"] = {
+            "enabled": True,
+            "reason": compatibility_path,
+            "performed": False,
+        }
     # Mirror project data into JSON state; global current_project only updates for legacy fallback.
 
     _mark("agent_context_manager")

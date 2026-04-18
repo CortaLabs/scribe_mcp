@@ -28,6 +28,7 @@ class ResolvedScope:
     resolution_source: str
     trust_level: ScopeProvenanceLabel
     provenance: ScopeProvenance
+    authoritative_session_key: Optional[str] = None
 
 
 def build_resolved_scope(payload: Mapping[str, Any]) -> ResolvedScope:
@@ -55,16 +56,21 @@ def build_resolved_scope(payload: Mapping[str, Any]) -> ResolvedScope:
     if not resolution_source:
         resolution_source = "runtime_context"
 
+    authoritative_session_key = _as_optional_str(payload.get("stable_session_id")) or _as_optional_str(
+        payload.get("session_id")
+    )
+
     return ResolvedScope(
         transport_session_id=_as_optional_str(payload.get("transport_session_id")),
-        stable_session_id=_as_optional_str(payload.get("session_id")),
-        agent_session_id=_as_optional_str(payload.get("stable_session_id")),
+        stable_session_id=_as_optional_str(payload.get("stable_session_id")),
+        agent_session_id=_as_optional_str(payload.get("agent_session_id")),
         repo_root=str(payload.get("repo_root") or ""),
         project_name=_as_optional_str(payload.get("project_name")),
         scoped_reuse_key=_as_optional_str(payload.get("scoped_reuse_key") or payload.get("scope_key")),
         resolution_source=str(resolution_source),
         trust_level=trust_level,
         provenance=provenance,
+        authoritative_session_key=authoritative_session_key,
     )
 
 

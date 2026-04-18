@@ -769,10 +769,11 @@ class ProjectFormatter(BaseFormatter):
                 dev_plan = dev_plan[len(root):].lstrip('/')
         lines.append(f"  Dev Plan: {dev_plan}")
         root_authorization = project.get("root_authorization") or {}
-        if root_authorization.get("compatibility_override_used"):
-            lines.append("  Root Authorization: compatibility override via skip_validation=true")
-        elif root_authorization.get("skip_validation_requested"):
-            lines.append("  Root Authorization: skip_validation=true (trusted scope)")
+        self._append_root_authority_summary(
+            lines=lines,
+            project=project,
+            root_authorization=root_authorization,
+        )
         lines.append("")
 
         # Documents Created section
@@ -879,10 +880,11 @@ class ProjectFormatter(BaseFormatter):
                 dev_plan = dev_plan[len(root):].lstrip('/')
         lines.append(f"  Dev Plan: {dev_plan}")
         root_authorization = project.get("root_authorization") or {}
-        if root_authorization.get("compatibility_override_used"):
-            lines.append("  Root Authorization: compatibility override via skip_validation=true")
-        elif root_authorization.get("skip_validation_requested"):
-            lines.append("  Root Authorization: skip_validation=true (trusted scope)")
+        self._append_root_authority_summary(
+            lines=lines,
+            project=project,
+            root_authorization=root_authorization,
+        )
         lines.append("")
 
         # Existing Project Inventory section
@@ -982,6 +984,47 @@ class ProjectFormatter(BaseFormatter):
         lines.append("\U0001F4A1 Context: Continuing active development - review recent progress entries")
 
         return "\n".join(lines)
+
+    def _append_root_authority_summary(
+        self,
+        *,
+        lines: List[str],
+        project: Dict[str, Any],
+        root_authorization: Dict[str, Any],
+    ) -> None:
+        if root_authorization.get("compatibility_override_used"):
+            lines.append("  Root Authorization: legacy skip_validation compatibility shim (grant-backed)")
+            migration_hint = root_authorization.get("migration_hint")
+            deprecation_notice = root_authorization.get("deprecation_notice")
+            if deprecation_notice:
+                lines.append(f"  Deprecation: {deprecation_notice}")
+            if migration_hint:
+                lines.append(f"  Migration: {migration_hint}")
+        elif root_authorization.get("skip_validation_requested"):
+            lines.append("  Root Authorization: skip_validation=true (trusted scope)")
+
+        authority_source = (
+            root_authorization.get("authority_source")
+            or root_authorization.get("reason_code")
+            or root_authorization.get("authorization_mode")
+        )
+        if authority_source:
+            lines.append(f"  Authority Source: {authority_source}")
+
+        if root_authorization.get("grant_id"):
+            lines.append(f"  Grant ID: {root_authorization.get('grant_id')}")
+
+        repo_id = project.get("repo_id") or root_authorization.get("grant_repo_id")
+        if repo_id:
+            lines.append(f"  Repo ID: {repo_id}")
+
+        project_key = project.get("project_key")
+        if project_key:
+            lines.append(f"  Project Key: {project_key}")
+
+        denied_fallback_attempts = root_authorization.get("denied_fallback_attempts")
+        if isinstance(denied_fallback_attempts, list) and denied_fallback_attempts:
+            lines.append(f"  Denied Fallback Attempts: {len(denied_fallback_attempts)}")
 
     def format_projects_response(
         self,

@@ -421,6 +421,22 @@ async def get_project(
     if agent_identity:
         agent_id = await agent_identity.get_or_create_agent_id()
 
+    exec_context = None
+    if hasattr(server_module, "get_execution_context"):
+        try:
+            exec_context = server_module.get_execution_context()
+        except Exception:
+            exec_context = None
+
+    effective_recovery_mode = recovery_mode
+    if not effective_recovery_mode and not project and not exec_context:
+        try:
+            state = await server_module.state_manager.load()
+        except Exception:
+            state = None
+        if state and getattr(state, "current_project", None):
+            effective_recovery_mode = "compat_active_project"
+
     try:
         context: LoggingContext = await _GET_PROJECT_HELPER.prepare_context(
             tool_name="get_project",
@@ -428,6 +444,7 @@ async def get_project(
             explicit_project=project,
             require_project=False,
             state_snapshot=state_snapshot,
+            recovery_mode=effective_recovery_mode,
         )
     except ProjectResolutionError as exc:
         payload = _GET_PROJECT_HELPER.translate_project_error(exc)
@@ -440,7 +457,7 @@ async def get_project(
 
     recent_projects = list(context.recent_projects)
     allowed_recovery_modes = {"compat_active_project", "compat_last_known_project"}
-    compatibility_mode = recovery_mode in allowed_recovery_modes
+    compatibility_mode = effective_recovery_mode in allowed_recovery_modes
     recovery_applied = False
     recovery_reason: Optional[str] = None
 
@@ -465,13 +482,6 @@ async def get_project(
 
     target_project = context.project if context.project else None
     current_name = target_project.get("name") if target_project else None
-
-    exec_context = None
-    if hasattr(server_module, "get_execution_context"):
-        try:
-            exec_context = server_module.get_execution_context()
-        except Exception:
-            exec_context = None
 
     if project:
         requested_project = project
@@ -527,7 +537,7 @@ async def get_project(
                 return response
             if compatibility_mode:
                 recovery_reason = "session_authority_present"
-        if not target_project and not exec_context and compatibility_mode and recovery_mode == "compat_active_project":
+        if not target_project and not exec_context and compatibility_mode and effective_recovery_mode == "compat_active_project":
             active_project, current_name, recent = await load_active_project(server_module.state_manager)
             if active_project:
                 target_project = dict(active_project)
@@ -540,7 +550,7 @@ async def get_project(
             extra: Dict[str, Any] = {}
             try:
                 last_known = None
-                if compatibility_mode and recovery_mode == "compat_last_known_project":
+                if compatibility_mode and effective_recovery_mode == "compat_last_known_project":
                     last_known = _PROJECT_REGISTRY.get_last_known_project_for_recovery(candidates=recent_projects)
                     recovery_reason = "compat_last_known_project_lookup"
                 if last_known and last_known.last_access_at:

@@ -73,11 +73,12 @@ async def generate_doc_templates(
             "created": [],
             "warnings": [],
         }
+    explicit_project = None if base_dir else project_name
     try:
         logging_context = await _GENERATE_DOC_TEMPLATES_HELPER.prepare_context(
             tool_name="generate_doc_templates",
             agent_id=None,
-            explicit_project=project_name,
+            explicit_project=explicit_project,
             require_project=False,
             state_snapshot=state_snapshot,
         )

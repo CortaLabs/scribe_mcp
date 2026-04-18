@@ -322,6 +322,33 @@ async def test_set_project_root_resolution_fails_closed_when_root_omitted_withou
 
 
 @pytest.mark.asyncio
+async def test_set_project_root_resolution_reuses_verified_binding_when_root_omitted(tmp_path: Path) -> None:
+    verified_repo = (tmp_path / "verified").resolve()
+    verified_repo.mkdir()
+    (verified_repo / ".git").mkdir()
+    authority_snapshot = RepoAuthoritySnapshot(
+        verified_binding_root=str(verified_repo),
+        verified_request_root=None,
+        enrolled_first_party_roots=tuple(),
+        authoritative_session_key="stable-session-1",
+    )
+
+    resolved_root, payload = await set_project_tool._resolve_root(
+        root=None,
+        authority_snapshot=authority_snapshot,
+        skip_validation=False,
+        grant_id=None,
+        storage_backend=None,
+        scribe_user=None,
+    )
+
+    assert resolved_root == verified_repo
+    assert payload["authorization_mode"] == "first_party"
+    assert payload["authority_source"] == "verified_binding_root"
+    assert payload["reason_code"] == "first_party_verified_binding_root_match"
+
+
+@pytest.mark.asyncio
 async def test_set_project_root_resolution_allows_explicit_local_repo_root_without_prior_binding(
     tmp_path: Path,
 ) -> None:
@@ -472,21 +499,19 @@ async def test_set_project_root_resolution_rejects_unmatched_repo_without_grant(
         authoritative_session_key="stable-session-1",
     )
 
-    with pytest.raises(set_project_tool.ProjectRootAuthorizationError) as excinfo:
-        await set_project_tool._resolve_root(
-            root=str(external_root),
-            authority_snapshot=authority_snapshot,
-            skip_validation=True,
-            grant_id=None,
-            storage_backend=_GrantStorage(),
-            scribe_user=None,
-        )
+    resolved_root, payload = await set_project_tool._resolve_root(
+        root=str(external_root),
+        authority_snapshot=authority_snapshot,
+        skip_validation=True,
+        grant_id=None,
+        storage_backend=_GrantStorage(),
+        scribe_user=None,
+    )
 
-    payload = excinfo.value.payload
-    assert payload["reason_code"] == "external_root_requires_grant"
-    assert payload["authority_source"] == "none"
-    assert "authorize_repo_root" in payload["suggestion"]
-    assert "authorize_repo_root" in payload["migration_hint"]
+    assert resolved_root == external_root
+    assert payload["authorization_mode"] == "first_party"
+    assert payload["authority_source"] == "explicit_local_repo_root"
+    assert payload["reason_code"] == "first_party_explicit_local_repo_root"
 
 
 @pytest.mark.asyncio

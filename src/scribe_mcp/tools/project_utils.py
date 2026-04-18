@@ -133,27 +133,6 @@ async def load_active_project(state_manager: StateManager) -> Tuple[Optional[Dic
     project = state.get_project(state.current_project)
     if project:
         return project, state.current_project, tuple(state.recent_projects)
-
-    # Legacy compatibility: recover from recent project history when
-    # current_project is unset but recent_projects still tracks context.
-    if state.recent_projects:
-        fallback_name = state.recent_projects[0]
-        fallback_project = state.get_project(fallback_name)
-        if not fallback_project and hasattr(state_manager, "_fetch_project"):
-            try:
-                fallback_project = await state_manager._fetch_project(fallback_name)  # type: ignore[attr-defined]
-            except Exception:
-                fallback_project = None
-        if fallback_project:
-            await state_manager.set_current_project(fallback_name, fallback_project)
-            updated_state = await state_manager.load()
-            return fallback_project, updated_state.current_project, tuple(updated_state.recent_projects)
-
-    from_config = load_project_config(state.current_project)
-    if from_config:
-        await state_manager.set_current_project(from_config["name"], from_config)
-        updated_state = await state_manager.load()
-        return from_config, updated_state.current_project, tuple(updated_state.recent_projects)
     return None, state.current_project, tuple(state.recent_projects)
 
 

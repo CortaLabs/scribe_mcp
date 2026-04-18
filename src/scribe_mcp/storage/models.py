@@ -3,6 +3,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from datetime import datetime
+from hashlib import sha256
+from pathlib import Path
+
+from scribe_mcp.utils.slug import normalize_project_input
+
+
+def normalize_repo_root(repo_root: str) -> str:
+    try:
+        return str(Path(repo_root).expanduser().resolve())
+    except Exception:
+        return str(Path(repo_root).expanduser())
+
+
+def compute_repo_id(repo_root: str) -> str:
+    normalized_root = normalize_repo_root(repo_root)
+    return sha256(normalized_root.encode("utf-8")).hexdigest()
+
+
+def compute_project_key(*, repo_root: str, project_name: str) -> str:
+    normalized_root = normalize_repo_root(repo_root)
+    normalized_name = normalize_project_input(project_name) or project_name.strip().lower()
+    digest = sha256(f"{normalized_root}::{normalized_name}".encode("utf-8")).hexdigest()
+    return f"pk_{digest}"
 
 
 @dataclass
@@ -11,6 +34,8 @@ class ProjectRecord:
     name: str
     repo_root: str
     progress_log_path: str
+    repo_id: Optional[str] = None
+    project_key: Optional[str] = None
     docs_json: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -175,3 +200,34 @@ class AgentReportCardRecord:
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
+
+@dataclass
+class RepoScopeGrantRecord:
+    grant_id: str
+    authoritative_session_key: str
+    repo_root: str
+    repo_id: str
+    reason: str
+    expires_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass
+class CaseRegistryRecord:
+    case_id: str
+    case_type: str
+    project_name: str
+    repo_root: str
+    repo_id: str
+    project_key: str
+    doc_type: str
+    doc_name: str
+    doc_path: str
+    title: Optional[str] = None
+    status: Optional[str] = None
+    severity: Optional[str] = None
+    source_tool: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None

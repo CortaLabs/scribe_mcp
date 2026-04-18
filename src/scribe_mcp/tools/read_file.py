@@ -1809,13 +1809,26 @@ async def read_file(
     """Read a repository file using scan, page, chunk, line-range, or search modes."""
     exec_context = server_module.get_execution_context()
     if exec_context is None:
-        return {"ok": False, "error": "ExecutionContext missing"}
+        return {
+            "ok": False,
+            "error": "authority_error",
+            "reason_code": "execution_context_missing",
+            "message": "Execution context missing; invoke set_project for this session first.",
+        }
 
     # Validate include_impact requires include_dependencies
     if include_impact and not include_dependencies:
         return {"ok": False, "error": "include_impact=True requires include_dependencies=True"}
 
-    repo_root = Path(exec_context.repo_root).resolve()
+    repo_root_value = getattr(exec_context, "repo_root", None)
+    if not repo_root_value:
+        return {
+            "ok": False,
+            "error": "authority_error",
+            "reason_code": "repo_root_unresolved_no_verified_project_binding",
+            "message": "Repository authority is unresolved for this session.",
+        }
+    repo_root = Path(repo_root_value).resolve()
     requested_mode = mode.lower()
     target = Path(path).expanduser()
 

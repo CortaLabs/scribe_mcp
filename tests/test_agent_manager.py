@@ -9,7 +9,13 @@ import pytest
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.state.manager import StateManager
-from scribe_mcp.state.agent_manager import AgentContextManager, SessionLeaseExpired
+from scribe_mcp.state.agent_manager import (
+    AgentContextManager,
+    SessionLeaseExpired,
+    STALE_SESSION_REASON_EXPIRED,
+    STALE_SESSION_REASON_MISMATCH,
+    STALE_SESSION_REASON_NO_ACTIVE,
+)
 from scribe_mcp.state import agent_manager as agent_manager_module
 
 
@@ -344,6 +350,40 @@ async def test_session_binding_keeps_agent_session_ids_isolated(tmp_path: Path) 
 
     with pytest.raises(SessionLeaseExpired, match="Session ID mismatch"):
         await manager.set_current_project("CoderAgent-api", "SharedProject", "sess-cli-001")
+
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_session_lease_error_taxonomy_exposes_typed_reasons(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    state_path = tmp_path / "state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
+
+    session_id = await manager.start_session("AgentX", session_id="sess-001")
+
+    with pytest.raises(SessionLeaseExpired, match="No active session") as no_active:
+        await manager._validate_session_lease("UnknownAgent", "sess-001")
+    assert no_active.value.reason == STALE_SESSION_REASON_NO_ACTIVE
+    assert no_active.value.agent_id == "UnknownAgent"
+
+    with pytest.raises(SessionLeaseExpired, match="Session ID mismatch") as mismatch:
+        await manager._validate_session_lease("AgentX", "wrong-session")
+    assert mismatch.value.reason == STALE_SESSION_REASON_MISMATCH
+    assert mismatch.value.agent_id == "AgentX"
+    assert mismatch.value.session_id == "wrong-session"
+
+    manager._session_leases["AgentX"] = (
+        session_id,
+        agent_manager_module.utcnow() - timedelta(seconds=1),
+    )
+    with pytest.raises(SessionLeaseExpired, match="Session lease expired") as expired:
+        await manager._validate_session_lease("AgentX", "sess-001")
+    assert expired.value.reason == STALE_SESSION_REASON_EXPIRED
+    assert expired.value.agent_id == "AgentX"
+    assert expired.value.session_id == "sess-001"
 
     await storage.close()
 

@@ -125,6 +125,118 @@ def _is_manage_docs_write_intent(action: str) -> bool:
     return action in {"create", "rehome_doc"} or action in _MUTATION_ACTIONS
 
 
+def _case_registry_method(storage_backend: Any) -> Optional[Callable[..., Any]]:
+    for method_name in (
+        "upsert_case_registry_record",
+        "upsert_case_registry",
+        "upsert_case_record",
+        "register_case",
+    ):
+        candidate = getattr(storage_backend, method_name, None)
+        if callable(candidate):
+            return candidate
+    return None
+
+
+async def _call_case_registry_method(method: Callable[..., Any], upsert_kwargs: Dict[str, Any]) -> None:
+    def _is_signature_mismatch(exc: TypeError) -> bool:
+        message = str(exc)
+        markers = (
+            "unexpected keyword argument",
+            "positional argument",
+            "required positional argument",
+            "keyword-only argument",
+            "multiple values for argument",
+            "takes",
+            "missing",
+        )
+        return any(marker in message for marker in markers)
+
+    attempts = (
+        ((), upsert_kwargs),
+        ((upsert_kwargs,), {}),
+        ((), {"payload": upsert_kwargs}),
+    )
+    last_error: Optional[Exception] = None
+    for args, kwargs in attempts:
+        try:
+            result = method(*args, **kwargs)
+            if inspect.isawaitable(result):
+                await result
+            return
+        except TypeError as exc:
+            if not _is_signature_mismatch(exc):
+                raise
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+
+
+def _resolve_mutated_doc_path(
+    *,
+    response: Dict[str, Any],
+    project: Dict[str, Any],
+    doc_name: Optional[str],
+    doc_category: str,
+) -> Optional[Path]:
+    response_path = response.get("path")
+    if isinstance(response_path, str) and response_path.strip():
+        return Path(response_path).resolve()
+
+    docs_mapping = project.get("docs", {}) or {}
+    for key in (doc_name, doc_category):
+        if not key:
+            continue
+        candidate = docs_mapping.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return Path(candidate).resolve()
+    return None
+
+
+async def _refresh_case_registry_for_mutation(
+    *,
+    storage_backend: Any,
+    project: Dict[str, Any],
+    response: Dict[str, Any],
+    doc_name: Optional[str],
+    doc_category: str,
+) -> Optional[str]:
+    if not storage_backend:
+        return None
+
+    register_method = _case_registry_method(storage_backend)
+    if register_method is None:
+        return None
+
+    target_path = _resolve_mutated_doc_path(
+        response=response,
+        project=project,
+        doc_name=doc_name,
+        doc_category=doc_category,
+    )
+    if target_path is None or not target_path.exists():
+        return None
+
+    extracted = utils_shared.extract_case_registry_metadata_from_report(
+        target_path,
+        project_root=Path(str(project.get("root", ""))),
+        project=project,
+    )
+    upsert_kwargs = utils_shared.build_case_registry_upsert_kwargs(
+        extracted=extracted,
+        overrides={"source_tool": "manage_docs.mutation"},
+    )
+    if upsert_kwargs is None:
+        return None
+
+    try:
+        await _call_case_registry_method(register_method, upsert_kwargs)
+    except Exception as exc:
+        return f"Case registry refresh failed after mutation: {exc}"
+    return None
+
+
 async def _resolve_manage_docs_actor_id(
     *,
     caller_agent: Optional[str],
@@ -1232,6 +1344,16 @@ async def handle_manage_docs_request(
             response = _attach_manage_docs_project_context(response, context=context)
             if response.get("ok") and action in {"create", "create_doc"}:
                 response = await _attach_create_section_inventory(response)
+            if response.get("ok") and not dry_run and action in _MUTATION_ACTIONS:
+                case_registry_warning = await _refresh_case_registry_for_mutation(
+                    storage_backend=backend,
+                    project=active_project,
+                    response=response,
+                    doc_name=doc_name,
+                    doc_category=doc_category,
+                )
+                if case_registry_warning:
+                    response.setdefault("warnings", []).append(case_registry_warning)
         if runtime_warnings and isinstance(response, dict) and response.get("ok") is not False:
             response.setdefault("warnings", []).extend(runtime_warnings)
         return response

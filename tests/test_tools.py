@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import shutil
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -82,6 +84,7 @@ def isolated_state(tmp_path, monkeypatch):
 def project_root(tmp_path):
     root = settings.project_root / "tmp_tests" / str(uuid.uuid4())
     root.mkdir(parents=True, exist_ok=True)
+    (root / ".git").mkdir(exist_ok=True)
     yield root
     if root.exists():
         shutil.rmtree(root)
@@ -109,6 +112,60 @@ def test_set_and_get_project_roundtrip(isolated_state, project_root):
     assert project["progress_log"] == str((docs_dir / "PROGRESS_LOG.md").resolve())
     assert project["docs"]["architecture"].endswith("ARCHITECTURE_GUIDE.md")
     assert active["recent_projects"][0] == "test-project"
+
+
+def test_set_project_handles_legacy_sqlite_project_schema(monkeypatch, tmp_path):
+    db_path = tmp_path / "legacy.db"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / ".git").mkdir(exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE scribe_projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            repo_root TEXT NOT NULL,
+            progress_log_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            docs_json TEXT
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO scribe_projects (name, repo_root, progress_log_path, docs_json)
+        VALUES (?, ?, ?, ?);
+        """,
+        ("legacy-project", str(repo_root), str(repo_root / "PROGRESS_LOG.md"), None),
+    )
+    conn.commit()
+    conn.close()
+
+    storage = SQLiteStorage(db_path)
+    run(storage.setup())
+    manager = StateManager(path=tmp_path / "state.json", storage_backend=storage)
+
+    monkeypatch.setattr(server, "storage_backend", storage, raising=False)
+    monkeypatch.setattr(server, "state_manager", manager, raising=False)
+
+    result = run(
+        set_project.set_project(
+            agent="test_agent",
+            name="legacy-project",
+            root=str(repo_root),
+            format="structured",
+        )
+    )
+    assert result["ok"] is True
+
+    fetched = run(storage.fetch_project("legacy-project", repo_root=str(repo_root)))
+    assert fetched is not None
+    assert fetched.name == "legacy-project"
+
+    run(storage.close())
 
 
 def test_append_and_read_recent(isolated_state, project_root):
@@ -319,6 +376,63 @@ def test_generate_doc_templates_renders_files(tmp_path, isolated_state):
         architecture = (target_dir / "ARCHITECTURE_GUIDE.md").read_text(encoding="utf-8")
         assert str(target_dir) in architecture
         assert str(settings_default_dir) not in architecture
+    finally:
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+
+
+def test_generate_doc_templates_with_base_dir_skips_explicit_project_rebind(monkeypatch, tmp_path, isolated_state):
+    project_name = "UnitTestDocsBypass"
+    docs_root = tmp_path / "render-root" / "docs" / "dev_plans"
+    target_dir = docs_root / slugify_project_name(project_name)
+    active_project = "integrate_bug_management_system_20260417"
+
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return SimpleNamespace(recent_projects=[active_project], current_project=active_project)
+
+    async def _get_session_project(session_id: str):
+        if session_id == "session-security":
+            return active_project
+        return None
+
+    async def _fetch_project(name: str):
+        if name == active_project:
+            return SimpleNamespace(
+                name=active_project,
+                repo_root=str(tmp_path / "bound-root"),
+                progress_log_path=str(tmp_path / "bound-root" / "PROGRESS_LOG.md"),
+                docs_json=None,
+            )
+        return None
+
+    fake_server = SimpleNamespace(
+        state_manager=SimpleNamespace(record_tool=_record_tool, load=_load_state),
+        storage_backend=SimpleNamespace(get_session_project=_get_session_project, fetch_project=_fetch_project),
+        get_execution_context=lambda: SimpleNamespace(
+            mode="project",
+            stable_session_id="session-security",
+            session_id="session-security",
+        ),
+        get_agent_identity=lambda: None,
+    )
+
+    monkeypatch.setattr(generate_doc_templates, "server_module", fake_server)
+    monkeypatch.setattr(generate_doc_templates._GENERATE_DOC_TEMPLATES_HELPER, "server_module", fake_server)
+
+    try:
+        result = run(
+            generate_doc_templates.generate_doc_templates(
+                agent="test_agent",
+                project_name=project_name,
+                author="QA",
+                base_dir=str(docs_root),
+            )
+        )
+        assert result["ok"]
+        assert (target_dir / "ARCHITECTURE_GUIDE.md").exists()
     finally:
         if target_dir.exists():
             shutil.rmtree(target_dir)

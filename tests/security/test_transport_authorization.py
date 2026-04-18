@@ -46,6 +46,7 @@ def test_public_release_denied_operation_rejected_single(monkeypatch, client, mo
 
     assert response.status_code == 403
     assert response.json()["type"] == "ForbiddenOperation"
+    assert response.json()["type"] != "TransportClosed"
     mock_backend.delete_project.assert_not_awaited()
 
 
@@ -64,6 +65,7 @@ def test_public_release_mixed_batch_with_denied_operation_fails_closed(monkeypat
 
     assert response.status_code == 403
     assert response.json()["type"] == "ForbiddenOperation"
+    assert response.json()["type"] != "TransportClosed"
     mock_backend.list_projects.assert_not_awaited()
     mock_backend.delete_project.assert_not_awaited()
 

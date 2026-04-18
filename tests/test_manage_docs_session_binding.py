@@ -112,12 +112,35 @@ async def test_register_document_path_fails_closed_without_authoritative_session
     assert registry.calls == 0
 
 
-def test_resolve_authoritative_write_scope_prefers_context_session_id_over_stable() -> None:
-    context = SimpleNamespace(session_id="authoritative-session", stable_session_id="stale-session")
+def test_resolve_authoritative_write_scope_uses_context_authoritative_session_key() -> None:
+    context = SimpleNamespace(
+        session_id="context-session",
+        stable_session_id="stable-session",
+        authoritative_session_key="authoritative-session",
+    )
 
     scope = resolve_authoritative_write_scope(context=context, agent_session_id=None)
 
+    assert scope["authoritative_session_key"] == "authoritative-session"
     assert scope["authoritative_session_id"] == "authoritative-session"
+
+
+def test_resolve_authoritative_write_scope_rejects_transport_only_scope() -> None:
+    context = SimpleNamespace(
+        transport_session_id="transport-only-session",
+        resolved_scope=SimpleNamespace(
+            transport_session_id="transport-only-session",
+            stable_session_id=None,
+            agent_session_id=None,
+            authoritative_session_key=None,
+            resolution_source="runtime_context",
+        ),
+    )
+
+    scope = resolve_authoritative_write_scope(context=context, agent_session_id=None)
+
+    assert scope["authoritative_session_key"] is None
+    assert scope["authoritative_session_id"] is None
 
 
 @pytest.mark.asyncio

@@ -13,9 +13,26 @@ from scribe_mcp.state.manager import StateManager
 logger = logging.getLogger(__name__)
 
 
+STALE_SESSION_REASON_NO_ACTIVE = "no_active_session"
+STALE_SESSION_REASON_MISMATCH = "session_mismatch"
+STALE_SESSION_REASON_EXPIRED = "session_lease_expired"
+
+
 class SessionLeaseExpired(Exception):
-    """Raised when a session lease has expired."""
-    pass
+    """Raised when a session lease is stale for a typed reason."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        agent_id: str,
+        session_id: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.agent_id = agent_id
+        self.session_id = session_id
 
 
 class AgentContextManager:
@@ -321,14 +338,29 @@ class AgentContextManager:
         """
         async with self._lease_lock:
             if agent_id not in self._session_leases:
-                raise SessionLeaseExpired(f"No active session for agent {agent_id}")
+                raise SessionLeaseExpired(
+                    f"No active session for agent {agent_id}",
+                    reason=STALE_SESSION_REASON_NO_ACTIVE,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                )
 
             cached_session_id, expires_at = self._session_leases[agent_id]
             if cached_session_id != session_id:
-                raise SessionLeaseExpired(f"Session ID mismatch for agent {agent_id}")
+                raise SessionLeaseExpired(
+                    f"Session ID mismatch for agent {agent_id}",
+                    reason=STALE_SESSION_REASON_MISMATCH,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                )
 
             if expires_at < utcnow():
-                raise SessionLeaseExpired(f"Session lease expired for agent {agent_id}")
+                raise SessionLeaseExpired(
+                    f"Session lease expired for agent {agent_id}",
+                    reason=STALE_SESSION_REASON_EXPIRED,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                )
 
     async def _mirror_session_to_json_state(self, agent_id: str, session_id: str, metadata: Optional[Dict[str, Any]]) -> None:
         """

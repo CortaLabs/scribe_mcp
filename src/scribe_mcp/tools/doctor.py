@@ -15,6 +15,10 @@ from scribe_mcp.config.mode_detection import resolve_configured_mode
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.plugins.registry import get_plugin_registry
 from scribe_mcp.shared.project_registry import get_runtime_project_registry
+from scribe_mcp.shared.tool_runtime import (
+    repo_root_grant_diagnostics,
+    resolve_context_authoritative_session_key,
+)
 
 
 def _list_loaded_plugins() -> list[str]:
@@ -47,6 +51,139 @@ def _backend_name(value: Any) -> str | None:
     if value is None:
         return None
     return type(value).__name__
+
+
+async def _active_project_authority_snapshot(
+    *,
+    storage_backend: Any,
+    runtime_exec_context: Any,
+) -> Dict[str, Any]:
+    authoritative_session_key = resolve_context_authoritative_session_key(runtime_exec_context)
+    resolved_scope = getattr(runtime_exec_context, "resolved_scope", None) if runtime_exec_context else None
+    resolved_repo_root = getattr(resolved_scope, "repo_root", None)
+    resolved_project_name = getattr(resolved_scope, "project_name", None)
+    resolution_source = getattr(resolved_scope, "resolution_source", None)
+    provenance = getattr(resolved_scope, "provenance", None)
+    repo_root_provenance = getattr(provenance, "repo_root", None) if provenance else None
+    project_name_provenance = getattr(provenance, "project_name", None) if provenance else None
+
+    bound_project_name = None
+    if (
+        authoritative_session_key
+        and storage_backend is not None
+        and hasattr(storage_backend, "get_session_project")
+    ):
+        try:
+            bound_project_name = await storage_backend.get_session_project(str(authoritative_session_key))
+        except Exception:
+            bound_project_name = None
+    project_name = bound_project_name or resolved_project_name
+
+    project_record = None
+    if (
+        project_name
+        and storage_backend is not None
+        and hasattr(storage_backend, "fetch_project")
+    ):
+        try:
+            project_record = await storage_backend.fetch_project(
+                str(project_name),
+                repo_root=str(resolved_repo_root) if resolved_repo_root else None,
+            )
+        except TypeError:
+            project_record = await storage_backend.fetch_project(str(project_name))
+        except Exception:
+            project_record = None
+
+    authority_source = str(resolution_source or "runtime_context")
+    compatibility_bound = authority_source.startswith("compat_")
+    if not compatibility_bound and isinstance(repo_root_provenance, str):
+        compatibility_bound = repo_root_provenance in {"claimed", "inferred", "anonymous"}
+    if compatibility_bound:
+        authority_state = "compatibility_bound"
+    elif str(repo_root_provenance or "").lower() == "verified":
+        authority_state = "verified"
+    else:
+        authority_state = "granted"
+
+    return {
+        "authority_state": authority_state,
+        "authority_source": authority_source,
+        "authoritative_session_key": authoritative_session_key,
+        "repo_root": str(resolved_repo_root) if resolved_repo_root else None,
+        "project_name": str(project_name) if project_name else None,
+        "project_key": getattr(project_record, "project_key", None) if project_record else None,
+        "repo_id": getattr(project_record, "repo_id", None) if project_record else None,
+        "provenance": {
+            "repo_root": repo_root_provenance,
+            "project_name": project_name_provenance,
+        },
+        "compatibility_usage": {
+            "active_session_compatibility_bound": compatibility_bound,
+            "remaining_legacy_skip_validation_compatibility_usage": 1 if compatibility_bound else 0,
+            "denied_fallback_attempts": [],
+        },
+    }
+
+
+async def _case_telemetry_snapshot(*, storage_backend: Any, runtime_exec_context: Any) -> Dict[str, Any]:
+    if storage_backend is None or not hasattr(storage_backend, "query_case_registry_records"):
+        return {
+            "registry_surface_available": False,
+            "list_surface_activity": {"query_attempted": False, "records_scanned": 0},
+        }
+
+    resolved_scope = getattr(runtime_exec_context, "resolved_scope", None) if runtime_exec_context else None
+    repo_root = getattr(resolved_scope, "repo_root", None)
+    project_name = getattr(resolved_scope, "project_name", None)
+    normalized_status_counts: Dict[str, int] = {}
+    ownership_snapshots: list[Dict[str, Any]] = []
+    case_type_counts: Dict[str, int] = {}
+    records_scanned = 0
+    try:
+        records = await storage_backend.query_case_registry_records(
+            repo_root=str(repo_root) if repo_root else None,
+            project_name=str(project_name) if project_name else None,
+            limit=200,
+            offset=0,
+        )
+    except Exception:
+        records = []
+
+    for record in records:
+        records_scanned += 1
+        status_value = str(getattr(record, "status", "") or "").strip().lower() or "open"
+        normalized_status_counts[status_value] = normalized_status_counts.get(status_value, 0) + 1
+        case_type = str(getattr(record, "case_type", "") or "").strip().lower() or "unknown"
+        case_type_counts[case_type] = case_type_counts.get(case_type, 0) + 1
+        if len(ownership_snapshots) < 3:
+            ownership_snapshots.append(
+                {
+                    "case_id": getattr(record, "case_id", None),
+                    "case_type": case_type,
+                    "normalized_status": status_value,
+                    "ownership": {
+                        "project_name": getattr(record, "project_name", None),
+                        "repo_id": getattr(record, "repo_id", None),
+                        "project_key": getattr(record, "project_key", None),
+                        "source_tool": getattr(record, "source_tool", None),
+                    },
+                }
+            )
+
+    return {
+        "registry_surface_available": True,
+        "list_surface_activity": {
+            "query_attempted": True,
+            "records_scanned": records_scanned,
+        },
+        "counts": {
+            "total_cases": records_scanned,
+            "by_case_type": case_type_counts,
+            "by_normalized_status": normalized_status_counts,
+        },
+        "ownership_snapshots": ownership_snapshots,
+    }
 
 
 def _storage_diagnostics() -> dict[str, Any]:
@@ -109,6 +246,15 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
     except Exception:
         runtime_exec_context = None
     storage_diagnostics = _storage_diagnostics()
+    grant_diagnostics = repo_root_grant_diagnostics(storage_backend=runtime_storage_backend)
+    authority_snapshot = await _active_project_authority_snapshot(
+        storage_backend=runtime_storage_backend,
+        runtime_exec_context=runtime_exec_context,
+    )
+    case_snapshot = await _case_telemetry_snapshot(
+        storage_backend=runtime_storage_backend,
+        runtime_exec_context=runtime_exec_context,
+    )
     planning_registry = get_runtime_project_registry()
     planning_registry_context: Dict[str, Any] = {}
     try:
@@ -174,7 +320,18 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
                 "session_id": getattr(runtime_exec_context, "session_id", None),
                 "stable_session_id": getattr(runtime_exec_context, "stable_session_id", None),
                 "transport_session_id": getattr(runtime_exec_context, "transport_session_id", None),
+                "authoritative_session_key": resolve_context_authoritative_session_key(
+                    runtime_exec_context
+                ),
             } if runtime_exec_context else None,
+            "repo_authority": {
+                "authoritative_session_key": resolve_context_authoritative_session_key(
+                    runtime_exec_context
+                ) if runtime_exec_context else None,
+                **grant_diagnostics,
+                **authority_snapshot,
+            },
+            "case_telemetry": case_snapshot,
             "storage_diagnostics": storage_diagnostics,
             "planning_registry": {
                 "available": bool(getattr(planning_registry, "available", False)),

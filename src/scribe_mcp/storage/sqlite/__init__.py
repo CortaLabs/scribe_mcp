@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp.storage.base import StorageBackend
-from scribe_mcp.storage.models import ProjectRecord
+from scribe_mcp.storage.models import CaseRegistryRecord, ProjectRecord, RepoScopeGrantRecord
 
 from .domain_facade import SQLiteDomainFacadeMixin
 from .internals import SQLiteInternals
 from . import compat_migrations
+from . import cases as case_ops
 from . import documents as document_ops
 from . import entries as entry_ops
 from . import projects as project_ops
@@ -82,11 +83,20 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
             bridge_managed=bridge_managed,
         )
 
-    async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+    async def fetch_project(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[ProjectRecord]:
         return await project_ops.fetch_project(
             initialise_fn=self._initialise,
+            execute_fn=self._execute,
             fetchone_fn=self._fetchone,
             name=name,
+            repo_root=repo_root,
+            project_key=project_key,
         )
 
     def fetch_project_sync(self, name: str) -> Optional[ProjectRecord]:
@@ -122,6 +132,104 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
             execute_fn=self._execute,
             name=name,
             docs_json=docs_json,
+        )
+
+    async def create_repo_scope_grant(
+        self,
+        *,
+        authoritative_session_key: str,
+        repo_root: str,
+        reason: str,
+        ttl_minutes: int = 30,
+    ) -> RepoScopeGrantRecord:
+        return await project_ops.create_repo_scope_grant(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            execute_fn=self._execute,
+            fetchone_fn=self._fetchone,
+            authoritative_session_key=authoritative_session_key,
+            repo_root=repo_root,
+            reason=reason,
+            ttl_minutes=ttl_minutes,
+        )
+
+    async def fetch_repo_scope_grant(self, grant_id: str) -> Optional[RepoScopeGrantRecord]:
+        return await project_ops.fetch_repo_scope_grant(
+            initialise_fn=self._initialise,
+            execute_fn=self._execute,
+            fetchone_fn=self._fetchone,
+            grant_id=grant_id,
+        )
+
+    async def upsert_case_registry_record(
+        self,
+        *,
+        case_id: str,
+        case_type: str,
+        project_name: str,
+        repo_root: str,
+        doc_type: str,
+        doc_name: str,
+        doc_path: str,
+        title: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        source_tool: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CaseRegistryRecord:
+        return await case_ops.upsert_case_registry_record(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            execute_fn=self._execute,
+            fetchone_fn=self._fetchone,
+            case_id=case_id,
+            case_type=case_type,
+            project_name=project_name,
+            repo_root=repo_root,
+            doc_type=doc_type,
+            doc_name=doc_name,
+            doc_path=doc_path,
+            title=title,
+            status=status,
+            severity=severity,
+            source_tool=source_tool,
+            metadata=metadata,
+        )
+
+    async def fetch_case_registry_record(
+        self,
+        case_id: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[CaseRegistryRecord]:
+        return await case_ops.fetch_case_registry_record(
+            initialise_fn=self._initialise,
+            execute_fn=self._execute,
+            fetchone_fn=self._fetchone,
+            case_id=case_id,
+            repo_root=repo_root,
+            project_name=project_name,
+        )
+
+    async def query_case_registry_records(
+        self,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+        case_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[CaseRegistryRecord]:
+        return await case_ops.query_case_registry_records(
+            initialise_fn=self._initialise,
+            execute_fn=self._execute,
+            fetchall_fn=self._fetchall,
+            repo_root=repo_root,
+            project_name=project_name,
+            case_type=case_type,
+            limit=limit,
+            offset=offset,
         )
 
     async def insert_entry(
@@ -325,6 +433,7 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
                 db_path=self._path,
                 logger=logger,
             )
+            await case_ops.ensure_case_registry_schema(execute_fn=self._execute)
 
             self._initialised = True
 

@@ -173,22 +173,22 @@ def resolve_authoritative_write_scope(
     """Resolve authoritative write-path session inputs from request-local scope."""
     resolved_scope: Optional[ResolvedScope] = getattr(context, "resolved_scope", None) if context else None
 
-    authoritative_session_id: Optional[str] = None
-    for candidate in (
-        # Prefer the authoritative session_id used by set_project writes.
-        getattr(resolved_scope, "stable_session_id", None),
+    authoritative_candidates = (
+        getattr(resolved_scope, "authoritative_session_key", None),
+        getattr(context, "authoritative_session_key", None),
         getattr(context, "session_id", None) if context else None,
-        getattr(context, "stable_session_id", None) if context else None,
         getattr(resolved_scope, "agent_session_id", None),
         agent_session_id,
-        getattr(resolved_scope, "transport_session_id", None),
-    ):
-        if candidate:
-            authoritative_session_id = str(candidate)
+    )
+    authoritative_session_id = None
+    for candidate in authoritative_candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            authoritative_session_id = candidate.strip()
             break
 
     return {
         "resolved_scope": resolved_scope,
+        "authoritative_session_key": authoritative_session_id,
         "authoritative_session_id": authoritative_session_id,
         "scope_resolution_source": getattr(resolved_scope, "resolution_source", None)
         or ("execution_context" if context else "none"),

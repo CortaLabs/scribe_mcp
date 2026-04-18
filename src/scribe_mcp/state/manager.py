@@ -252,7 +252,10 @@ class StateManager:
             if resolved_name:
                 resolved_payload.setdefault("name", resolved_name)
                 if not skip_upsert:
-                    await self._upsert_project(resolved_name, resolved_payload)
+                    resolved_payload = await self._upsert_project(resolved_name, resolved_payload)
+                else:
+                    self._projects_cache[resolved_name] = dict(resolved_payload)
+                    self._projects_cache_at = time.monotonic()
 
                 if resolved_session_id and hasattr(self._storage_backend, "set_session_project"):
                     await self._storage_backend.set_session_project(resolved_session_id, resolved_name)
@@ -297,7 +300,21 @@ class StateManager:
             await self._ensure_backend_ready()
             await self._run_legacy_migration_once()
 
-            current = await self._fetch_project(name) or {"name": name}
+            lookup_repo_root = updates.get("root") or updates.get("repo_root")
+            lookup_project_key = updates.get("project_key")
+
+            if not lookup_repo_root or not lookup_project_key:
+                session_id = self._resolve_session_id_from_context()
+                session_payload = self._session_projects_cache.get(session_id or "")
+                if self._resolve_project_name(session_payload) == name:
+                    lookup_repo_root = lookup_repo_root or session_payload.get("root")
+                    lookup_project_key = lookup_project_key or session_payload.get("project_key")
+
+            current = await self._fetch_project(
+                name,
+                repo_root=str(lookup_repo_root) if lookup_repo_root else None,
+                project_key=str(lookup_project_key) if lookup_project_key else None,
+            ) or {"name": name}
             current.update(updates)
             await self._upsert_project(name, current)
             return await self._load_locked()
@@ -460,6 +477,22 @@ class StateManager:
                 current_project = project_name
                 session_projects[session_id] = dict(cached)
 
+        if not current_project and not session_id and hasattr(self._storage_backend, "get_agent_project"):
+            try:
+                global_project = await self._storage_backend.get_agent_project(_GLOBAL_AGENT_ID)
+            except Exception:
+                global_project = None
+
+            project_name = None
+            if isinstance(global_project, dict):
+                global_session_id = global_project.get("session_id")
+                if global_session_id in {None, "", "__global__"}:
+                    project_name = self._resolve_project_name(
+                        {"name": global_project.get("project_name")}
+                    )
+            if project_name:
+                current_project = project_name
+
         return current_project, session_projects
 
     async def _resolve_session_modes(self, session_id: Optional[str]) -> Dict[str, str]:
@@ -528,9 +561,9 @@ class StateManager:
         except Exception as exc:
             logger.warning("Failed to set global project '%s': %s", project_name, exc)
 
-    async def _upsert_project(self, project_name: str, payload: Dict[str, Any]) -> None:
+    async def _upsert_project(self, project_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not project_name or not hasattr(self._storage_backend, "upsert_project"):
-            return
+            return dict(payload)
 
         name = str(project_name)
         root_value = payload.get("root") or payload.get("repo_root")
@@ -555,22 +588,34 @@ class StateManager:
         if isinstance(docs, dict):
             docs_json = json.dumps(docs)
 
-        await self._storage_backend.upsert_project(
+        record = await self._storage_backend.upsert_project(
             name=name,
             repo_root=repo_root,
             progress_log_path=progress_log,
             docs_json=docs_json,
         )
+        record_payload = self._record_to_project_dict(record)
         cache_payload = dict(payload)
         cache_payload["name"] = name
-        cache_payload["root"] = repo_root
-        cache_payload["progress_log"] = progress_log
+        cache_payload["root"] = record_payload.get("root", repo_root)
+        cache_payload["progress_log"] = record_payload.get("progress_log", progress_log)
+        if record_payload.get("repo_id"):
+            cache_payload["repo_id"] = record_payload["repo_id"]
+        if record_payload.get("project_key"):
+            cache_payload["project_key"] = record_payload["project_key"]
         if "docs_dir" not in cache_payload:
             cache_payload["docs_dir"] = str(Path(progress_log).expanduser().resolve().parent)
         self._projects_cache[name] = cache_payload
         self._projects_cache_at = time.monotonic()
+        return cache_payload
 
-    async def _fetch_project(self, project_name: str) -> Optional[Dict[str, Any]]:
+    async def _fetch_project(
+        self,
+        project_name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not project_name:
             return None
 
@@ -578,7 +623,11 @@ class StateManager:
             return None
 
         try:
-            record = await self._storage_backend.fetch_project(project_name)
+            record = await self._storage_backend.fetch_project(
+                project_name,
+                repo_root=repo_root,
+                project_key=project_key,
+            )
         except Exception:
             record = None
 
@@ -591,6 +640,8 @@ class StateManager:
         payload: Dict[str, Any] = {
             "name": getattr(record, "name", None),
             "root": getattr(record, "repo_root", None),
+            "repo_id": getattr(record, "repo_id", None),
+            "project_key": getattr(record, "project_key", None),
             "progress_log": progress_log_path,
         }
         if progress_log_path:

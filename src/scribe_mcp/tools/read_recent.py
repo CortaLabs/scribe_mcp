@@ -268,6 +268,15 @@ async def read_recent(
     if isinstance(project, str):
         project = project.strip() or None
 
+    effective_recovery_mode = None
+    if not project and not exec_context:
+        try:
+            state = await server_module.state_manager.load()
+        except Exception:
+            state = None
+        if state and getattr(state, "current_project", None):
+            effective_recovery_mode = "compat_active_project"
+
     try:
         context = await _READ_RECENT_HELPER.prepare_context(
             tool_name="read_recent",
@@ -275,6 +284,7 @@ async def read_recent(
             explicit_project=project,
             require_project=True,
             state_snapshot=state_snapshot,
+            recovery_mode=effective_recovery_mode,
         )
     except ProjectResolutionError as exc:
         base_response = _READ_RECENT_HELPER.translate_project_error(exc)

@@ -19,6 +19,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.applications import Starlette
+from starlette.routing import Route
+
+from scribe_mcp.state.agent_manager import SessionLeaseExpired
 
 # Ensure the src directory is on the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -311,6 +315,79 @@ class TestTransportAuthBoundary:
         assert rest_response.json()["type"] == "Unauthorized"
         assert message_response.json()["type"] == "Unauthorized"
         assert health_response.status_code == 200
+
+
+class TestTransportFailureTaxonomy:
+    def test_backend_operation_maps_stale_session_to_typed_response(self):
+        import scribe_mcp.server_sse as sse_mod
+        import scribe_mcp.server as server_mod
+
+        backend = MagicMock()
+        backend.set_agent_project = AsyncMock(
+            side_effect=SessionLeaseExpired(
+                "Session ID mismatch for agent AgentA",
+                reason="session_mismatch",
+                agent_id="AgentA",
+                session_id="sess-123",
+            )
+        )
+
+        app = Starlette(
+            routes=[Route("/api/v1/backend/{operation}", sse_mod.handle_backend_operation, methods=["POST"])]
+        )
+
+        original_backend = server_mod.storage_backend
+        try:
+            server_mod.storage_backend = backend
+            with patch(
+                "scribe_mcp.server.begin_transport_operation",
+                new=AsyncMock(return_value="running"),
+            ), patch(
+                "scribe_mcp.server.end_transport_operation",
+                new=AsyncMock(),
+            ):
+                with TestClient(app, raise_server_exceptions=False) as client:
+                    response = client.post("/api/v1/backend/set_agent_project", json={})
+        finally:
+            server_mod.storage_backend = original_backend
+
+        assert response.status_code == 409
+        body = response.json()
+        assert body["type"] == "StaleSession"
+        assert body["stale_session_reason"] == "session_mismatch"
+        assert body["agent_id"] == "AgentA"
+        assert body["session_id"] == "sess-123"
+
+    def test_shutdown_phase_reports_draining_before_transport_closed(self):
+        import scribe_mcp.server_sse as sse_mod
+        import scribe_mcp.server as server_mod
+
+        app = Starlette(
+            routes=[Route("/api/v1/backend/{operation}", sse_mod.handle_backend_operation, methods=["POST"])]
+        )
+
+        original_backend = server_mod.storage_backend
+        try:
+            server_mod.storage_backend = MagicMock()
+            with patch(
+                "scribe_mcp.server.begin_transport_operation",
+                new=AsyncMock(return_value="draining"),
+            ):
+                with TestClient(app, raise_server_exceptions=False) as client:
+                    draining = client.post("/api/v1/backend/list_projects", json={})
+            with patch(
+                "scribe_mcp.server.begin_transport_operation",
+                new=AsyncMock(return_value="backend_close"),
+            ):
+                with TestClient(app, raise_server_exceptions=False) as client:
+                    closed = client.post("/api/v1/backend/list_projects", json={})
+        finally:
+            server_mod.storage_backend = original_backend
+
+        assert draining.status_code == 503
+        assert draining.json()["type"] == "TransportDraining"
+        assert closed.status_code == 503
+        assert closed.json()["type"] == "TransportClosed"
 
 
 class TestCLIArgumentParsing:

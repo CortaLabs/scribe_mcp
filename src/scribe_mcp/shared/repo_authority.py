@@ -140,7 +140,11 @@ def _normalize_explicit_root(
     mapped_root, original_client_root = map_client_root(str(candidate), user=scribe_user)
     mapped_path = Path(mapped_root).expanduser().resolve()
     discovered_root = RepoDiscovery.find_repo_root(mapped_path)
-    if discovered_root is None or not discovered_root.exists():
+    if (
+        discovered_root is None
+        or not discovered_root.exists()
+        or discovered_root.resolve() != mapped_path
+    ):
         raise RepoAuthorityResolutionError(
             "Explicit root must resolve to a local repository root before authorization.",
             payload={

@@ -17,10 +17,15 @@ import asyncpg
 from scribe_mcp.storage.base import ConflictError, StorageBackend
 from scribe_mcp.storage.models import (
     BenchmarkRecord,
+    CaseRegistryRecord,
     DevPlanRecord,
     PerformanceMetricsRecord,
     PhaseRecord,
     ProjectRecord,
+    RepoScopeGrantRecord,
+    compute_project_key,
+    compute_repo_id,
+    normalize_repo_root,
 )
 from scribe_mcp.utils.search import message_matches
 from scribe_mcp.utils.slug import normalize_project_input
@@ -33,13 +38,6 @@ from . import migrations as pg_migrations
 SLOW_QUERY_THRESHOLD_MS = 25.0
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _normalize_repo_root(repo_root: str) -> str:
-    try:
-        return str(Path(repo_root).expanduser().resolve())
-    except Exception:
-        return str(Path(repo_root).expanduser())
 
 
 def _to_iso(value: Any) -> Any:
@@ -177,24 +175,31 @@ class PostgresStorage(StorageBackend):
         bridge_id: Optional[str] = None,
         bridge_managed: bool = False,
     ) -> ProjectRecord:
-        normalized_root = _normalize_repo_root(repo_root)
+        await self._ensure_repo_scoped_project_identity()
+        normalized_root = normalize_repo_root(repo_root)
+        repo_id = compute_repo_id(normalized_root)
+        project_key = compute_project_key(repo_root=normalized_root, project_name=name)
         row = await self._fetchrow(
             """
             INSERT INTO scribe_projects
-                (name, repo_root, progress_log_path, docs_json, bridge_id, bridge_managed, updated_at)
+                (name, repo_root, repo_id, project_key, progress_log_path, docs_json, bridge_id, bridge_managed, updated_at)
             VALUES
-                ($1, $2, $3, $4, $5, $6, NOW())
-            ON CONFLICT(name) DO UPDATE SET
+                ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT(project_key) DO UPDATE SET
+                name = EXCLUDED.name,
                 repo_root = EXCLUDED.repo_root,
+                repo_id = EXCLUDED.repo_id,
                 progress_log_path = EXCLUDED.progress_log_path,
                 docs_json = EXCLUDED.docs_json,
                 bridge_id = EXCLUDED.bridge_id,
                 bridge_managed = EXCLUDED.bridge_managed,
                 updated_at = NOW()
-            RETURNING id, name, repo_root, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed;
+            RETURNING id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed;
             """,
             name,
             normalized_root,
+            repo_id,
+            project_key,
             progress_log_path,
             docs_json,
             bridge_id,
@@ -203,8 +208,15 @@ class PostgresStorage(StorageBackend):
         assert row is not None
         return self._project_from_row(row)
 
-    async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
-        row = await self._fetch_project_row(name)
+    async def fetch_project(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[ProjectRecord]:
+        await self._ensure_repo_scoped_project_identity()
+        row = await self._fetch_project_row(name, repo_root=repo_root, project_key=project_key)
         if not row:
             return None
         return self._project_from_row(row)
@@ -228,7 +240,7 @@ class PostgresStorage(StorageBackend):
     async def list_projects(self) -> List[ProjectRecord]:
         rows = await self._fetch(
             """
-            SELECT id, name, repo_root, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+            SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
             FROM scribe_projects
             ORDER BY name;
             """
@@ -236,10 +248,10 @@ class PostgresStorage(StorageBackend):
         return [self._project_from_row(row) for row in rows]
 
     async def list_projects_by_repo(self, repo_root: str) -> List[ProjectRecord]:
-        normalized_root = _normalize_repo_root(repo_root)
+        normalized_root = normalize_repo_root(repo_root)
         rows = await self._fetch(
             """
-            SELECT id, name, repo_root, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+            SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
             FROM scribe_projects
             WHERE repo_root = $1
             ORDER BY name;
@@ -264,6 +276,202 @@ class PostgresStorage(StorageBackend):
             name,
         )
         return _command_count(tag) > 0
+
+    async def create_repo_scope_grant(
+        self,
+        *,
+        authoritative_session_key: str,
+        repo_root: str,
+        reason: str,
+        ttl_minutes: int = 30,
+    ) -> RepoScopeGrantRecord:
+        await self._ensure_repo_scope_grants_schema()
+        grant_id = uuid.uuid4().hex
+        normalized_root = normalize_repo_root(repo_root)
+        repo_id = compute_repo_id(normalized_root)
+        row = await self._fetchrow(
+            """
+            INSERT INTO repo_scope_grants
+                (grant_id, authoritative_session_key, repo_root, repo_id, reason, expires_at, created_at, updated_at)
+            VALUES
+                ($1, $2, $3, $4, $5, NOW() + ($6::INT * INTERVAL '1 minute'), NOW(), NOW())
+            RETURNING grant_id, authoritative_session_key, repo_root, repo_id, reason, expires_at, created_at, updated_at;
+            """,
+            grant_id,
+            authoritative_session_key,
+            normalized_root,
+            repo_id,
+            reason,
+            ttl_minutes,
+        )
+        assert row is not None
+        return RepoScopeGrantRecord(
+            grant_id=str(row["grant_id"]),
+            authoritative_session_key=str(row["authoritative_session_key"]),
+            repo_root=str(row["repo_root"]),
+            repo_id=str(row["repo_id"]),
+            reason=str(row["reason"]),
+            expires_at=row["expires_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    async def fetch_repo_scope_grant(self, grant_id: str) -> Optional[RepoScopeGrantRecord]:
+        await self._ensure_repo_scope_grants_schema()
+        row = await self._fetchrow(
+            """
+            SELECT grant_id, authoritative_session_key, repo_root, repo_id, reason, expires_at, created_at, updated_at
+            FROM repo_scope_grants
+            WHERE grant_id = $1
+              AND expires_at > NOW();
+            """,
+            grant_id,
+        )
+        if not row:
+            return None
+        return RepoScopeGrantRecord(
+            grant_id=str(row["grant_id"]),
+            authoritative_session_key=str(row["authoritative_session_key"]),
+            repo_root=str(row["repo_root"]),
+            repo_id=str(row["repo_id"]),
+            reason=str(row["reason"]),
+            expires_at=row["expires_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    async def upsert_case_registry_record(
+        self,
+        *,
+        case_id: str,
+        case_type: str,
+        project_name: str,
+        repo_root: str,
+        doc_type: str,
+        doc_name: str,
+        doc_path: str,
+        title: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        source_tool: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CaseRegistryRecord:
+        await self._ensure_case_registry_schema()
+        normalized_root = normalize_repo_root(repo_root)
+        repo_id = compute_repo_id(normalized_root)
+        project_key = compute_project_key(repo_root=normalized_root, project_name=project_name)
+        row = await self._fetchrow(
+            """
+            INSERT INTO case_registry (
+                case_id, case_type, project_name, repo_root, repo_id, project_key,
+                doc_type, doc_name, doc_path, title, status, severity, source_tool, metadata, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, NOW())
+            ON CONFLICT(case_id) DO UPDATE SET
+                case_type = EXCLUDED.case_type,
+                project_name = EXCLUDED.project_name,
+                repo_root = EXCLUDED.repo_root,
+                repo_id = EXCLUDED.repo_id,
+                project_key = EXCLUDED.project_key,
+                doc_type = EXCLUDED.doc_type,
+                doc_name = EXCLUDED.doc_name,
+                doc_path = EXCLUDED.doc_path,
+                title = EXCLUDED.title,
+                status = EXCLUDED.status,
+                severity = EXCLUDED.severity,
+                source_tool = EXCLUDED.source_tool,
+                metadata = EXCLUDED.metadata,
+                updated_at = NOW()
+            RETURNING case_id, case_type, project_name, repo_root, repo_id, project_key,
+                      doc_type, doc_name, doc_path, title, status, severity, source_tool,
+                      metadata, created_at, updated_at;
+            """,
+            case_id,
+            case_type,
+            project_name,
+            normalized_root,
+            repo_id,
+            project_key,
+            doc_type,
+            doc_name,
+            doc_path,
+            title,
+            status,
+            severity,
+            source_tool,
+            json.dumps(metadata or {}, sort_keys=True),
+        )
+        assert row is not None
+        return self._case_registry_from_row(row)
+
+    async def fetch_case_registry_record(
+        self,
+        case_id: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[CaseRegistryRecord]:
+        await self._ensure_case_registry_schema()
+        clauses = ["case_id = $1"]
+        params: List[Any] = [case_id]
+        if repo_root:
+            params.append(normalize_repo_root(repo_root))
+            clauses.append(f"repo_root = ${len(params)}")
+        if project_name:
+            params.append(project_name)
+            clauses.append(f"project_name = ${len(params)}")
+
+        row = await self._fetchrow(
+            f"""
+            SELECT case_id, case_type, project_name, repo_root, repo_id, project_key,
+                   doc_type, doc_name, doc_path, title, status, severity, source_tool,
+                   metadata, created_at, updated_at
+            FROM case_registry
+            WHERE {' AND '.join(clauses)}
+            LIMIT 1;
+            """,
+            *params,
+        )
+        if not row:
+            return None
+        return self._case_registry_from_row(row)
+
+    async def query_case_registry_records(
+        self,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+        case_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[CaseRegistryRecord]:
+        await self._ensure_case_registry_schema()
+        clauses = ["1=1"]
+        params: List[Any] = []
+        if repo_root:
+            params.append(normalize_repo_root(repo_root))
+            clauses.append(f"repo_root = ${len(params)}")
+        if project_name:
+            params.append(project_name)
+            clauses.append(f"project_name = ${len(params)}")
+        if case_type:
+            params.append(case_type)
+            clauses.append(f"case_type = ${len(params)}")
+        params.extend([limit, offset])
+
+        rows = await self._fetch(
+            f"""
+            SELECT case_id, case_type, project_name, repo_root, repo_id, project_key,
+                   doc_type, doc_name, doc_path, title, status, severity, source_tool,
+                   metadata, created_at, updated_at
+            FROM case_registry
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, case_id ASC
+            LIMIT ${len(params) - 1} OFFSET ${len(params)};
+            """,
+            *params,
+        )
+        return [self._case_registry_from_row(row) for row in rows]
 
     async def insert_entry(
         self,
@@ -1052,7 +1260,7 @@ class PostgresStorage(StorageBackend):
         mode: Optional[str] = None,
     ) -> None:
         mode_value = mode if mode in ("sentinel", "project") else "sentinel"
-        normalized_repo = _normalize_repo_root(repo_root) if repo_root else None
+        normalized_repo = normalize_repo_root(repo_root) if repo_root else None
         try:
             await self._execute(
                 """
@@ -1378,7 +1586,7 @@ class PostgresStorage(StorageBackend):
             identity_key,
             agent_name,
             agent_key,
-            _normalize_repo_root(repo_root),
+            normalize_repo_root(repo_root),
             mode,
             scope_key,
             expires_at,
@@ -1395,7 +1603,7 @@ class PostgresStorage(StorageBackend):
             LIMIT 1;
             """,
             agent_key,
-            _normalize_repo_root(repo_root),
+            normalize_repo_root(repo_root),
             mode,
             scope_key,
         )
@@ -1630,7 +1838,7 @@ class PostgresStorage(StorageBackend):
                 agent_id,
                 error_message,
                 response_size_bytes,
-                _normalize_repo_root(repo_root) if repo_root else None,
+                normalize_repo_root(repo_root) if repo_root else None,
             )
         except Exception as exc:
             LOGGER.error("Failed to record tool call: %s", exc)
@@ -1673,7 +1881,7 @@ class PostgresStorage(StorageBackend):
                     agent_id,
                     error_message,
                     response_size_bytes,
-                    _normalize_repo_root(repo_root) if repo_root else None,
+                    normalize_repo_root(repo_root) if repo_root else None,
                 )
             finally:
                 await conn.close()
@@ -2037,6 +2245,91 @@ class PostgresStorage(StorageBackend):
             schema_path=SCHEMA_PATH,
         )
 
+    async def _ensure_repo_scoped_project_identity(self) -> None:
+        await self._ensure_column("scribe_projects", "repo_id", "TEXT")
+        await self._ensure_column("scribe_projects", "project_key", "TEXT")
+        await self._execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_projects_project_key_unique ON scribe_projects(project_key);"
+        )
+        await self._execute(
+            "CREATE INDEX IF NOT EXISTS idx_scribe_projects_name_repo_id ON scribe_projects(name, repo_id);"
+        )
+
+    async def _backfill_repo_scoped_project_identity_for_row(
+        self,
+        *,
+        row_id: int,
+        name: str,
+        repo_root: str,
+    ) -> None:
+        normalized_root = normalize_repo_root(repo_root)
+        await self._execute(
+            """
+            UPDATE scribe_projects
+            SET repo_root = $1, repo_id = $2, project_key = $3, updated_at = NOW()
+            WHERE id = $4;
+            """,
+            normalized_root,
+            compute_repo_id(normalized_root),
+            compute_project_key(repo_root=normalized_root, project_name=name),
+            row_id,
+        )
+
+    async def _ensure_repo_scope_grants_schema(self) -> None:
+        await self._execute(
+            """
+            CREATE TABLE IF NOT EXISTS repo_scope_grants (
+                grant_id TEXT PRIMARY KEY,
+                authoritative_session_key TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                repo_id TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        await self._execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_repo_scope_grants_expires_at
+            ON repo_scope_grants(expires_at);
+            """
+        )
+
+    async def _ensure_case_registry_schema(self) -> None:
+        await self._execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_registry (
+                case_id TEXT PRIMARY KEY,
+                case_type TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                repo_id TEXT NOT NULL,
+                project_key TEXT NOT NULL,
+                doc_type TEXT NOT NULL,
+                doc_name TEXT NOT NULL,
+                doc_path TEXT NOT NULL,
+                title TEXT,
+                status TEXT,
+                severity TEXT,
+                source_tool TEXT,
+                metadata JSONB,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        await self._execute(
+            "CREATE INDEX IF NOT EXISTS idx_case_registry_repo_project ON case_registry(repo_id, project_name);"
+        )
+        await self._execute(
+            "CREATE INDEX IF NOT EXISTS idx_case_registry_case_type ON case_registry(case_type);"
+        )
+        await self._execute(
+            "CREATE INDEX IF NOT EXISTS idx_case_registry_project_key ON case_registry(project_key);"
+        )
+
     async def _execute(self, query: str, *params: Any) -> str:
         await self._ensure_schema()
         pool = await self._ensure_pool()
@@ -2061,42 +2354,129 @@ class PostgresStorage(StorageBackend):
         async with pool.acquire() as conn:
             return await conn.fetchval(query, *params)
 
-    async def _fetch_project_row(self, name: str) -> Optional[asyncpg.Record]:
+    async def _fetch_project_row(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[asyncpg.Record]:
+        await self._ensure_repo_scoped_project_identity()
+        if project_key:
+            return await self._fetchrow(
+                """
+                SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+                FROM scribe_projects
+                WHERE project_key = $1;
+                """,
+                project_key,
+            )
+        if repo_root:
+            scoped_key = compute_project_key(
+                repo_root=normalize_repo_root(repo_root),
+                project_name=name,
+            )
+            return await self._fetchrow(
+                """
+                SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+                FROM scribe_projects
+                WHERE project_key = $1;
+                """,
+                scoped_key,
+            )
+
+        count = await self._fetchval("SELECT COUNT(*) FROM scribe_projects WHERE name = $1;", name)
+        if int(count or 0) > 1:
+            return None
         row = await self._fetchrow(
             """
-            SELECT id, name, repo_root, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+            SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
             FROM scribe_projects
             WHERE name = $1;
             """,
             name,
         )
+        if row and (not row.get("repo_id") or not row.get("project_key")):
+            await self._backfill_repo_scoped_project_identity_for_row(
+                row_id=int(row["id"]),
+                name=str(row["name"]),
+                repo_root=str(row["repo_root"]),
+            )
+            row = await self._fetchrow(
+                """
+                SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+                FROM scribe_projects
+                WHERE id = $1;
+                """,
+                int(row["id"]),
+            )
         if row:
             return row
 
         canonical = normalize_project_input(name)
         if canonical and canonical != name:
-            row = await self._fetchrow(
-                """
-                SELECT id, name, repo_root, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
-                FROM scribe_projects
-                WHERE name = $1;
-                """,
+            canonical_count = await self._fetchval(
+                "SELECT COUNT(*) FROM scribe_projects WHERE name = $1;",
                 canonical,
             )
+            if int(canonical_count or 0) > 1:
+                return None
+                row = await self._fetchrow(
+                    """
+                    SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+                    FROM scribe_projects
+                    WHERE name = $1;
+                    """,
+                    canonical,
+                )
+                if row and (not row.get("repo_id") or not row.get("project_key")):
+                    await self._backfill_repo_scoped_project_identity_for_row(
+                        row_id=int(row["id"]),
+                        name=str(row["name"]),
+                        repo_root=str(row["repo_root"]),
+                    )
+                    row = await self._fetchrow(
+                        """
+                        SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+                        FROM scribe_projects
+                        WHERE id = $1;
+                        """,
+                        int(row["id"]),
+                    )
             if row:
                 return row
 
         if "_" in name:
             denormalized = name.replace("_", "-")
             if denormalized != name:
+                denormalized_count = await self._fetchval(
+                    "SELECT COUNT(*) FROM scribe_projects WHERE name = $1;",
+                    denormalized,
+                )
+                if int(denormalized_count or 0) > 1:
+                    return None
                 row = await self._fetchrow(
                     """
-                    SELECT id, name, repo_root, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+                    SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
                     FROM scribe_projects
                     WHERE name = $1;
                     """,
                     denormalized,
                 )
+                if row and (not row.get("repo_id") or not row.get("project_key")):
+                    await self._backfill_repo_scoped_project_identity_for_row(
+                        row_id=int(row["id"]),
+                        name=str(row["name"]),
+                        repo_root=str(row["repo_root"]),
+                    )
+                    row = await self._fetchrow(
+                        """
+                        SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
+                        FROM scribe_projects
+                        WHERE id = $1;
+                        """,
+                        int(row["id"]),
+                    )
         return row
 
     def _project_from_row(self, row: asyncpg.Record) -> ProjectRecord:
@@ -2104,12 +2484,34 @@ class PostgresStorage(StorageBackend):
             id=row["id"],
             name=row["name"],
             repo_root=row["repo_root"],
+            repo_id=row.get("repo_id"),
+            project_key=row.get("project_key"),
             progress_log_path=row["progress_log_path"],
             docs_json=row.get("docs_json"),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
             bridge_id=row.get("bridge_id"),
             bridge_managed=bool(row.get("bridge_managed", False)),
+        )
+
+    def _case_registry_from_row(self, row: asyncpg.Record) -> CaseRegistryRecord:
+        return CaseRegistryRecord(
+            case_id=str(row["case_id"]),
+            case_type=str(row["case_type"]),
+            project_name=str(row["project_name"]),
+            repo_root=str(row["repo_root"]),
+            repo_id=str(row["repo_id"]),
+            project_key=str(row["project_key"]),
+            doc_type=str(row["doc_type"]),
+            doc_name=str(row["doc_name"]),
+            doc_path=str(row["doc_path"]),
+            title=row.get("title"),
+            status=row.get("status"),
+            severity=row.get("severity"),
+            source_tool=row.get("source_tool"),
+            metadata=_coerce_json(row.get("metadata")) if row.get("metadata") is not None else None,
+            created_at=row.get("created_at"),
+            updated_at=row.get("updated_at"),
         )
 
     async def _resolve_project_record(

@@ -221,6 +221,91 @@ async def _record_agent_report_card_metadata(
         logger.warning("Failed to record agent report card metadata: %s", exc)
 
 
+def _case_registry_method(storage_backend: Any) -> Optional[Callable[..., Any]]:
+    for method_name in (
+        "upsert_case_registry_record",
+        "upsert_case_registry",
+        "upsert_case_record",
+        "register_case",
+    ):
+        candidate = getattr(storage_backend, method_name, None)
+        if callable(candidate):
+            return candidate
+    return None
+
+
+async def _call_case_registry_method(method: Callable[..., Any], upsert_kwargs: Dict[str, Any]) -> None:
+    def _is_signature_mismatch(exc: TypeError) -> bool:
+        message = str(exc)
+        markers = (
+            "unexpected keyword argument",
+            "positional argument",
+            "required positional argument",
+            "keyword-only argument",
+            "multiple values for argument",
+            "takes",
+            "missing",
+        )
+        return any(marker in message for marker in markers)
+
+    attempts = (
+        ((), upsert_kwargs),
+        ((upsert_kwargs,), {}),
+        ((), {"payload": upsert_kwargs}),
+    )
+    last_error: Optional[Exception] = None
+    for args, kwargs in attempts:
+        try:
+            result = method(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                await result
+            return
+        except TypeError as exc:
+            if not _is_signature_mismatch(exc):
+                raise
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+
+
+async def _register_case_in_shared_registry(
+    storage_backend: Any,
+    *,
+    project: Dict[str, Any],
+    target_path: Path,
+    metadata: Dict[str, Any],
+    doc_label: str,
+) -> Optional[str]:
+    if doc_label not in {"bug_report", "security_report"}:
+        return None
+    if not storage_backend:
+        return None
+
+    register_method = _case_registry_method(storage_backend)
+    if register_method is None:
+        return "Case registry registration skipped: storage backend does not expose a shared case registration method."
+
+    extracted = utils_shared.extract_case_registry_metadata_from_report(
+        target_path,
+        project_root=Path(project.get("root", "")),
+        metadata=metadata,
+        project=project,
+    )
+    upsert_kwargs = utils_shared.build_case_registry_upsert_kwargs(
+        extracted=extracted,
+        overrides={"source_tool": "manage_docs.create"},
+    )
+    if upsert_kwargs is None:
+        return "Case registry registration skipped: unable to derive normalized case metadata from created report."
+
+    try:
+        await _call_case_registry_method(register_method, upsert_kwargs)
+    except Exception as exc:
+        return f"Case registry registration failed: {exc}"
+    return None
+
+
 def get_index_updater_for_path(
     file_path: Path,
     project_root: Path,
@@ -541,6 +626,13 @@ async def handle_special_document_creation(
                 prepared_metadata,
                 logger=logger,
             )
+        case_registry_warning = await _register_case_in_shared_registry(
+            storage_backend,
+            project=project,
+            target_path=target_path,
+            metadata=prepared_metadata,
+            doc_label=doc_label,
+        )
 
         healed_metadata, _, _ = healing_shared.normalize_metadata_with_healing(prepared_metadata)
         log_meta = healed_metadata
@@ -635,6 +727,11 @@ async def handle_special_document_creation(
                             registration_warning = f"Registry update failed: {reg_exc}"
             except Exception as exc:
                 registration_warning = f"Doc registration failed: {exc}"
+        if case_registry_warning:
+            if registration_warning:
+                registration_warning += f"; {case_registry_warning}"
+            else:
+                registration_warning = case_registry_warning
 
         if storage_backend and project and index_path and index_path.exists():
             try:
