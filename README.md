@@ -1,8 +1,8 @@
 # Scribe MCP
 
 [![PyPI version](https://img.shields.io/pypi/v/scribe-mcp)](https://pypi.org/project/scribe-mcp/)
-[![Python 3.11+](https://img.shields.io/pypi/pyversions/scribe-mcp)](https://pypi.org/project/scribe-mcp/)
-[![License](https://img.shields.io/github/license/CortaLabs/scribe_mcp)](https://github.com/CortaLabs/scribe_mcp/blob/main/LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/scribe-mcp/)
+[![License](https://img.shields.io/badge/license-PolyForm--NC-orange)](https://github.com/CortaLabs/scribe_mcp/blob/main/LICENSE)
 
 Scribe MCP is the accountability layer for agent-driven engineering work.
 
@@ -15,9 +15,9 @@ Scribe is strongest when you want three things at the same time:
 - MCP-safe read/search/edit primitives that are easier to automate than ad hoc shell mutations
 
 If you want the fast product tour first, start here:
-- [Tour: what Scribe feels like](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)
+- [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)
 
-## Why Teams Reach For Scribe
+## Why teams reach for Scribe
 
 Without Scribe, agent-heavy work tends to fragment:
 
@@ -33,7 +33,7 @@ Scribe turns that into a tighter loop:
 3. log meaningful actions as the work happens
 4. query the resulting history later by project, status, message, or scope
 
-## What Scribe Gives You
+## What Scribe gives you
 
 - project and session binding with explicit repo scope
 - governed docs such as `ARCHITECTURE_GUIDE.md`, `PHASE_PLAN.md`, and `CHECKLIST.md`
@@ -42,19 +42,17 @@ Scribe turns that into a tighter loop:
 - a Postgres-first runtime for shared use, plus explicit standalone SQLite for local-only workflows
 - CLI helpers for bootstrap, MCP server startup, migrations, backups, metrics, and Codex projection
 
-## What Makes Scribe Different
+## What makes Scribe different
 
-The basic pitch is "audit trail plus governed docs," but the deeper value is in the mechanics behind that surface.
+The pitch is simple: keep the work record, the docs, and the repo operations in one system. The reason it holds up in practice is the machinery underneath it.
 
 - Scribe keeps a project registry with lifecycle and hygiene metadata, not just loose markdown files.
 - It tracks doc readiness and drift using stored hashes, last-update timestamps, and advisory flags such as `doc_drift_suspected`.
 - It computes activity signals like `days_since_last_entry`, `days_since_last_access`, `staleness_level`, and `activity_score` so projects become queryable operational objects instead of folders you have to inspect manually.
 - Managed docs are anchored with stable section IDs like `<!-- ID: problem_statement -->`, which is what makes later `replace_section` and checklist `status_update` operations deterministic.
-- The bootstrap and migration toolchain is unusually complete for this kind of project: `scribe-bootstrap-postgres`, `scribe-migrate`, `scribe-migrate-postgres`, `scribe-migrate-objects`, `scribe-backup-postgres`, `scribe-metrics-postgres`, and `scribe-soak-postgres` all ship in the package.
+- The bootstrap and migration toolchain is deeper than most projects in this space: `scribe-bootstrap-postgres`, `scribe-migrate`, `scribe-migrate-postgres`, `scribe-migrate-objects`, `scribe-backup-postgres`, `scribe-metrics-postgres`, and `scribe-soak-postgres` all ship in the package.
 
-That combination is why Scribe feels more like infrastructure than a thin MCP wrapper.
-
-## Five-Minute Quickstart
+## Five-minute quickstart
 
 Install the package:
 
@@ -132,12 +130,14 @@ On a fresh project, that one call can generate the core scaffold:
   BUG_LOG.md
 ```
 
-That artifact flow is one of Scribe's best features, and it is easy to miss if you only read the old top-level docs. The tour page walks through it in more detail:
-- [Tour: what Scribe feels like](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)
+That scaffold is the point. Scribe is not just starting a server. It is creating a project surface that later MCP calls can work against.
+
+The tour walks through that loop in more detail:
+- [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)
 
 If you want to see the registry surface after that first bind, Scribe also exposes project inventory and health-oriented views through tools such as `list_projects` and managed-doc `project_health`.
 
-## What The Governed Docs Story Looks Like
+## How governed docs work
 
 Generated docs are not just blank markdown files. They are structured scaffolds designed for later managed updates.
 
@@ -163,9 +163,9 @@ Example excerpt from a generated `CHECKLIST.md`:
 - [ ] Add package-specific acceptance item with expected verification command
 ```
 
-So the "magic" is not just that Scribe writes docs. It writes docs that are easier for agents and operators to keep current as work evolves.
+The value is not just that Scribe writes docs. It writes docs that agents and operators can update without turning them into mush.
 
-## The Project Registry And Drift Story
+## The project registry and drift story
 
 Scribe does more than remember that a project exists.
 
@@ -175,13 +175,13 @@ The runtime keeps registry-backed metadata for each project, including:
 - activity signals such as `days_since_last_entry`, `days_since_last_access`, `staleness_level`, and `activity_score`
 - doc hygiene metadata such as `baseline_hashes`, `current_hashes`, `doc_drift_days_since_update`, `drift_score`, and `doc_drift_suspected`
 
-That is the part the public docs used to hide. Scribe is not just storing docs and logs side by side. It is keeping enough structured state to warn when active work has outpaced planning docs.
+This is the useful part: Scribe is not just storing docs and logs side by side. It keeps enough structured state to warn when active work has outpaced the planning docs.
 
 If you want the template-side view of those fields, start with:
 - [Template variables reference](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TEMPLATE_VARIABLES.md)
 - [Scribe MCP whitepaper](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/whitepapers/scribe_mcp_whitepaper.md)
 
-## The `.scribe/` Working Surface
+## The `.scribe/` working surface
 
 Once Scribe is active, your repo grows a real working surface under `.scribe/`. Depending on runtime mode and the tools you use, that can include:
 
@@ -207,7 +207,7 @@ Once Scribe is active, your repo grows a real working surface under `.scribe/`. 
 
 That layout is part of the product story. Scribe gives agents and operators a durable project memory layer inside the repo boundary instead of scattering evidence across chat threads, shell history, and CI logs.
 
-## Run Scribe As An MCP Server
+## Run Scribe as an MCP server
 
 For MCP hosts such as Codex or Claude-compatible setups, the usual entry point is:
 
@@ -237,14 +237,14 @@ Codex-specific guidance lives here:
 
 The repo also ships bundled plugin assets for Codex and Claude under `plugins/`, so the MCP server surface is not the only integration story.
 
-## Documentation Map
+## Documentation map
 
 Start with these:
 
 - [Install and Bootstrap](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/INSTALL_AND_BOOTSTRAP.md)  
   The canonical install guide, including Postgres bootstrap, standalone mode, and Codex projection.
-- [Tour: what Scribe feels like](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)  
-  The fastest way to understand the governed-doc and audit-trail workflow.
+- [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)  
+  A short MCP-first walkthrough with verified live response shapes.
 - [Scribe Usage Guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/Scribe_Usage.md)  
   The day-to-day operating loop and the tool families you will actually use.
 - [MCP Server Guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/mcp_server_guide.md)  
@@ -267,7 +267,7 @@ Examples:
 - [mcp.json example](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/examples/mcp.json.example)
 - [opencode.json example](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/examples/opencode.json.example)
 
-## Who Scribe Is For
+## Who Scribe is for
 
 Scribe is a strong fit if you are:
 
@@ -276,9 +276,9 @@ Scribe is a strong fit if you are:
 - trying to keep specs, plans, and checklists attached to implementation reality
 - tired of reconstructing "why did the agent do this?" from scattered logs
 
-## What Still Needs Love
+## What still needs work
 
-The docs are now much closer to the real product, but there is still one obvious next step:
+There is still one obvious next step:
 
 - a clean-room walkthrough of the full pip-installed path from bootstrap to first live MCP host integration
 

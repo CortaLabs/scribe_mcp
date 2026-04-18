@@ -1,11 +1,11 @@
-# Scribe MCP Usage Guide
+# Scribe MCP usage guide
 
-Release line: `2.2.7`  
+Release line: `2.2.8`  
 Updated: `2026-04-18`
 
 This guide is about day-to-day usage once Scribe is installed.
 
-If you have not installed or bootstrapped Scribe yet, start with [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md). If you want the fast artifact tour first, start with [TOUR.md](TOUR.md).
+If you have not installed or bootstrapped Scribe yet, start with [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md). If you want the fast MCP-first tour first, start with [TOUR.md](TOUR.md).
 
 ## The short mental model
 
@@ -17,7 +17,7 @@ Scribe is easiest to understand as a loop:
 4. log what happened
 5. keep the governed docs current
 
-The point is not just "have logs" or "have docs." The point is to keep execution history and project artifacts connected strongly enough that an agent or operator can reconstruct what happened later.
+This is not just about having logs or docs. It is about keeping execution history and project artifacts tied together closely enough that an agent or operator can reconstruct what happened later.
 
 ## The first useful workflow
 

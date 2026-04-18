@@ -1,172 +1,333 @@
-# Tour: What Scribe Feels Like
+# Tour: Scribe as an MCP product
 
-Release line: `2.2.7`  
+Release line: `2.2.8`  
 Updated: `2026-04-18`
 
-This is the fastest way to understand why Scribe is more interesting than "yet another MCP server."
+This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
 
-The short answer:
+This page uses real MCP captures from `2026-04-18`. If we did not re-check a payload live, we do not pretend we did.
 
-- it binds work to a project and repo root
-- it scaffolds governed docs immediately
-- it gives later tools stable structure to update
-- it keeps an audit trail next to the work
-- it gives that work registry-backed health and drift signals later
+If you only remember one thing, make it this:
 
-## One command, real artifacts
+- Scribe is not “a markdown generator with a server attached”
+- Scribe is a project-scoped MCP tool system for audit trails, governed docs, and repo-safe inspection
 
-After install and runtime setup, a fresh project bind looks like this:
+## The shortest useful MCP loop
 
-```bash
-scribe call set_project \
-  --agent demo-agent \
-  --repo-root "$PWD" \
-  --arg name=demo_docs \
-  --arg root="$PWD" \
-  --arg format=structured \
-  --pretty
+In most MCP hosts, the first meaningful sequence is:
+
+1. `set_project(...)`
+2. `read_recent(...)`
+3. `read_file(..., mode="scan_only")`
+4. `append_entry(...)`
+5. `manage_docs(...)`
+
+That is the core product loop.
+
+## 1. Bind a project
+
+Start here:
+
+```python
+set_project(
+    agent="demo-agent",
+    name="demo_docs",
+    root="/absolute/path/to/repo",
+    format="structured",
+)
 ```
 
-On a fresh project, that one step can generate:
+Verified live structured top-level keys:
 
-```text
-.scribe/docs/dev_plans/demo_docs/
-  ARCHITECTURE_GUIDE.md
-  PHASE_PLAN.md
-  CHECKLIST.md
-  PROGRESS_LOG.md
-  DOC_LOG.md
-  SECURITY_LOG.md
-  BUG_LOG.md
+```json
+[
+  "ok",
+  "project",
+  "generated",
+  "skipped",
+  "side_effects",
+  "root_authorization",
+  "scope_resolution",
+  "recent_projects",
+  "reminders"
+]
 ```
 
-That is the first thing the public docs should have been showing all along.
+Verified nested `project` keys included:
 
-## What the generated docs actually look like
-
-Excerpt from a generated `ARCHITECTURE_GUIDE.md`:
-
-```md
-## 1. Problem Statement
-<!-- ID: problem_statement -->
-- **Context:** demo_docs needs a reliable documentation system.
-
-## 3. Architecture Overview
-<!-- ID: architecture_overview -->
-- **Solution Summary:** Document manager orchestrates template rendering and writes.
+```json
+[
+  "name",
+  "root",
+  "progress_log",
+  "docs_dir",
+  "docs",
+  "defaults",
+  "author",
+  "description",
+  "tags",
+  "meta",
+  "version",
+  "updated_by",
+  "session_id"
+]
 ```
 
-Excerpt from a generated `CHECKLIST.md`:
+Why this matters:
 
-```md
-## Phase 0
-<!-- ID: phase_0 -->
-- [ ] Add package-specific acceptance item with expected verification command.
+- it binds the repo and session boundary
+- it creates the governed-doc working surface on a fresh project
+- it gives later tools a trusted project context instead of leaving them to guess
+
+## 2. Rehydrate context
+
+Next:
+
+```python
+read_recent(
+    agent="demo-agent",
+    limit=5,
+    format="readable",
+)
 ```
 
-Those `<!-- ID: ... -->` anchors are a big part of the value story. They give Scribe stable targets for managed updates later, which is much safer than hoping an agent can keep finding the right markdown heading by text alone.
+Verified live readable shape:
 
-The same template system can also inject registry and activity metadata into documents, including fields like:
-
-- `staleness_level`
-- `days_since_last_entry`
-- `baseline_hashes`
-- `current_hashes`
-- `doc_drift_days_since_update`
-- `drift_score`
-
-That is how Scribe can move beyond "some markdown files exist" into "this project looks healthy" or "this work has drifted."
-
-## Why that matters
-
-Without a structure like this, agent-driven docs tend to rot fast:
-
-- plans become stale snapshots
-- checklists lose proof
-- architecture notes drift away from implementation
-- later updates turn into brittle search-and-replace hacks
-
-Scribe gives the docs a managed shape from the beginning, so later operations like `replace_section`, `apply_patch`, and `status_update` have something reliable to work with.
-
-## Projects become queryable, not just created
-
-Scribe keeps registry-backed lifecycle and hygiene data for each project. In practice that means a project can carry:
-
-- lifecycle timestamps like `created_at`, `last_entry_at`, and `last_access_at`
-- activity signals like `activity_score` and `staleness_level`
-- doc health hints like `doc_drift_suspected` and `drift_score`
-
-So the system is not just "write a plan, then forget it." It has the ingredients to tell you when a project is warming up, going stale, or drifting away from its docs.
-
-## The audit trail sits next to the docs
-
-Scribe does not stop at scaffolding. It also lays down the log surface that explains what happened:
-
-- `PROGRESS_LOG.md` for execution milestones
-- `DOC_LOG.md` for documentation changes
-- `SECURITY_LOG.md` for security-sensitive work
-- `BUG_LOG.md` for defect tracking
-
-That means the project artifacts and the execution trail live in the same working surface instead of being split across markdown, chat history, and terminal output.
-
-## The `.scribe/` surface is part of the product
-
-After Scribe has touched a repo, the local working surface can look something like this:
-
-```text
-.scribe/
-  state/
-  vectors/
-  backups/
-  sentinel/
-  cli/
-  docs/
-    agent_report_cards/
-    dev_plans/<project>/
-      ARCHITECTURE_GUIDE.md
-      PHASE_PLAN.md
-      CHECKLIST.md
-      PROGRESS_LOG.md
-      DOC_LOG.md
-      SECURITY_LOG.md
-      BUG_LOG.md
-      TOOL_LOG.jsonl
+```json
+[
+  {
+    "type": "text",
+    "text": "<ANSI-formatted log output>"
+  }
+]
 ```
 
-That is one of the reasons Scribe feels heavier-duty than a lot of agent tooling. It is building a local memory and evidence surface, not just exposing RPC calls.
+This is how a session stops being stateless.
 
-## The setup story is stronger than the old docs admitted
+## 3. Inspect files without blowing tokens
 
-The package does not just ship `scribe-server`. It also ships a serious operator toolchain:
+One of Scribe’s best inspection paths is `read_file(..., mode="scan_only")`.
 
-- `scribe-bootstrap-postgres`
-- `scribe-migrate`
-- `scribe-migrate-postgres`
-- `scribe-migrate-objects`
-- `scribe-backup-postgres`
-- `scribe-metrics-postgres`
-- `scribe-soak-postgres`
-
-That matters because the install experience is part of the product. Scribe is trying to be usable as real infrastructure, not just as a toy local demo.
-
-## The operating loop
-
-This is the normal Scribe rhythm:
-
-```text
-set_project
-  -> read_recent / query_entries
-  -> do work
-  -> append_entry
-  -> manage_docs
-  -> verify
+```python
+read_file(
+    agent="demo-agent",
+    path="README.md",
+    mode="scan_only",
+    format="structured",
+)
 ```
 
-That is what makes Scribe feel different in practice. It is not just a server you connect to. It is a way to keep engineering work inspectable while it is happening.
+Verified top-level keys:
 
-## Where to go next
+```json
+[
+  "ok",
+  "scan",
+  "mode",
+  "frontmatter",
+  "frontmatter_raw",
+  "frontmatter_line_count",
+  "frontmatter_byte_count",
+  "has_frontmatter",
+  "structure",
+  "structure_pagination",
+  "navigation_hints",
+  "advanced_analysis_hint",
+  "reminders"
+]
+```
 
-- [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md) for the install and runtime setup path
+Verified `scan` keys:
+
+```json
+[
+  "absolute_path",
+  "repo_relative_path",
+  "byte_size",
+  "line_count",
+  "sha256",
+  "newline_type",
+  "encoding",
+  "estimated_chunk_count"
+]
+```
+
+Verified `structure` keys:
+
+```json
+[
+  "ok",
+  "type",
+  "headings",
+  "total_headings",
+  "truncated"
+]
+```
+
+This is the MCP version of looking before you leap. You get shape, size, structure, and navigation hints before you spend tokens on a deeper read.
+
+Follow-up targeted read:
+
+```python
+read_file(
+    agent="demo-agent",
+    path="README.md",
+    mode="line_range",
+    start_line=1,
+    end_line=40,
+    format="readable",
+)
+```
+
+Verified live readable shape:
+
+```json
+[
+  {
+    "type": "text",
+    "text": "<formatted file snippet>"
+  }
+]
+```
+
+## 4. Search the repo safely
+
+```python
+search(
+    agent="demo-agent",
+    pattern="drift_score",
+    format="structured",
+)
+```
+
+Verified top-level keys:
+
+```json
+[
+  "ok",
+  "output_mode",
+  "pattern",
+  "files_searched",
+  "files_with_matches",
+  "total_matches",
+  "files_skipped",
+  "skip_details",
+  "matches",
+  "pagination"
+]
+```
+
+This is the other half of the inspection story: `read_file` for one file, `search` for the repo.
+
+This exact minimal call is the one we re-verified live. A first attempt with extra filter arguments was rejected by runtime validation in the active harness, so this example stays conservative on purpose.
+
+## 5. Keep the audit trail alive
+
+```python
+append_entry(
+    agent="demo-agent",
+    message="Validated bootstrap and created governed docs scaffold.",
+    status="success",
+)
+```
+
+This is why Scribe is not just a file-editing tool. It preserves the execution trail next to the work.
+
+## 6. Use the project registry like an operator
+
+Scribe projects are not just directories. They become queryable registry objects.
+
+```python
+list_projects(
+    agent="demo-agent",
+    limit=5,
+    format="structured",
+)
+```
+
+Verified top-level keys:
+
+```json
+[
+  "ok",
+  "projects",
+  "count",
+  "total",
+  "pagination",
+  "summary",
+  "resolution_source",
+  "fallback_used",
+  "fallback_chain",
+  "resolution_summary",
+  "active_project",
+  "compatibility_recovery",
+  "recent_projects",
+  "reminders"
+]
+```
+
+Verified per-project fields included:
+
+```json
+[
+  "name",
+  "root",
+  "progress_log",
+  "state",
+  "sitrep_message",
+  "entry_count"
+]
+```
+
+This is where Scribe stops looking like a pile of markdown files and starts looking like an operational surface:
+
+- projects have lifecycle state
+- docs have drift signals
+- activity becomes queryable instead of anecdotal
+
+## 7. Query the execution trail directly
+
+```python
+query_entries(
+    agent="demo-agent",
+    message="bootstrap",
+    format="structured",
+)
+```
+
+Verified top-level keys:
+
+```json
+[
+  "ok",
+  "entries",
+  "pagination",
+  "search_params",
+  "validation_warnings",
+  "total_found",
+  "returned",
+  "source",
+  "search_message",
+  "reminders",
+  "project",
+  "project_resolution"
+]
+```
+
+This is the difference between "I saw it happen once" and "I can prove what happened later."
+
+## 8. Govern docs without guessing the contract
+
+The managed-doc surface matters because:
+
+- actions like `create`, `replace_section`, and `status_update` are real
+- managed docs carry stable anchors like `<!-- ID: problem_statement -->`
+- that is what keeps later updates deterministic instead of devolving into heading-text guesswork
+
+We are not inventing a fake success payload for `manage_docs`. In the live harness used for this docs pass, `manage_docs(action="list_sections", ...)` did not return a clean verified success example, so this tour leaves that example out.
+
+## What to read next
+
 - [Scribe_Usage.md](Scribe_Usage.md) for the day-to-day operating loop
-- [mcp_server_guide.md](mcp_server_guide.md) for MCP host integration
-- [guides/manage_docs_agent_guide.md](guides/manage_docs_agent_guide.md) for the deeper managed-doc operations
+- [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md) for runtime setup
+- [mcp_server_guide.md](mcp_server_guide.md) for host wiring details

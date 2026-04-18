@@ -1,6 +1,6 @@
-# MCP Server Guide
+# MCP server guide
 
-Release line: `2.2.7`  
+Release line: `2.2.8`  
 Updated: `2026-04-18`
 
 This guide shows how to run Scribe as an MCP server for hosts such as Codex or Claude-compatible clients.
@@ -149,9 +149,9 @@ Cause: missing or invalid auth token.
 
 Fix: verify `SCRIBE_REMOTE_AUTH_TOKEN` on the client and the matching server-side token configuration.
 
-### You installed Scribe, but the docs still feel abstract
+### You installed Scribe, but you still want the product tour
 
-Cause: the MCP server guide is not the best first product walkthrough.
+Cause: this guide is about wiring a host, not showing the day-to-day MCP loop.
 
 Fix: start with [TOUR.md](TOUR.md), then come back here once you are ready to wire a real host.
 

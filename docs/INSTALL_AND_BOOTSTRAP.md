@@ -1,13 +1,13 @@
-# Install and Bootstrap
+# Install and bootstrap
 
-Release line: `2.2.7`  
+Release line: `2.2.8`  
 Updated: `2026-04-18`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 
 If you want the short product tour first, read [TOUR.md](TOUR.md). If you want the MCP-host setup details, read [mcp_server_guide.md](mcp_server_guide.md).
 
-## What path should you use?
+## Which path should you use?
 
 Choose the smallest path that matches what you are trying to do:
 
@@ -34,7 +34,7 @@ scribe-server --help
 
 Those commands are the right first checks after installation. You do not need to guess entry points or go spelunking through `pyproject.toml`.
 
-Scribe also ships a broader operator toolchain than the old public docs admitted:
+Scribe also ships a broader operator toolchain:
 
 - `scribe-bootstrap-postgres`
 - `scribe-migrate`
@@ -122,7 +122,7 @@ On a fresh project, this scaffolds the core managed docs:
   BUG_LOG.md
 ```
 
-That one step is the easiest way to see what Scribe is really selling: not just a server, but a repeatable artifact surface for agent work.
+That one step shows what Scribe actually does: it gives agent work a repeatable artifact surface.
 
 For a walkthrough of what those files look like and why they matter, read [TOUR.md](TOUR.md).
 
@@ -172,7 +172,7 @@ Useful flags:
 - `--codex-home` to target a specific `CODEX_HOME`
 - `--config-path` to target a specific Codex `config.toml`
 
-This release line intentionally documents the supported projection flow rather than inventing a fake "generic plugin installer."
+This is the supported projection flow for this release line.
 
 The package also ships bundled plugin assets under `plugins/` for Codex and Claude-oriented setups.
 
