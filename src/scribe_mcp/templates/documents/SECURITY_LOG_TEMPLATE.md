@@ -1,10 +1,11 @@
 {% extends "documents/base_log.md" %}
 {% from "documents/base_log.md" import rotation_notice with context %}
+{% set product = product_name | default(project_name or "this project") %}
 
 {% block log_metadata %}
 {% set log_config.title = "Security Log" %}
 {% set log_config.icon = "🔒" %}
-{% set log_config.summary = 'Track security events, vulnerabilities, and decisions. Use `log_type="security"` (or `--log security`).' %}
+{% set log_config.summary = "Track security events, vulnerabilities, and decisions for " ~ product ~ ". Use `log_type=\"security\"` (or `--log security`)." %}
 {% endblock %}
 
 {% block log_body %}
@@ -52,7 +53,7 @@
 - **Network**: API security, segmentation, firewall rules.
 - **Code Injection**: XSS, SQL injection, command injection.
 - **Infrastructure**: Servers, containers, secrets management.
-- **Configuration**: Settings, permissions, access controls.
+- **Configuration**: Settings, permissions, access controls, and repo-local override surfaces.
 
 ---
 

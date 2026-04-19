@@ -20,7 +20,7 @@ from scribe_mcp.cli.session_store import (
 from scribe_mcp.config.paths import cli_session_state_path
 
 
-_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap", "plugins"}
+_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap", "plugins", "templates"}
 
 
 def _discover_repo_root(start: Path) -> Path:
@@ -56,6 +56,19 @@ def _load_json_object(raw: str | None, *, flag_name: str) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         raise SystemExit(f"{flag_name} must decode to a JSON object")
     return parsed
+
+
+def _load_optional_json_source(
+    raw: str | None,
+    *,
+    file_path: str | None = None,
+    flag_name: str,
+) -> Dict[str, Any]:
+    if raw and file_path:
+        raise SystemExit(f"Use either {flag_name} or --meta-file, not both")
+    if file_path:
+        return _load_json_object(f"@{file_path}", flag_name="--meta-file")
+    return _load_json_object(raw, flag_name=flag_name)
 
 
 def _parse_key_value_pairs(values: Sequence[str]) -> Dict[str, Any]:
@@ -187,6 +200,87 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional config.toml target. Defaults to <codex-home>/config.toml.",
+    )
+
+    templates_parser = subparsers.add_parser(
+        "templates",
+        help="Inspect and validate the active template stack.",
+    )
+    templates_subparsers = templates_parser.add_subparsers(dest="templates_action", required=True)
+
+    templates_list_parser = templates_subparsers.add_parser(
+        "list",
+        help="List templates discovered for the active repository.",
+    )
+    templates_list_parser.add_argument(
+        "--repo-root",
+        dest="repo_root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root or any path inside the target repository.",
+    )
+    templates_list_parser.add_argument(
+        "--project-name",
+        default=None,
+        help="Optional project name override for template context.",
+    )
+    templates_list_parser.add_argument(
+        "--extension",
+        default=".md",
+        help="File extension to list (default: .md).",
+    )
+    templates_list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON.",
+    )
+
+    templates_validate_parser = templates_subparsers.add_parser(
+        "validate",
+        help="Validate Jinja templates discovered for the active repository.",
+    )
+    templates_validate_parser.add_argument(
+        "--repo-root",
+        dest="repo_root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root or any path inside the target repository.",
+    )
+    templates_validate_parser.add_argument(
+        "--project-name",
+        default=None,
+        help="Optional project name override for template context.",
+    )
+    templates_validate_parser.add_argument(
+        "--template",
+        action="append",
+        default=[],
+        help="Validate one template by name (repeatable). Defaults to all discovered templates.",
+    )
+    templates_validate_parser.add_argument(
+        "--extension",
+        default=".md",
+        help="File extension to validate when --template is omitted (default: .md).",
+    )
+    templates_validate_parser.add_argument(
+        "--render-check",
+        action="store_true",
+        help="After syntax validation, perform a strict render smoke-test with the provided metadata.",
+    )
+    templates_validate_parser.add_argument(
+        "--meta-json",
+        default=None,
+        help="Metadata JSON object used for render smoke-tests.",
+    )
+    templates_validate_parser.add_argument(
+        "--meta-file",
+        default=None,
+        help="Path to a JSON file used for render smoke-tests.",
+    )
+    templates_validate_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON.",
     )
 
     call_parser = subparsers.add_parser("call", help="Invoke a tool by name", allow_abbrev=False)
@@ -566,6 +660,84 @@ def _run_plugins_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_templates_command(args: argparse.Namespace) -> int:
+    repo_root = _discover_repo_root(args.repo_root)
+    _prepare_environment(repo_root)
+
+    from scribe_mcp.template_engine import Jinja2TemplateEngine
+
+    project_name = args.project_name or repo_root.name
+    engine = Jinja2TemplateEngine(project_root=repo_root, project_name=project_name)
+
+    if args.templates_action == "list":
+        templates = engine.list_templates(extension=args.extension)
+        payload = {
+            "project_root": str(repo_root),
+            "project_name": project_name,
+            "extension": args.extension,
+            "count": len(templates),
+            "templates": [
+                {
+                    "template": template_name,
+                    **engine.get_template_info(template_name),
+                }
+                for template_name in templates
+            ],
+        }
+        if args.json:
+            _json_print(payload, pretty=True)
+        else:
+            print(f"Template stack for {project_name} ({len(templates)} templates):")
+            for item in payload["templates"]:
+                print(
+                    f"- {item['template']} [{item['template_type']}]"
+                    + (f" -> {item['path']}" if item.get("path") else "")
+                )
+        return 0
+
+    if args.templates_action != "validate":
+        raise ValueError(f"Unsupported templates action: {args.templates_action}")
+
+    metadata = _load_optional_json_source(
+        args.meta_json,
+        file_path=args.meta_file,
+        flag_name="--meta-json",
+    )
+    template_names = args.template or None
+    payload = engine.validate_templates(
+        template_names=template_names,
+        extension=args.extension,
+        metadata=metadata,
+        render_check=args.render_check,
+    )
+    payload.update(
+        {
+            "project_root": str(repo_root),
+            "project_name": project_name,
+            "extension": args.extension,
+        }
+    )
+
+    if args.json:
+        _json_print(payload, pretty=True)
+    else:
+        mode_label = "syntax + render" if args.render_check else "syntax-only"
+        print(
+            f"Validated {payload['checked']} template(s) for {project_name}"
+            f" using {mode_label} checks: "
+            f"{payload['valid_count']} passed, {payload['invalid_count']} failed."
+        )
+        for item in payload["templates"]:
+            status = "PASS" if item.get("valid") else "FAIL"
+            print(f"- [{status}] {item['template']} [{item.get('template_type', 'unknown')}]")
+            for error in item.get("errors", []):
+                print(f"    error: {error}")
+            for warning in item.get("warnings", []):
+                print(f"    warning: {warning}")
+
+    return 0 if payload.get("valid") else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     normalized_argv = _normalize_argv(argv or sys.argv[1:])
     parser = _build_parser()
@@ -591,6 +763,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "plugins":
         return _run_plugins_command(args)
+
+    if args.command == "templates":
+        return _run_templates_command(args)
 
     return asyncio.run(_run_call_command(args, passthrough_options))
 

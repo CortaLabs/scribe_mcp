@@ -35,14 +35,22 @@
 {% if features %}
 ### Core Features
 {% for feature in features %}
-- **{{ feature.name }}:** {{ feature.description }}
+{% if feature is mapping %}
+- **{{ feature.name | default("Feature") }}:** {{ feature.description | default("Describe this feature.") }}
+{% else %}
+- {{ feature }}
+{% endif %}
 {% endfor %}
 {% endif %}
 
 {% if team %}
 ### Team
 {% for member in team %}
-- **{{ member.name }}:** {{ member.role }}
+{% if member is mapping %}
+- **{{ member.name | default("Member") }}:** {{ member.role | default("Contributor") }}
+{% else %}
+- {{ member }}
+{% endif %}
 {% endfor %}
 {% endif %}
 

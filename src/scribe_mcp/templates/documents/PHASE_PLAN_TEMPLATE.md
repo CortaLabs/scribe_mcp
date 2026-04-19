@@ -1,9 +1,10 @@
 {% extends "documents/base_document.md" %}
 {% set doc_title = "Phase Plan" %}
 {% set doc_icon = "⚙️" %}
-{% set summary = metadata.summary | default("Break the architecture into reviewable execution phases tied to checklist items and measurable outcomes.") %}
-{% set phases = metadata.phases or [] %}
-{% set milestones = metadata.milestones or [] %}
+{% set product = product_name | default(project_name or "this project") %}
+{% set summary = metadata.get("summary", "Break " ~ product ~ " into reviewable execution phases tied to checklist items, measurable outcomes, and proof artifacts.") %}
+{% set phases = metadata.get("phases", []) %}
+{% set milestones = metadata.get("milestones", []) %}
 
 {% block document_body %}
 {% call section("Phase Overview", "phase_overview") %}
@@ -14,10 +15,10 @@
 | {{ phase.name | default("Phase " ~ loop.index0) }} | {{ phase.goal | default("State the objective for this phase.") }} | {{ (phase.deliverables or []) | join(", ") | default("List the tangible outputs.") }} | {{ "%.2f"|format(phase.confidence | default(0.7)) }} |
   {% endfor %}
 {% else %}
-| Phase N | Define scoped objective | List the concrete deliverables for this phase | 0.70 |
-| Next Phase | Define scoped objective | List the concrete deliverables for this phase | 0.70 |
+| Phase N | Define a bounded objective for {{ product }} | List the concrete deliverables for this phase | 0.70 |
+| Next Phase | Define the next bounded operator or downstream outcome | List the concrete deliverables for this phase | 0.70 |
 {% endif %}
-Update this table as the project evolves. Confidence values should change as knowledge increases.
+Update this table as {{ product }} evolves. Confidence values should change as knowledge increases.
 {% endcall %}
 
 {% if phases %}
@@ -50,7 +51,7 @@ Update this table as the project evolves. Confidence values should change as kno
 - [ ] Add concrete task 3 with a measurable result.
 
 **Deliverables:**
-- Artifact or behavior shipped for this phase.
+- Artifact or behavior shipped for {{ product }} in this phase.
 - Verification evidence linked to tests/logs/commits.
 
 **Acceptance Criteria:**

@@ -26,7 +26,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version="scribe-mcp 2.2",
+        version="scribe-mcp 2.2.11",
     )
     parser.add_argument(
         "--transport",

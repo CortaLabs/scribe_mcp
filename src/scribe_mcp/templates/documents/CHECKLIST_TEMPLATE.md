@@ -1,10 +1,11 @@
 {% extends "documents/base_document.md" %}
 {% set doc_title = "Acceptance Checklist" %}
 {% set doc_icon = "✅" %}
-{% set doc_version = metadata.version | default("v0.1") %}
-{% set doc_status = metadata.status | default("Draft") %}
-{% set summary = metadata.summary | default("Mirror the Phase Plan here. Every task should map to a checkbox with proof (commit, log entry, screenshot, etc.).") %}
-{% set sections = metadata.sections or [] %}
+{% set product = product_name | default(project_name or "this project") %}
+{% set doc_version = metadata.get("version", "v0.1") %}
+{% set doc_status = metadata.get("status", "Draft") %}
+{% set summary = metadata.get("summary", "Mirror the Phase Plan here. Every " ~ product ~ " task should map to a checkbox with proof (commit, log entry, screenshot, etc.).") %}
+{% set sections = metadata.get("sections", []) %}
 
 {% block document_body %}
 {% if sections %}
@@ -16,7 +17,7 @@
   {% endfor %}
 {% else %}
 {% call section("Documentation Hygiene", "documentation_hygiene") %}
-- [ ] Confirm planning docs exist and use current project scope (proof: list the exact doc references).
+- [ ] Confirm planning docs exist and use current {{ product }} scope (proof: list the exact doc references).
 - [ ] Confirm each checklist item maps to a phase package or milestone (proof: include section/item IDs).
 {% endcall %}
 

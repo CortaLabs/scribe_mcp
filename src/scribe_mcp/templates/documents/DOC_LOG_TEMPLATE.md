@@ -1,10 +1,11 @@
 {% extends "documents/base_log.md" %}
 {% from "documents/base_log.md" import rotation_notice with context %}
+{% set product = product_name | default(project_name or "this project") %}
 
 {% block log_metadata %}
 {% set log_config.title = "Documentation Update Log" %}
 {% set log_config.icon = "📋" %}
-{% set log_config.summary = 'Track every structured documentation change. Use `log_type="doc_updates"` (or `--log doc_updates`).' %}
+{% set log_config.summary = "Track every structured documentation change for " ~ product ~ ". Use `log_type=\"doc_updates\"` (or `--log doc_updates`)." %}
 {% endblock %}
 
 {% block log_body %}
@@ -39,6 +40,7 @@
 - Always specify which document section you're updating via `section=`.
 - Include `action=` to indicate the type of modification.
 - Reference checklist items or phases when applicable.
+- Note template or config-surface changes explicitly when the docs update affects repo-local customization.
 - Use `--dry-run` first when making structural changes.
 - All documentation changes are automatically tracked and versioned.
 
