@@ -132,6 +132,52 @@ On a fresh project, that one call can generate the core scaffold:
 
 That scaffold is the point. Scribe is not just starting a server. It is creating a project surface that later MCP calls can work against.
 
+### Downstream customization now lives in the repo
+
+On first bind/bootstrap, Scribe also seeds the downstream customization surface under `.scribe/` so each repo can own its local scaffolding and settings without forking the library:
+
+```text
+.scribe/
+  config/
+    scribe.yaml
+    seed_registry.json
+  templates/
+    documents/
+      ARCHITECTURE_GUIDE_TEMPLATE.md
+      PHASE_PLAN_TEMPLATE.md
+      CHECKLIST_TEMPLATE.md
+      PROGRESS_LOG_TEMPLATE.md
+      DOC_LOG_TEMPLATE.md
+      SECURITY_LOG_TEMPLATE.md
+      BUG_LOG_TEMPLATE.md
+  .env.example
+```
+
+That seeded surface is live, not decorative:
+
+- `generate_doc_templates` and template-driven doc flows now resolve repo-local `.scribe/templates/` first
+- repo-local seeded files are tracked in `.scribe/config/seed_registry.json` so refreshes can update untouched files without clobbering customized ones
+- `.scribe/.env.example` is a discovery artifact only; runtime never auto-loads it
+
+The ownership split is intentional:
+
+- shared infrastructure defaults such as `SCRIBE_DB_URL`, backend mode, and pool settings belong in user/global config by default
+- repo-specific runtime overrides belong in repo root `.env`
+- repo-scoped structured behavior belongs in `.scribe/config/scribe.yaml`
+
+The user/global config home resolves in this order:
+
+1. `SCRIBE_CONFIG_DIR`
+2. `XDG_CONFIG_HOME/scribe_mcp`
+3. `~/.config/scribe_mcp`
+
+Inside that directory, use:
+
+- `runtime.env` for shared env-backed defaults across repos
+- `scribe.yaml` for user-level structured defaults such as display preferences
+
+That means you do not need to restate DB credentials in every downstream Scribe project just to make the runtime work.
+
 The tour walks through that loop in more detail:
 - [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)
 
@@ -187,6 +233,19 @@ Once Scribe is active, your repo grows a real working surface under `.scribe/`. 
 
 ```text
 .scribe/
+  .env.example
+  config/
+    scribe.yaml
+    seed_registry.json
+  templates/
+    documents/
+      ARCHITECTURE_GUIDE_TEMPLATE.md
+      PHASE_PLAN_TEMPLATE.md
+      CHECKLIST_TEMPLATE.md
+      PROGRESS_LOG_TEMPLATE.md
+      DOC_LOG_TEMPLATE.md
+      SECURITY_LOG_TEMPLATE.md
+      BUG_LOG_TEMPLATE.md
   state/
   vectors/
   backups/
@@ -206,6 +265,8 @@ Once Scribe is active, your repo grows a real working surface under `.scribe/`. 
 ```
 
 That layout is part of the product story. Scribe gives agents and operators a durable project memory layer inside the repo boundary instead of scattering evidence across chat threads, shell history, and CI logs.
+
+The important new bit is that `.scribe/templates/` and `.scribe/config/` are now first-class downstream surfaces. Customize templates there when you want repo-specific scaffolds, keep repo behavior in `.scribe/config/scribe.yaml`, keep repo-specific env overrides in repo root `.env`, and keep shared cross-repo runtime defaults in the user/global config home.
 
 ## Run Scribe as an MCP server
 

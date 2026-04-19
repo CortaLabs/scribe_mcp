@@ -12,6 +12,7 @@ import hashlib
 from scribe_mcp import server as server_module
 from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.config.settings import settings
+from scribe_mcp.config.downstream_assets import ensure_downstream_seed_assets
 from scribe_mcp.tools.project_utils import slugify_project_name
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import additive_local_tool
@@ -91,9 +92,15 @@ async def generate_doc_templates(
         payload.setdefault("reminders", [])
         return payload
 
+    effective_repo_root = _resolve_effective_repo_root(logging_context, base_dir=base_dir)
+    try:
+        await asyncio.to_thread(ensure_downstream_seed_assets, effective_repo_root)
+    except Exception as exc:
+        logger.warning("Downstream seed/adopt skipped for %s: %s", effective_repo_root, exc)
+
     templates: Dict[str, str] = {}
     if legacy_fallback:
-        templates = await load_templates()
+        templates = await load_templates(repo_root=effective_repo_root)
 
     # INTELLIGENT PARAMETER HANDLING: Support custom context with bulletproof error recovery
     try:
@@ -101,24 +108,24 @@ async def generate_doc_templates(
             # If custom_context is provided, use it for enhanced template rendering
             if isinstance(custom_context, dict):
                 # Merge with base context
-                base_context = substitution_context(project_name, author)
+                base_context = substitution_context(project_name, author, repo_root=effective_repo_root)
                 base_context.update(custom_context)
                 render_context = base_context
             else:
                 # Try to convert to dict if it's not already
-                render_context = substitution_context(project_name, author)
+                render_context = substitution_context(project_name, author, repo_root=effective_repo_root)
                 logger.warning("custom_context should be a dict, got %s", type(custom_context).__name__)
         else:
-            render_context = substitution_context(project_name, author)
+            render_context = substitution_context(project_name, author, repo_root=effective_repo_root)
     except Exception as e:
         # Graceful fallback if context handling fails
-        render_context = substitution_context(project_name, author)
+        render_context = substitution_context(project_name, author, repo_root=effective_repo_root)
         logger.warning("Error handling custom_context: %s. Using base context.", e)
 
     engine_error: Exception | None = None
     try:
         engine = Jinja2TemplateEngine(
-            project_root=settings.project_root,
+            project_root=effective_repo_root,
             project_name=project_name,
             security_mode="sandbox",
         )
@@ -143,12 +150,7 @@ async def generate_doc_templates(
     # Treat legacy overwrite as opt-in force, but gate overwrites behind force for safety.
     force_overwrite = bool(force or overwrite)
 
-    project_root_for_docs = settings.project_root
-    try:
-        if logging_context.project and logging_context.project.get("root"):
-            project_root_for_docs = Path(str(logging_context.project["root"])).resolve()
-    except Exception:
-        project_root_for_docs = settings.project_root
+    project_root_for_docs = effective_repo_root
 
     written: List[str] = []
     skipped: List[str] = []
@@ -289,6 +291,35 @@ async def generate_doc_templates(
 def _path_has_suffix(path: Path, suffix: Tuple[str, ...]) -> bool:
     parts = path.parts
     return len(parts) >= len(suffix) and tuple(parts[-len(suffix):]) == suffix
+
+
+def _resolve_effective_repo_root(logging_context: Any, *, base_dir: str | None) -> Path:
+    try:
+        if logging_context.project and logging_context.project.get("root"):
+            return Path(str(logging_context.project["root"])).resolve()
+    except Exception:
+        pass
+
+    if base_dir:
+        base_path = Path(base_dir).expanduser().resolve()
+        canonical_suffix = tuple(settings.dev_plans_base.parts)
+        legacy_suffix = ("docs", "dev_plans")
+        suffixes = (canonical_suffix, legacy_suffix)
+
+        # base_dir points at docs root: <repo>/.scribe/docs/dev_plans or <repo>/docs/dev_plans
+        for suffix in suffixes:
+            if _path_has_suffix(base_path, suffix):
+                return base_path.parents[len(suffix) - 1].resolve()
+
+        # base_dir points at docs project slug dir:
+        # <repo>/.scribe/docs/dev_plans/<slug> or <repo>/docs/dev_plans/<slug>
+        for suffix in suffixes:
+            if _path_has_suffix(base_path.parent, suffix):
+                return base_path.parent.parents[len(suffix) - 1].resolve()
+
+        return base_path
+
+    return settings.project_root.resolve()
 
 
 def _target_directory(project_name: str, base_dir: str | None, *, project_root: Path) -> Path:

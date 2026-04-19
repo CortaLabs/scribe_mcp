@@ -28,20 +28,24 @@ TEMPLATE_FILENAMES = {
 }
 
 _PROJECT_VARIABLES_CACHE: Dict[str, Any] | None = None
+_PROJECT_VARIABLES_CACHE_BY_ROOT: Dict[str, Dict[str, Any]] = {}
 
 
-def template_root() -> Path:
+def template_root(repo_root: Path | None = None) -> Path:
     """Return the canonical template directory."""
-    legacy_path = (settings.project_root / "scribe_mcp" / "templates" / "documents").resolve()
-    modern_path = (settings.project_root / "templates" / "documents").resolve()
+    root = (repo_root or settings.project_root).resolve()
+    legacy_path = (root / "scribe_mcp" / "templates" / "documents").resolve()
+    modern_path = (root / "templates" / "documents").resolve()
     if modern_path.exists():
         return modern_path
-    return legacy_path
+    if legacy_path.exists():
+        return legacy_path
+    return (Path(__file__).resolve().parent / "documents").resolve()
 
 
-async def load_templates() -> Dict[str, str]:
+async def load_templates(repo_root: Path | None = None) -> Dict[str, str]:
     """Load all base templates into memory."""
-    root = template_root()
+    root = template_root(repo_root=repo_root)
     contents: Dict[str, str] = {}
     for key, filename in TEMPLATE_FILENAMES.items():
         path = root / filename
@@ -54,12 +58,18 @@ def _read_text(path: Path) -> str:
         return handle.read()
 
 
-def substitution_context(project_name: str, author: str | None = None, rotation_context: Dict[str, str] | None = None) -> Dict[str, str]:
+def substitution_context(
+    project_name: str,
+    author: str | None = None,
+    rotation_context: Dict[str, str] | None = None,
+    repo_root: Path | None = None,
+) -> Dict[str, str]:
     """Return default variables for template rendering."""
     author_value = author or "Scribe"
     date_value = format_utc()
     slug = slugify_project_name(project_name)
-    project_root = str(settings.project_root)
+    resolved_repo_root = (repo_root or settings.project_root).resolve()
+    project_root = str(resolved_repo_root)
 
     # Base context
     context = {
@@ -111,7 +121,7 @@ def substitution_context(project_name: str, author: str | None = None, rotation_
                 context[key] = str(value)
                 context[key.upper()] = str(value)
 
-    custom_vars = _load_project_variables()
+    custom_vars = _load_project_variables(repo_root=resolved_repo_root)
     if custom_vars:
         for key, value in custom_vars.items():
             # Do not override explicit context (e.g., passed-in author)
@@ -168,27 +178,38 @@ def create_rotation_context(
     }
 
 
-def _load_project_variables() -> Dict[str, Any]:
+def _load_project_variables(repo_root: Path | None = None) -> Dict[str, Any]:
     """Load variables from .scribe/variables.json once per process."""
     global _PROJECT_VARIABLES_CACHE
-    if _PROJECT_VARIABLES_CACHE is not None:
-        return _PROJECT_VARIABLES_CACHE
+    resolved_repo_root = (repo_root or settings.project_root).resolve()
+    cache_key = str(resolved_repo_root)
 
-    variables_path = settings.project_root / ".scribe" / "variables.json"
-    if not variables_path.exists():
-        _PROJECT_VARIABLES_CACHE = {}
+    if repo_root is None and _PROJECT_VARIABLES_CACHE is not None:
         return _PROJECT_VARIABLES_CACHE
+    if cache_key in _PROJECT_VARIABLES_CACHE_BY_ROOT:
+        return _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key]
+
+    variables_path = resolved_repo_root / ".scribe" / "variables.json"
+    if not variables_path.exists():
+        _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key] = {}
+        if repo_root is None:
+            _PROJECT_VARIABLES_CACHE = {}
+            return _PROJECT_VARIABLES_CACHE
+        return _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key]
 
     try:
         content = variables_path.read_text(encoding="utf-8")
         data = json.loads(content) if content.strip() else {}
         if isinstance(data, dict):
-            _PROJECT_VARIABLES_CACHE = data
+            _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key] = data
         else:
-            _PROJECT_VARIABLES_CACHE = {}
+            _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key] = {}
     except json.JSONDecodeError:
-        _PROJECT_VARIABLES_CACHE = {}
+        _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key] = {}
     except OSError:
-        _PROJECT_VARIABLES_CACHE = {}
+        _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key] = {}
 
-    return _PROJECT_VARIABLES_CACHE
+    if repo_root is None:
+        _PROJECT_VARIABLES_CACHE = _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key]
+        return _PROJECT_VARIABLES_CACHE
+    return _PROJECT_VARIABLES_CACHE_BY_ROOT[cache_key]

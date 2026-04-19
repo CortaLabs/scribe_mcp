@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import enum
 import logging
+import os
 from typing import TYPE_CHECKING, Optional
 
 import httpx
+from scribe_mcp.config.repo_config import resolve_repo_runtime_overrides
 
 if TYPE_CHECKING:
     from scribe_mcp.config.settings import Settings
@@ -39,6 +41,9 @@ def resolve_configured_mode(settings: Settings) -> OperatingMode:
     """Resolve the configured storage contract without network probing."""
     mode_setting = settings.mode
     configured_backend = str(getattr(settings, "storage_backend", "postgres")).strip().lower() or "postgres"
+    repo_overrides = resolve_repo_runtime_overrides(getattr(settings, "project_root"))
+    if "SCRIBE_STORAGE_BACKEND" not in os.environ and repo_overrides.get("storage_backend"):
+        configured_backend = str(repo_overrides["storage_backend"]).strip().lower() or configured_backend
     db_url = getattr(settings, "db_url", None)
     if _is_public_release(settings):
         if mode_setting == OperatingMode.CLIENT.value:

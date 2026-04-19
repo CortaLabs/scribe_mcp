@@ -88,6 +88,21 @@ def config_data_dir() -> Path:
     return package_root() / "config"
 
 
+def packaged_config_asset(relative_path: str | Path) -> Path:
+    """Resolve a packaged config asset path relative to ``config_data_dir``."""
+    return (config_data_dir() / Path(relative_path)).resolve()
+
+
+def packaged_template_asset(relative_path: str | Path) -> Path:
+    """Resolve a packaged template asset path relative to ``templates_dir``."""
+    return (templates_dir() / Path(relative_path)).resolve()
+
+
+def downstream_seed_manifest_path() -> Path:
+    """Return the packaged downstream seed manifest path."""
+    return packaged_config_asset("downstream_seed_manifest.yaml")
+
+
 def templates_dir() -> Path:
     """Directory containing packaged template assets."""
     return package_root() / "templates"
@@ -118,6 +133,19 @@ def user_data_dir() -> Path:
         return (Path(xdg_data_home).expanduser() / _PACKAGE_NAME).resolve()
 
     return (Path.home() / ".local" / "share" / _PACKAGE_NAME).resolve()
+
+
+def config_home_dir() -> Path:
+    """Resolve writable user/global config home (override -> XDG -> ~/.config)."""
+    override = _env_path("SCRIBE_CONFIG_DIR")
+    if override:
+        return override
+
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        return (Path(xdg_config_home).expanduser() / _PACKAGE_NAME).resolve()
+
+    return (Path.home() / ".config" / _PACKAGE_NAME).resolve()
 
 
 def default_db_path() -> Path:
@@ -231,9 +259,13 @@ def map_client_root(
 __all__ = [
     "cli_session_dir",
     "cli_session_state_path",
+    "config_home_dir",
     "config_data_dir",
     "db_init_sql",
+    "downstream_seed_manifest_path",
     "map_client_root",
+    "packaged_config_asset",
+    "packaged_template_asset",
     "postgres_migrations_dir",
     "default_db_path",
     "package_root",

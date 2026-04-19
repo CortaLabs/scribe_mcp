@@ -1,0 +1,47 @@
+version: 1
+assets:
+  - asset_id: architecture_template
+    kind: template
+    target: .scribe/templates/documents/ARCHITECTURE_GUIDE_TEMPLATE.md
+    source: templates/documents/ARCHITECTURE_GUIDE_TEMPLATE.md
+    seed_version: 2026.04.19
+  - asset_id: phase_plan_template
+    kind: template
+    target: .scribe/templates/documents/PHASE_PLAN_TEMPLATE.md
+    source: templates/documents/PHASE_PLAN_TEMPLATE.md
+    seed_version: 2026.04.19
+  - asset_id: checklist_template
+    kind: template
+    target: .scribe/templates/documents/CHECKLIST_TEMPLATE.md
+    source: templates/documents/CHECKLIST_TEMPLATE.md
+    seed_version: 2026.04.19
+  - asset_id: progress_log_template
+    kind: template
+    target: .scribe/templates/documents/PROGRESS_LOG_TEMPLATE.md
+    source: templates/documents/PROGRESS_LOG_TEMPLATE.md
+    seed_version: 2026.04.19
+  - asset_id: bug_log_template
+    kind: template
+    target: .scribe/templates/documents/BUG_LOG_TEMPLATE.md
+    source: templates/documents/BUG_LOG_TEMPLATE.md
+    seed_version: 2026.04.19
+  - asset_id: security_log_template
+    kind: template
+    target: .scribe/templates/documents/SECURITY_LOG_TEMPLATE.md
+    source: templates/documents/SECURITY_LOG_TEMPLATE.md
+    seed_version: 2026.04.19
+  - asset_id: doc_log_template
+    kind: template
+    target: .scribe/templates/documents/DOC_LOG_TEMPLATE.md
+    source: templates/documents/DOC_LOG_TEMPLATE.md
+    seed_version: 2026.04.19
+  - asset_id: repo_config
+    kind: repo_config
+    target: .scribe/config/scribe.yaml
+    source: config/scribe_config_template.yaml
+    seed_version: 2026.04.19
+  - asset_id: env_example
+    kind: env_example
+    target: .scribe/.env.example
+    generated_from: settings_contract
+    seed_version: 2026.04.19

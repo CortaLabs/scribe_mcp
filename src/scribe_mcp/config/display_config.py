@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 import yaml
 
-from scribe_mcp.config.paths import repo_root
+from scribe_mcp.config.paths import config_home_dir, repo_root
 
 
 class DisplayConfig:
@@ -65,9 +65,33 @@ class DisplayConfig:
             # Try to find .scribe/config/scribe.yaml relative to project
             try:
                 from scribe_mcp.config.repo_config import get_current_repo_config
-                _, repo_config = get_current_repo_config()
-                # Config already loaded by repo_config
-                self._config = repo_config
+                repo_root_path, _repo_config = get_current_repo_config()
+                repo_data: Dict[str, Any] = {}
+                repo_config_file = repo_root_path / ".scribe" / "config" / "scribe.yaml"
+                if repo_config_file.exists():
+                    try:
+                        with open(repo_config_file, "r", encoding="utf-8") as handle:
+                            loaded_repo = yaml.safe_load(handle) or {}
+                        if isinstance(loaded_repo, dict):
+                            repo_data = loaded_repo
+                    except Exception:
+                        repo_data = {}
+                global_data: Dict[str, Any] = {}
+                global_config = config_home_dir() / "scribe.yaml"
+                if global_config.exists():
+                    try:
+                        with open(global_config, "r", encoding="utf-8") as handle:
+                            loaded = yaml.safe_load(handle) or {}
+                        if isinstance(loaded, dict):
+                            global_data = loaded
+                    except Exception:
+                        global_data = {}
+                self._config = dict(global_data)
+                self._config.update(repo_data)  # repo remains authoritative
+                if isinstance(global_data.get("display"), dict) and isinstance(repo_data.get("display"), dict):
+                    merged_display = dict(global_data["display"])
+                    merged_display.update(repo_data["display"])
+                    self._config["display"] = merged_display
                 return
             except Exception:
                 # Fallback to default search

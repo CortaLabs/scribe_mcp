@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from scribe_mcp.config.paths import default_db_path, repo_root
+from scribe_mcp.config.paths import config_home_dir, default_db_path, repo_root
 
 try:  # Prefer optional dotenv loading to keep env setup simple outside the repo
     from dotenv import load_dotenv  # type: ignore
@@ -45,7 +45,17 @@ def _load_repo_root_dotenv(load_dotenv_fn: Optional[Any] = None) -> bool:
         return False
 
 
-_load_repo_root_dotenv()
+def _load_global_runtime_dotenv(load_dotenv_fn: Optional[Any] = None) -> bool:
+    """Best-effort user/global runtime dotenv load (below process + repo env)."""
+    loader = load_dotenv_fn or load_dotenv
+    if loader is None:
+        return False
+    try:
+        dotenv_path = config_home_dir() / "runtime.env"
+        loader(dotenv_path, override=False)
+        return True
+    except Exception:
+        return False
 
 
 def _load_env_json(name: str) -> Dict[str, Any]:
@@ -341,6 +351,13 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
+        # Explicit precedence order:
+        # 1) process env (already present)
+        # 2) repo root .env
+        # 3) user/global runtime.env
+        _load_repo_root_dotenv()
+        _load_global_runtime_dotenv()
+
         project_root = Path(os.environ.get("SCRIBE_ROOT", _default_root())).resolve()
         env_state_path = os.environ.get("SCRIBE_STATE_PATH")
         if env_state_path:

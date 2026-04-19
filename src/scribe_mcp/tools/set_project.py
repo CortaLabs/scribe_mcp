@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp import server as server_module
+from scribe_mcp.config.downstream_assets import ensure_downstream_seed_assets
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import stateful_local_tool
@@ -565,6 +566,11 @@ async def set_project(
                 base_context,
             )
         resolved_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        ensure_downstream_seed_assets(resolved_root)
+    except Exception as exc:
+        logger.warning("Downstream asset bootstrap skipped for '%s': %s", resolved_root, exc)
 
     # Bootstrap documentation scaffolds when missing
     doc_result = await _ensure_documents(name, author, overwrite_docs, resolved_root, docs_dir, agent_id)

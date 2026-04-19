@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import TYPE_CHECKING, Optional
 
 from scribe_mcp.storage.base import StorageBackend
+from scribe_mcp.config.repo_config import resolve_repo_runtime_overrides
 
 if TYPE_CHECKING:
     from scribe_mcp.config.mode_detection import OperatingMode
+
+logger = logging.getLogger(__name__)
 
 
 def create_storage_backend(
@@ -24,6 +29,16 @@ def create_storage_backend(
               that proxies all persistent ops to the remote server.
     """
     from scribe_mcp.config.settings import settings
+    repo_overrides = resolve_repo_runtime_overrides(settings.project_root)
+
+    backend_name = str(settings.storage_backend).strip().lower()
+    if "SCRIBE_STORAGE_BACKEND" not in os.environ and repo_overrides.get("storage_backend"):
+        backend_name = str(repo_overrides["storage_backend"]).strip().lower() or backend_name
+
+    sqlite_path = settings.sqlite_path
+    repo_db_path = repo_overrides.get("db_path")
+    if "SCRIBE_DB_PATH" not in os.environ and "SCRIBE_SQLITE_PATH" not in os.environ and repo_db_path:
+        sqlite_path = repo_db_path
 
     # Resolve the documented three-mode contract before choosing a concrete
     # backend so import-time setup and startup detection share one path.
@@ -47,9 +62,8 @@ def create_storage_backend(
         if mode == _OM.STANDALONE:
             from scribe_mcp.storage.sqlite import SQLiteStorage
 
-            return SQLiteStorage(settings.sqlite_path)
+            return SQLiteStorage(sqlite_path)
 
-    backend_name = str(settings.storage_backend).strip().lower()
     if mode is not None:
         from scribe_mcp.config.mode_detection import OperatingMode as _OM
 
@@ -59,6 +73,11 @@ def create_storage_backend(
                 "SQLite is only supported in explicit standalone mode."
             )
     if backend_name == "postgres":
+        if repo_db_path:
+            logger.warning(
+                "Repo config db_path is ignored because effective backend is postgres; "
+                "repo db_path only applies for sqlite standalone mode."
+            )
         if not settings.db_url:
             raise RuntimeError(
                 "Postgres backend selected but SCRIBE_DB_URL is missing. "
@@ -78,7 +97,7 @@ def create_storage_backend(
         )
     if backend_name == "sqlite":
         from scribe_mcp.storage.sqlite import SQLiteStorage
-        return SQLiteStorage(settings.sqlite_path)
+        return SQLiteStorage(sqlite_path)
     raise RuntimeError(
         f"Unsupported SCRIBE_STORAGE_BACKEND value: {backend_name!r}. "
         "Use 'postgres' for server/public-release runtime or explicitly opt into 'sqlite' standalone mode."
