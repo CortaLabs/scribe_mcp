@@ -1,6 +1,6 @@
 # Scribe MCP usage guide
 
-Release line: `2.2.8`  
+Release line: `2.2.9`  
 Updated: `2026-04-18`
 
 This guide is about day-to-day usage once Scribe is installed.

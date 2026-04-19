@@ -1,6 +1,6 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.2.8`  
+Release line: `2.2.9`  
 Updated: `2026-04-18`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.

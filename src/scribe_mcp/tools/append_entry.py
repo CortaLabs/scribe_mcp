@@ -1080,6 +1080,7 @@ async def append_entry(
     stagger_seconds: int = 1,
     agent_id: Optional[str] = None,  # Agent identification (auto-detected if not provided)
     log_type: Optional[str] = "progress",
+    project: Optional[str] = None,  # Explicit project override for cross-project logging
     priority: Optional[str] = None,  # Entry priority (critical|high|medium|low)
     category: Optional[str] = None,  # Entry category (decision|investigation|bug|etc.)
     tags: Optional[List[str]] = None,  # List of tags for entry
@@ -1176,6 +1177,11 @@ async def append_entry(
         stagger_seconds = final_config.stagger_seconds
         agent_id = final_config.agent_id
         log_type = final_config.log_type
+        explicit_project = project.strip() if isinstance(project, str) and project.strip() else None
+        if not explicit_project:
+            raw_project = _kwargs.get("project")
+            if isinstance(raw_project, str):
+                explicit_project = raw_project.strip() or None
 
         # Normalize metadata early for consistent handling throughout the function
         meta_pairs = _normalise_meta(meta)
@@ -1264,7 +1270,7 @@ async def append_entry(
 
             return {"ok": True, "written_count": written, "mode": "sentinel"}
 
-        if exec_context and getattr(exec_context, "mode", None) == "sentinel":
+        if exec_context and getattr(exec_context, "mode", None) == "sentinel" and not explicit_project:
             bulk_items = _collect_bulk_items(items, items_list)
             split_parts = (
                 [part for part in message.split(split_delimiter) if part]
@@ -1288,6 +1294,7 @@ async def append_entry(
                 tool_name="append_entry",
                 server_module=server_module,
                 agent_id=agent_id,
+                explicit_project=explicit_project,
                 require_project=True,
                 state_snapshot=state_snapshot,
             )
@@ -1304,11 +1311,12 @@ async def append_entry(
                         tool_name="append_entry",
                         server_module=server_module,
                         agent_id=healed_context["healed_values"].get("agent_id", agent_id),
+                        explicit_project=explicit_project,
                         require_project=True,
                         state_snapshot=state_snapshot,
                     )
                 except Exception:
-                    if exec_context:
+                    if exec_context and not explicit_project:
                         bulk_items = _collect_bulk_items(items, items_list)
                         split_parts = (
                             [part for part in message.split(split_delimiter) if part]
@@ -1336,7 +1344,7 @@ async def append_entry(
                 error_response["debug_path"] = "project_resolution_failed_healed"
                 return error_response
             else:
-                if exec_context:
+                if exec_context and not explicit_project:
                     bulk_items = _collect_bulk_items(items, items_list)
                     split_parts = (
                         [part for part in message.split(split_delimiter) if part]
@@ -1411,6 +1419,26 @@ async def append_entry(
                 result["meta"]["parameter_emergency_fallback"] = True
             else:
                 result["meta"]["parameter_healing"] = True
+
+        if explicit_project and exec_context and getattr(exec_context, "mode", None) == "sentinel":
+            reminders_list = result.setdefault("reminders", [])
+            reminders_list.append(
+                {
+                    "emoji": "⚠️",
+                    "message": (
+                        f"Logged to explicit project '{project.get('name', explicit_project)}' while the session is in "
+                        "sentinel mode. Run set_project before relying on project-scoped follow-up tools."
+                    ),
+                    "tool": "append_entry",
+                }
+            )
+            override_warning = "explicit_project_logged_without_rebinding_session"
+            existing_warning = result.get("warning")
+            result["warning"] = (
+                f"{existing_warning}; {override_warning}"
+                if isinstance(existing_warning, str) and existing_warning
+                else override_warning
+            )
 
         # Route through formatter for readable/structured/compact output
         return await default_formatter.finalize_tool_response(
