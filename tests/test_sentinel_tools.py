@@ -648,6 +648,61 @@ async def test_link_fix_accepts_parent_execution_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_link_fix_accepts_active_session_key() -> None:
+    """link_fix should allow the active canonical session key for later standalone calls."""
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.parent_execution_id = None
+    ctx.stable_session_id = "session-stable-789"
+    ctx.authoritative_session_key = "session-stable-789"
+    ctx.session_id = "session-fallback-000"
+
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value={"ok": True})
+
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001")
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="session-stable-789",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is True
+    _assert_operator_envelope(result)
+
+
+@pytest.mark.asyncio
+async def test_link_fix_rejects_transport_process_identifier() -> None:
+    """link_fix must not treat process transport IDs as trusted execution provenance."""
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.parent_execution_id = None
+    ctx.transport_session_id = "process:runtime-abc"
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="process:runtime-abc",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is False
+    _assert_operator_envelope(result)
+    assert "execution_id" in result.get("error", "")
+
+
+@pytest.mark.asyncio
 async def test_link_fix_execution_lineage_through_execute_tool_call_runtime_path(
     _patch_registry_backend: _RegistryBackend,
 ) -> None:

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from scribe_mcp import server as server_module
 from scribe_mcp.doc_management import utils as doc_utils
+from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import additive_local_tool
 from scribe_mcp.utils.sentinel_logs import append_case_event, append_sentinel_event
@@ -401,6 +402,10 @@ def _validate_link_fix_execution_id(context: Any, execution_id: str) -> Optional
     if isinstance(parent_execution_id, str) and parent_execution_id.strip():
         allowed_ids.add(parent_execution_id.strip())
 
+    authoritative_session_key = resolve_context_authoritative_session_key(context)
+    if isinstance(authoritative_session_key, str) and authoritative_session_key.strip():
+        allowed_ids.add(authoritative_session_key.strip())
+
     # When execution context does not expose IDs (e.g., legacy tests), avoid false negatives.
     if not allowed_ids:
         return None
@@ -408,7 +413,7 @@ def _validate_link_fix_execution_id(context: Any, execution_id: str) -> Optional
     if provided_id not in allowed_ids:
         return (
             "execution_id does not match active execution context "
-            "(must be current or parent execution_id)"
+            "(must be current/parent execution_id or the active session key)"
         )
 
     return None
