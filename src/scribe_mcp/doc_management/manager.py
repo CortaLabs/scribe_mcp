@@ -3430,10 +3430,6 @@ def _build_create_doc_body(
                     sections.append(text)
                 sections.append("")
             body = "\n".join(sections).rstrip()
-    if not body:
-        raise DocumentOperationError(
-            "CREATE_DOC_MISSING_CONTENT: provide content, body, snippet, or sections"
-        )
     if not body.endswith("\n"):
         body += "\n"
     return body

@@ -211,7 +211,7 @@ async def test_create_doc_normalizes_top_level_workflow_metadata(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_create_doc_missing_content_fails(tmp_path: Path) -> None:
+async def test_create_doc_allows_empty_body(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
 
     change = await apply_doc_change(
@@ -230,8 +230,10 @@ async def test_create_doc_missing_content_fails(tmp_path: Path) -> None:
         dry_run=False,
     )
 
-    assert not change.success
-    assert "CREATE_DOC_MISSING_CONTENT" in (change.error_message or "")
+    assert change.success
+    path = Path(change.path)
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.body.strip() == ""
 
 
 @pytest.mark.asyncio
