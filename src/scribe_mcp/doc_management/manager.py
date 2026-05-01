@@ -28,6 +28,7 @@ from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
 from scribe_mcp.utils.error_handler import sanitize_error_message
+from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality
 import re
 
 # Setup logging for doc management operations
@@ -377,6 +378,8 @@ async def apply_doc_change(
                 )
             elif action == "status_update":
                 updated_body = _toggle_checklist_status(original_body, section, metadata or {})
+            elif action == "frontmatter_update":
+                updated_body = original_body
             elif action == "apply_patch":
                 patch_text = patch or content
                 current_hash = _hash_text(original_body)
@@ -639,7 +642,28 @@ async def apply_doc_change(
                         "CREATE_DOC_EXISTS: target path already exists (use metadata.overwrite to replace or "
                         "metadata.register_existing to register without overwrite)"
                     )
-                updated_body = _build_create_doc_body(content, metadata)
+                has_explicit_body = False
+                if isinstance(content, str) and content.strip():
+                    has_explicit_body = True
+                elif isinstance(metadata, dict):
+                    raw_body = metadata.get("body") or metadata.get("snippet")
+                    if isinstance(raw_body, str) and raw_body.strip():
+                        has_explicit_body = True
+                    elif isinstance(metadata.get("sections"), list) and metadata.get("sections"):
+                        has_explicit_body = True
+
+                if has_explicit_body:
+                    updated_body = _build_create_doc_body(content, metadata)
+                elif isinstance(template, str) and template.strip():
+                    updated_body = await _render_content(project, None, template.strip(), metadata)
+                    if updated_body and not updated_body.endswith("\n"):
+                        updated_body += "\n"
+                else:
+                    updated_body = _build_create_doc_body(content, metadata)
+                if isinstance(updated_body, str):
+                    normalized_body = updated_body.strip().lower()
+                    if normalized_body in {"no message provided", "empty message"} or normalized_body.startswith("no message provided"):
+                        updated_body = "\n"
                 if isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict):
                     metadata.setdefault("frontmatter", {})
                 if isinstance(metadata, dict):
@@ -743,7 +767,7 @@ async def apply_doc_change(
                     sanitize_error_message(str(e)),
                 )
 
-        allow_frontmatter_create = action != "status_update"
+        allow_frontmatter_create = action in {"frontmatter_update", "replace_section", "append", "replace_range", "replace_text", "apply_patch", "normalize_headers", "generate_toc", "validate_crosslinks", "create_doc"}
 
         try:
             updated_text, frontmatter_extra, frontmatter_line_count = _apply_frontmatter_pipeline(
@@ -909,6 +933,11 @@ async def apply_doc_change(
             extra={
                 **(extra if "extra" in locals() else {}),
                 **frontmatter_extra,
+                "scaffold_quality_warnings": analyze_scaffold_quality(
+                    text=updated_text,
+                    metadata=metadata if isinstance(metadata, dict) else None,
+                    doc_name=doc_name,
+                ),
                 "document_info": document_info,
             },
             success=True,
@@ -3408,13 +3437,16 @@ def _build_create_doc_body(
     metadata: Optional[Dict[str, Any]],
 ) -> str:
     if content:
-        body = str(content)
+        content_text = str(content)
+        sentinel = content_text.strip().lower()
+        body = "" if sentinel in {"no message provided", "empty message"} or sentinel.startswith("no message provided") else content_text
     else:
         metadata = metadata or {}
         body = ""
         raw_body = metadata.get("body") or metadata.get("snippet")
         if isinstance(raw_body, str):
-            body = raw_body
+            sentinel = raw_body.strip().lower()
+            body = "" if sentinel in {"no message provided", "empty message"} or sentinel.startswith("no message provided") else raw_body
         elif isinstance(metadata.get("sections"), list):
             sections = []
             for section in metadata["sections"]:
@@ -3534,7 +3566,7 @@ def _validate_and_correct_inputs(
         "action": {
             "type": str,
             "required": True,
-            "allowed_values": {"replace_section", "append", "status_update", "list_sections", "batch",
+            "allowed_values": {"replace_section", "append", "status_update", "frontmatter_update", "list_sections", "batch",
                              "apply_patch", "replace_range", "replace_text", "normalize_headers", "generate_toc", "create_doc", "validate_crosslinks",
                              "search", "create_research_doc", "create_bug_report", "create_review_report", "create_agent_report_card"},
             "default": "append"
@@ -3658,9 +3690,14 @@ def _validate_and_correct_inputs(
             if corrected_action in {"normalize_headers", "generate_toc"}:
                 corrected_content = None
                 corrected_template = None
-            if corrected_action in {"create_doc", "validate_crosslinks"}:
+            if corrected_action == "validate_crosslinks":
                 corrected_content = corrected_content if corrected_content not in {"No message provided", "Empty message"} else None
                 corrected_template = None
+            if corrected_action == "create_doc":
+                if isinstance(corrected_content, str):
+                    sentinel = corrected_content.strip().lower()
+                    if sentinel in {"no message provided", "empty message"} or sentinel.startswith("no message provided"):
+                        corrected_content = None
         elif not corrected_content and not corrected_template:
             corrected_content = f"## {corrected_action.replace('_', ' ').title()}\n\nContent placeholder."
 

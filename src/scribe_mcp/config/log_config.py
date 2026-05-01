@@ -6,7 +6,7 @@ import json
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.utils.slug import slugify_project_name as _slugify_project_name
@@ -34,40 +34,75 @@ DEFAULT_LOGS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def _log_config_path() -> Path:
+def _effective_repo_root(repo_root: Optional[str | Path] = None) -> Path:
+    if repo_root:
+        return Path(repo_root).expanduser().resolve()
+    configured_root = getattr(settings, "default_repo_root", None)
+    if configured_root:
+        return Path(configured_root).expanduser().resolve()
+    return settings.project_root.resolve()
+
+
+def _repo_log_config_path(repo_root: Path) -> Path:
+    return repo_root / ".scribe" / "config" / "log_config.json"
+
+
+def _legacy_log_config_path() -> Path:
     return settings.project_root / "config" / "log_config.json"
 
 
-@lru_cache(maxsize=1)
-def load_log_config() -> Dict[str, Dict[str, Any]]:
-    """Load log configuration, merged with defaults."""
-    data: Dict[str, Any] = {}
-    path = _log_config_path()
+def _load_json_log_config(path: Path) -> Dict[str, Any]:
     if not path.exists():
-        config_logger.info(f"Creating default log configuration at {path}")
-        _write_default_config(path)
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            config_logger.debug(f"Successfully loaded log configuration from {path}")
-        except json.JSONDecodeError:
-            config_logger.warning(f"Log config JSON invalid, regenerating defaults: {path}")
-            _write_default_config(path)
-            data = {"logs": DEFAULT_LOGS}
-        except Exception as e:
-            config_logger.error(f"Failed to read log config at {path}: {e}")
-            _write_default_config(path)
-            data = {"logs": DEFAULT_LOGS}
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        config_logger.debug("Successfully loaded log configuration from %s", path)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        config_logger.warning("Log config JSON invalid, ignoring: %s", path)
+    except Exception as exc:
+        config_logger.error("Failed to read log config at %s: %s", path, exc)
+    return {}
 
+
+def _extract_logs(data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     logs = data.get("logs") if isinstance(data, dict) else None
     if not isinstance(logs, dict):
         logs = data
-    logs = logs or {}
+    if not isinstance(logs, dict):
+        return {}
+    return {key: value for key, value in logs.items() if isinstance(value, dict)}
 
+
+def _load_repo_yaml_log_config(repo_root: Path) -> Dict[str, Dict[str, Any]]:
+    from scribe_mcp.config.repo_config import RepoDiscovery
+
+    config = RepoDiscovery.load_config(repo_root, seed_if_missing=False)
+    logs = dict(getattr(config, "log_config", {}) or {})
+    log_path = getattr(config, "log_path", None)
+    if log_path:
+        progress = dict(logs.get("progress") or {})
+        progress["path"] = str(Path(log_path).expanduser().resolve())
+        logs["progress"] = progress
+    return {key: value for key, value in logs.items() if isinstance(value, dict)}
+
+
+def load_log_config(repo_root: Optional[str | Path] = None) -> Dict[str, Dict[str, Any]]:
+    return _load_log_config_cached(str(_effective_repo_root(repo_root)))
+
+
+@lru_cache(maxsize=32)
+def _load_log_config_cached(repo_root_key: str) -> Dict[str, Dict[str, Any]]:
+    """Load log configuration, merged with defaults."""
     merged = dict(DEFAULT_LOGS)
-    for key, value in logs.items():
-        if isinstance(value, dict):
+
+    repo_root = Path(repo_root_key).expanduser().resolve()
+    for path in (_legacy_log_config_path(), _repo_log_config_path(repo_root)):
+        for key, value in _extract_logs(_load_json_log_config(path)).items():
             merged[key] = value
+
+    for key, value in _load_repo_yaml_log_config(repo_root).items():
+        merged[key] = value
 
     return merged
 
@@ -83,10 +118,10 @@ def _write_default_config(path: Path) -> None:
         raise
 
 
-def get_log_definition(log_type: str) -> Dict[str, Any]:
+def get_log_definition(log_type: str, repo_root: Optional[str | Path] = None) -> Dict[str, Any]:
     """Return log definition for the given type (defaults to progress)."""
     log_type = (log_type or "progress").lower()
-    logs = load_log_config()
+    logs = load_log_config(repo_root)
     return logs.get(log_type) or logs["progress"]
 
 

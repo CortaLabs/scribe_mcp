@@ -8,6 +8,7 @@ import pytest
 
 from scribe_mcp import server as server_module
 from scribe_mcp.reminders import reset_reminder_cooldowns
+from scribe_mcp.reminders import get_reminders
 from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
@@ -82,6 +83,17 @@ async def _setup_project(tmp_path: Path) -> dict:
     (docs_dir / "PHASE_PLAN.md").write_text("# Phase\n", encoding="utf-8")
     (docs_dir / "CHECKLIST.md").write_text("# Checklist\n", encoding="utf-8")
     (docs_dir / "PROGRESS_LOG.md").write_text("# Log\n", encoding="utf-8")
+    (docs_dir / "DECISIONS.md").write_text("[2026-05-01] custom log entry\n", encoding="utf-8")
+    config_dir = project_root / ".scribe" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "scribe.yaml").write_text(
+        "repo_slug: test\n"
+        "logs:\n"
+        "  decisions:\n"
+        "    path: \"{docs_dir}/DECISIONS.md\"\n"
+        "    metadata_requirements: []\n",
+        encoding="utf-8",
+    )
 
     return {
         "name": "Test Project",
@@ -93,6 +105,7 @@ async def _setup_project(tmp_path: Path) -> dict:
             "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
             "checklist": str(docs_dir / "CHECKLIST.md"),
             "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+            "decisions": str(docs_dir / "DECISIONS.md"),
         },
         "defaults": {"agent": "QA Bot"},
     }
@@ -259,3 +272,138 @@ async def test_manage_docs_create_returns_next_step_guidance(tmp_path: Path) -> 
 
     assert result["ok"] is True
     assert "replace_section" in result.get("next_step_guidance", "")
+
+
+@pytest.mark.asyncio
+async def test_readiness_claim_blocked_but_edit_persists(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        write_result = await manage_docs(
+            action="replace_section",
+            doc="architecture",
+            section="problem_statement",
+            content="[fill this section]\n",
+            metadata={"scaffold": False},
+            dry_run=False,
+        )
+        assert write_result["ok"] is True
+
+        result = await manage_docs(
+            action="frontmatter_update",
+            doc="architecture",
+            metadata={"frontmatter": {"status": "complete"}},
+            dry_run=False,
+        )
+
+    assert result["ok"] is False
+    assert result.get("code") == "DOC_NOT_DONE_SCAFFOLD_QUALITY"
+    blockers = result.get("readiness_blockers") or []
+    assert blockers
+    assert any(b.get("code") == "SCF_PLACEHOLDER_BRACKET" for b in blockers)
+    persisted = Path(project["docs"]["architecture"]).read_text(encoding="utf-8")
+    assert "[fill this section]" in persisted
+    assert "status: complete" not in persisted
+
+
+@pytest.mark.asyncio
+async def test_replace_section_with_readiness_claim_blocks_whole_mutation(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    original = Path(project["docs"]["architecture"]).read_text(encoding="utf-8")
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="replace_section",
+            doc="architecture",
+            section="problem_statement",
+            content="[fill this section]\n",
+            metadata={"frontmatter": {"status": "complete"}},
+            dry_run=False,
+        )
+
+    assert result["ok"] is False
+    assert result.get("code") == "DOC_NOT_DONE_SCAFFOLD_QUALITY"
+    blockers = result.get("readiness_blockers") or []
+    assert blockers
+    persisted = Path(project["docs"]["architecture"]).read_text(encoding="utf-8")
+    assert persisted == original
+    assert "status: complete" not in persisted
+    assert "[fill this section]" not in persisted
+
+
+@pytest.mark.asyncio
+async def test_quality_reminder_categories_and_cooldown(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    project["defaults"] = {
+        "reminder": {
+            "quality_cooldown_minutes": 60,
+            "scaffold_residue_category": "scaffold_residue_custom",
+            "frontmatter_mismatch_category": "frontmatter_mismatch_custom",
+            "stale_research_index_category": "stale_index_custom",
+        }
+    }
+    architecture_path = Path(project["docs"]["architecture"])
+    architecture_path.write_text("---\nstatus: complete\n---\n[fill this section]\n", encoding="utf-8")
+
+    reset_reminder_cooldowns(project_root=project["root"])
+    with patch("scribe_mcp.reminders._resolve_reminder_storage", return_value=None):
+        from scribe_mcp import reminders as reminders_module
+        reminders_module._reminder_engine = None
+        first = await get_reminders(project, tool_name="manage_docs", state=None, agent_id="qa")
+        cats = {r.get("category") for r in first}
+        assert "scaffold_residue_custom" in cats
+        assert "frontmatter_mismatch_custom" in cats
+
+        second = await get_reminders(project, tool_name="manage_docs", state=None, agent_id="qa")
+        cats2 = {r.get("category") for r in second}
+        assert "scaffold_residue_custom" not in cats2
+        assert "frontmatter_mismatch_custom" not in cats2
+
+
+@pytest.mark.asyncio
+async def test_quality_reminders_ignore_configured_custom_logs(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+    architecture_path.write_text("---\nstatus: complete\n---\nFinal architecture content.\n", encoding="utf-8")
+
+    reset_reminder_cooldowns(project_root=project["root"])
+    with patch("scribe_mcp.reminders._resolve_reminder_storage", return_value=None):
+        from scribe_mcp import reminders as reminders_module
+
+        reminders_module._reminder_engine = None
+        result = await get_reminders(project, tool_name="manage_docs", state=None, agent_id="qa")
+
+    cats = {r.get("category") for r in result}
+    assert "scaffold_residue" not in cats
+
+
+@pytest.mark.asyncio
+async def test_quality_reminders_count_stale_index_for_path_registered_research_docs(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+    architecture_path.write_text("---\nstatus: complete\n---\nFinal architecture content.\n", encoding="utf-8")
+    research_dir = Path(project["docs_dir"]) / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    research_doc = research_dir / "RESEARCH_FRONTMATTER.md"
+    research_doc.write_text("# Research\nEvidence.\n", encoding="utf-8")
+    project["docs"] = {
+        "architecture": project["docs"]["architecture"],
+        "research_frontmatter": str(research_doc),
+        "progress_log": project["docs"]["progress_log"],
+        "decisions": project["docs"]["decisions"],
+    }
+
+    reset_reminder_cooldowns(project_root=project["root"])
+    with patch("scribe_mcp.reminders._resolve_reminder_storage", return_value=None):
+        from scribe_mcp import reminders as reminders_module
+
+        reminders_module._reminder_engine = None
+        result = await get_reminders(project, tool_name="manage_docs", state=None, agent_id="qa")
+
+    cats = {r.get("category") for r in result}
+    assert "stale_research_index" in cats
+    assert "scaffold_residue" not in cats

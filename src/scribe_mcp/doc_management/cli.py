@@ -17,6 +17,7 @@ def run_manage_docs_cli(
         try:
             result = await manage_docs_callable(
                 action=args.action,
+                project=args.project,
                 doc=args.doc,
                 section=args.section,
                 content=args.content,
@@ -79,6 +80,9 @@ Examples:
             "replace_section",
             "append",
             "status_update",
+            "frontmatter_update",
+            "quality_check",
+            "scaffold_quality_check",
             "apply_patch",
             "replace_range",
             "list_sections",
@@ -95,8 +99,12 @@ Examples:
 
     parser.add_argument(
         "doc",
-        choices=["architecture", "phase_plan", "checklist", "progress_log", "doc_log", "security_log", "bug_log"],
         help="Document to modify",
+    )
+
+    parser.add_argument(
+        "--project",
+        help="Project name to target",
     )
 
     parser.add_argument(
@@ -190,6 +198,9 @@ Examples:
             "normalize_headers",
             "generate_toc",
             "preview_reconciliation",
+            "frontmatter_update",
+            "quality_check",
+            "scaffold_quality_check",
             "list_sections",
             "list_checklist_items",
             "batch",

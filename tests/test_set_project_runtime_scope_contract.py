@@ -120,6 +120,85 @@ async def test_execute_tool_call_set_project_root_omitted_fails_without_verified
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_call_uses_configured_default_repo_root_for_unbound_tool(tmp_path: Path):
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    configured_repo = (tmp_path / "apps" / "vera").resolve()
+    configured_repo.mkdir(parents=True)
+    (configured_repo / ".scribe" / "config").mkdir(parents=True)
+    (configured_repo / ".scribe" / "config" / "scribe.yaml").write_text(
+        "repo_slug: vera\n",
+        encoding="utf-8",
+    )
+    router = _CapturingRuntimeRouter()
+
+    def read_file_stub(agent: str, **_kwargs) -> dict[str, str]:
+        return {"agent": agent, "status": "ok"}
+
+    result = await execute_tool_call(
+        name="read_file",
+        arguments={"agent": "codex", "path": "README.md"},
+        kwargs={},
+        registry={"read_file": read_file_stub},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=None,
+        settings=SimpleNamespace(
+            project_root=workspace_root,
+            default_repo_root=configured_repo,
+            trusted_repo_roots=(),
+        ),
+        state_manager=_DummyStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"read_file"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result["status"] == "ok"
+    assert router.last_payload is not None
+    assert router.last_payload["repo_root"] == str(configured_repo)
+    assert router.last_payload["scope_provenance"]["repo_root"] == "verified"
+    assert router.last_payload["resolution_source"] == "configured_default_repo_root"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_verifies_explicit_trusted_repo_root_for_unbound_tool(tmp_path: Path):
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    trusted_repo = (tmp_path / "apps" / "trusted").resolve()
+    trusted_repo.mkdir(parents=True)
+    (trusted_repo / ".git").mkdir()
+    router = _CapturingRuntimeRouter()
+
+    def read_file_stub(agent: str, **_kwargs) -> dict[str, str]:
+        return {"agent": agent, "status": "ok"}
+
+    result = await execute_tool_call(
+        name="read_file",
+        arguments={"agent": "codex", "repo_root": str(trusted_repo), "path": "README.md"},
+        kwargs={},
+        registry={"read_file": read_file_stub},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=None,
+        settings=SimpleNamespace(
+            project_root=workspace_root,
+            default_repo_root=None,
+            trusted_repo_roots=(trusted_repo,),
+        ),
+        state_manager=_DummyStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"read_file"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result["status"] == "ok"
+    assert router.last_payload is not None
+    assert router.last_payload["repo_root"] == str(trusted_repo)
+    assert router.last_payload["scope_provenance"]["repo_root"] == "verified"
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_call_set_project_uses_verified_request_local_repo_root(tmp_path: Path):
     workspace_root = (tmp_path / "workspace").resolve()
     workspace_root.mkdir()

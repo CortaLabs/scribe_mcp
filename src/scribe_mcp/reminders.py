@@ -20,6 +20,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # Import the new reminder engine
 from scribe_mcp.utils.reminder_validator import validate_and_load_engine
 from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext as NewReminderContext
+from scribe_mcp.utils.reminder_engine import ReminderInstance
+from scribe_mcp.doc_management.scaffold_quality import (
+    collect_managed_doc_quality_warnings,
+    configured_log_quality_exclusion_paths,
+    is_managed_doc_quality_target,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -322,9 +328,74 @@ async def get_reminders(
     # Use the new engine
     engine = _get_engine()
     reminder_instances = await engine.generate_reminders(context)
+    reminder_instances.extend(await _quality_state_reminders(engine, context))
 
     # Convert to the old format
     return engine.to_dict_list(reminder_instances)
+
+
+async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderContext) -> List[ReminderInstance]:
+    quality = context.variables.get("managed_doc_quality") if isinstance(context.variables, dict) else None
+    if not isinstance(quality, dict):
+        return []
+
+    reminders: List[ReminderInstance] = []
+    default_cooldown = int(context.variables.get("quality_reminder_cooldown_minutes", 30) or 30)
+    categories_cfg = context.variables.get("quality_reminder_categories") or {}
+
+    def _cfg(name: str, fallback: str) -> str:
+        if isinstance(categories_cfg, dict) and isinstance(categories_cfg.get(name), str):
+            return str(categories_cfg.get(name))
+        return fallback
+
+    residue = int(quality.get("readiness_blocker_count", 0) or 0)
+    mismatch = int(quality.get("frontmatter_mismatch_count", 0) or 0)
+    stale = int(quality.get("stale_research_index_count", 0) or 0)
+
+    if residue > 0:
+        reminders.append(
+            ReminderInstance(
+                key="quality.scaffold_residue",
+                level="warning",
+                emoji="⚠️",
+                message=f"Scaffold residue remains ({residue} readiness blockers). Fix listed warning codes before claiming done.",
+                category=_cfg("scaffold_residue", "scaffold_residue"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                cooldown_minutes=default_cooldown,
+            )
+        )
+    if mismatch > 0:
+        reminders.append(
+            ReminderInstance(
+                key="quality.frontmatter_mismatch",
+                level="warning",
+                emoji="🧭",
+                message=f"Frontmatter readiness mismatch detected ({mismatch}). Align status with body quality state.",
+                category=_cfg("frontmatter_mismatch", "frontmatter_mismatch"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                cooldown_minutes=default_cooldown,
+            )
+        )
+    if stale > 0:
+        reminders.append(
+            ReminderInstance(
+                key="quality.stale_research_index",
+                level="info",
+                emoji="📚",
+                message=f"Research index hygiene warning ({stale}) present. Reconcile stale index entries when appropriate.",
+                category=_cfg("stale_research_index", "stale_research_index"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                cooldown_minutes=default_cooldown,
+            )
+        )
+
+    emitted: List[ReminderInstance] = []
+    for reminder in reminders:
+        if await engine._should_show_reminder_async(reminder, context):
+            reminder_hash = engine._get_reminder_hash(reminder.key, reminder.variables)
+            engine.history.reminder_hashes[reminder_hash] = datetime.now(timezone.utc)
+            emitted.append(reminder)
+    return emitted
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +458,29 @@ async def _build_legacy_context(
     # Get current phase (cached by file signature).
     current_phase = await _get_current_phase(project.get("docs", {}).get("phase_plan"))
 
+    quality_state: Dict[str, Any] = {
+        "readiness_blocker_count": 0,
+        "frontmatter_mismatch_count": 0,
+        "stale_research_index_count": 0,
+    }
+    docs = project.get("docs", {}) if isinstance(project.get("docs"), dict) else {}
+    configured_log_paths = configured_log_quality_exclusion_paths(project)
+    for key, doc_path in docs.items():
+        if not isinstance(doc_path, str) or not doc_path.endswith(".md"):
+            continue
+        if not is_managed_doc_quality_target(str(key), doc_path, configured_log_paths=configured_log_paths):
+            continue
+        try:
+            text = await asyncio.to_thread(Path(doc_path).read_text, encoding="utf-8")
+        except Exception:
+            continue
+        warnings = collect_managed_doc_quality_warnings(text=text, doc_name=str(key), path=doc_path, project=project)
+        quality_state["readiness_blocker_count"] += sum(1 for w in warnings if bool(w.get("blocking")))
+        quality_state["frontmatter_mismatch_count"] += sum(1 for w in warnings if w.get("code") == "SCF_FRONTMATTER_MISMATCH")
+        quality_state["stale_research_index_count"] += sum(1 for w in warnings if w.get("code") in {"SCF_INDEX_STALE", "SCF_INDEX_MISSING", "SCF_DOC_UNINDEXED"})
+
+    reminder_cfg = ((project.get("defaults") or {}).get("reminder") or {}) if isinstance(project, dict) else {}
+
     # Get session age information
     session_age_minutes = None
     try:
@@ -420,7 +514,16 @@ async def _build_legacy_context(
         docs_changed=docs_changed,
         current_phase=current_phase,
         session_age_minutes=session_age_minutes,
-        variables=variables or {},
+        variables={
+            **(variables or {}),
+            "managed_doc_quality": quality_state,
+            "quality_reminder_cooldown_minutes": int(reminder_cfg.get("quality_cooldown_minutes", 30) or 30),
+            "quality_reminder_categories": {
+                "scaffold_residue": str(reminder_cfg.get("scaffold_residue_category", "scaffold_residue")),
+                "frontmatter_mismatch": str(reminder_cfg.get("frontmatter_mismatch_category", "frontmatter_mismatch")),
+                "stale_research_index": str(reminder_cfg.get("stale_research_index_category", "stale_research_index")),
+            },
+        },
         operation_status=operation_status,
     )
 

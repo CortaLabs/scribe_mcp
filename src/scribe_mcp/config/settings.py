@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp.config.paths import config_home_dir, default_db_path, repo_root
 
@@ -250,6 +250,8 @@ class Settings:
     """Resolved configuration for the MCP server."""
 
     project_root: Path
+    default_repo_root: Optional[Path]
+    trusted_repo_roots: Tuple[Path, ...]
     default_state_path: Path
     db_url: Optional[str]
     storage_backend: str
@@ -359,6 +361,18 @@ class Settings:
         _load_global_runtime_dotenv()
 
         project_root = Path(os.environ.get("SCRIBE_ROOT", _default_root())).resolve()
+        default_repo_root_raw = _optional_env("SCRIBE_REPO_ROOT", "REPO_ROOT")
+        default_repo_root = (
+            Path(default_repo_root_raw).expanduser().resolve()
+            if default_repo_root_raw
+            else None
+        )
+        trusted_repo_roots_raw = os.environ.get("SCRIBE_TRUSTED_REPO_ROOTS", "")
+        trusted_repo_roots = tuple(
+            Path(item).expanduser().resolve()
+            for item in trusted_repo_roots_raw.split(os.pathsep)
+            if item.strip()
+        )
         env_state_path = os.environ.get("SCRIBE_STATE_PATH")
         if env_state_path:
             state_path = Path(env_state_path).expanduser()
@@ -522,6 +536,8 @@ class Settings:
 
         return cls(
             project_root=project_root,
+            default_repo_root=default_repo_root,
+            trusted_repo_roots=trusted_repo_roots,
             default_state_path=state_path,
             db_url=db_url,
             storage_backend=storage_backend,

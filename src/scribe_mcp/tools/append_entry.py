@@ -1104,7 +1104,7 @@ async def append_entry(
         auto_split: Automatically split multiline messages into separate entries (default: True)
         split_delimiter: Delimiter for splitting multiline messages (default: newline)
         stagger_seconds: Seconds to stagger timestamps for bulk/split entries (default: 1)
-        log_type: Target log identifier (progress/doc_updates/etc.) defined in config/log_config.json
+        log_type: Target log identifier (progress/doc_updates/etc.) defined in .scribe/config/scribe.yaml logs
         priority: Entry priority (critical|high|medium|low). Auto-inferred from status if not provided. Default: medium
         category: Entry category (decision|investigation|bug|implementation|test|milestone|config|security|performance|documentation)
         tags: List of tags for entry

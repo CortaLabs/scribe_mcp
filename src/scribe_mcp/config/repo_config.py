@@ -18,6 +18,24 @@ from scribe_mcp.config.paths import config_home_dir
 from scribe_mcp.config.settings import settings
 # Setup structured logging for repository configuration operations
 repo_config_logger = logging.getLogger(__name__)
+_RESERVED_CREATE_DOC_TYPES = {
+    "custom",
+    "spec",
+    "research",
+    "bug",
+    "security",
+    "review",
+    "agent_card",
+}
+
+
+@dataclass(frozen=True)
+class DocTypeCreateResolution:
+    aliases: Dict[str, str] = field(default_factory=dict)
+    templates: Dict[str, str] = field(default_factory=dict)
+    template_doc_types: set[str] = field(default_factory=set)
+    warnings: list[str] = field(default_factory=list)
+    source_path: str = "built_in"
 
 _REPO_ENV_OWNED_IGNORE_KEYS = {
     "db_url",
@@ -158,6 +176,76 @@ def resolve_repo_runtime_overrides(repo_root: Path) -> Dict[str, Any]:
     return {"storage_backend": None, "db_path": None, "config_path": None}
 
 
+def _extract_doc_type_config_map(repo_config: "RepoConfig") -> tuple[Optional[Dict[str, Any]], str]:
+    top_level = getattr(repo_config, "_raw_config", None)
+    if isinstance(top_level, dict):
+        doc_types = top_level.get("doc_types")
+        if isinstance(doc_types, dict):
+            return doc_types, "repo_config:doc_types"
+    reminder_config = repo_config.reminder_config if isinstance(repo_config.reminder_config, dict) else {}
+    doc_types = reminder_config.get("doc_types")
+    if isinstance(doc_types, dict):
+        return doc_types, "repo_config:reminder_config.doc_types"
+    return None, "built_in"
+
+
+def resolve_create_doc_type_config(repo_config: "RepoConfig") -> DocTypeCreateResolution:
+    """Resolve validated create aliases/templates from repo config.
+
+    Primary path: `doc_types.*`
+    Compatibility path: `reminder_config.doc_types.*`
+    """
+    aliases: Dict[str, str] = {}
+    templates: Dict[str, str] = {}
+    warnings: list[str] = []
+    template_doc_types: set[str] = set()
+    doc_types, source_path = _extract_doc_type_config_map(repo_config)
+    if not isinstance(doc_types, dict):
+        return DocTypeCreateResolution(
+            aliases=aliases,
+            templates=templates,
+            template_doc_types=template_doc_types,
+            warnings=warnings,
+            source_path=source_path,
+        )
+    raw_aliases = doc_types.get("create_aliases")
+    if isinstance(raw_aliases, dict):
+        for raw_alias, raw_target in raw_aliases.items():
+            alias = str(raw_alias or "").strip().lower()
+            target = str(raw_target or "").strip().lower()
+            if not alias or not target:
+                warnings.append("Ignoring empty create_aliases entry; both alias and target are required.")
+                continue
+            if alias in _RESERVED_CREATE_DOC_TYPES:
+                warnings.append(f"Ignoring create_aliases['{alias}']: alias conflicts with reserved built-in doc_type.")
+                continue
+            if target not in _RESERVED_CREATE_DOC_TYPES:
+                warnings.append(f"Ignoring create_aliases['{alias}']: target '{target}' is not a valid built-in doc_type.")
+                continue
+            aliases[alias] = target
+
+    raw_templates = doc_types.get("create_templates")
+    if isinstance(raw_templates, dict):
+        for raw_doc_type, raw_template in raw_templates.items():
+            doc_type = str(raw_doc_type or "").strip().lower()
+            template = str(raw_template or "").strip()
+            if not doc_type or not template:
+                warnings.append("Ignoring empty create_templates entry; both doc_type and template are required.")
+                continue
+            if doc_type in _RESERVED_CREATE_DOC_TYPES:
+                warnings.append(f"Ignoring create_templates['{doc_type}']: doc_type is reserved by built-ins.")
+                continue
+            templates[doc_type] = template
+            template_doc_types.add(doc_type)
+    return DocTypeCreateResolution(
+        aliases=aliases,
+        templates=templates,
+        template_doc_types=template_doc_types,
+        warnings=warnings,
+        source_path=source_path,
+    )
+
+
 
 @dataclass
 class RepoConfig:
@@ -170,6 +258,8 @@ class RepoConfig:
     # Documentation structure
     dev_plans_dir: Path = field(default_factory=_canonical_dev_plans_base)
     progress_log_name: str = "PROGRESS_LOG.md"
+    log_path: Optional[Path] = None
+    log_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     # Template and customization
     templates_pack: str = "default"
@@ -233,6 +323,15 @@ class RepoConfig:
             dev_plans_dir = repo_root / Path(dev_plans_dir_value)
         else:
             dev_plans_dir = _default_dev_plans_dir(repo_root)
+        log_path = None
+        log_path_value = data.get("log_path") or data.get("progress_log_path")
+        if log_path_value:
+            log_path = Path(str(log_path_value)).expanduser()
+            if not log_path.is_absolute():
+                log_path = repo_root / log_path
+        log_config = data.get("logs") or data.get("log_config") or {}
+        if not isinstance(log_config, dict):
+            log_config = {}
         custom_templates_dir = None
         if data.get("custom_templates_dir"):
             custom_templates_dir = repo_root / Path(data["custom_templates_dir"])
@@ -244,11 +343,13 @@ class RepoConfig:
         if data.get("db_path"):
             db_path = repo_root / Path(data["db_path"])
 
-        return cls(
+        config = cls(
             repo_slug=data.get("repo_slug", repo_root.name),
             repo_root=repo_root,
             dev_plans_dir=dev_plans_dir,
             progress_log_name=data.get("progress_log_name", "PROGRESS_LOG.md"),
+            log_path=log_path,
+            log_config=log_config,
             templates_pack=data.get("templates_pack", "default"),
             custom_templates_dir=custom_templates_dir,
             permissions=permissions,
@@ -264,6 +365,8 @@ class RepoConfig:
             doc_snapshots=bool(data.get("doc_snapshots", True)),
             use_ansi_colors=bool(data.get("use_ansi_colors", True)),  # Colors ON by default
         )
+        setattr(config, "_raw_config", dict(data))
+        return config
 
     @classmethod
     def defaults_for_repo(cls, repo_root: Path) -> "RepoConfig":
@@ -290,6 +393,12 @@ class RepoConfig:
             "repo_root": str(self.repo_root),
             "dev_plans_dir": str(self.dev_plans_dir.relative_to(self.repo_root)),
             "progress_log_name": self.progress_log_name,
+            "log_path": (
+                str(self.log_path.relative_to(self.repo_root))
+                if self.log_path and self.log_path.is_relative_to(self.repo_root)
+                else str(self.log_path) if self.log_path else None
+            ),
+            "logs": self.log_config,
             "templates_pack": self.templates_pack,
             "permissions": self.permissions,
             "plugin_config": self.plugin_config,

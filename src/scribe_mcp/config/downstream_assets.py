@@ -23,6 +23,24 @@ from scribe_mcp.config.settings import PUBLIC_STORAGE_SETTINGS_CONTRACT
 logger = logging.getLogger(__name__)
 
 _SEED_REGISTRY_VERSION = 1
+_REPO_CONFIG_LOG_BLOCK = """
+
+# Log routing configuration
+# Add custom log types here and use append_entry(log_type="<name>").
+logs:
+  progress:
+    path: "{progress_log}"
+    metadata_requirements: []
+  doc_updates:
+    path: "{docs_dir}/DOC_LOG.md"
+    metadata_requirements: ["doc", "section", "action"]
+  security:
+    path: "{docs_dir}/SECURITY_LOG.md"
+    metadata_requirements: ["severity", "area", "impact"]
+  bugs:
+    path: "{docs_dir}/BUG_LOG.md"
+    metadata_requirements: ["severity", "component", "status"]
+"""
 
 
 @dataclass(frozen=True)
@@ -175,6 +193,23 @@ def _write_registry(repo_root: Path, registry: Dict[str, object]) -> None:
         handle.write("\n")
 
 
+def _ensure_repo_config_log_defaults(path: Path) -> bool:
+    """Append log routing defaults to existing repo configs without rewriting them."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+        payload = yaml.safe_load(raw) or {}
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("logs"), dict) or isinstance(payload.get("log_config"), dict):
+        return False
+
+    separator = "" if raw.endswith("\n") else "\n"
+    path.write_text(raw + separator + _REPO_CONFIG_LOG_BLOCK.lstrip("\n"), encoding="utf-8")
+    return True
+
+
 def ensure_downstream_seed_assets(
     repo_root: Path,
     *,
@@ -231,6 +266,9 @@ def ensure_downstream_seed_assets(
             }
             seeded += 1
             continue
+
+        if asset.asset_id == "repo_config":
+            _ensure_repo_config_log_defaults(target_path)
 
         with open(target_path, "rb") as handle:
             current_bytes = handle.read()

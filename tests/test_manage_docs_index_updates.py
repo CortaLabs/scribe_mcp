@@ -142,7 +142,7 @@ async def test_index_updater_routes_security_reports_to_collection_root(monkeypa
         captured["agent_id"] = agent_id
         captured["repo_root"] = repo_root
 
-    monkeypatch.setattr(special_create_shared, "_update_bug_index", _capture_bug_index)
+    monkeypatch.setattr(special_create_shared, "_update_security_index", _capture_bug_index)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         project_root = Path(tmpdir)
@@ -351,6 +351,58 @@ def test_classification_uses_case_id_prefix_before_path_fallback():
         assert classified is not None
         assert classified.doc_type == "security_report"
         assert classified.case_id == "SEC-2026-044"
+
+
+def test_classification_honors_repo_config_doc_type_alias(tmp_path: Path) -> None:
+    project_root = tmp_path
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "test_project"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    doc_path = docs_dir / "INCIDENT.md"
+    doc_path.write_text("---\ndoc_type: incident\n---\n# Incident\n", encoding="utf-8")
+
+    config_dir = project_root / ".scribe" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "scribe.yaml").write_text(
+        "doc_types:\n"
+        "  create_aliases:\n"
+        "    incident: bug\n",
+        encoding="utf-8",
+    )
+
+    classified = classify_scribe_source_document(
+        doc_path,
+        project_root=project_root,
+        docs_dir=docs_dir,
+    )
+    assert classified is not None
+    assert classified.source_family == "case_report"
+    assert classified.doc_type == "bug_report"
+
+
+def test_classification_honors_template_backed_doc_type(tmp_path: Path) -> None:
+    project_root = tmp_path
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "test_project"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    doc_path = docs_dir / "INCIDENT_TEMPLATE.md"
+    doc_path.write_text("---\ndoc_type: incident\n---\n# Incident Template\n", encoding="utf-8")
+
+    config_dir = project_root / ".scribe" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "scribe.yaml").write_text(
+        "doc_types:\n"
+        "  create_templates:\n"
+        "    incident: RESEARCH_REPORT_TEMPLATE\n",
+        encoding="utf-8",
+    )
+
+    classified = classify_scribe_source_document(
+        doc_path,
+        project_root=project_root,
+        docs_dir=docs_dir,
+    )
+    assert classified is not None
+    assert classified.source_family == "dev_plan"
+    assert classified.doc_type == "incident"
 
 
 if __name__ == "__main__":

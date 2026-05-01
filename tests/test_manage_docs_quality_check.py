@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+from scribe_mcp import server as server_module
+from scribe_mcp.shared.logging_utils import LoggingContext
+from scribe_mcp.state import StateManager
+from scribe_mcp.tools.manage_docs import manage_docs
+
+
+@contextmanager
+def _isolated_server(state_manager: StateManager, *, project_root: Path, session_id: str):
+    originals = {"state_manager": server_module.state_manager, "storage_backend": server_module.storage_backend}
+    from scribe_mcp.tools import manage_docs as manage_docs_module
+    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
+    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
+    orig_agent_id = getattr(server_module, "get_agent_identity", None)
+    server_module.state_manager = state_manager
+    server_module.storage_backend = getattr(state_manager, "_storage_backend", None)
+    server_module.get_execution_context = lambda: SimpleNamespace(mode="project", session_id=session_id, stable_session_id=session_id)
+    server_module.get_agent_identity = lambda: None
+
+    from scribe_mcp.config.repo_config import RepoConfig
+    fake_config = RepoConfig(repo_slug="test", repo_root=project_root)
+    try:
+        async def _prepare_context_stub(**kwargs):
+            state = await state_manager.load()
+            current_project = state.get_project(state.current_project) if state.current_project else None
+            return LoggingContext(tool_name="manage_docs", project=current_project, recent_projects=list(getattr(state, "recent_projects", []) or []), state_snapshot={}, reminders=[], resolution_source="session_binding")
+
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
+        with patch("scribe_mcp.config.repo_config.get_current_repo_config", return_value=(project_root, fake_config)):
+            yield
+    finally:
+        server_module.state_manager = originals["state_manager"]
+        server_module.storage_backend = originals["storage_backend"]
+        if orig_exec_ctx is not None:
+            server_module.get_execution_context = orig_exec_ctx
+        if orig_agent_id is not None:
+            server_module.get_agent_identity = orig_agent_id
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
+
+
+async def _seed_runtime_session(state_manager: StateManager, session_id: str, repo_root: str) -> None:
+    backend = getattr(state_manager, "_storage_backend", None)
+    if backend and hasattr(backend, "upsert_session"):
+        await backend.upsert_session(session_id=session_id, transport_session_id=session_id, repo_root=repo_root, mode="project")
+
+
+@pytest.mark.asyncio
+async def test_quality_check_returns_structured_quality_proof(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    arch = docs_dir / "ARCHITECTURE_GUIDE.md"
+    arch.write_text("---\nstatus: complete\n---\n[fill this section]\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-check-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-check-session"):
+        result = await manage_docs(action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+
+    assert result["ok"] is True
+    assert result["quality_status"] in {"warn", "fail"}
+    assert result["scope"]["doc_name"] == "ARCHITECTURE_GUIDE"
+    assert result["summary"]["total_warnings"] >= 1
+    first = result["warnings"][0]
+    for key in ("code", "severity", "blocking", "location", "excerpt", "message", "suggested_repair"):
+        assert key in first
+
+
+@pytest.mark.asyncio
+async def test_quality_check_clean_doc_passes(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    phase = docs_dir / "PHASE_PLAN.md"
+    phase.write_text("---\nstatus: in_progress\n---\n# Phase\nComplete evidence text.\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-pass-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-pass-session"):
+        result = await manage_docs(action="quality_check", doc="PHASE_PLAN", dry_run=True)
+
+    assert result["ok"] is True
+    assert result["quality_status"] == "pass"
+    assert result["readiness_blockers"] == []
+
+
+@pytest.mark.asyncio
+async def test_quality_check_respects_metadata_quality_overrides(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    checklist = docs_dir / "CHECKLIST.md"
+    checklist.write_text("---\nstatus: complete\n---\nTODO: do this\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"CHECKLIST": str(checklist)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-override-session", project["root"])
+
+    metadata = {"quality": {"severity_overrides": {"SCF_TODO_ONLY_SECTION": "low"}, "blocking_overrides": {"SCF_TODO_ONLY_SECTION": False}}}
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-override-session"):
+        result = await manage_docs(action="quality_check", doc_name="CHECKLIST", metadata=metadata, dry_run=True)
+
+    todo = [w for w in result["warnings"] if w.get("code") == "SCF_TODO_ONLY_SECTION"][0]
+    assert todo["severity"] == "low"
+    assert todo["blocking"] is False
+    assert result["summary"]["config_source"] == "metadata.quality"

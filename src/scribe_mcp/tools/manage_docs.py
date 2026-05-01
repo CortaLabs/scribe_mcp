@@ -105,6 +105,12 @@ async def manage_docs(
     - `edit_trace` is reserved and authored by the tool. Raw caller-provided
       `metadata.edit_trace` / `metadata.frontmatter.edit_trace` is ignored with hints.
 
+    Use `action="frontmatter_update"` for frontmatter-only narrative-document edits.
+    Use `action="quality_check"` as the primary scaffold-quality proof path. It returns
+    structured warnings with codes, severity, blocking status, locations, excerpts, and
+    suggested repairs without requiring regex search payloads.
+    `status_update` is checklist-only and returns `DOC_STATUS_INTENT_MISMATCH` when
+    the payload looks like narrative frontmatter intent.
     `metadata.frontmatter` remains the advanced override surface for non-reserved fields.
     Responses include compact frontmatter summaries by default; set
     `metadata.include_frontmatter_extra=true` to include the full merged payload.

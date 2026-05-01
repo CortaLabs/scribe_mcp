@@ -3,10 +3,28 @@
 
 # Repository identification
 repo_slug: my-project  # Auto-detected from directory name if not specified
+# repo_root: /absolute/path/to/my-project  # Optional documentation only; the containing repo remains authoritative
 
 # Documentation structure
 dev_plans_dir: .scribe/docs/dev_plans  # Canonical default; legacy docs/dev_plans trees remain supported when explicitly configured
 progress_log_name: PROGRESS_LOG.md  # Name of the main progress log file
+# log_path: .scribe/docs/dev_plans/{project_slug}/PROGRESS_LOG.md  # Optional progress log path template override
+
+# Log routing configuration
+# Add custom log types here and use append_entry(log_type="<name>").
+logs:
+  progress:
+    path: "{progress_log}"
+    metadata_requirements: []
+  doc_updates:
+    path: "{docs_dir}/DOC_LOG.md"
+    metadata_requirements: ["doc", "section", "action"]
+  security:
+    path: "{docs_dir}/SECURITY_LOG.md"
+    metadata_requirements: ["severity", "area", "impact"]
+  bugs:
+    path: "{docs_dir}/BUG_LOG.md"
+    metadata_requirements: ["severity", "component", "status"]
 
 # Template configuration
 templates_pack: default  # Use built-in templates

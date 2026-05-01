@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from scribe_mcp.config.repo_config import RepoDiscovery, resolve_create_doc_type_config
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.utils.time import format_utc
 
@@ -171,7 +172,7 @@ def _extract_metadata_hint(metadata: Dict[str, Any], *keys: str) -> Optional[str
     return None
 
 
-def _map_explicit_doc_type(value: Optional[str]) -> Optional[tuple[str, str]]:
+def _map_explicit_doc_type(value: Optional[str], *, project_root: Optional[Path] = None) -> Optional[tuple[str, str]]:
     normalized = (value or "").strip().lower().replace(" ", "_")
     if not normalized:
         return None
@@ -189,6 +190,17 @@ def _map_explicit_doc_type(value: Optional[str]) -> Optional[tuple[str, str]]:
         "security": ("case_report", "security_report"),
         "security_report": ("case_report", "security_report"),
     }
+    if normalized not in mapping and project_root is not None:
+        try:
+            repo_config = RepoDiscovery.load_config(project_root.resolve(), seed_if_missing=False)
+            resolved_config = resolve_create_doc_type_config(repo_config)
+            alias_target = resolved_config.aliases.get(normalized)
+            if alias_target:
+                normalized = alias_target
+            elif normalized in resolved_config.template_doc_types:
+                return ("dev_plan", normalized)
+        except Exception:
+            pass
     return mapping.get(normalized)
 
 
@@ -223,7 +235,7 @@ def classify_scribe_source_document(
         "template_type",
         "doc_category",
     )
-    classification = _map_explicit_doc_type(explicit_doc_type)
+    classification = _map_explicit_doc_type(explicit_doc_type, project_root=resolved_project_root)
     if classification is None:
         classification = _classify_from_case_reference(
             _extract_metadata_hint(combined_metadata, "case_id", "doc_name")

@@ -2,6 +2,58 @@
 
 Comprehensive troubleshooting reference for `manage_docs` operations in the Scribe MCP system.
 
+## Create Doc-Type Routing (Package 3.2)
+
+`manage_docs(action="create", metadata={"doc_type": ...})` is the single operator-facing input.
+
+Repo config supports:
+
+```yaml
+doc_types:
+  create_aliases:
+    incident: bug
+  create_templates:
+    incident_report: RESEARCH_REPORT_TEMPLATE
+```
+
+Compatibility fallback (legacy) is still read if top-level `doc_types` is absent:
+`reminder_config.doc_types.*`.
+
+Failure modes:
+- Unknown doc type: returns error with valid built-ins and transparency fields.
+- Reserved alias key: ignored with warning (built-ins remain authoritative).
+- Invalid alias target: ignored with warning.
+- Missing/invalid configured template: create fails closed before writing, with actionable template guidance.
+
+Create transparency fields:
+- `requested_doc_type`
+- `resolved_doc_type`
+- `resolved_handler`
+- `config_source` (`built_in`, `repo_config:doc_types.create_aliases`, `repo_config:doc_types.create_templates`, or legacy-compatible source path).
+
+Contract reminders:
+- `metadata.doc_type` is the only operator-facing `create` selector.
+- Top-level `.scribe/config/scribe.yaml` `doc_types.create_aliases` and `doc_types.create_templates` are primary config.
+- Built-ins are reserved and remain authoritative.
+- Invalid/missing template config fails closed and returns actionable configuration guidance.
+
+Frontmatter/status intent rules:
+- Narrative-doc frontmatter updates must use `frontmatter_update` with `metadata.frontmatter`.
+- `status_update` is checklist-only; narrative misuse returns exact `DOC_STATUS_INTENT_MISMATCH`.
+
+Scaffold/readiness rules:
+- Scaffold residue means "not done"; readiness claims can be blocked by `DOC_NOT_DONE_SCAFFOLD_QUALITY`.
+- Run `quality_check` for deterministic no-regex proof before handoff.
+- `project_health` and reminders should exclude configured log files, including custom `logs:` entries. If a log timestamp is reported as scaffold residue, treat that as a Scribe quality-target bug, not document cleanup work.
+
+Authoritative quality warning codes:
+- `SCF_PLACEHOLDER_BRACKET`, `SCF_TEMPLATE_PROSE`, `SCF_EMPTY_FINDING`, `SCF_UNFILLED_APPENDIX`, `SCF_TODO_ONLY_SECTION`, `SCF_LOG_TEMPLATE_ONLY`, `SCF_FRONTMATTER_MISMATCH`, `SCF_INDEX_STALE`, `SCF_INDEX_MISSING`, `SCF_DOC_UNINDEXED`, `SCF_NONCANONICAL_LOCATION`.
+
+Canonical research path guidance:
+- Research docs stay in `.scribe/docs/dev_plans/<project>/research/` (flat, canonical).
+- `research/INDEX.md` is refreshed via managed lifecycle paths.
+- Noncanonical paths and stale/orphan/unindexed docs should be treated as warning conditions, not "done".
+
 ## Quick Diagnosis
 
 **Common symptoms and immediate checks:**
@@ -95,9 +147,8 @@ await generate_doc_templates(project_name="<project>")
 # Solution 2: Use CREATE action for new documents
 await manage_docs(
     action="create",
-    doc_type="research",
     doc_name="RESEARCH_TOPIC_20260106",
-    metadata={...}
+    metadata={"doc_type": "research", ...}
 )
 
 # Solution 3: Verify project exists

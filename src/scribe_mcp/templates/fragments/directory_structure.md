@@ -16,7 +16,7 @@
 │   └── setup.py                       # Package setup
 ├── config/
 │   ├── {{ project_slug }}_config.json     # Project configuration
-│   └── log_config.json                # Multi-log routing configuration
+│   └── scribe.yaml                    # Repo config, including multi-log routing
 ├── .scribe/docs/dev_plans/{{ project_slug }}/
 │   ├── ARCHITECTURE_GUIDE.md          # System design and technical blueprint
 │   ├── PHASE_PLAN.md                  # Development roadmap with phases and tasks

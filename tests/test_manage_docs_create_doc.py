@@ -260,7 +260,7 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
             },
             dry_run=False,
         )
-        assert result["ok"] is True
+        assert result["ok"] is True, result
         assert "warnings" in result
         assert "Registry update failed" in result["warnings"][0]
         assert "replace_section" in result.get("next_step_guidance", "")
@@ -467,3 +467,191 @@ async def test_create_doc_with_md_suffix_does_not_double_append(tmp_path: Path) 
     assert change.path is not None
     assert str(change.path).endswith("already_named.md")
     assert not str(change.path).endswith(".md.md")
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_create_uses_repo_config_doc_type_alias_and_transparency(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    repo_config_dir = Path(project["root"]) / ".scribe" / "config"
+    repo_config_dir.mkdir(parents=True, exist_ok=True)
+    (repo_config_dir / "scribe.yaml").write_text(
+        "doc_types:\n"
+        "  create_aliases:\n"
+        "    incident: bug\n",
+        encoding="utf-8",
+    )
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="create",
+            doc="incident_note",
+            metadata={
+                "doc_type": "incident",
+                "doc_name": "INCIDENT_001",
+                "category": "runtime",
+                "symptoms": "Symptom details",
+            },
+            dry_run=False,
+        )
+        assert result["ok"] is True
+        assert result["requested_doc_type"] == "incident"
+        assert result["resolved_doc_type"] == "bug"
+        assert result["resolved_handler"] == "create_bug_report"
+        assert result["config_source"] == "repo_config:doc_types.create_aliases"
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_create_reserved_alias_config_fails_closed_with_warning(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    repo_config_dir = Path(project["root"]) / ".scribe" / "config"
+    repo_config_dir.mkdir(parents=True, exist_ok=True)
+    (repo_config_dir / "scribe.yaml").write_text(
+        "doc_types:\n"
+        "  create_aliases:\n"
+        "    bug: security\n"
+        "    incident: not_a_type\n",
+        encoding="utf-8",
+    )
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="create",
+            doc="incident_note",
+            metadata={"doc_type": "incident", "doc_name": "INCIDENT_002"},
+            dry_run=False,
+        )
+        assert result["ok"] is False
+        warnings = result.get("warnings") or []
+        assert any("reserved built-in doc_type" in warning for warning in warnings)
+        assert any("not a valid built-in doc_type" in warning for warning in warnings)
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_create_custom_template_from_top_level_doc_types(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    repo_config_dir = Path(project["root"]) / ".scribe" / "config"
+    repo_config_dir.mkdir(parents=True, exist_ok=True)
+    (repo_config_dir / "scribe.yaml").write_text(
+        "doc_types:\n"
+        "  create_templates:\n"
+        "    incident: RESEARCH_REPORT_TEMPLATE\n",
+        encoding="utf-8",
+    )
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="create",
+            doc="incident_from_template",
+            metadata={"doc_type": "incident", "doc_name": "INCIDENT_TEMPLATE_001"},
+            dry_run=False,
+        )
+        assert result["ok"] is True
+        assert result["requested_doc_type"] == "incident"
+        assert result["resolved_doc_type"] == "incident"
+        assert result["resolved_handler"] == "create_doc"
+        assert result["config_source"] == "repo_config:doc_types.create_templates"
+        created = Path(result["path"])
+        rendered_text = created.read_text(encoding="utf-8")
+        assert "## Executive Summary" in rendered_text
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_create_template_missing_fails_closed(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    repo_config_dir = Path(project["root"]) / ".scribe" / "config"
+    repo_config_dir.mkdir(parents=True, exist_ok=True)
+    (repo_config_dir / "scribe.yaml").write_text(
+        "doc_types:\n"
+        "  create_templates:\n"
+        "    incident: DOES_NOT_EXIST_TEMPLATE\n",
+        encoding="utf-8",
+    )
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="create",
+            doc="incident_missing_template",
+            metadata={"doc_type": "incident", "doc_name": "INCIDENT_TEMPLATE_404"},
+            dry_run=False,
+        )
+        assert result["ok"] is False
+        assert "Invalid configured template" in result.get("error", "")
+        warnings = result.get("warnings") or []
+        assert any("was not found" in warning for warning in warnings)
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_create_alias_legacy_fallback_config_source(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    repo_config_dir = Path(project["root"]) / ".scribe" / "config"
+    repo_config_dir.mkdir(parents=True, exist_ok=True)
+    (repo_config_dir / "scribe.yaml").write_text(
+        "reminder_config:\n"
+        "  doc_types:\n"
+        "    create_aliases:\n"
+        "      incident: bug\n",
+        encoding="utf-8",
+    )
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="create",
+            doc="incident_note_legacy",
+            metadata={
+                "doc_type": "incident",
+                "doc_name": "INCIDENT_LEGACY_ALIAS_001",
+                "category": "runtime",
+                "symptoms": "Legacy fallback alias path",
+            },
+            dry_run=False,
+        )
+        assert result["ok"] is True
+        assert result["config_source"] == "repo_config:reminder_config.doc_types.create_aliases"
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_create_template_legacy_fallback_config_source(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    repo_config_dir = Path(project["root"]) / ".scribe" / "config"
+    repo_config_dir.mkdir(parents=True, exist_ok=True)
+    (repo_config_dir / "scribe.yaml").write_text(
+        "reminder_config:\n"
+        "  doc_types:\n"
+        "    create_templates:\n"
+        "      incident: RESEARCH_REPORT_TEMPLATE\n",
+        encoding="utf-8",
+    )
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="create",
+            doc="incident_template_legacy",
+            metadata={"doc_type": "incident", "doc_name": "INCIDENT_LEGACY_TEMPLATE_001"},
+            dry_run=False,
+        )
+        assert result["ok"] is True
+        assert result["config_source"] == "repo_config:reminder_config.doc_types.create_templates"

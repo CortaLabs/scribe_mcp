@@ -8,9 +8,10 @@ import os
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Mapping, MutableMapping, Optional, Set, cast
+from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Set, cast
 
 from scribe_mcp.shared.repo_authority import build_repo_authority_snapshot
+from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.shared.session_utils import get_canonical_session_key
 
 ToolCallable = Callable[..., Any]
@@ -31,6 +32,45 @@ _UNTRUSTED_CALLER_SESSION_KEYS = (
     "transport_session_id",
 )
 _UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor", "list_projects"}
+
+
+def _normalize_configured_repo_root(value: Any) -> Optional[str]:
+    """Return a configured repo root only when it resolves to a real repo root."""
+    if value is None:
+        return None
+    try:
+        candidate = Path(str(value)).expanduser().resolve()
+    except (TypeError, ValueError, OSError):
+        return None
+    discovered = RepoDiscovery.find_repo_root(candidate)
+    if discovered is None:
+        return None
+    try:
+        resolved = discovered.resolve()
+    except (OSError, ValueError):
+        return None
+    if resolved != candidate or not resolved.exists():
+        return None
+    return str(resolved)
+
+
+def _configured_repo_roots(settings: Any) -> tuple[Optional[str], tuple[str, ...]]:
+    default_root = _normalize_configured_repo_root(
+        getattr(settings, "default_repo_root", None)
+    )
+    trusted_values = getattr(settings, "trusted_repo_roots", ()) or ()
+    if isinstance(trusted_values, (str, bytes)):
+        trusted_iter: Iterable[Any] = (trusted_values,)
+    else:
+        trusted_iter = trusted_values
+    trusted = []
+    for item in trusted_iter:
+        normalized = _normalize_configured_repo_root(item)
+        if normalized and normalized not in trusted:
+            trusted.append(normalized)
+    if default_root and default_root not in trusted:
+        trusted.append(default_root)
+    return default_root, tuple(trusted)
 
 
 def resolve_context_authoritative_session_key(context: Any) -> Optional[str]:
@@ -552,15 +592,22 @@ async def execute_tool_call(
     else:
         context_payload.pop("parent_execution_id", None)
 
+    configured_default_repo_root, configured_trusted_roots = _configured_repo_roots(settings)
+
     repo_authority = build_repo_authority_snapshot(
         current_context=current_context,
         app=app,
         scribe_user=kwargs.get("_scribe_user"),
         authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+        enrolled_first_party_roots=configured_trusted_roots,
     )
     context_payload["repo_authority"] = repo_authority.as_dict()
     if not context_payload.get("repo_root") and repo_authority.verified_request_root:
         context_payload["repo_root"] = repo_authority.verified_request_root
+        _set_scope_provenance(context_payload, field="repo_root", label="verified")
+    if not context_payload.get("repo_root") and configured_default_repo_root:
+        context_payload["repo_root"] = configured_default_repo_root
+        context_payload["resolution_source"] = "configured_default_repo_root"
         _set_scope_provenance(context_payload, field="repo_root", label="verified")
 
     session_id_claimed = bool(context_payload.get("session_id"))
@@ -584,7 +631,9 @@ async def execute_tool_call(
     )
     if repo_root_hint:
         context_payload["repo_root"] = repo_root_hint
-        if existing_repo_root_provenance != "verified":
+        if repo_root_hint in configured_trusted_roots:
+            _set_scope_provenance(context_payload, field="repo_root", label="verified")
+        elif existing_repo_root_provenance != "verified":
             _set_scope_provenance(context_payload, field="repo_root", label="claimed")
     else:
         repo_root_hint = _normalize_repo_root(
@@ -596,7 +645,10 @@ async def execute_tool_call(
             _set_scope_provenance(context_payload, field="repo_root", label="claimed")
         elif repo_root_hint:
             context_payload["repo_root"] = repo_root_hint
-            _set_scope_provenance(context_payload, field="repo_root", label="claimed")
+            if repo_root_hint in configured_trusted_roots:
+                _set_scope_provenance(context_payload, field="repo_root", label="verified")
+            else:
+                _set_scope_provenance(context_payload, field="repo_root", label="claimed")
 
     if not context_payload.get("project_name"):
         project_hint = call_arguments.get("project") or call_arguments.get("name")

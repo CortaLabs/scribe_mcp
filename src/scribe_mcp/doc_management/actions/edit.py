@@ -10,6 +10,7 @@ from scribe_mcp.doc_management.manager import (
     build_manage_docs_boundary_guidance,
     is_manage_docs_boundary_error,
 )
+from scribe_mcp.doc_management.scaffold_quality import build_research_index_hygiene_warnings
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 
@@ -18,6 +19,7 @@ _ALLOWED_DOC_ACTIONS = {
     "replace_section",
     "append",
     "status_update",
+    "frontmatter_update",
     "apply_patch",
     "replace_range",
     "replace_text",
@@ -25,6 +27,64 @@ _ALLOWED_DOC_ACTIONS = {
     "generate_toc",
     "validate_crosslinks",
 }
+
+_FRONTMATTER_INTENT_KEYS = {
+    "frontmatter",
+    "status",
+    "summary",
+    "owners",
+    "tags",
+    "related_docs",
+    "maintained_by",
+}
+
+_DEFAULT_READINESS_VALUES = {"ready", "done", "complete", "finished"}
+
+
+def _readiness_values(metadata: Optional[Dict[str, Any]]) -> set[str]:
+    if not isinstance(metadata, dict):
+        return set(_DEFAULT_READINESS_VALUES)
+    quality_cfg = metadata.get("quality") if isinstance(metadata.get("quality"), dict) else {}
+    configured = quality_cfg.get("readiness_values") if isinstance(quality_cfg, dict) else None
+    if not isinstance(configured, list):
+        return set(_DEFAULT_READINESS_VALUES)
+    return {str(v).strip().lower() for v in configured if str(v).strip()}
+
+
+def _is_readiness_claim(text: str, metadata: Optional[Dict[str, Any]]) -> bool:
+    parsed = parse_frontmatter(text)
+    status = str(parsed.frontmatter_data.get("status", "")).strip().lower()
+    return status in _readiness_values(metadata)
+
+
+def _readiness_blockers(warnings: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    return [w for w in warnings if isinstance(w, dict) and bool(w.get("blocking"))]
+
+
+def _status_intent_mismatch_response(
+    metadata: Optional[Dict[str, Any]],
+    *,
+    doc_name: Optional[str],
+    doc_category: str,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(metadata, dict):
+        return None
+    normalized_doc_name = str(doc_name or "").strip().lower()
+    normalized_doc_category = str(doc_category or "").strip().lower()
+    if normalized_doc_name == "checklist" or normalized_doc_category == "checklist":
+        return None
+    has_frontmatter_payload = isinstance(metadata.get("frontmatter"), dict)
+    has_frontmatter_intent_key = any(key in metadata for key in _FRONTMATTER_INTENT_KEYS)
+    if not (has_frontmatter_payload or has_frontmatter_intent_key):
+        return None
+    return {
+        "ok": False,
+        "code": "DOC_STATUS_INTENT_MISMATCH",
+        "error": (
+            "status_update is checklist-only. For narrative-doc frontmatter status/metadata changes, "
+            "use manage_docs(action=\"frontmatter_update\", metadata={...}) or metadata.frontmatter."
+        ),
+    }
 
 
 def _strip_unexpected_prefix(message: str) -> str:
@@ -88,12 +148,22 @@ async def handle_edit_action(
         return None
 
     if action in _ALLOWED_DOC_ACTIONS:
+        if action == "status_update":
+            mismatch = _status_intent_mismatch_response(
+                metadata,
+                doc_name=doc_name,
+                doc_category=doc_category,
+            )
+            if mismatch is not None:
+                return helper.apply_context_payload(mismatch, context)
         allowed_docs = set((project.get("docs") or {}).keys())
         if doc_name not in allowed_docs:
             response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
             return helper.apply_context_payload(response, context)
 
     if action == "create_doc" and isinstance(metadata, dict):
+        if not template and isinstance(metadata.get("template"), str):
+            template = str(metadata.get("template") or "").strip() or None
         register_existing = bool(metadata.get("register_existing"))
         if register_existing:
             register_key = metadata.get("register_as") or metadata.get("doc_name") or doc_name
@@ -155,6 +225,71 @@ async def handle_edit_action(
     if not doc_name:
         response = {"ok": False, "error": f"Action '{action}' requires doc_name parameter"}
         return helper.apply_context_payload(response, context)
+
+    if action in _ALLOWED_DOC_ACTIONS and action != "status_update":
+        try:
+            preview_change = await apply_doc_change(
+                project,
+                doc_name=doc_name,
+                doc_category=doc_category,
+                action=action,
+                section=section,
+                content=content,
+                patch=patch,
+                patch_source_hash=patch_source_hash,
+                edit=edit,
+                patch_mode=patch_mode,
+                start_line=start_line,
+                end_line=end_line,
+                template=template,
+                metadata=metadata,
+                dry_run=True,
+            )
+        except Exception as exc:
+            return helper.apply_context_payload({"ok": False, "error": str(exc)}, context)
+
+        preview_warnings = []
+        if isinstance(preview_change.extra, dict):
+            preview_warnings = preview_change.extra.get("scaffold_quality_warnings") or []
+        if _is_readiness_claim(preview_change.content_written, metadata):
+            blockers = _readiness_blockers(preview_warnings)
+            if blockers:
+                response = {
+                    "ok": False,
+                    "code": "DOC_NOT_DONE_SCAFFOLD_QUALITY",
+                    "error": "Readiness claim blocked: scaffold residue remains. Repair listed warnings before marking done.",
+                    "doc_name": doc_name,
+                    "action": action,
+                    "readiness_blockers": [
+                        {
+                            "code": b.get("code"),
+                            "location": b.get("location"),
+                            "excerpt": b.get("excerpt"),
+                            "message": b.get("message"),
+                            "suggested_repair": b.get("suggested_repair"),
+                        }
+                        for b in blockers
+                    ],
+                    "quality_warnings": preview_warnings,
+                }
+                if not dry_run:
+                    try:
+                        await append_entry(
+                            message=f"Blocked readiness attempt for {doc_name}",
+                            status="warning",
+                            meta={
+                                "doc_name": doc_name,
+                                "action": action,
+                                "reason_code": "DOC_NOT_DONE_SCAFFOLD_QUALITY",
+                                "blocker_codes": [b.get("code") for b in blockers],
+                            },
+                            agent=agent_id,
+                            log_type="doc_updates",
+                            format="structured",
+                        )
+                    except Exception:
+                        pass
+                return helper.apply_context_payload(response, context)
 
     try:
         change = await apply_doc_change(
@@ -279,6 +414,59 @@ async def handle_edit_action(
         response["hashes"] = {"before": change.before_hash, "after": change.after_hash}
     if change.extra:
         response["extra"] = change.extra
+        structured_warnings = change.extra.get("scaffold_quality_warnings")
+        if isinstance(structured_warnings, list) and structured_warnings:
+            response["quality_warnings"] = structured_warnings
+    canonical_doc_name = ""
+    if isinstance(metadata, dict):
+        canonical_doc_name = str(metadata.get("register_as") or metadata.get("doc_name") or doc_name or "").strip()
+    if not canonical_doc_name:
+        canonical_doc_name = str(doc_name or "").strip()
+    response["requested_doc_name"] = doc_name
+    response["canonical_doc_name"] = canonical_doc_name or None
+    response["final_path"] = response.get("path") or None
+    if isinstance(metadata, dict):
+        requested_doc_type = metadata.get("_requested_doc_type")
+        resolved_doc_type = metadata.get("_resolved_doc_type")
+        resolved_handler = metadata.get("_resolved_handler")
+        config_source = metadata.get("_config_source")
+        if requested_doc_type is not None:
+            response["requested_doc_type"] = requested_doc_type
+        if resolved_doc_type is not None:
+            response["resolved_doc_type"] = resolved_doc_type
+        if resolved_handler is not None:
+            response["resolved_handler"] = resolved_handler
+        if config_source is not None:
+            response["config_source"] = config_source
+        create_warnings = metadata.get("_create_config_warnings")
+        if isinstance(create_warnings, list) and create_warnings:
+            response.setdefault("warnings", [])
+            response["warnings"].extend(str(item) for item in create_warnings)
+
+    try:
+        changed_path = Path(change.path) if change.path else None
+        if changed_path:
+            docs_dir_path = Path(str(project.get("docs_dir", ""))).expanduser()
+            canonical_research_dir = (docs_dir_path / "research").resolve() if str(docs_dir_path) else None
+            research_dir = None
+            if canonical_research_dir:
+                try:
+                    changed_path.resolve().relative_to(canonical_research_dir)
+                    research_dir = canonical_research_dir
+                except ValueError:
+                    pass
+            if research_dir is None and changed_path.parent.name == "research":
+                research_dir = changed_path.parent.resolve()
+            if research_dir and research_dir.exists():
+                research_warnings = build_research_index_hygiene_warnings(
+                    research_dir=research_dir,
+                    changed_path=changed_path,
+                    canonical_research_dir=canonical_research_dir,
+                )
+                if research_warnings:
+                    response.setdefault("research_hygiene_warnings", []).extend(research_warnings)
+    except Exception:
+        pass
     if index_warning:
         response["index_warning"] = index_warning
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from scribe_mcp.config.repo_config import resolve_create_doc_type_config
+from scribe_mcp.templates import template_root
 
 _CREATE_DOC_TYPE_ACTIONS = {
     "research": "create_research_doc",
@@ -26,6 +29,44 @@ def classify_create_doc_type(metadata: Optional[Dict[str, Any]]) -> str:
     return value or "custom"
 
 
+def _resolve_doc_type_from_config(
+    requested_doc_type: str,
+    project_root: Optional[str],
+) -> tuple[str, str, Optional[str], list[str], Optional[str], Optional[str]]:
+    if not project_root:
+        return requested_doc_type, requested_doc_type, None, [], None, None
+    try:
+        from scribe_mcp.config.repo_config import RepoDiscovery
+
+        repo_config = RepoDiscovery.load_config(Path(project_root), seed_if_missing=False)
+    except Exception as exc:
+        return requested_doc_type, requested_doc_type, None, [f"Failed loading repo config for doc_types config: {exc}"], None, None
+
+    resolved_config = resolve_create_doc_type_config(repo_config)
+    alias_target = resolved_config.aliases.get(requested_doc_type)
+    template_name = resolved_config.templates.get(requested_doc_type)
+    resolved = alias_target or requested_doc_type
+    if alias_target:
+        config_source = f"{resolved_config.source_path}.create_aliases"
+    elif template_name:
+        config_source = f"{resolved_config.source_path}.create_templates"
+    else:
+        config_source = None
+    return requested_doc_type, resolved, template_name, resolved_config.warnings, config_source, resolved_config.source_path
+
+
+def _validate_configured_template(template_name: str) -> Optional[str]:
+    normalized = str(template_name or "").strip()
+    if not normalized:
+        return "Configured template is empty."
+    if "/" in normalized or "\\" in normalized or ".." in normalized:
+        return "Configured template must be a template name, not a path."
+    candidate = template_root() / f"{normalized}.md"
+    if not candidate.exists():
+        return f"Configured template '{normalized}' was not found at {candidate}."
+    return None
+
+
 async def normalize_or_handle_create_action(
     *,
     action: str,
@@ -44,19 +85,59 @@ async def normalize_or_handle_create_action(
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Normalize create action and dispatch special create handlers when needed."""
     if action == "create":
-        doc_type = classify_create_doc_type(metadata)
-        if doc_type == "custom":
+        requested_doc_type = classify_create_doc_type(metadata)
+        _, doc_type, resolved_template, config_warnings, config_source, _ = _resolve_doc_type_from_config(
+            requested_doc_type=requested_doc_type,
+            project_root=project.get("root") if isinstance(project, dict) else None,
+        )
+
+        if metadata is not None and isinstance(metadata, dict):
+            metadata["_requested_doc_type"] = requested_doc_type
+            metadata["_resolved_doc_type"] = doc_type
+            metadata["_resolved_handler"] = _CREATE_DOC_TYPE_ACTIONS.get(str(doc_type), "create_doc")
+            metadata["_config_source"] = config_source or "built_in"
+            if resolved_template:
+                metadata.setdefault("template", resolved_template)
+            if config_warnings:
+                metadata.setdefault("_create_config_warnings", [])
+                metadata["_create_config_warnings"].extend(config_warnings)
+
+        if resolved_template:
+            template_error = _validate_configured_template(resolved_template)
+            if template_error:
+                error = helper.error_response(
+                    f"Invalid configured template for doc_type '{requested_doc_type}'.",
+                    suggestion=(
+                        "Update repo config at doc_types.create_templates with a valid template name under "
+                        "templates/documents, or remove the mapping."
+                    ),
+                )
+                error["requested_doc_type"] = requested_doc_type
+                error["resolved_doc_type"] = doc_type
+                error["resolved_handler"] = "create_doc"
+                error["config_source"] = config_source or "built_in"
+                error.setdefault("warnings", []).append(template_error)
+                return action, error
+
+        if doc_type == "custom" or resolved_template:
             return "create_doc", None
 
         mapped_action = _CREATE_DOC_TYPE_ACTIONS.get(str(doc_type))
         if not mapped_action:
-            return action, helper.error_response(
+            error = helper.error_response(
                 f"Unknown doc_type: {doc_type}",
                 suggestion=(
                     "Valid doc_types: custom, spec, "
                     + ", ".join(sorted(_SPECIAL_DOC_TYPES))
                 ),
             )
+            error["requested_doc_type"] = requested_doc_type
+            error["resolved_doc_type"] = doc_type
+            error["resolved_handler"] = "unresolved"
+            error["config_source"] = config_source or "built_in"
+            if config_warnings:
+                error["warnings"] = config_warnings
+            return action, error
         if mapped_action == "create_doc":
             return mapped_action, None
 
@@ -73,6 +154,13 @@ async def normalize_or_handle_create_action(
             helper=helper,
             context=context,
         )
+        response["requested_doc_type"] = requested_doc_type
+        response["resolved_doc_type"] = doc_type
+        response["resolved_handler"] = mapped_action
+        response["config_source"] = config_source or "built_in"
+        if config_warnings:
+            response.setdefault("warnings", [])
+            response["warnings"].extend(config_warnings)
         return action, response
 
     if action in _SPECIAL_CREATE_ACTIONS:

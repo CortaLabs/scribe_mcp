@@ -172,3 +172,40 @@ async def test_explicit_metadata_actor_id_is_not_overridden_by_internal_identity
 
     parsed = parse_frontmatter(Path(project["docs"]["architecture"]).read_text(encoding="utf-8"))
     assert parsed.frontmatter_data.get("maintained_by") == "ReviewAgent"
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_update_changes_metadata_without_dummy_body_content(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    original_body = path.read_text(encoding="utf-8")
+
+    dry_change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        metadata={"agent_id": "CoderAgent-Phase1", "status": "in_progress"},
+        template=None,
+        dry_run=True,
+    )
+    assert dry_change.success
+    parsed_source = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed_source.body == original_body
+    assert dry_change.extra.get("frontmatter_updates", {}).get("updated_keys")
+
+    apply_change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        metadata={"agent_id": "CoderAgent-Phase1", "frontmatter": {"summary": "Body preserved"}},
+        template=None,
+        dry_run=False,
+    )
+    assert apply_change.success
+    parsed_apply = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed_apply.body == original_body
+    assert parsed_apply.frontmatter_data.get("summary") == "Body preserved"

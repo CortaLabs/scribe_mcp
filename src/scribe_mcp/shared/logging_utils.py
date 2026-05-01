@@ -180,12 +180,22 @@ async def resolve_logging_context(
             backend = getattr(server_module, "storage_backend", None)
             if backend and hasattr(backend, "get_session_project"):
                 backend_session_lookup_available = True
-                # Canonical precedence must follow the shared session utility:
-                # stable_session_id first, then session_id fallback.
+                # Canonical precedence follows the shared session utility unless
+                # the stable id is an old prebinding key. Prebinding allocations
+                # are provisional; once an execution session is present it is the
+                # authoritative binding for project-mode logging.
                 canonical_session_key = get_canonical_session_key(exec_context)
-                transport_session_id = getattr(exec_context, "session_id", None)
+                execution_session_id = getattr(exec_context, "session_id", None)
                 session_keys: List[str] = []
-                for candidate_key in (canonical_session_key, transport_session_id):
+                if (
+                    canonical_session_key
+                    and "prebinding" in str(canonical_session_key)
+                    and execution_session_id
+                ):
+                    candidates = (execution_session_id, canonical_session_key)
+                else:
+                    candidates = (canonical_session_key, execution_session_id)
+                for candidate_key in candidates:
                     if candidate_key and str(candidate_key) not in session_keys:
                         session_keys.append(str(candidate_key))
 
@@ -846,14 +856,16 @@ def resolve_log_definition(
     from scribe_mcp.config import log_config as log_config_module  # Lazy import.
 
     log_key = (log_type or "progress").lower()
-    if cache is not None and log_key in cache:
-        return cache[log_key]
+    project_root = project.get("root")
+    cache_key = f"{project_root or ''}:{log_key}"
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
 
-    definition = log_config_module.get_log_definition(log_key)
+    definition = log_config_module.get_log_definition(log_key, repo_root=project_root)
     path = log_config_module.resolve_log_path(project, definition)
 
     if cache is not None:
-        cache[log_key] = (path, definition)
+        cache[cache_key] = (path, definition)
 
     return path, definition
 

@@ -1,0 +1,109 @@
+from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality
+
+
+def _codes(warnings):
+    return {w["code"] for w in warnings}
+
+
+def test_scaffold_quality_emits_authoritative_codes_and_payload_shape():
+    text = """---
+status: complete
+---
+# Findings
+| finding |
+| |
+
+[fill this section]
+## Appendix
+TODO: add references
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="ARCHITECTURE_GUIDE")
+    codes = _codes(warnings)
+    assert "SCF_PLACEHOLDER_BRACKET" in codes
+    assert "SCF_EMPTY_FINDING" in codes
+    assert "SCF_UNFILLED_APPENDIX" in codes
+    assert "SCF_TODO_ONLY_SECTION" in codes
+    assert "SCF_FRONTMATTER_MISMATCH" in codes
+    sample = warnings[0]
+    for key in ("code", "severity", "blocking", "location", "message", "suggested_repair"):
+        assert key in sample
+
+
+def test_scaffold_quality_suppresses_quoted_and_codefence_examples():
+    text = """---
+status: in_progress
+---
+> [example placeholder]
+```md
+[example in code fence]
+```
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="SPEC")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_nonblocking_code_catalog_defaults_present():
+    from scribe_mcp.doc_management.scaffold_quality import DEFAULT_WARNING_POLICIES
+    for code in ["SCF_INDEX_STALE", "SCF_INDEX_MISSING", "SCF_DOC_UNINDEXED", "SCF_NONCANONICAL_LOCATION"]:
+        assert code in DEFAULT_WARNING_POLICIES
+        assert DEFAULT_WARNING_POLICIES[code]["blocking"] is False
+
+
+def test_template_prose_scaffold_phrase_triggers():
+    text = """---
+status: in_progress
+---
+Please replace this with implementation-specific evidence.
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="PHASE_PLAN")
+    assert "SCF_TEMPLATE_PROSE" in _codes(warnings)
+
+
+def test_log_template_only_triggers_for_ready_log_shell():
+    text = """---
+status: complete
+---
+# Progress Log
+## Entries
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="PROGRESS_LOG")
+    assert "SCF_LOG_TEMPLATE_ONLY" in _codes(warnings)
+
+
+def test_proof_and_out_of_scope_labels_are_not_template_prose():
+    text = """---
+status: in_progress
+---
+Proof: command output attached below.
+Out of Scope: reminder scheduler and quality_check action.
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_TEMPLATE_PROSE" not in _codes(warnings)
+
+
+def test_todo_readiness_behavior():
+    in_progress_text = """---
+status: in_progress
+---
+TODO: flesh this section out later.
+"""
+    ready_text = """---
+status: complete
+---
+TODO: flesh this section out later.
+"""
+    in_progress_warnings = analyze_scaffold_quality(text=in_progress_text, doc_name="SPEC")
+    ready_warnings = analyze_scaffold_quality(text=ready_text, doc_name="SPEC")
+    assert "SCF_TODO_ONLY_SECTION" not in _codes(in_progress_warnings)
+    assert "SCF_TODO_ONLY_SECTION" in _codes(ready_warnings)
+
+
+def test_anchor_comments_and_headings_do_not_trigger_placeholder():
+    text = """---
+status: in_progress
+---
+<!-- id: p2-scaffold-analyzer -->
+# [Title Placeholder]
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)

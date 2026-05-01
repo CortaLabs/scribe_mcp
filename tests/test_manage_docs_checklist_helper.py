@@ -202,3 +202,24 @@ async def test_list_checklist_items_body_line_offset(tmp_path: Path) -> None:
         matches = result.get("matches", [])
         assert matches[0]["line"] == 2
         assert matches[0]["file_line"] == 7
+
+
+@pytest.mark.asyncio
+async def test_status_update_frontmatter_intent_returns_exact_mismatch_code(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="status_update",
+            doc="architecture",
+            section="main",
+            metadata={"frontmatter": {"status": "done"}},
+            dry_run=True,
+        )
+        assert not result.get("ok")
+        assert result.get("code") == "DOC_STATUS_INTENT_MISMATCH"
+        error = result.get("error", "")
+        assert "frontmatter_update" in error
+        assert "metadata.frontmatter" in error

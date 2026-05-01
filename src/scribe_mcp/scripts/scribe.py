@@ -193,7 +193,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--log",
         dest="log_type",
         default="progress",
-        help="Log type key defined in config/log_config.json (default: progress).",
+        help="Log type key defined in .scribe/config/scribe.yaml logs (legacy log_config.json also supported; default: progress).",
     )
     parser.add_argument(
         "-p",
@@ -284,7 +284,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "progress_log": config_data.get("progress_log"),
             "docs_dir": config_data.get("docs_dir"),
         }
-        log_definition = get_log_definition(args.log_type)
+        log_definition = get_log_definition(args.log_type, repo_root=project_payload.get("root"))
         log_path = resolve_log_path(project_payload, log_definition)
         print(f"Wrote entry to {log_path}:")
         print(entry)

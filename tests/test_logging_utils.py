@@ -185,6 +185,39 @@ def test_resolve_log_definition_uses_cache(tmp_path) -> None:
     assert cached_path == path
 
 
+def test_resolve_log_definition_uses_repo_local_scribe_yaml(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".scribe" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "scribe.yaml").write_text(
+        "\n".join(
+            [
+                "repo_slug: demo",
+                "log_path: .scribe/custom/MAIN.md",
+                "logs:",
+                "  decisions:",
+                "    path: \"{docs_dir}/DECISIONS.md\"",
+                "    metadata_requirements: [owner]",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    project = {
+        "name": "demo_project",
+        "root": str(tmp_path),
+        "progress_log": str(tmp_path / "fallback" / "PROGRESS_LOG.md"),
+        "docs_dir": str(tmp_path / ".scribe" / "docs" / "dev_plans" / "demo_project"),
+    }
+    cache: Dict[str, Tuple[Path, Dict[str, Any]]] = {}
+
+    progress_path, _progress_definition = resolve_log_definition(project, "progress", cache=cache)
+    decisions_path, decisions_definition = resolve_log_definition(project, "decisions", cache=cache)
+
+    assert progress_path == tmp_path / ".scribe" / "custom" / "MAIN.md"
+    assert decisions_path == tmp_path / ".scribe" / "docs" / "dev_plans" / "demo_project" / "DECISIONS.md"
+    assert decisions_definition["metadata_requirements"] == ["owner"]
+
+
 @pytest.mark.asyncio
 async def test_resolve_logging_context_with_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify that agent-scoped project resolution surfaces reminders and recents."""

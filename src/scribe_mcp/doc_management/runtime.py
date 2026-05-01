@@ -12,8 +12,15 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key
+from scribe_mcp.doc_management.scaffold_quality import (
+    collect_managed_doc_quality_warnings,
+    configured_log_quality_exclusion_paths,
+    is_managed_doc_quality_target,
+    summarize_quality_warnings,
+)
 from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
+from scribe_mcp.doc_management import special_indexes as special_indexes_shared
 from scribe_mcp.doc_management import utils as utils_shared
 from scribe_mcp.doc_management.actions import append as append_actions
 from scribe_mcp.doc_management.actions import batch as batch_actions
@@ -40,6 +47,7 @@ PRIMARY_ACTIONS = {
     "replace_text",
     "append",
     "status_update",
+    "frontmatter_update",
 }
 
 # Deprecated action aliases intentionally removed in fail-hard mode.
@@ -53,6 +61,8 @@ HIDDEN_ACTIONS = {
     "list_checklist_items",
     "preview_reconciliation",
     "project_health",
+    "quality_check",
+    "scaffold_quality_check",
     "rehome_doc",
     "search",
     "batch",
@@ -71,6 +81,7 @@ ACTION_ROUTER = {
     "replace_text": "edit",
     "append": "append",
     "status_update": "status",
+    "frontmatter_update": "edit",
     "normalize_headers": "query_transform",
     "generate_toc": "query_transform",
     "validate_crosslinks": "query_transform",
@@ -97,6 +108,7 @@ _MUTATION_ACTIONS = {
     "replace_range",
     "append",
     "status_update",
+    "frontmatter_update",
     "normalize_headers",
     "generate_toc",
     "replace_text",
@@ -425,6 +437,76 @@ async def _handle_project_health(
             if entry["project_slug"] != active_slug
         ][:limit],
     }
+
+    docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+    quality_docs: list[dict[str, Any]] = []
+    blockers = 0
+    configured_log_paths = configured_log_quality_exclusion_paths(active_project)
+    for key, path_str in docs.items():
+        if not isinstance(path_str, str) or not path_str.endswith(".md"):
+            continue
+        if not is_managed_doc_quality_target(str(key), path_str, configured_log_paths=configured_log_paths):
+            continue
+        p = Path(path_str)
+        if not p.exists():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        warnings = collect_managed_doc_quality_warnings(text=text, doc_name=str(key), path=p, project=active_project)
+        blocked = [w for w in warnings if bool(w.get("blocking"))]
+        blockers += len(blocked)
+        quality_docs.append(
+            {
+                "doc_name": key,
+                "path": str(p),
+                "warning_codes": [w.get("code") for w in warnings],
+                "readiness_blocker_codes": [w.get("code") for w in blocked],
+            }
+        )
+    response["managed_doc_quality"] = {
+        "status": "blocked" if blockers else "pass",
+        "readiness_blocker_count": blockers,
+        "documents": quality_docs,
+    }
+    return helper.apply_context_payload(response, context)
+
+
+async def _handle_quality_check(
+    *,
+    active_project: Dict[str, Any],
+    doc_name: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    helper: LoggingToolMixin,
+    context: LoggingContext,
+) -> Dict[str, Any]:
+    docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+    target_name = str(doc_name or "").strip()
+    path_str = docs.get(target_name) if target_name else None
+    if not isinstance(path_str, str) or not Path(path_str).exists():
+        return helper.apply_context_payload(helper.error_response("quality_check requires a valid doc_name/doc in the active project registry."), context)
+    path = Path(path_str)
+    text = path.read_text(encoding="utf-8")
+    warnings = collect_managed_doc_quality_warnings(
+        text=text,
+        metadata=metadata or {},
+        doc_name=target_name,
+        path=path,
+        project=active_project,
+    )
+    summary = summarize_quality_warnings(warnings)
+    readiness_blockers = [w for w in warnings if bool(w.get("blocking"))]
+    status = "pass" if not warnings else ("fail" if readiness_blockers else "warn")
+    response = {
+        "ok": True,
+        "quality_status": status,
+        "scope": {"type": "document", "doc_name": target_name, "path": str(path)},
+        "summary": {**summary, "config_source": "metadata.quality" if isinstance((metadata or {}).get("quality"), dict) else "defaults"},
+        "warnings": warnings,
+        "readiness_blockers": readiness_blockers,
+        "next_actions": [w.get("suggested_repair") for w in readiness_blockers[:3] if isinstance(w.get("suggested_repair"), str)],
+    }
     return helper.apply_context_payload(response, context)
 
 
@@ -568,9 +650,26 @@ async def _handle_rehome_doc(
                 mirror_global=False,
             )
 
+        # Keep research indexes truthful on move/copy flows without introducing a second writer.
+        try:
+            source_research_dir = source_docs_dir / "research"
+            if source_research_dir.exists() and source_path.is_relative_to(source_research_dir):
+                await special_indexes_shared.update_research_index(source_research_dir, agent_id)
+        except Exception:
+            pass
+        try:
+            target_research_dir = target_docs_dir / "research"
+            if target_research_dir.exists() and target_path.is_relative_to(target_research_dir):
+                await special_indexes_shared.update_research_index(target_research_dir, agent_id)
+        except Exception:
+            pass
+
     response = {
         "ok": True,
         "action": "rehome_doc",
+        "requested_doc_name": doc_name,
+        "canonical_doc_name": source_doc_key,
+        "final_path": str(target_path),
         "source_project": active_project.get("name"),
         "target_project": target_project_name,
         "source_path": str(source_path),
@@ -1076,6 +1175,15 @@ async def handle_manage_docs_request(
     if action == "project_health":
         response = await _handle_project_health(
             active_project=active_project,
+            metadata=metadata if isinstance(metadata, dict) else {},
+            helper=helper,
+            context=context,
+        )
+        return _attach_manage_docs_project_context(response, context=context)
+    if action in {"quality_check", "scaffold_quality_check"}:
+        response = await _handle_quality_check(
+            active_project=active_project,
+            doc_name=doc_name,
             metadata=metadata if isinstance(metadata, dict) else {},
             helper=helper,
             context=context,

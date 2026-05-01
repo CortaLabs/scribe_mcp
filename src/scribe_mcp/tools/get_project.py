@@ -125,7 +125,7 @@ async def _count_log_entries(log_path) -> int:
 
 async def _compute_log_counts(project: Dict[str, Any]) -> Dict[str, Any]:
     counts: Dict[str, Any] = {}
-    logs = log_config_module.load_log_config()
+    logs = log_config_module.load_log_config(project.get("root"))
     for log_type in sorted(logs.keys()):
         try:
             path, _definition = resolve_log_definition(project, log_type)

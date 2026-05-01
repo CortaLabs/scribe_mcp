@@ -51,12 +51,28 @@ def test_downstream_adopt_without_overwrite(tmp_path: Path) -> None:
     result = ensure_downstream_seed_assets(repo_root, asset_ids=("repo_config",))
 
     assert result.seeded == 0
-    assert config_path.read_text(encoding="utf-8") == "repo_slug: custom\n"
+    upgraded = config_path.read_text(encoding="utf-8")
+    assert upgraded.startswith("repo_slug: custom\n")
+    assert "logs:" in upgraded
+    assert "doc_updates:" in upgraded
 
     registry_path = repo_root / ".scribe" / "config" / "seed_registry.json"
     payload = json.loads(registry_path.read_text(encoding="utf-8"))
     entry = payload["assets"][".scribe/config/scribe.yaml"]
     assert entry["status"] == "customized"
+
+
+def test_downstream_existing_repo_config_with_logs_is_not_rewritten(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    config_path = repo_root / ".scribe" / "config" / "scribe.yaml"
+    config_path.parent.mkdir(parents=True)
+    original = "repo_slug: custom\nlogs:\n  ideas:\n    path: IDEAS.md\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    result = ensure_downstream_seed_assets(repo_root, asset_ids=("repo_config",))
+
+    assert result.seeded == 0
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 def test_downstream_safe_refresh_only_when_unmodified(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -101,7 +117,9 @@ def test_downstream_safe_refresh_skips_customized(monkeypatch: pytest.MonkeyPatc
 
     assert refresh.refreshed == 0
     assert refresh.customized == 1
-    assert config_path.read_text(encoding="utf-8") == "repo_slug: my-custom-version\n"
+    refreshed_text = config_path.read_text(encoding="utf-8")
+    assert refreshed_text.startswith("repo_slug: my-custom-version\n")
+    assert "logs:" in refreshed_text
 
 
 def test_downstream_safe_refresh_stays_skipped_after_customization_classification(
@@ -129,7 +147,9 @@ def test_downstream_safe_refresh_stays_skipped_after_customization_classificatio
 
     assert first_refresh.refreshed == 0
     assert first_refresh.customized == 1
-    assert config_path.read_text(encoding="utf-8") == "repo_slug: my-custom-version\n"
+    first_text = config_path.read_text(encoding="utf-8")
+    assert first_text.startswith("repo_slug: my-custom-version\n")
+    assert "logs:" in first_text
 
     def replacement_source_v2(asset):
         if asset.asset_id == "repo_config":
@@ -141,7 +161,9 @@ def test_downstream_safe_refresh_stays_skipped_after_customization_classificatio
 
     assert second_refresh.refreshed == 0
     assert second_refresh.customized == 1
-    assert config_path.read_text(encoding="utf-8") == "repo_slug: my-custom-version\n"
+    second_text = config_path.read_text(encoding="utf-8")
+    assert second_text.startswith("repo_slug: my-custom-version\n")
+    assert "logs:" in second_text
 
 
 def test_repo_config_seed_no_longer_depends_on_settings_project_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
