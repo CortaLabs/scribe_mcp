@@ -6,11 +6,12 @@ import os
 from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urlsplit, urlunsplit
+import yaml
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
 from scribe_mcp.config.settings import settings
-from scribe_mcp.config.repo_config import RepoDiscovery
+from scribe_mcp.config.repo_config import RepoDiscovery, resolve_runtime_efficiency_budgets
 from scribe_mcp.config.mode_detection import resolve_configured_mode
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.plugins.registry import get_plugin_registry
@@ -19,6 +20,7 @@ from scribe_mcp.shared.tool_runtime import (
     repo_root_grant_diagnostics,
     resolve_context_authoritative_session_key,
 )
+from scribe_mcp.runtime_timing_envelope import build_timing_envelope
 
 
 def _list_loaded_plugins() -> list[str]:
@@ -51,6 +53,33 @@ def _backend_name(value: Any) -> str | None:
     if value is None:
         return None
     return type(value).__name__
+
+
+def _bridge_hygiene_advisory(repo_root: Path | None) -> Dict[str, Any]:
+    if repo_root is None:
+        return {"status": "unknown", "deferred_non_blocking": []}
+    manifest_path = repo_root / ".scribe" / "config" / "bridges" / "council_mcp.yaml"
+    if not manifest_path.exists():
+        return {"status": "not_present", "deferred_non_blocking": []}
+    try:
+        payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        payload = {}
+    runtime_plugin = payload.get("runtime_plugin") if isinstance(payload, dict) else None
+    if runtime_plugin:
+        return {"status": "configured", "deferred_non_blocking": []}
+    return {
+        "status": "deferred_hygiene",
+        "deferred_non_blocking": [
+            {
+                "code": "BRIDGE_RUNTIME_PLUGIN_DEFERRED",
+                "severity": "low",
+                "blocking": False,
+                "path": str(manifest_path),
+                "message": "Bridge manifest runtime_plugin warning is deferred hygiene unless a bridge tool path is invoked.",
+            }
+        ],
+    }
 
 
 async def _active_project_authority_snapshot(
@@ -263,6 +292,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
         planning_registry_context = {}
 
     config_view = None
+    runtime_timing = dict(getattr(server_module, "_last_runtime_timing", {}) or {})
     if config is not None:
         config_view = {
             "repo_slug": config.repo_slug,
@@ -272,6 +302,8 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
             "storage_backend": config.storage_backend,
             "doc_snapshots": _safe_bool(config.doc_snapshots),
         }
+    bridge_hygiene = _bridge_hygiene_advisory(repo_root if isinstance(repo_root, Path) else None)
+    runtime_efficiency_budgets = resolve_runtime_efficiency_budgets(repo_root if isinstance(repo_root, Path) else None)
 
     return {
         "ok": True,
@@ -333,6 +365,14 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
             },
             "case_telemetry": case_snapshot,
             "storage_diagnostics": storage_diagnostics,
+            "timing_envelope": build_timing_envelope(
+                dispatch_path=runtime_timing.get("dispatch_path"),
+                startup_profile=runtime_timing.get("startup_profile"),
+                startup_phases_ms=runtime_timing.get("startup_phases_ms"),
+                set_project_phase_ms=runtime_timing.get("set_project_phase_ms"),
+                budget_thresholds=runtime_efficiency_budgets,
+                source="runtime_snapshot",
+            ),
             "planning_registry": {
                 "available": bool(getattr(planning_registry, "available", False)),
                 "classification": planning_registry_context.get("classification"),
@@ -346,6 +386,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
         "config_path": str(config_path) if config_path else None,
         "config_error": config_error,
         "plugins": plugin_info,
+        "diagnostic_hygiene": bridge_hygiene,
     }
 
 

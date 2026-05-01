@@ -64,24 +64,44 @@ Sanity-check the shipped commands:
 
 ```bash
 scribe --help
-scribe bootstrap --help
+scribe install --help
 scribe-server --help
 ```
 
-### Recommended: bootstrap Postgres
+### Recommended: run the install wizard
 
-Use the guided bootstrap first. It is the best default path for a real installation.
+Use the install wizard first. It is the preferred default path for a real installation.
 
 ```bash
-scribe bootstrap
+scribe install
 ```
 
-The bootstrap flow is designed to handle the annoying setup work for you:
+Default `scribe install` behavior is preview-only and safe-by-default:
+
+- no DB mutation
+- no `.env` mutation
+- no Codex projection
+
+Apply mutations only when you explicitly confirm commit mode:
+
+```bash
+scribe install --commit
+```
+
+For non-interactive commit flows, use the approved confirmation path:
+
+```bash
+scribe install --commit --yes
+```
+
+The commit flow is designed to handle the setup work for you:
 
 - create or update database roles
 - provision the Scribe app database
 - apply schema grants
-- write or update the runtime keys you need in `.env`
+- write or update repo-root runtime keys in `.env`
+
+After a successful commit, Scribe runs post-install diagnostics/readiness checks using the existing verification seam.
 
 After bootstrap, load the environment and start the server:
 

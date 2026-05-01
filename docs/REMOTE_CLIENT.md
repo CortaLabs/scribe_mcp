@@ -33,3 +33,8 @@ Compatibility aliases may still load in mixed environments (`SCRIBE_AUTH_TOKEN` 
 - `0.0.0.0` guidance is only for managed deployments with explicit auth and private network controls.
 - Do not publish unauthenticated broad-bind deployment as supported.
 - Reachability alone does not make a deployment supported.
+
+## Output safety and redaction
+
+- Preview and commit surfaces must not emit plaintext secrets, bearer tokens, or credential-bearing DSNs.
+- Treat any logs or screenshots as potentially shareable artifacts and keep credential material redacted.

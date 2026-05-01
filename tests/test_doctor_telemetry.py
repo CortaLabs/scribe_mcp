@@ -117,3 +117,61 @@ async def test_scribe_doctor_surfaces_authority_and_case_telemetry(monkeypatch: 
     assert case_telemetry["counts"]["by_case_type"]["bug"] == 1
     assert case_telemetry["counts"]["by_normalized_status"]["in_progress"] == 1
     assert case_telemetry["ownership_snapshots"][0]["case_id"] == "BUG-1"
+    envelope = result["runtime"]["timing_envelope"]
+    assert envelope["schema_version"] == "timing-envelope.v1"
+    assert "path" in envelope
+    assert "startup" in envelope
+    assert envelope["budget_status"]["schema_version"] == "runtime-efficiency-budget.v1"
+    assert "cold_start_ms" in envelope["budget_status"]["metrics"]
+    assert "set_project_total_ms" in envelope["budget_status"]["metrics"]
+    assert envelope["budget_status"]["metrics"]["cold_start_ms"]["status"] in {
+        "unknown",
+        "within_budget",
+        "near_budget",
+        "over_budget",
+    }
+    hygiene = result["diagnostic_hygiene"]
+    assert hygiene["status"] in {"deferred_hygiene", "not_present", "configured", "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_scribe_doctor_labels_bridge_runtime_plugin_warning_as_deferred_hygiene(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    bridge_dir = repo_root / ".scribe" / "config" / "bridges"
+    bridge_dir.mkdir(parents=True)
+    (bridge_dir / "council_mcp.yaml").write_text("bridge_id: council_mcp\n", encoding="utf-8")
+
+    fake_settings = SimpleNamespace(
+        project_root=repo_root,
+        storage_backend="sqlite",
+        db_url=None,
+        mode="project",
+        remote_server_url=None,
+        remote_auth_token=None,
+        sqlite_path=repo_root / "runtime.sqlite3",
+        postgres_schema="scribe",
+    )
+    monkeypatch.setattr(doctor_module, "settings", fake_settings)
+    monkeypatch.setattr(
+        doctor_module,
+        "server_module",
+        SimpleNamespace(
+            storage_backend=None,
+            state_manager=None,
+            router_context_manager=None,
+            get_execution_context=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(
+        doctor_module,
+        "get_runtime_project_registry",
+        lambda: SimpleNamespace(available=False, get_registry_advisory_context=lambda: {}),
+    )
+
+    result = await doctor_module.scribe_doctor(agent="test-agent")
+    hygiene = result["diagnostic_hygiene"]
+    assert hygiene["status"] == "deferred_hygiene"
+    assert hygiene["deferred_non_blocking"][0]["blocking"] is False
+    assert hygiene["deferred_non_blocking"][0]["code"] == "BRIDGE_RUNTIME_PLUGIN_DEFERRED"

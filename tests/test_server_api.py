@@ -25,6 +25,7 @@ from scribe_mcp.server_sse import (
     _serialize,
     handle_backend_operation,
     handle_batch,
+    handle_tool_invoke,
 )
 
 
@@ -38,6 +39,7 @@ def _build_test_app() -> Starlette:
         routes=[
             Route("/api/v1/backend/{operation}", handle_backend_operation, methods=["POST"]),
             Route("/api/v1/batch", handle_batch, methods=["POST"]),
+            Route("/api/v1/tools/invoke", handle_tool_invoke, methods=["POST"]),
         ]
     )
 
@@ -282,6 +284,33 @@ def test_batch_allowlist_enforced_per_operation(client, mock_backend):
     assert results[0]["ok"] is True
     assert results[1]["ok"] is False
     assert results[1]["type"] == "ForbiddenOperation"
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_route_calls_server_pipeline(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_invoke(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+        captured["tool_name"] = tool_name
+        captured["arguments"] = arguments
+        captured["context"] = context
+        return {"ok": True, "tool": tool_name}
+
+    monkeypatch.setattr(server_module, "invoke_tool", fake_invoke)
+    app = _build_test_app()
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        response = test_client.post(
+            "/api/v1/tools/invoke",
+            json={"tool_name": "manage_docs", "arguments": {"agent": "test-agent"}, "context": {"mode": "project"}},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["ok"] is True
+    assert captured == {
+        "tool_name": "manage_docs",
+        "arguments": {"agent": "test-agent"},
+        "context": {"mode": "project"},
+    }
 
 
 def test_batch_backend_not_initialised_returns_503(client_no_backend):

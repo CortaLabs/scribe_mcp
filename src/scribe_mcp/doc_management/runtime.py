@@ -7,10 +7,12 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from scribe_mcp.log_intelligence import build_report_from_path
 from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key
 from scribe_mcp.doc_management.scaffold_quality import (
     collect_managed_doc_quality_warnings,
@@ -18,6 +20,7 @@ from scribe_mcp.doc_management.scaffold_quality import (
     is_managed_doc_quality_target,
     summarize_quality_warnings,
 )
+from scribe_mcp.readiness import build_readiness_summary, collect_managed_doc_quality_state
 from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
@@ -131,6 +134,38 @@ _UNSAFE_PROJECT_WRITE_RESOLUTION_SOURCES = {
     "compat_active_project",
     "compat_recent_project",
 }
+_IN_PROGRESS_PHASE_RE = re.compile(r"##\s+(Phase\s+.+?)\s*\(In Progress\)")
+
+
+def _extract_current_phase(phase_plan_path: Optional[str]) -> Optional[str]:
+    if not phase_plan_path:
+        return None
+    try:
+        with open(phase_plan_path, "r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                match = _IN_PROGRESS_PHASE_RE.search(line)
+                if match:
+                    return match.group(1).strip()
+    except OSError:
+        return None
+    return None
+
+
+def _collect_log_friction_signals(active_project: Dict[str, Any]) -> list[Dict[str, Any]]:
+    progress_log = str(active_project.get("progress_log") or "").strip()
+    if not progress_log:
+        return []
+    path = Path(progress_log)
+    if not path.exists():
+        return []
+    try:
+        report = build_report_from_path(path, project=active_project.get("name"))
+    except OSError:
+        return []
+    signals = report.get("signals")
+    if not isinstance(signals, list):
+        return []
+    return [dict(signal) for signal in signals if str(signal.get("code", "")).startswith("LOG_")]
 
 
 def _is_manage_docs_write_intent(action: str) -> bool:
@@ -438,38 +473,18 @@ async def _handle_project_health(
         ][:limit],
     }
 
-    docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
-    quality_docs: list[dict[str, Any]] = []
-    blockers = 0
-    configured_log_paths = configured_log_quality_exclusion_paths(active_project)
-    for key, path_str in docs.items():
-        if not isinstance(path_str, str) or not path_str.endswith(".md"):
-            continue
-        if not is_managed_doc_quality_target(str(key), path_str, configured_log_paths=configured_log_paths):
-            continue
-        p = Path(path_str)
-        if not p.exists():
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        warnings = collect_managed_doc_quality_warnings(text=text, doc_name=str(key), path=p, project=active_project)
-        blocked = [w for w in warnings if bool(w.get("blocking"))]
-        blockers += len(blocked)
-        quality_docs.append(
-            {
-                "doc_name": key,
-                "path": str(p),
-                "warning_codes": [w.get("code") for w in warnings],
-                "readiness_blocker_codes": [w.get("code") for w in blocked],
-            }
-        )
-    response["managed_doc_quality"] = {
-        "status": "blocked" if blockers else "pass",
-        "readiness_blocker_count": blockers,
-        "documents": quality_docs,
-    }
+    current_phase = _extract_current_phase((active_project.get("docs") or {}).get("phase_plan"))
+    active_project_with_phase = dict(active_project)
+    active_project_with_phase["current_phase"] = current_phase
+    managed_doc_quality = collect_managed_doc_quality_state(active_project_with_phase)
+    log_signals = _collect_log_friction_signals(active_project)
+    readiness = build_readiness_summary(
+        current_phase=current_phase,
+        managed_doc_quality=managed_doc_quality,
+        log_signals=log_signals,
+    ).to_dict()
+    response["managed_doc_quality"] = managed_doc_quality
+    response["readiness_summary"] = readiness
     return helper.apply_context_payload(response, context)
 
 

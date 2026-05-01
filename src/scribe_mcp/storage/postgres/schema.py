@@ -35,6 +35,13 @@ def _quote_ident(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
+def _is_duplicate_index_race(statement: str, exc: asyncpg.PostgresError) -> bool:
+    """Allow idempotent index create races during startup schema bootstrap."""
+    if "CREATE INDEX" not in statement.upper():
+        return False
+    return "pg_class_relname_nsp_index" in str(exc)
+
+
 async def _ensure_migration_table(conn: asyncpg.Connection) -> None:
     await conn.execute(
         """
@@ -115,7 +122,16 @@ async def ensure_schema(
             await conn.execute(f"SET search_path TO {quoted_schema}, public;")
 
             for statement in statements:
-                await conn.execute(statement)
+                try:
+                    await conn.execute(statement)
+                except asyncpg.UniqueViolationError as exc:
+                    if _is_duplicate_index_race(statement, exc):
+                        LOGGER.warning(
+                            "Ignoring duplicate index race during schema bootstrap: %s",
+                            statement[:160],
+                        )
+                        continue
+                    raise
 
             await _ensure_migration_table(conn)
             await _apply_numbered_migrations(
@@ -124,4 +140,3 @@ async def ensure_schema(
             )
 
     return True
-

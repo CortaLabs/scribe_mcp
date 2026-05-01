@@ -7,6 +7,14 @@ This guide is about day-to-day usage once Scribe is installed.
 
 If you have not installed or bootstrapped Scribe yet, start with [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md). If you want the fast MCP-first tour first, start with [TOUR.md](TOUR.md).
 
+Install behavior reminder for day-to-day operators:
+
+- use `scribe install` as the preferred setup path
+- default install is preview-only and does not mutate DB, `.env`, or projection state
+- use `scribe install --commit` to apply mutations
+- use `scribe install --commit --yes` for approved non-interactive commit flows
+- use `--project-codex` only when you explicitly want Codex projection after core install
+
 ## The short mental model
 
 Scribe is easiest to understand as a loop:
@@ -228,7 +236,7 @@ export SCRIBE_DB_PATH=".scribe/state/scribe.db"
 
 ### Authenticated remote/client mode
 
-This is internal compatibility only for this release line.
+This is internal compatibility only for this release line. `internal-remote` is advanced/default-off and must be explicitly allowed via install profile controls.
 
 ```bash
 export SCRIBE_MODE=client

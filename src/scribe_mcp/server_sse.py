@@ -11,6 +11,7 @@ Endpoints
 - ``/messages/``                     -- POST target for MCP client messages
 - ``/api/v1/backend/{operation}``    -- Proxy a single StorageBackend operation (POST)
 - ``/api/v1/batch``                  -- Execute multiple StorageBackend operations (POST)
+- ``/api/v1/tools/invoke``           -- Invoke a registered tool through server pipeline (POST)
 
 Usage::
 
@@ -512,6 +513,53 @@ async def handle_batch(request: Request) -> JSONResponse:
         await server_module.end_transport_operation()
 
 
+async def handle_tool_invoke(request: Request) -> JSONResponse:
+    """Invoke a registered tool via the standard server invocation pipeline."""
+    phase = await server_module.begin_transport_operation()
+    if phase != "running":
+        return _shutdown_phase_response(phase)
+    try:
+        try:
+            body: dict[str, Any] = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        tool_name = body.get("tool_name")
+        arguments = body.get("arguments", {})
+        context = body.get("context", {})
+
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            return JSONResponse(
+                {"error": "'tool_name' must be a non-empty string", "type": "ValidationError"},
+                status_code=400,
+            )
+        if not isinstance(arguments, dict):
+            return JSONResponse(
+                {"error": "'arguments' must be an object", "type": "ValidationError"},
+                status_code=400,
+            )
+        if not isinstance(context, dict):
+            return JSONResponse(
+                {"error": "'context' must be an object", "type": "ValidationError"},
+                status_code=400,
+            )
+
+        try:
+            result = await server_module.invoke_tool(tool_name, arguments, context=context)
+            return JSONResponse({"result": _serialize(result)})
+        except SessionLeaseExpired as exc:
+            return _stale_session_response(exc)
+        except Exception as exc:
+            return JSONResponse(
+                {"error": str(exc), "type": type(exc).__name__},
+                status_code=500,
+            )
+    finally:
+        await server_module.end_transport_operation()
+
+
 # ---------------------------------------------------------------------------
 # Health endpoint
 # ---------------------------------------------------------------------------
@@ -570,6 +618,7 @@ def _build_starlette_app(
             Mount("/messages/", app=sse_transport.handle_post_message),
             Route("/api/v1/backend/{operation}", handle_backend_operation, methods=["POST"]),
             Route("/api/v1/batch", handle_batch, methods=["POST"]),
+            Route("/api/v1/tools/invoke", handle_tool_invoke, methods=["POST"]),
         ],
         lifespan=lifespan,
     )

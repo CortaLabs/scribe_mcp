@@ -50,8 +50,18 @@ def _project_payload(project_root: Path, slug: str) -> dict:
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / slug
     docs_dir.mkdir(parents=True, exist_ok=True)
     custom_log_path = docs_dir / "DECISIONS.md"
-    for filename, title in (("ARCHITECTURE_GUIDE.md", "Architecture"), ("PHASE_PLAN.md", "Phase"), ("CHECKLIST.md", "Checklist"), ("PROGRESS_LOG.md", "Log")):
+    for filename, title in (("ARCHITECTURE_GUIDE.md", "Architecture"), ("CHECKLIST.md", "Checklist")):
         (docs_dir / filename).write_text(f"# {title}\n", encoding="utf-8")
+    (docs_dir / "PHASE_PLAN.md").write_text("## Phase 1 (In Progress)\n", encoding="utf-8")
+    (docs_dir / "PROGRESS_LOG.md").write_text(
+        "\n".join(
+            [
+                "[✅] [2026-05-01 01:00:00 UTC] [Agent: Forge] [Project: Alpha] Complete task | priority=high; category=milestone; tags=[\"ship\"]",
+                "[ℹ️] [2026-05-01 02:00:00 UTC] [Agent: Forge] [Project: Alpha] Missing category and tags | priority=medium",
+            ]
+        ),
+        encoding="utf-8",
+    )
     custom_log_path.write_text("[2026-05-01] custom log entry\n", encoding="utf-8")
     config_dir = project_root / ".scribe" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +103,17 @@ async def test_project_health_includes_managed_doc_quality(tmp_path: Path) -> No
     names = {doc.get("doc_name") for doc in quality.get("documents", [])}
     assert "progress_log" not in names
     assert "decisions" not in names
+    readiness = result.get("readiness_summary") or {}
+    assert isinstance(readiness.get("managed_doc_quality"), dict)
+    assert readiness.get("managed_doc_quality") == quality
+    assert readiness.get("current_phase")
+    assert "Phase 1" in str(readiness.get("current_phase"))
+    log_friction = readiness.get("log_friction") or {}
+    signals = log_friction.get("signals") or []
+    assert signals
+    assert {s.get("code") for s in signals} == {"LOG_MISSING_CATEGORY", "LOG_MISSING_TAGS"}
+    assert readiness.get("warning_count", 0) == quality.get("total_warning_count", 0) + len(signals)
+    assert readiness.get("blocker_count", 0) == quality.get("readiness_blocker_count", 0)
 
 
 @pytest.mark.asyncio

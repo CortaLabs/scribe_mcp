@@ -8,7 +8,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 import scribe_mcp.server as server_module
-from scribe_mcp.server_sse import handle_backend_operation, handle_batch
+from scribe_mcp.server_sse import TransportAuthMiddleware, handle_backend_operation, handle_batch, handle_tool_invoke
 
 
 @pytest.fixture()
@@ -33,16 +33,28 @@ def client(mock_backend):
         routes=[
             Route("/api/v1/backend/{operation}", handle_backend_operation, methods=["POST"]),
             Route("/api/v1/batch", handle_batch, methods=["POST"]),
+            Route("/api/v1/tools/invoke", handle_tool_invoke, methods=["POST"]),
         ]
     )
+    app.add_middleware(TransportAuthMiddleware, expected_auth_token="test-token")
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
+
+
+def test_tool_invoke_requires_auth(client) -> None:
+    response = client.post("/api/v1/tools/invoke", json={"tool_name": "manage_docs", "arguments": {}, "context": {}})
+    assert response.status_code == 401
+    assert response.json()["type"] == "Unauthorized"
 
 
 def test_public_release_denied_operation_rejected_single(monkeypatch, client, mock_backend) -> None:
     monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "public")
 
-    response = client.post("/api/v1/backend/delete_project", json={"name": "alpha"})
+    response = client.post(
+        "/api/v1/backend/delete_project",
+        json={"name": "alpha"},
+        headers={"authorization": "Bearer test-token"},
+    )
 
     assert response.status_code == 403
     assert response.json()["type"] == "ForbiddenOperation"
@@ -61,6 +73,7 @@ def test_public_release_mixed_batch_with_denied_operation_fails_closed(monkeypat
                 {"op": "delete_project", "args": {"name": "alpha"}},
             ]
         },
+        headers={"authorization": "Bearer test-token"},
     )
 
     assert response.status_code == 403
@@ -73,7 +86,7 @@ def test_public_release_mixed_batch_with_denied_operation_fails_closed(monkeypat
 def test_public_release_allowed_operation_succeeds(monkeypatch, client, mock_backend) -> None:
     monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "public")
 
-    response = client.post("/api/v1/backend/list_projects", json={})
+    response = client.post("/api/v1/backend/list_projects", json={}, headers={"authorization": "Bearer test-token"})
 
     assert response.status_code == 200
     body = response.json()
@@ -84,7 +97,11 @@ def test_public_release_allowed_operation_succeeds(monkeypatch, client, mock_bac
 def test_internal_profile_keeps_legacy_allowlist_for_transport(monkeypatch, client, mock_backend) -> None:
     monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "internal")
 
-    response = client.post("/api/v1/backend/delete_project", json={"name": "alpha"})
+    response = client.post(
+        "/api/v1/backend/delete_project",
+        json={"name": "alpha"},
+        headers={"authorization": "Bearer test-token"},
+    )
 
     assert response.status_code == 200
     mock_backend.delete_project.assert_awaited_once_with(name="alpha")

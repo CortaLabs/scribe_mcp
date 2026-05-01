@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -39,6 +40,7 @@ _FRONTMATTER_INTENT_KEYS = {
 }
 
 _DEFAULT_READINESS_VALUES = {"ready", "done", "complete", "finished"}
+_SIDE_EFFECT_TIMEOUT_SECONDS = 5.0
 
 
 def _readiness_values(metadata: Optional[Dict[str, Any]]) -> set[str]:
@@ -358,26 +360,32 @@ async def handle_edit_action(
             }
         )
         try:
-            await append_entry(
-                message=f"Doc update [{doc_name}] {section or 'full'} via {action}",
-                status="info",
-                meta=log_meta,
-                agent=agent_id,
-                log_type="doc_updates",
-                format="structured",
+            await asyncio.wait_for(
+                append_entry(
+                    message=f"Doc update [{doc_name}] {section or 'full'} via {action}",
+                    status="info",
+                    meta=log_meta,
+                    agent=agent_id,
+                    log_type="doc_updates",
+                    format="structured",
+                ),
+                timeout=_SIDE_EFFECT_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             log_error = str(exc)
 
         if change.success and change.path:
             try:
-                await index_doc_for_vector(
-                    project=project,
-                    doc_name=doc_name,
-                    change_path=Path(change.path),
-                    after_hash=change.after_hash or "",
-                    agent_id=agent_id or "unknown",
-                    metadata=metadata if isinstance(metadata, dict) else None,
+                await asyncio.wait_for(
+                    index_doc_for_vector(
+                        project=project,
+                        doc_name=doc_name,
+                        change_path=Path(change.path),
+                        after_hash=change.after_hash or "",
+                        agent_id=agent_id or "unknown",
+                        metadata=metadata if isinstance(metadata, dict) else None,
+                    ),
+                    timeout=_SIDE_EFFECT_TIMEOUT_SECONDS,
                 )
             except Exception as exc:
                 index_warning = str(exc)

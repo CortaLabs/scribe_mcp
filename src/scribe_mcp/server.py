@@ -126,6 +126,7 @@ agent_context_manager = None  # Will be initialized in startup
 agent_identity = None  # Will be initialized in startup
 router_context_manager = RouterContextManager(storage_backend=storage_backend)
 _startup_complete = False
+_last_runtime_timing: dict[str, Any] = {}
 _journal_replay_complete = False  # Tracks background journal replay status
 
 # Background task management (prevents garbage collection of fire-and-forget tasks)
@@ -650,7 +651,7 @@ if _MCP_AVAILABLE:
         async def _call_tool(name: str, arguments: Dict[str, Any], **kwargs: Any) -> Any:
             tools.ensure_tool_loaded(name)
             registry = getattr(Server, "_scribe_tool_registry", {})
-            return await execute_tool_call(
+            result = await execute_tool_call(
                 name=name,
                 arguments=dict(arguments or {}),
                 kwargs=kwargs,
@@ -936,7 +937,7 @@ async def _bridge_health_monitor_service(monitor: Any) -> None:
         await monitor.stop()
 
 
-async def _startup() -> None:
+async def _startup(*, startup_profile: str = "full_server") -> None:
     """Initialise shared resources before handling requests."""
     global agent_context_manager, agent_identity, _startup_complete
     global storage_backend, state_manager, router_context_manager
@@ -946,6 +947,7 @@ async def _startup() -> None:
     _transport_shutdown_phase = "running"
     _startup_complete = True
     startup_started = perf_counter()
+    startup_phases_ms: dict[str, float] = {}
 
     # --- Mode detection (client/server/standalone) ---
     mode = await detect_operating_mode(settings)
@@ -957,6 +959,8 @@ async def _startup() -> None:
         type(rebound_backend).__name__ if rebound_backend is not None else "None",
     )
 
+    run_server_background = startup_profile == "full_server"
+
     if storage_backend:
         storage_setup_started = perf_counter()
         await storage_backend.setup()
@@ -964,8 +968,9 @@ async def _startup() -> None:
             "PERF storage.setup completed in %.1fms",
             (perf_counter() - storage_setup_started) * 1000.0,
         )
+        startup_phases_ms["storage.setup"] = (perf_counter() - storage_setup_started) * 1000.0
         # Server-only: entry cleanup contends on shared SQLite writers
-        if mode != OperatingMode.CLIENT:
+        if mode != OperatingMode.CLIENT and run_server_background:
             schedule_background_task(
                 _run_after_delay(
                     _STARTUP_CLEANUP_DELAY_SECONDS,
@@ -977,7 +982,7 @@ async def _startup() -> None:
             )
 
     # Server-only background services: plugins, bridges, legacy migration
-    if mode != OperatingMode.CLIENT:
+    if mode != OperatingMode.CLIENT and run_server_background:
         schedule_background_task(
             _run_after_delay(
                 _STARTUP_PLUGIN_INIT_DELAY_SECONDS,
@@ -1001,7 +1006,7 @@ async def _startup() -> None:
         logger.info("AgentIdentity system initialized for automatic agent detection")
 
         # Server-only: legacy migration and session cleanup loop
-        if mode != OperatingMode.CLIENT:
+        if mode != OperatingMode.CLIENT and run_server_background:
             schedule_background_task(
                 _run_after_delay(
                     _STARTUP_LEGACY_MIGRATION_DELAY_SECONDS,
@@ -1020,7 +1025,7 @@ async def _startup() -> None:
             logger.info("Session cleanup task started")
 
     # Server-only: register bridge custom tools
-    if mode != OperatingMode.CLIENT:
+    if mode != OperatingMode.CLIENT and run_server_background:
         _register_bridge_custom_tools()
 
     # Initialize document store (object store layer)
@@ -1036,11 +1041,12 @@ async def _startup() -> None:
             "PERF document_store.setup completed in %.1fms",
             (perf_counter() - doc_store_started) * 1000.0,
         )
+        startup_phases_ms["document_store.setup"] = (perf_counter() - doc_store_started) * 1000.0
     except Exception:
         logger.warning("Document store initialization failed — continuing without object store", exc_info=True)
 
     # Server-only: journal replay
-    if mode != OperatingMode.CLIENT:
+    if mode != OperatingMode.CLIENT and run_server_background:
         schedule_background_task(
             _replay_journals_background(),
             service_name="journal_replay",
@@ -1049,14 +1055,17 @@ async def _startup() -> None:
 
     total_startup_ms = (perf_counter() - startup_started) * 1000.0
     logger.warning(
-        "PERF startup total=%.1fms (deferred services=%d, mode=%s)",
+        "PERF startup total=%.1fms (deferred services=%d, mode=%s, startup_profile=%s)",
         total_startup_ms,
         len(background_tasks),
         mode.value,
+        startup_profile,
     )
     # Protocol signal — Council MCP and other process managers pattern-match
     # stderr for "Server ready" to know the subprocess is ready for MCP
     # handshake. WARNING level ensures visibility at the default log level.
+    global _last_runtime_timing
+    _last_runtime_timing = {"startup_profile": startup_profile, "startup_phases_ms": startup_phases_ms, "startup_total_ms": total_startup_ms, "dispatch_path": "bound_server"}
     logger.warning("Server ready (mode=%s, journal replay %s)",
                    mode.value,
                    "skipped" if mode == OperatingMode.CLIENT else "continuing in background")
@@ -1193,6 +1202,36 @@ def describe_registered_tools() -> dict[str, dict[str, Any]]:
     return description_map
 
 
+def resolve_tool_startup_profile(name: str) -> str:
+    """Classify tool startup dependency tier for one-shot execution."""
+    defs = getattr(Server, "_scribe_tool_defs", {})
+    tool_def = defs.get(name)
+    if tool_def is None:
+        return "full_server"
+
+    meta = getattr(tool_def, "meta", None)
+    scribe_meta = meta.get("scribe", {}) if isinstance(meta, dict) else {}
+    profile = scribe_meta.get("startupProfile")
+    if profile in {"local_only", "storage_only", "full_server"}:
+        return str(profile)
+
+    trust_tier = scribe_meta.get("trustTier")
+    if trust_tier == 0:
+        return "local_only"
+
+    annotations = getattr(tool_def, "annotations", None)
+    read_only_hint = getattr(annotations, "readOnlyHint", None)
+    destructive_hint = getattr(annotations, "destructiveHint", None)
+    open_world_hint = getattr(annotations, "openWorldHint", None)
+    if bool(read_only_hint) and not bool(destructive_hint) and not bool(open_world_hint):
+        return "local_only"
+    return "storage_only"
+
+
+def _tool_can_skip_startup(name: str) -> bool:
+    return resolve_tool_startup_profile(name) == "local_only"
+
+
 async def invoke_tool(
     name: str,
     arguments: Optional[Dict[str, Any]] = None,
@@ -1208,11 +1247,18 @@ async def invoke_tool(
     if context is not None:
         kwargs["context"] = context
 
-    await _startup()
+    tools.ensure_tool_loaded(name)
+    startup_profile = resolve_tool_startup_profile(name)
+    skip_startup = startup_profile == "local_only"
+    started = False
+    dispatch_path = "bound_server" if context is not None else "local_one_shot"
+    if not skip_startup:
+        await _startup(startup_profile=startup_profile)
+        started = True
     try:
-        tools.ensure_tool_loaded(name)
         registry = getattr(Server, "_scribe_tool_registry", {})
-        return await execute_tool_call(
+        bridge_tool_resolver = _resolve_bridge_tool if startup_profile == "full_server" else None
+        result = await execute_tool_call(
             name=name,
             arguments=payload,
             kwargs=kwargs,
@@ -1225,10 +1271,16 @@ async def invoke_tool(
             sentinel_only=_SENTINEL_ONLY_TOOLS,
             sentinel_allowed=_SENTINEL_ALLOWED_TOOLS,
             log_scope_violation_cb=log_scope_violation,
-            bridge_tool_resolver=_resolve_bridge_tool,
+            bridge_tool_resolver=bridge_tool_resolver,
         )
+        global _last_runtime_timing
+        _last_runtime_timing["dispatch_path"] = dispatch_path
+        _last_runtime_timing["last_tool"] = name
+        _last_runtime_timing["startup_profile"] = startup_profile
+        return result
     finally:
-        await _shutdown()
+        if started:
+            await _shutdown()
 
 
 async def _session_cleanup_task(agent_manager):

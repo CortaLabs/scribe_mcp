@@ -407,3 +407,94 @@ async def test_quality_reminders_count_stale_index_for_path_registered_research_
     cats = {r.get("category") for r in result}
     assert "stale_research_index" in cats
     assert "scaffold_residue" not in cats
+
+
+@pytest.mark.asyncio
+async def test_quality_reminders_runtime_efficiency_budget_and_suppression(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    project["defaults"] = {
+        "reminder": {
+            "runtime_efficiency_budget_category": "runtime_budget_custom",
+        }
+    }
+
+    from scribe_mcp import reminders as reminders_module
+    from scribe_mcp.utils.reminder_engine import ReminderContext
+
+    with patch("scribe_mcp.reminders._resolve_reminder_storage", return_value=None):
+        reminders_module._reminder_engine = None
+        engine = reminders_module._get_engine()
+        context = ReminderContext(
+            tool_name="manage_docs",
+            project_name=project["name"],
+            project_root=project["root"],
+            agent_id="qa",
+            session_id=None,
+            total_entries=0,
+            minutes_since_log=None,
+            last_log_time=None,
+            docs_status={},
+            docs_changed=[],
+            current_phase="Phase 2",
+            session_age_minutes=None,
+            variables={
+                "readiness_summary": {
+                    "current_phase": "Phase 2",
+                    "managed_doc_quality": {"readiness_blocker_count": 0, "frontmatter_mismatch_count": 0, "stale_research_index_count": 0},
+                    "log_friction": {"runtime_efficiency": {"budget_status": "over_budget"}},
+                },
+                "quality_reminder_cooldown_minutes": 60,
+                "quality_reminder_categories": {"runtime_efficiency_budget": "runtime_budget_custom"},
+                "quality_reminder_suppress_codes": [],
+            },
+            operation_status="failure",
+        )
+        with patch.object(engine, "_should_show_reminder_async", return_value=True):
+            result = engine.to_dict_list(await reminders_module._quality_state_reminders(engine, context))
+
+    cats = {r.get("category") for r in result}
+    assert "runtime_budget_custom" in cats
+    stale_messages = [r.get("message", "") for r in result if r.get("category") == "stale_research_index"]
+    if stale_messages:
+        assert "active lane" in stale_messages[0]
+
+    project["defaults"] = {
+        "reminder": {
+            "runtime_efficiency_budget_category": "runtime_budget_custom",
+            "suppress_warning_codes": ["RUNTIME_EFFICIENCY_BUDGET"],
+        }
+    }
+
+    with patch("scribe_mcp.reminders._resolve_reminder_storage", return_value=None):
+        reminders_module._reminder_engine = None
+        engine = reminders_module._get_engine()
+        suppressed_context = ReminderContext(
+            tool_name="manage_docs",
+            project_name=project["name"],
+            project_root=project["root"],
+            agent_id="qa",
+            session_id=None,
+            total_entries=0,
+            minutes_since_log=None,
+            last_log_time=None,
+            docs_status={},
+            docs_changed=[],
+            current_phase="Phase 2",
+            session_age_minutes=None,
+            variables={
+                "readiness_summary": {
+                    "current_phase": "Phase 2",
+                    "managed_doc_quality": {"readiness_blocker_count": 0, "frontmatter_mismatch_count": 0, "stale_research_index_count": 0},
+                    "log_friction": {"runtime_efficiency": {"budget_status": "over_budget"}},
+                },
+                "quality_reminder_cooldown_minutes": 60,
+                "quality_reminder_categories": {"runtime_efficiency_budget": "runtime_budget_custom"},
+                "quality_reminder_suppress_codes": ["RUNTIME_EFFICIENCY_BUDGET"],
+            },
+            operation_status="failure",
+        )
+        with patch.object(engine, "_should_show_reminder_async", return_value=True):
+            suppressed = engine.to_dict_list(await reminders_module._quality_state_reminders(engine, suppressed_context))
+
+    suppressed_cats = {r.get("category") for r in suppressed}
+    assert "runtime_budget_custom" not in suppressed_cats

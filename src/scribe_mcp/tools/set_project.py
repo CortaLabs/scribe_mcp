@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import asyncio
 from time import perf_counter as _pc
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ from scribe_mcp.shared.repo_authority import (
     build_repo_authority_snapshot,
     resolve_authorized_project_root,
 )
+from scribe_mcp.runtime_timing_envelope import build_runtime_efficiency_budget_status
 
 
 class _SetProjectHelper(LoggingToolMixin):
@@ -50,6 +52,8 @@ class _SetProjectHelper(LoggingToolMixin):
 _SET_PROJECT_HELPER = _SetProjectHelper()
 _PROJECT_REGISTRY = get_runtime_project_registry()
 _SESSION_DEBUG_ENABLED = os.environ.get("SCRIBE_SESSION_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+_TARGETED_REMINDER_REFRESH_TIMEOUT_SECONDS = 0.5
+_POST_BIND_CONTEXT_REFRESH_TIMEOUT_SECONDS = 1.0
 
 
 class ProjectRootAuthorizationError(ValueError):
@@ -286,6 +290,12 @@ async def _check_slug_collision(
         existing = await backend.fetch_project(name, repo_root=str(repo_root.resolve()))
     except TypeError:
         existing = await backend.fetch_project(name)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"Unable to validate project name collision due to storage lookup failure: {exc}",
+            "error_code": "storage_lookup_failed",
+        }
     if existing:
         return None  # Same name update is allowed, not a collision
 
@@ -293,9 +303,11 @@ async def _check_slug_collision(
     try:
         all_projects = await backend.list_projects()
     except Exception as exc:
-        # If we can't query projects, allow operation to proceed
-        # (backend errors should be caught at upsert time)
-        return None
+        return {
+            "ok": False,
+            "error": f"Unable to validate project name collision due to project listing failure: {exc}",
+            "error_code": "storage_lookup_failed",
+        }
 
     resolved_repo_root = repo_root.resolve()
 
@@ -375,6 +387,41 @@ def _project_names_share_canonical_alias(left: str, right: str) -> bool:
     left_slug = normalize_project_input(left)
     right_slug = normalize_project_input(right)
     return bool(left_slug and right_slug and left_slug == right_slug)
+
+
+async def _targeted_post_bind_refresh(
+    *,
+    project: Dict[str, Any],
+    tool_name: str,
+    state_snapshot: Dict[str, Any],
+    agent_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Fetch post-bind reminders without a full context re-resolution."""
+    async def _fetch_reminders() -> List[Dict[str, Any]]:
+        try:
+            return await reminders.get_reminders(
+                project,
+                tool_name=tool_name,
+                state=state_snapshot,
+                agent_id=agent_id,
+            )
+        except TypeError:
+            return await reminders.get_reminders(
+                project,
+                tool_name=tool_name,
+                state=state_snapshot,
+            )
+
+    try:
+        return await asyncio.wait_for(
+            _fetch_reminders(),
+            timeout=_TARGETED_REMINDER_REFRESH_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out during targeted post-bind reminder refresh; returning no reminders")
+        return []
+    except Exception:
+        return []
 
 
 @app.tool(**stateful_local_tool(title="Set Project Context", tags=("projects", "context", "write")))
@@ -458,7 +505,7 @@ async def set_project(
 
     # Update agent activity tracking
     agent_identity = server_module.get_agent_identity()
-    if agent_identity:
+    if agent_identity and hasattr(agent_identity, "update_agent_activity"):
         await agent_identity.update_agent_activity(
             agent_id, "set_project", {"project_name": name, "expected_version": expected_version}
         )
@@ -910,20 +957,28 @@ async def set_project(
     _mark("upsert_agent_recent")
     recent_projects = list(state.recent_projects)
 
-    try:
-        context_after = await _SET_PROJECT_HELPER.prepare_context(
-            tool_name="set_project",
-            agent_id=agent_id,
-            explicit_project=name,
-            require_project=False,
-            state_snapshot=state_snapshot,
-        )
-    except ProjectResolutionError:
-        context_after = base_context
-
-    _mark("prepare_context_after")
     # Handle readable format with SITREP formatters
     if format == "readable":
+        context_after = base_context
+        try:
+            context_after = await asyncio.wait_for(
+                _SET_PROJECT_HELPER.prepare_context(
+                    tool_name="set_project",
+                    agent_id=agent_id,
+                    explicit_project=name,
+                    require_project=False,
+                    state_snapshot=state_snapshot,
+                ),
+                timeout=_POST_BIND_CONTEXT_REFRESH_TIMEOUT_SECONDS,
+            )
+        except ProjectResolutionError:
+            context_after = base_context
+        except TimeoutError:
+            logger.warning(
+                "Timed out during set_project post-bind context refresh; using base context"
+            )
+            context_after = base_context
+        _mark("prepare_context_after")
         from scribe_mcp.utils.response import default_formatter
 
         # Compute docs_were_generated BEFORE count_entries so we can skip the call for new projects.
@@ -1033,6 +1088,17 @@ async def set_project(
                 tool_name="set_project"
             )
 
+
+
+    def _build_timing_breakdown_ms() -> Dict[str, float]:
+        timing_breakdown_ms: Dict[str, float] = {}
+        prev = 0.0
+        for lbl, cum in _timings:
+            timing_breakdown_ms[lbl] = round(cum - prev, 3)
+            prev = cum
+        if _timings:
+            timing_breakdown_ms["total_ms"] = round(_timings[-1][1], 3)
+        return timing_breakdown_ms
     # For structured/compact formats, use existing logic
     response: Dict[str, Any] = {
         "ok": True,
@@ -1042,6 +1108,7 @@ async def set_project(
         "skipped": doc_result.get("skipped", []),
         "side_effects": write_side_effects,
         "root_authorization": root_authorization,
+        "timing": {"set_project_phase_ms": {}},
         "scope_resolution": {
             "source": write_side_effects.get("scope_resolution_source"),
             "authoritative_session_id": write_side_effects.get("authoritative_session_id"),
@@ -1052,12 +1119,28 @@ async def set_project(
         },
         **({"warnings": validation.get("warnings", [])} if validation.get("warnings") else {}),
     }
-    if context_after.reminders:
-        response["reminders"] = list(context_after.reminders)
+    targeted_reminders = await _targeted_post_bind_refresh(
+        project=project_data,
+        tool_name="set_project",
+        state_snapshot=state_snapshot,
+        agent_id=agent_id,
+    )
+    _mark("targeted_refresh_after")
+    if targeted_reminders:
+        response["reminders"] = list(targeted_reminders)
+    set_project_phase_ms = _build_timing_breakdown_ms()
+    response["timing"]["set_project_phase_ms"] = set_project_phase_ms
+    response["timing"]["budget_status"] = build_runtime_efficiency_budget_status(
+        startup_phases_ms=None,
+        set_project_phase_ms=set_project_phase_ms,
+        dispatch_path=None,
+        startup_profile=None,
+        budget_thresholds=getattr(settings, "runtime_efficiency_budgets", None),
+    )
 
     _mark("format_structured")
     _log_timings()
-    return _SET_PROJECT_HELPER.apply_context_payload(response, context_after)
+    return _SET_PROJECT_HELPER.apply_context_payload(response, base_context)
 
 
 def _get_context_repo_root_details() -> Dict[str, Any]:

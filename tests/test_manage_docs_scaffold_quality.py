@@ -1,4 +1,6 @@
-from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality
+from pathlib import Path
+
+from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality, collect_managed_doc_quality_warnings
 
 
 def _codes(warnings):
@@ -107,3 +109,23 @@ status: in_progress
 """
     warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
     assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_noncanonical_warning_for_nested_research_path_is_actionable(tmp_path: Path):
+    docs_dir = tmp_path / "docs"
+    research_dir = docs_dir / "research"
+    nested = research_dir / "wave_1"
+    nested.mkdir(parents=True)
+    (research_dir / "INDEX.md").write_text("# Index\n", encoding="utf-8")
+    changed = nested / "RESEARCH_NOTE.md"
+    changed.write_text("# Note\n", encoding="utf-8")
+
+    warnings = collect_managed_doc_quality_warnings(
+        text=changed.read_text(encoding="utf-8"),
+        doc_name="RESEARCH_NOTE",
+        path=changed,
+        project={"docs_dir": str(docs_dir)},
+    )
+    noncanonical = [w for w in warnings if w.get("code") == "SCF_NONCANONICAL_LOCATION"]
+    assert noncanonical
+    assert "not in canonical flat research placement" in str(noncanonical[0].get("message"))

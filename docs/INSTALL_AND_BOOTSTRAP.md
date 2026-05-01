@@ -13,9 +13,9 @@ Choose the smallest path that matches what you are trying to do:
 
 | Goal | Recommended path |
 | --- | --- |
-| Real install for day-to-day use | Bootstrap Postgres with `scribe bootstrap` |
+| Real install for day-to-day use | Install wizard with `scribe install` (preview first, then explicit commit) |
 | Local-only demo or single-user experiment | Explicit standalone SQLite |
-| Connect Scribe to Codex after local setup | Run `scribe plugins project-codex` |
+| Connect Scribe to Codex after local setup | Run `scribe install --commit --yes --project-codex` |
 | Use a remote/client deployment | Internal-only posture for this release line |
 
 ## 1. Install the package
@@ -28,7 +28,7 @@ Sanity-check the public CLI surface:
 
 ```bash
 scribe --help
-scribe bootstrap --help
+scribe install --help
 scribe-server --help
 ```
 
@@ -45,13 +45,15 @@ Scribe also ships a broader operator toolchain:
 - `scribe-soak-postgres`
 - `scribe-server-sse`
 
-## 2. Recommended path: bootstrap Postgres
+## 2. Recommended path: install wizard
 
-Scribe is Postgres-first in normal server/runtime posture. If you want the path that best matches the supported public runtime model, start here:
+Scribe is local-first and repo-scoped by default. Start with preview mode:
 
 ```bash
-scribe bootstrap
+scribe install
 ```
+
+Preview mode is default and performs no DB mutation, no `.env` mutation, and no projection.
 
 The bootstrap flow is designed to handle the setup work that most users do not want to do by hand:
 
@@ -65,9 +67,30 @@ The bootstrap flow is designed to handle the setup work that most users do not w
 Useful variants:
 
 ```bash
-scribe bootstrap --dry-run
-scribe bootstrap --no-interactive --superuser-password '<password>'
+scribe install --profile local-postgres
+scribe install --profile sqlite-eval
+scribe install --profile existing-postgres
 ```
+
+Apply mutations only with explicit commit:
+
+```bash
+scribe install --commit
+```
+
+Non-interactive commit requires the approved confirmation path:
+
+```bash
+scribe install --commit --yes
+```
+
+Advanced profile behavior:
+
+- `internal-remote` is advanced and default-off
+- to preview it, pass both `--profile internal-remote` and `--allow-advanced-profile`
+- standard install remains local-first/repo-scoped
+
+After successful commit, the wizard runs post-install diagnostics/readiness checks automatically.
 
 After bootstrap completes, load the generated environment and start the server:
 
@@ -163,14 +186,10 @@ If you want the host-specific details and environment table, use [mcp_server_gui
 If you want the bundled Scribe plugin projected into native Codex surfaces, use the shipped projection command:
 
 ```bash
-scribe plugins project-codex --repo-root /absolute/path/to/repo
+scribe install --commit --yes --project-codex
 ```
 
-Useful flags:
-
-- `--plugin-root` to override the plugin bundle path
-- `--codex-home` to target a specific `CODEX_HOME`
-- `--config-path` to target a specific Codex `config.toml`
+Codex projection is explicit opt-in only and runs after core install commit verification. Base install never touches `CODEX_HOME` unless you explicitly request projection.
 
 This is the supported projection flow for this release line.
 

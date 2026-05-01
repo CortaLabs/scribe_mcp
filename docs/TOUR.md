@@ -7,6 +7,13 @@ This tour is about the **MCP tools**. The CLI exists to help you run them locall
 
 This page uses real MCP captures from `2026-04-18`. If we did not re-check a payload live, we do not pretend we did.
 
+Install posture for this release line:
+
+- preferred path is `scribe install`
+- default install is preview-only (no DB mutation, no `.env` mutation, no projection)
+- mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
+- Codex projection is explicit opt-in with `--project-codex` after successful commit
+
 If you only remember one thing, make it this:
 
 - Scribe is not “a markdown generator with a server attached”

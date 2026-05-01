@@ -11,6 +11,8 @@ import tomllib
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
+import httpx
+
 from scribe_mcp.cli.session_store import (
     CliSessionState,
     build_scoped_reuse_key,
@@ -20,7 +22,8 @@ from scribe_mcp.cli.session_store import (
 from scribe_mcp.config.paths import cli_session_state_path
 
 
-_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap", "plugins", "templates"}
+_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap", "plugins", "templates", "logs", "install"}
+_DEFAULT_CALL_TIMEOUT_SECONDS = 6.0
 
 
 def _discover_repo_root(start: Path) -> Path:
@@ -283,6 +286,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON.",
     )
 
+    logs_parser = subparsers.add_parser("logs", help="Inspect progress logs")
+    logs_subparsers = logs_parser.add_subparsers(dest="logs_action", required=True)
+    logs_analyze_parser = logs_subparsers.add_parser("analyze", help="Analyze log intelligence signals")
+    logs_analyze_parser.add_argument("file", help="Path to progress log markdown file")
+    logs_analyze_parser.add_argument("--project", default=None, help="Optional project label for report scope")
+
+    install_parser = subparsers.add_parser("install", help="Preview or commit secure install flow")
+    install_parser.add_argument(
+        "--repo-root",
+        dest="repo_root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root or any path inside the target repository.",
+    )
+    install_parser.add_argument(
+        "--profile",
+        choices=["local-postgres", "sqlite-eval", "existing-postgres", "internal-remote"],
+        default="local-postgres",
+        help="Install profile preview target.",
+    )
+    install_parser.add_argument(
+        "--allow-advanced-profile",
+        action="store_true",
+        help="Explicitly allow advanced profile previews (internal-remote).",
+    )
+    install_parser.add_argument("--commit", action="store_true", help="Apply install mutations.")
+    install_parser.add_argument("--yes", action="store_true", help="Non-interactive confirmation for commit path.")
+    install_parser.add_argument("--dangerous-overwrite-secrets", action="store_true", help="Explicitly allow overwriting existing secret env values.")
+    install_parser.add_argument("--project-codex", action="store_true", help="Run optional Codex projection after successful commit verification.")
+
     call_parser = subparsers.add_parser("call", help="Invoke a tool by name", allow_abbrev=False)
     call_parser.add_argument("tool", help="Tool name (for example: read_file)")
     call_parser.add_argument(
@@ -334,6 +367,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not persist updated session context after call.",
     )
+    call_parser.add_argument(
+        "--tool-timeout-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Timeout for one-shot storage-backed call execution in seconds. "
+            "Defaults to SCRIBE_CALL_TIMEOUT_SECONDS or 6.0."
+        ),
+    )
 
     session_parser = subparsers.add_parser("session", help="Inspect/reset CLI session state")
     session_subparsers = session_parser.add_subparsers(dest="session_action", required=True)
@@ -370,6 +412,65 @@ def _resolve_agent(agent: str | None) -> str:
 
 def _prepare_environment(repo_root: Path) -> None:
     os.environ["SCRIBE_ROOT"] = str(repo_root.resolve())
+
+
+def _resolve_call_timeout_seconds(explicit: float | None) -> float:
+    """Resolve one-shot CLI timeout in seconds for storage-backed tool calls."""
+    if explicit is not None:
+        return max(0.1, float(explicit))
+    raw = os.environ.get("SCRIBE_CALL_TIMEOUT_SECONDS")
+    if raw is None:
+        return _DEFAULT_CALL_TIMEOUT_SECONDS
+    try:
+        return max(0.1, float(raw))
+    except ValueError:
+        return _DEFAULT_CALL_TIMEOUT_SECONDS
+
+
+def _bound_server_endpoint() -> str | None:
+    """Return configured/discoverable server endpoint for bound execution."""
+    endpoint = os.environ.get("SCRIBE_REMOTE_URL")
+    if isinstance(endpoint, str) and endpoint.strip():
+        return endpoint.strip()
+    return None
+
+
+def _redacted_auth_state() -> str:
+    """Return a non-secret auth state marker for diagnostics."""
+    token = os.environ.get("SCRIBE_REMOTE_AUTH_TOKEN") or os.environ.get("SCRIBE_TRANSPORT_AUTH_TOKEN")
+    return "configured" if token else "missing"
+
+
+def _bound_server_headers() -> dict[str, str]:
+    token = os.environ.get("SCRIBE_REMOTE_AUTH_TOKEN") or os.environ.get("SCRIBE_TRANSPORT_AUTH_TOKEN")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}", "x-scribe-auth": token}
+
+
+async def _invoke_tool_bound_server(
+    *,
+    endpoint: str,
+    tool: str,
+    call_args: Dict[str, Any],
+    context: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    url = f"{endpoint.rstrip('/')}/api/v1/tools/invoke"
+    payload = {"tool_name": tool, "arguments": call_args, "context": context}
+    timeout = httpx.Timeout(timeout_seconds)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(url, headers=_bound_server_headers(), json=payload)
+    response.raise_for_status()
+    body = response.json()
+    if not isinstance(body, dict):
+        raise RuntimeError("Bound server returned non-object response")
+    if "error" in body:
+        raise RuntimeError(str(body.get("error") or "unknown bound-server error"))
+    result = body.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("Bound server returned invalid result payload")
+    return result
 
 
 def _normalize_tracked_path(repo_root: Path, candidate: Any) -> str | None:
@@ -565,7 +666,74 @@ async def _run_call_command(args: argparse.Namespace, passthrough_options: Dict[
         tracked_reads=tracked_reads,
     )
 
-    result = await server_module.invoke_tool(args.tool, call_args, context=context)
+    startup_profile = str(
+        getattr(server_module, "resolve_tool_startup_profile", lambda _name: "full_server")(args.tool)
+    )
+    skip_startup = startup_profile == "local_only"
+    dispatch_path = "local_one_shot"
+    endpoint = _bound_server_endpoint()
+    if (not skip_startup) and endpoint:
+        # Fast path: run through configured server/client endpoint when available.
+        context["dispatch_path"] = "bound_server"
+        context["remote_server_url"] = endpoint
+        dispatch_path = "bound_server"
+    if skip_startup:
+        context["dispatch_path"] = "local_one_shot"
+        context["startup_profile"] = startup_profile
+        result = await server_module.invoke_tool(args.tool, call_args, context=context)
+    else:
+        timeout_seconds = _resolve_call_timeout_seconds(args.tool_timeout_seconds)
+        context["startup_profile"] = startup_profile
+        try:
+            if dispatch_path == "bound_server":
+                result = await _invoke_tool_bound_server(
+                    endpoint=endpoint,
+                    tool=args.tool,
+                    call_args=call_args,
+                    context=context,
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                result = await asyncio.wait_for(
+                    server_module.invoke_tool(args.tool, call_args, context=context),
+                    timeout=timeout_seconds,
+                )
+        except (asyncio.TimeoutError, httpx.HTTPError, RuntimeError):
+            if dispatch_path == "bound_server":
+                print(
+                    (
+                        f"warning: bound_server path unavailable for '{args.tool}' (endpoint={endpoint}, "
+                        f"auth={_redacted_auth_state()}); falling back to local_one_shot."
+                    ),
+                    file=sys.stderr,
+                )
+                context["dispatch_path"] = "local_one_shot"
+                try:
+                    context.pop("remote_server_url", None)
+                    result = await asyncio.wait_for(
+                        server_module.invoke_tool(args.tool, call_args, context=context),
+                        timeout=timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    print(
+                        (
+                            f"error: tool call timed out after {timeout_seconds:.1f}s while starting storage-backed "
+                            f"execution for '{args.tool}'. Verify storage/server config (Postgres reachability, "
+                            "credentials, and SCRIBE_* settings), or raise --tool-timeout-seconds."
+                        ),
+                        file=sys.stderr,
+                    )
+                    return 2
+            else:
+                print(
+                    (
+                        f"error: tool call timed out after {timeout_seconds:.1f}s while starting storage-backed "
+                        f"execution for '{args.tool}'. Verify storage/server config (Postgres reachability, "
+                        "credentials, and SCRIBE_* settings), or raise --tool-timeout-seconds."
+                    ),
+                    file=sys.stderr,
+                )
+                return 2
 
     backend = getattr(server_module, "storage_backend", None)
     if backend and hasattr(backend, "get_session_by_transport"):
@@ -604,6 +772,8 @@ async def _run_call_command(args: argparse.Namespace, passthrough_options: Dict[
     if not args.no_save_session:
         save_session_state(session_state)
 
+    if isinstance(result, dict):
+        result.setdefault("dispatch_path", context.get("dispatch_path", dispatch_path))
     _json_print(result, pretty=args.pretty)
     return 0
 
@@ -738,6 +908,51 @@ def _run_templates_command(args: argparse.Namespace) -> int:
     return 0 if payload.get("valid") else 1
 
 
+def _run_logs_command(args: argparse.Namespace) -> int:
+    from scribe_mcp.log_intelligence import build_report_from_path
+
+    if args.logs_action != "analyze":
+        raise ValueError(f"Unsupported logs action: {args.logs_action}")
+    report = build_report_from_path(args.file, project=args.project)
+    _json_print(report, pretty=True)
+    return 0
+
+
+def _run_install_command(args: argparse.Namespace) -> int:
+    from scribe_mcp.install_wizard import build_install_plan, execute_install_commit, execute_projection_opt_in
+    from scribe_mcp.utils.error_handler import sanitize_error_message
+
+    repo_root = _discover_repo_root(args.repo_root)
+    _prepare_environment(repo_root)
+    try:
+        if args.commit:
+            payload = asyncio.run(execute_install_commit(
+                repo_root=repo_root,
+                profile=args.profile,
+                commit=bool(args.commit),
+                yes=bool(args.yes),
+                allow_advanced_profile=bool(args.allow_advanced_profile),
+                dangerous_overwrite_secrets=bool(args.dangerous_overwrite_secrets),
+            ))
+            if payload.get("ok") and bool(args.project_codex):
+                payload["projection"] = execute_projection_opt_in(repo_root=repo_root)
+            _json_print(payload, pretty=True)
+            return 0 if payload.get("ok") else 1
+        plan = build_install_plan(
+            repo_root=repo_root,
+            profile=args.profile,
+            include_advanced_profile=bool(args.allow_advanced_profile),
+        )
+    except ValueError as exc:
+        print(f"error: {sanitize_error_message(str(exc))}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"error: {sanitize_error_message(f'install failed: {exc}')}", file=sys.stderr)
+        return 2
+    _json_print(plan.to_dict(), pretty=True)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     normalized_argv = _normalize_argv(argv or sys.argv[1:])
     parser = _build_parser()
@@ -766,6 +981,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "templates":
         return _run_templates_command(args)
+    if args.command == "logs":
+        return _run_logs_command(args)
+    if args.command == "install":
+        return _run_install_command(args)
 
     return asyncio.run(_run_call_command(args, passthrough_options))
 

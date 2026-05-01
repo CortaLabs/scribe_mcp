@@ -21,11 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from scribe_mcp.utils.reminder_validator import validate_and_load_engine
 from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext as NewReminderContext
 from scribe_mcp.utils.reminder_engine import ReminderInstance
-from scribe_mcp.doc_management.scaffold_quality import (
-    collect_managed_doc_quality_warnings,
-    configured_log_quality_exclusion_paths,
-    is_managed_doc_quality_target,
-)
+from scribe_mcp.readiness import build_readiness_summary, collect_managed_doc_quality_state
 
 logger = logging.getLogger(__name__)
 
@@ -335,8 +331,8 @@ async def get_reminders(
 
 
 async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderContext) -> List[ReminderInstance]:
-    quality = context.variables.get("managed_doc_quality") if isinstance(context.variables, dict) else None
-    if not isinstance(quality, dict):
+    readiness = context.variables.get("readiness_summary") if isinstance(context.variables, dict) else None
+    if not isinstance(readiness, dict):
         return []
 
     reminders: List[ReminderInstance] = []
@@ -348,42 +344,64 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
             return str(categories_cfg.get(name))
         return fallback
 
+    quality = readiness.get("managed_doc_quality") if isinstance(readiness.get("managed_doc_quality"), dict) else {}
+    log_friction = readiness.get("log_friction") if isinstance(readiness.get("log_friction"), dict) else {}
+    current_phase = str(readiness.get("current_phase") or "active phase")
     residue = int(quality.get("readiness_blocker_count", 0) or 0)
     mismatch = int(quality.get("frontmatter_mismatch_count", 0) or 0)
     stale = int(quality.get("stale_research_index_count", 0) or 0)
+    runtime_budget_status = str((log_friction.get("runtime_efficiency") or {}).get("budget_status") or "")
+    if not runtime_budget_status and isinstance(context.variables, dict):
+        runtime_efficiency = context.variables.get("runtime_efficiency")
+        if isinstance(runtime_efficiency, dict):
+            runtime_budget_status = str(runtime_efficiency.get("budget_status") or "")
 
-    if residue > 0:
+    suppressed = set(context.variables.get("quality_reminder_suppress_codes") or [])
+
+    if residue > 0 and "SCF_READINESS_BLOCKERS" not in suppressed:
         reminders.append(
             ReminderInstance(
                 key="quality.scaffold_residue",
                 level="warning",
                 emoji="⚠️",
-                message=f"Scaffold residue remains ({residue} readiness blockers). Fix listed warning codes before claiming done.",
+                message=f"{current_phase}: {residue} readiness blocker(s) remain. Clear SCF_* blockers in active docs before claiming done.",
                 category=_cfg("scaffold_residue", "scaffold_residue"),
                 variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
                 cooldown_minutes=default_cooldown,
             )
         )
-    if mismatch > 0:
+    if mismatch > 0 and "SCF_FRONTMATTER_MISMATCH" not in suppressed:
         reminders.append(
             ReminderInstance(
                 key="quality.frontmatter_mismatch",
                 level="warning",
                 emoji="🧭",
-                message=f"Frontmatter readiness mismatch detected ({mismatch}). Align status with body quality state.",
+                message=f"{current_phase}: frontmatter/body readiness mismatch ({mismatch}). Re-run quality_check, then align frontmatter status with body state.",
                 category=_cfg("frontmatter_mismatch", "frontmatter_mismatch"),
                 variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
                 cooldown_minutes=default_cooldown,
             )
         )
-    if stale > 0:
+    if stale > 0 and "SCF_INDEX_HYGIENE" not in suppressed:
         reminders.append(
             ReminderInstance(
                 key="quality.stale_research_index",
                 level="info",
                 emoji="📚",
-                message=f"Research index hygiene warning ({stale}) present. Reconcile stale index entries when appropriate.",
+                message=f"{current_phase}: research index hygiene signal ({stale}) in the active lane. Reconcile canonical research paths and refresh index references for this phase.",
                 category=_cfg("stale_research_index", "stale_research_index"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                cooldown_minutes=default_cooldown,
+            )
+        )
+    if runtime_budget_status in {"near_budget", "over_budget"} and "RUNTIME_EFFICIENCY_BUDGET" not in suppressed:
+        reminders.append(
+            ReminderInstance(
+                key="quality.runtime_efficiency_budget",
+                level="warning" if runtime_budget_status == "over_budget" else "info",
+                emoji="⏱️",
+                message=f"Runtime-efficiency budget status is `{runtime_budget_status}` (runtime-efficiency-budget.v1). Use project_health/log_intelligence timing guidance before widening scope.",
+                category=_cfg("runtime_efficiency_budget", "runtime_efficiency_budget"),
                 variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
                 cooldown_minutes=default_cooldown,
             )
@@ -458,28 +476,26 @@ async def _build_legacy_context(
     # Get current phase (cached by file signature).
     current_phase = await _get_current_phase(project.get("docs", {}).get("phase_plan"))
 
-    quality_state: Dict[str, Any] = {
-        "readiness_blocker_count": 0,
-        "frontmatter_mismatch_count": 0,
-        "stale_research_index_count": 0,
-    }
-    docs = project.get("docs", {}) if isinstance(project.get("docs"), dict) else {}
-    configured_log_paths = configured_log_quality_exclusion_paths(project)
-    for key, doc_path in docs.items():
-        if not isinstance(doc_path, str) or not doc_path.endswith(".md"):
-            continue
-        if not is_managed_doc_quality_target(str(key), doc_path, configured_log_paths=configured_log_paths):
-            continue
-        try:
-            text = await asyncio.to_thread(Path(doc_path).read_text, encoding="utf-8")
-        except Exception:
-            continue
-        warnings = collect_managed_doc_quality_warnings(text=text, doc_name=str(key), path=doc_path, project=project)
-        quality_state["readiness_blocker_count"] += sum(1 for w in warnings if bool(w.get("blocking")))
-        quality_state["frontmatter_mismatch_count"] += sum(1 for w in warnings if w.get("code") == "SCF_FRONTMATTER_MISMATCH")
-        quality_state["stale_research_index_count"] += sum(1 for w in warnings if w.get("code") in {"SCF_INDEX_STALE", "SCF_INDEX_MISSING", "SCF_DOC_UNINDEXED"})
+    quality_state = await asyncio.to_thread(collect_managed_doc_quality_state, project)
+    log_signals = list((variables or {}).get("log_signals") or []) if isinstance(variables, dict) else []
+    runtime_efficiency = (variables or {}).get("runtime_efficiency") if isinstance(variables, dict) else None
+    readiness_summary = build_readiness_summary(
+        current_phase=current_phase,
+        managed_doc_quality=quality_state,
+        log_signals=log_signals,
+    ).to_dict()
+    if isinstance(runtime_efficiency, dict):
+        readiness_summary.setdefault("log_friction", {}).setdefault("runtime_efficiency", runtime_efficiency)
 
     reminder_cfg = ((project.get("defaults") or {}).get("reminder") or {}) if isinstance(project, dict) else {}
+    try:
+        from scribe_mcp.config.settings import settings
+
+        global_reminder_cfg = settings.reminder_defaults if isinstance(settings.reminder_defaults, dict) else {}
+    except Exception:
+        global_reminder_cfg = {}
+
+    combined_cfg = {**global_reminder_cfg, **reminder_cfg}
 
     # Get session age information
     session_age_minutes = None
@@ -517,12 +533,15 @@ async def _build_legacy_context(
         variables={
             **(variables or {}),
             "managed_doc_quality": quality_state,
-            "quality_reminder_cooldown_minutes": int(reminder_cfg.get("quality_cooldown_minutes", 30) or 30),
+            "readiness_summary": readiness_summary,
+            "quality_reminder_cooldown_minutes": int(combined_cfg.get("quality_cooldown_minutes", 30) or 30),
             "quality_reminder_categories": {
-                "scaffold_residue": str(reminder_cfg.get("scaffold_residue_category", "scaffold_residue")),
-                "frontmatter_mismatch": str(reminder_cfg.get("frontmatter_mismatch_category", "frontmatter_mismatch")),
-                "stale_research_index": str(reminder_cfg.get("stale_research_index_category", "stale_research_index")),
+                "scaffold_residue": str(combined_cfg.get("scaffold_residue_category", "scaffold_residue")),
+                "frontmatter_mismatch": str(combined_cfg.get("frontmatter_mismatch_category", "frontmatter_mismatch")),
+                "stale_research_index": str(combined_cfg.get("stale_research_index_category", "stale_research_index")),
+                "runtime_efficiency_budget": str(combined_cfg.get("runtime_efficiency_budget_category", "runtime_efficiency_budget")),
             },
+            "quality_reminder_suppress_codes": [str(code) for code in (combined_cfg.get("suppress_warning_codes") or []) if str(code).strip()],
         },
         operation_status=operation_status,
     )

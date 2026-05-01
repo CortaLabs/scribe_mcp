@@ -299,17 +299,26 @@ def build_research_index_hygiene_warnings(
         except ValueError:
             noncanonical = True
         if noncanonical:
+            nested_inside_canonical = False
+            try:
+                changed_resolved.relative_to(canonical_dir)
+                nested_inside_canonical = True
+            except ValueError:
+                nested_inside_canonical = False
             warnings.append(
                 _research_warning(
                     "SCF_NONCANONICAL_LOCATION",
                     excerpt=str(changed_path),
                     message=(
-                        "Research artifact is outside canonical flat research storage. "
-                        "Package 3.1 expects files directly under .scribe/docs/dev_plans/<project>/research/."
+                        "Research artifact is not in canonical flat research placement. "
+                        "Files are expected directly under .scribe/docs/dev_plans/<project>/research/."
+                        if nested_inside_canonical
+                        else "Research artifact is outside canonical research storage and may not be indexed as expected."
                     ),
                     repair=(
-                        "Move or rehome the artifact into the canonical flat research directory and regenerate research/INDEX.md; "
-                        "use index display grouping instead of physical wave/subdirectory placement."
+                        "Rehome the artifact to the top-level canonical research directory and regenerate research/INDEX.md."
+                        if nested_inside_canonical
+                        else "Move the artifact into the canonical research directory and regenerate research/INDEX.md."
                     ),
                 )
             )

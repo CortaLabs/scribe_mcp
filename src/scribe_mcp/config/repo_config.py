@@ -176,6 +176,39 @@ def resolve_repo_runtime_overrides(repo_root: Path) -> Dict[str, Any]:
     return {"storage_backend": None, "db_path": None, "config_path": None}
 
 
+def resolve_runtime_efficiency_budgets(repo_root: Path | None) -> Dict[str, Dict[str, float]]:
+    """Resolve runtime-efficiency budgets from repo config defaults with safe fallbacks."""
+    from scribe_mcp.runtime_timing_envelope import DEFAULT_RUNTIME_EFFICIENCY_BUDGETS
+
+    if repo_root is None:
+        return dict(DEFAULT_RUNTIME_EFFICIENCY_BUDGETS)
+
+    for config_path in _repo_config_paths(repo_root):
+        raw = _load_structured_config(config_path)
+        if not raw:
+            continue
+        sanitized = _sanitize_repo_config_data(raw, source_label=str(config_path))
+        defaults = sanitized.get("defaults")
+        if not isinstance(defaults, dict):
+            continue
+        runtime_efficiency = defaults.get("runtime_efficiency")
+        if not isinstance(runtime_efficiency, dict):
+            continue
+        budgets = runtime_efficiency.get("budgets")
+        if not isinstance(budgets, dict):
+            continue
+        merged: Dict[str, Dict[str, float]] = dict(DEFAULT_RUNTIME_EFFICIENCY_BUDGETS)
+        for metric_name, threshold in budgets.items():
+            if not isinstance(threshold, dict):
+                continue
+            warn = threshold.get("warn")
+            fail = threshold.get("fail")
+            if isinstance(warn, (int, float)) and isinstance(fail, (int, float)):
+                merged[str(metric_name)] = {"warn": float(warn), "fail": float(fail)}
+        return merged
+    return dict(DEFAULT_RUNTIME_EFFICIENCY_BUDGETS)
+
+
 def _extract_doc_type_config_map(repo_config: "RepoConfig") -> tuple[Optional[Dict[str, Any]], str]:
     top_level = getattr(repo_config, "_raw_config", None)
     if isinstance(top_level, dict):

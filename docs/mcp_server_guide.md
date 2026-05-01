@@ -18,7 +18,7 @@ scribe-server
 For most real installs, that means:
 
 - install `scribe-mcp`
-- run `scribe bootstrap`
+- run `scribe install` (preview) and then explicit commit when ready
 - load the resulting `.env`
 - point your MCP host at `scribe-server`
 
@@ -61,8 +61,10 @@ codex mcp add scribe \
 If you want Scribe's bundled Codex plugin projected into native Codex config surfaces:
 
 ```bash
-scribe plugins project-codex --repo-root /absolute/path/to/repo
+scribe install --commit --yes --project-codex
 ```
+
+Projection is explicit opt-in and is not part of base install preview/commit unless you pass `--project-codex`.
 
 ## Runtime modes
 
@@ -133,7 +135,7 @@ Cause: invalid `SCRIBE_DB_URL`, unreachable database, or incomplete bootstrap.
 
 Fix:
 
-- rerun `scribe bootstrap`
+- rerun `scribe install` for preview, then `scribe install --commit` when ready
 - verify the connection string
 - verify local network/database access
 

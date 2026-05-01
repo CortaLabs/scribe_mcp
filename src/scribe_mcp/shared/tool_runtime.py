@@ -516,13 +516,24 @@ async def execute_tool_call(
 ) -> Any:
     func = registry.get(name)
 
+    bridge_resolution_attempted = False
+    bridge_resolution_available = bridge_tool_resolver is not None
     if not func and ":" in name and bridge_tool_resolver is not None:
+        bridge_resolution_attempted = True
         try:
             func = bridge_tool_resolver(name)
         except Exception:
             func = None
 
     if not func:
+        if ":" in name and not bridge_resolution_available:
+            raise ValueError(
+                f"Unknown tool '{name}' (bridge resolution unavailable for this runtime path)"
+            )
+        if ":" in name and bridge_resolution_attempted:
+            raise ValueError(
+                f"Unknown tool '{name}' (bridge tool not registered or bridge runtime unavailable)"
+            )
         raise ValueError(f"Unknown tool '{name}'")
 
     call_arguments = dict(arguments)
