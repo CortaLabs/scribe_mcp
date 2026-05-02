@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import scribe_mcp.object_store as object_store_module
 import pytest
+from mcp.types import CallToolRequest
 
 from scribe_mcp import server
 from scribe_mcp.config.mode_detection import OperatingMode
@@ -18,6 +19,28 @@ class _ToolDef:
     def __init__(self, *, trust_tier: int | None, annotations: _Annotations) -> None:
         self.meta = {"scribe": {"trustTier": trust_tier}} if trust_tier is not None else {}
         self.annotations = annotations
+
+
+@pytest.mark.asyncio
+async def test_mcp_call_tool_handler_returns_dispatch_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_tool_call(**kwargs: object) -> dict[str, object]:
+        return {"ok": True, "tool": kwargs["name"]}
+
+    monkeypatch.setattr(server.tools, "ensure_tool_loaded", lambda _name: None)
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+
+    handler = server.app.request_handlers[CallToolRequest]
+    result = await handler(
+        CallToolRequest(
+            method="tools/call",
+            params={"name": "set_project", "arguments": {"agent": "test-agent"}},
+        )
+    )
+
+    assert result.root.structuredContent == {"ok": True, "tool": "set_project"}
+    assert result.root.isError is False
 
 
 @pytest.mark.asyncio

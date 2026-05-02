@@ -666,6 +666,7 @@ if _MCP_AVAILABLE:
                 log_scope_violation_cb=log_scope_violation,
                 bridge_tool_resolver=_resolve_bridge_tool,
             )
+            return result
 
 
 # Import tool modules to register them with the server instance.
