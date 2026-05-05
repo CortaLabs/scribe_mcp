@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from scribe_mcp.state import StateManager
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.template_engine import Jinja2TemplateEngine
 from scribe_mcp.tools.manage_docs import manage_docs
+from scribe_mcp.tools import manage_docs as manage_docs_module
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 
 
@@ -212,7 +214,16 @@ async def test_manage_docs_renders_jinja_content_and_custom_templates(tmp_path: 
     assert change.verification_passed
     updated_text = architecture_path.read_text(encoding="utf-8")
     assert "**Project:** Test Project | Note: Upgraded via test" in updated_text
-    assert list(architecture_path.parent.glob("ARCHITECTURE_GUIDE.preflight-*.bak"))
+    preflight_backup = change.extra.get("preflight_backup")
+    assert isinstance(preflight_backup, str) and preflight_backup
+    preflight_backup_path = Path(preflight_backup)
+    assert preflight_backup_path.is_file()
+    assert preflight_backup_path.suffix == ".bak"
+    expected_archive_dir = docs_dir / "archive" / "preflight" / "planning"
+    assert preflight_backup_path.parent == expected_archive_dir
+    assert "ARCHITECTURE_GUIDE" in preflight_backup_path.name
+    assert ".preflight-" in preflight_backup_path.name
+    assert not list(architecture_path.parent.glob("ARCHITECTURE_GUIDE.preflight-*.bak"))
 
     # Append additional content via a custom template stored under .scribe/templates
     custom_templates_dir = project_root / ".scribe" / "templates"
@@ -467,7 +478,32 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
     server_module.state_manager = state_manager
     server_module.storage_backend = storage
 
+    had_get_execution_context = hasattr(server_module, "get_execution_context")
+    had_get_agent_identity = hasattr(server_module, "get_agent_identity")
+    original_get_execution_context = getattr(server_module, "get_execution_context", None)
+    original_get_agent_identity = getattr(server_module, "get_agent_identity", None)
+    original_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
+
     try:
+        server_module.get_execution_context = lambda: SimpleNamespace(mode="local")
+        server_module.get_agent_identity = lambda: None
+        async def _prepare_context_stub(**kwargs):
+            state = await state_manager.load()
+            current_project = state.get_project(state.current_project) if state.current_project else None
+            return SimpleNamespace(
+                tool_name=str(kwargs.get("tool_name") or "manage_docs"),
+                project=current_project,
+                recent_projects=list(getattr(state, "recent_projects", []) or []),
+                state_snapshot=kwargs.get("state_snapshot") if isinstance(kwargs.get("state_snapshot"), dict) else {},
+                reminders=[],
+                agent_id="test_agent",
+                resolution_source="compat_active_project",
+                fallback_used=False,
+                fallback_chain=[],
+                denied_fallback_attempts=[],
+                compatibility_usage={"requested": True, "requested_mode": "compat_active_project", "applied": True},
+            )
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
         project_config = {
             "name": project_name,
             "root": str(project_root),
@@ -718,6 +754,15 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         await storage.close()
         server_module.state_manager = original_state_manager
         server_module.storage_backend = original_storage_backend
+        if had_get_execution_context:
+            server_module.get_execution_context = original_get_execution_context
+        elif hasattr(server_module, "get_execution_context"):
+            delattr(server_module, "get_execution_context")
+        if had_get_agent_identity:
+            server_module.get_agent_identity = original_get_agent_identity
+        elif hasattr(server_module, "get_agent_identity"):
+            delattr(server_module, "get_agent_identity")
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = original_prepare_context
         shutil.rmtree(project_root, ignore_errors=True)
 
 

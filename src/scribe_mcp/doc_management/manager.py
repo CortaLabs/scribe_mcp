@@ -167,6 +167,49 @@ def build_manage_docs_boundary_guidance(
     return guidance
 
 
+def _derive_backup_family(
+    *,
+    doc_category: Optional[str],
+    doc_name: str,
+    doc_path: Path,
+) -> str:
+    """Derive archive backup family for managed docs."""
+    category_value = str(doc_category or "").strip().lower()
+    if category_value in {"planning", "research", "review"}:
+        return category_value
+    if category_value in {"agent", "agent_card", "agent-card"}:
+        return "agent"
+    if category_value in {"case", "bug", "security"}:
+        return "case"
+
+    planning_doc_keys = {
+        "architecture",
+        "phase_plan",
+        "checklist",
+        "progress_log",
+        "bug_log",
+        "security_log",
+        "doc_updates",
+    }
+    planning_filenames = {
+        "ARCHITECTURE_GUIDE.md",
+        "PHASE_PLAN.md",
+        "CHECKLIST.md",
+        "PROGRESS_LOG.md",
+        "BUG_LOG.md",
+        "SECURITY_LOG.md",
+        "DOC_UPDATES.md",
+    }
+    if doc_name.strip().lower() in planning_doc_keys or doc_path.name in planning_filenames:
+        return "planning"
+
+    path_tokens = [token.lower() for token in doc_path.parts]
+    if "research" in path_tokens or doc_name.strip().lower().startswith("research"):
+        return "research"
+
+    return "misc"
+
+
 def resolve_registered_doc_key(project: Dict[str, Any], doc_name: str) -> str:
     """Resolve doc aliases and path/.md variants to a registered docs key when possible."""
     candidate = str(doc_name or "").strip()
@@ -804,6 +847,12 @@ async def apply_doc_change(
             try:
                 if doc_path.exists():
                     try:
+                        docs_dir = project.get("docs_dir")
+                        backup_family = _derive_backup_family(
+                            doc_category=doc_category,
+                            doc_name=doc_name,
+                            doc_path=doc_path,
+                        )
                         backup_path = await asyncio.to_thread(
                             preflight_backup,
                             doc_path,
@@ -812,6 +861,9 @@ async def apply_doc_change(
                                 "component": "files",
                                 "op": "backup",
                                 "project_name": project.get("name"),
+                                "managed_doc_archive": True,
+                                "project_docs_dir": docs_dir,
+                                "backup_family": backup_family,
                             },
                         )
                         frontmatter_extra.setdefault("preflight_backup", str(backup_path))

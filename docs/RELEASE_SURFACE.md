@@ -1,7 +1,7 @@
 # Release Surface
 
-Baseline date: **2026-04-18**  
-Applies to: **v2.2.11 public release line**
+Baseline date: **2026-05-05**
+Applies to: **v2.2.17 public release line**
 
 ## Public contract
 
@@ -26,6 +26,7 @@ Public docs must keep these runtime truths aligned with current source:
 - Remote/client remains internal compatibility only for this release line and is excluded by public-release posture.
 - `SCRIBE_REMOTE_URL` is documented as service root; `/health` and `/sse` are distinct paths with different roles.
 - Codex projection is documented through `scribe plugins project-codex`.
+- Managed-doc hygiene behavior is public release truth: scaffold-aware `quality_check`, grouped `project_health` signals, project-local managed-doc preflight archives, centralized `edit_file` backups, canonical research artifact naming, and stale index-backup cleanup.
 
 ## Local/operator boundary
 

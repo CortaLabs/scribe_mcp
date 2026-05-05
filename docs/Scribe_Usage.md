@@ -1,7 +1,7 @@
 # Scribe MCP usage guide
 
-Release line: `2.2.11`  
-Updated: `2026-04-18`
+Release line: `2.2.17`
+Updated: `2026-05-05`
 
 This guide is about day-to-day usage once Scribe is installed.
 
@@ -14,6 +14,8 @@ Install behavior reminder for day-to-day operators:
 - use `scribe install --commit` to apply mutations
 - use `scribe install --commit --yes` for approved non-interactive commit flows
 - use `--project-codex` only when you explicitly want Codex projection after core install
+
+In `2.2.17`, managed-doc hygiene is part of the day-to-day loop: use `manage_docs quality_check` for scaffold-aware stale-doc checks, expect managed-doc preflight snapshots to stay with the active dev-plan archive, and keep general `edit_file` backups in `.scribe/backups/`.
 
 ## The short mental model
 

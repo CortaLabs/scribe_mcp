@@ -374,6 +374,18 @@ async def resolve_logging_context(
                     project["docs"] = json.loads(record.docs_json)
                 except (json.JSONDecodeError, TypeError):
                     pass
+            if record.progress_log_path:
+                try:
+                    project["docs_dir"] = str(Path(record.progress_log_path).expanduser().resolve().parent)
+                except Exception:
+                    project["docs_dir"] = str(Path(record.progress_log_path).expanduser().parent)
+            if not project.get("docs_dir"):
+                progress_doc = None
+                docs_payload = project.get("docs")
+                if isinstance(docs_payload, dict):
+                    progress_doc = docs_payload.get("progress_log")
+                if isinstance(progress_doc, str) and progress_doc.strip():
+                    project["docs_dir"] = str(Path(progress_doc).expanduser().resolve().parent)
             recent_projects = [project["name"]]
         else:
             from scribe_mcp.tools.project_utils import load_project_config  # Lazy import.

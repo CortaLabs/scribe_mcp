@@ -32,6 +32,9 @@ _TEMPLATE_PROSE_PATTERNS = [
 
 _NON_READINESS_DOC_KEYS = {"progress_log", "tool_log", "audit_log"}
 _NON_READINESS_DOC_FILENAMES = {"PROGRESS_LOG.md", "TOOL_LOG.md", "AUDIT_LOG.md"}
+_PROGRESS_PREFIX_PATTERN = re.compile(
+    r"^\s*\[(?:✅|☑️|❌|⚠️|ℹ️)\]\s*\[[^\]]+\]\s*\[[^\]]+\]\s*\[[^\]]+\]"
+)
 
 
 def configured_log_quality_exclusion_paths(project: Mapping[str, Any]) -> set[Path]:
@@ -129,6 +132,26 @@ def _excerpt(text: str, idx: int) -> str:
     return _line_text(text, idx).strip()[:160]
 
 
+def _is_checklist_marker(line: str, match_start: int) -> bool:
+    # Suppress only canonical Markdown checklist markers: "- [ ]" / "- [x]" / "- [X]".
+    return bool(re.match(r"^\s*-\s+\[[ xX]\]\s*$", line.strip()))
+
+
+def _is_progress_prefix_bracket(line: str, match_start: int) -> bool:
+    if not _PROGRESS_PREFIX_PATTERN.match(line.strip()):
+        return False
+    return line[:match_start].count("[") < 4
+
+
+def _is_markdown_link_label(line: str, match_start: int, match_end: int) -> bool:
+    match_body = line[match_start:match_end]
+    escaped = re.escape(match_body)
+    for candidate in re.finditer(rf"{escaped}\([^)]+\)", line):
+        if candidate.start() == match_start:
+            return True
+    return False
+
+
 def summarize_quality_warnings(warnings: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
     severity_counts: Dict[str, int] = {}
     blocked = 0
@@ -188,10 +211,41 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
     body = parsed.body
     readiness_claim = str(parsed.frontmatter_data.get("status", "")).strip().lower() in _READINESS_VALUES
 
+    warnings.extend(_placeholder_residue_warnings(body))
+    warnings.extend(
+        _conformance_warnings(
+            body,
+            readiness_claim=readiness_claim,
+            doc_name=doc_name,
+            existing_warnings=warnings,
+        )
+    )
+
+    for warning in warnings:
+        loc = warning.get("location") if isinstance(warning.get("location"), dict) else {}
+        line = max(1, int(loc.get("line", 1)))
+        body_lines = body.splitlines()
+        excerpt = body_lines[line - 1].strip()[:160] if line <= len(body_lines) else ""
+        warning["excerpt"] = excerpt
+    configured, _suppressed, _meta = _apply_quality_overrides(warnings, metadata=metadata)
+    return configured
+
+
+def _placeholder_residue_warnings(body: str) -> List[Dict[str, Any]]:
+    warnings: List[Dict[str, Any]] = []
     for m in re.finditer(r"\[[^\]]{4,}\]", body):
         if _in_code_fence(body, m.start()) or _is_quoted_line(body, m.start()):
             continue
-        line = _line_text(body, m.start()).strip()
+        line = _line_text(body, m.start())
+        line_idx = m.start() - (body.rfind("\n", 0, m.start()) + 1)
+        if _is_checklist_marker(line, line_idx):
+            continue
+        if _is_progress_prefix_bracket(line, line_idx):
+            continue
+        if _is_markdown_link_label(line, line_idx, line_idx + (m.end() - m.start())):
+            continue
+        stripped = line.strip()
+        line = stripped
         if line.startswith("<!--") and line.endswith("-->"):
             continue
         if line.startswith("#"):
@@ -211,7 +265,17 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
     appendix = re.search(r"(^|\n)#+\s+(appendix|references|attachments)\b", body, re.IGNORECASE)
     if appendix and re.search(r"(TBD|TODO|\[fill|placeholder)", body[appendix.start(): appendix.start()+250], re.IGNORECASE):
         warnings.append(_warning("SCF_UNFILLED_APPENDIX", "Appendix/reference section appears unfilled.", body, appendix.start(), "Replace placeholder appendix text with real references or remove section."))
+    return warnings
 
+
+def _conformance_warnings(
+    body: str,
+    *,
+    readiness_claim: bool,
+    doc_name: Optional[str],
+    existing_warnings: Optional[Sequence[Mapping[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    warnings: List[Dict[str, Any]] = []
     todo_line = re.search(r"^\s*[-*]?\s*(TODO|TBD)\b.*$", body, re.IGNORECASE | re.MULTILINE)
     if todo_line and readiness_claim:
         warnings.append(_warning("SCF_TODO_ONLY_SECTION", "TODO-only section found while document claims readiness.", body, todo_line.start(), "Complete or remove TODO-only section before claiming readiness."))
@@ -221,17 +285,10 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
         if len(non_header_lines) <= 2:
             warnings.append(_warning("SCF_LOG_TEMPLATE_ONLY", "Log document appears to contain only template structure.", body or "\n", 0, "Add real dated log entries with substantive content."))
 
-    if readiness_claim and warnings:
+    unresolved_warnings = list(existing_warnings or []) + warnings
+    if readiness_claim and unresolved_warnings:
         warnings.append(_warning("SCF_FRONTMATTER_MISMATCH", "Frontmatter readiness claim conflicts with unfinished body state.", body or "\n", 0, "Set status to in_progress or resolve scaffold warnings before marking complete."))
-
-    for warning in warnings:
-        loc = warning.get("location") if isinstance(warning.get("location"), dict) else {}
-        line = max(1, int(loc.get("line", 1)))
-        body_lines = body.splitlines()
-        excerpt = body_lines[line - 1].strip()[:160] if line <= len(body_lines) else ""
-        warning["excerpt"] = excerpt
-    configured, _suppressed, _meta = _apply_quality_overrides(warnings, metadata=metadata)
-    return configured
+    return warnings
 
 
 def collect_managed_doc_quality_warnings(

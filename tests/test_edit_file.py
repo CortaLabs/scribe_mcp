@@ -129,5 +129,6 @@ class TestEditFileBackup:
         assert backup_path.exists()
         assert backup_path.read_text() == "original content"
         assert ".scribe/backups/" in str(backup_path)
+        assert backup_path.parent == tmp_path / ".scribe" / "backups"
         assert "test.py." in backup_path.name
         assert backup_path.name.endswith(".bak")

@@ -130,3 +130,72 @@ def test_preflight_backup_nonexistent_file_raises():
             preflight_backup(nonexistent, repo_root=tmpdir)
 
         assert "non-existent" in str(exc_info.value).lower() or "does not exist" in str(exc_info.value).lower()
+
+
+def test_preflight_backup_managed_doc_routes_to_docs_archive_family():
+    """Managed-doc backups route under docs_dir/archive/preflight/<family>/."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        docs_dir = tmpdir / ".scribe" / "docs" / "dev_plans" / "proj1"
+        research_dir = docs_dir / "research"
+        research_dir.mkdir(parents=True)
+        test_file = research_dir / "RESEARCH_TEST.md"
+        test_file.write_text("research body")
+
+        backup_path = preflight_backup(
+            test_file,
+            repo_root=tmpdir,
+            context={
+                "component": "files",
+                "op": "backup",
+                "managed_doc_archive": True,
+                "project_docs_dir": str(docs_dir),
+                "backup_family": "research",
+            },
+        )
+
+        assert backup_path.parent == docs_dir / "archive" / "preflight" / "research"
+        assert backup_path.suffix == ".bak"
+        assert not backup_path.name.endswith(".md")
+
+
+def test_preflight_backup_managed_doc_fallback_family_misc():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        docs_dir = tmpdir / "docs" / "dev_plans" / "legacy_proj"
+        docs_dir.mkdir(parents=True)
+        test_file = docs_dir / "UNKNOWN.md"
+        test_file.write_text("x")
+
+        backup_path = preflight_backup(
+            test_file,
+            repo_root=tmpdir,
+            context={
+                "managed_doc_archive": True,
+                "project_docs_dir": str(docs_dir),
+            },
+        )
+
+        assert backup_path.parent == docs_dir / "archive" / "preflight" / "misc"
+
+
+@pytest.mark.parametrize("unsafe_family", ["../escape", "research/extra"])
+def test_preflight_backup_managed_doc_unsafe_family_routes_to_misc(unsafe_family: str):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        docs_dir = tmpdir / ".scribe" / "docs" / "dev_plans" / "proj_unsafe"
+        docs_dir.mkdir(parents=True)
+        test_file = docs_dir / "RESEARCH_UNSAFE.md"
+        test_file.write_text("unsafe test")
+
+        backup_path = preflight_backup(
+            test_file,
+            repo_root=tmpdir,
+            context={
+                "managed_doc_archive": True,
+                "project_docs_dir": str(docs_dir),
+                "backup_family": unsafe_family,
+            },
+        )
+
+        assert backup_path.parent == docs_dir / "archive" / "preflight" / "misc"

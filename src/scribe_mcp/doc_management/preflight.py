@@ -90,4 +90,13 @@ def write_index_with_policy(index_path: Path, content: str, doc_dir: Path | None
     """Apply shared index preflight policy, then write atomically."""
     if doc_dir is not None:
         validate_and_repair_index(index_path, doc_dir)
-    return write_file_atomically(index_path, content)
+    wrote = write_file_atomically(index_path, content)
+    if wrote:
+        for stale_suffix in (".invalid.backup", ".corrupted.backup"):
+            stale_backup = index_path.with_suffix(stale_suffix)
+            try:
+                if stale_backup.exists():
+                    stale_backup.unlink()
+            except OSError:
+                logger.debug("Unable to remove stale index backup %s", stale_backup)
+    return wrote

@@ -1,7 +1,7 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.2.11`  
-Updated: `2026-04-18`
+Release line: `2.2.17`
+Updated: `2026-05-05`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
 
@@ -13,6 +13,12 @@ Install posture for this release line:
 - default install is preview-only (no DB mutation, no `.env` mutation, no projection)
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
+
+Release `2.2.17` tightens the governed-doc loop:
+
+- `quality_check` is scaffold-aware, so leftover template text and real stale-doc residue are easier to separate from ordinary markdown.
+- Managed-doc preflight snapshots stay with the active dev-plan archive, while `edit_file` backups continue to use the general `.scribe/backups/` lane.
+- Research artifacts normalize duplicate family prefixes such as `research_RESEARCH_*`, clean stale `INDEX.invalid.backup` files after a successful index refresh, and bind checks to canonical `research/` docs.
 
 If you only remember one thing, make it this:
 

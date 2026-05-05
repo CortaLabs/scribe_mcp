@@ -111,6 +111,66 @@ status: in_progress
     assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
 
 
+def test_authored_markdown_literals_do_not_trigger_placeholder_brackets():
+    text = """---
+status: in_progress
+---
+- [x] Completed quality gate
+[Package 2.1 plan](./PHASE_PLAN.md)
+[✅] [2026-05-05 02:23:44 UTC] [Agent: Forge] [Project: X] Completed analyzer refactor
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_authored_placeholders_still_trigger_blocking_warning():
+    text = """---
+status: in_progress
+---
+Please review [fill this section] before final approval.
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    codes = _codes(warnings)
+    assert "SCF_PLACEHOLDER_BRACKET" in codes
+    placeholder = next(w for w in warnings if w["code"] == "SCF_PLACEHOLDER_BRACKET")
+    assert placeholder["blocking"] is True
+
+
+def test_mixed_markdown_link_and_placeholder_still_warns_for_placeholder():
+    text = """---
+status: in_progress
+---
+See [Spec](./SPEC.md) and then [fill this section].
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    codes = _codes(warnings)
+    assert "SCF_PLACEHOLDER_BRACKET" in codes
+    placeholder_warning = next(w for w in warnings if w["code"] == "SCF_PLACEHOLDER_BRACKET")
+    assert placeholder_warning["excerpt"] == "See [Spec](./SPEC.md) and then [fill this section]."
+
+
+def test_ready_status_with_bracket_placeholder_emits_mismatch_and_placeholder():
+    text = """---
+status: complete
+---
+[fill this section]
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="ARCHITECTURE_GUIDE")
+    codes = _codes(warnings)
+    assert "SCF_PLACEHOLDER_BRACKET" in codes
+    assert "SCF_FRONTMATTER_MISMATCH" in codes
+
+
+def test_bullet_bracket_placeholder_is_not_suppressed_as_checklist_marker():
+    text = """---
+status: in_progress
+---
+- [fill this section]
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" in _codes(warnings)
+
+
 def test_noncanonical_warning_for_nested_research_path_is_actionable(tmp_path: Path):
     docs_dir = tmp_path / "docs"
     research_dir = docs_dir / "research"

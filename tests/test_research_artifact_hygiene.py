@@ -11,7 +11,7 @@ import pytest
 from scribe_mcp import server as server_module
 from scribe_mcp.doc_management.special_indexes import update_research_index
 from scribe_mcp.doc_management.scaffold_quality import build_research_index_hygiene_warnings
-from scribe_mcp.doc_management.special_create import handle_special_document_creation
+from scribe_mcp.doc_management.special_create import _normalize_research_doc_name, handle_special_document_creation
 from scribe_mcp.doc_management.runtime import _handle_rehome_doc
 from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
@@ -171,6 +171,11 @@ async def test_research_create_normalizes_md_suffix_and_refreshes_index(tmp_path
     assert "RESEARCH_SUFFIX_TEST.md" in index_content
 
 
+def test_research_name_normalization_collapses_duplicate_family_prefix() -> None:
+    normalized = _normalize_research_doc_name("research_RESEARCH_DUPLICATE.md")
+    assert normalized == "RESEARCH_DUPLICATE"
+
+
 @pytest.mark.asyncio
 async def test_research_create_respects_explicit_target_dir_override(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
@@ -251,7 +256,8 @@ def test_research_hygiene_warns_for_noncanonical_locations(tmp_path: Path) -> No
 
     noncanonical = next(w for w in warnings if w.get("code") == "SCF_NONCANONICAL_LOCATION")
     assert ".scribe/docs/dev_plans/<project>/research/" in noncanonical["message"]
-    assert "flat" in noncanonical["suggested_repair"].lower()
+    suggested_repair = str(noncanonical.get("suggested_repair") or "").lower()
+    assert "top-level canonical" in suggested_repair or "flat" in suggested_repair
 
 
 @pytest.mark.asyncio
@@ -337,6 +343,106 @@ async def test_managed_research_frontmatter_update_refreshes_index(tmp_path: Pat
     after_index = (research_dir / "INDEX.md").read_text(encoding="utf-8")
     assert after_index != before_index
     assert "RESEARCH_FRONTMATTER.md" in after_index
+
+
+@pytest.mark.asyncio
+async def test_research_index_refresh_removes_stale_invalid_backup(tmp_path: Path) -> None:
+    research_dir = tmp_path / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    (research_dir / "RESEARCH_A.md").write_text("# A\n", encoding="utf-8")
+
+    index_path = research_dir / "INDEX.md"
+    index_path.write_text("invalid index body", encoding="utf-8")
+    stale_backup = research_dir / "INDEX.invalid.backup"
+    stale_backup.write_text("old stale backup", encoding="utf-8")
+
+    await update_research_index(research_dir, "test_agent", repo_root=tmp_path)
+
+    assert index_path.exists()
+    assert not stale_backup.exists()
+
+
+@pytest.mark.asyncio
+async def test_quality_check_recovers_research_doc_after_registry_stale_rename(tmp_path: Path) -> None:
+    project_root = tmp_path / "qc_recovery_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
+    research_dir = docs_dir / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    progress_log = docs_dir / "PROGRESS_LOG.md"
+    progress_log.write_text("# Log\n", encoding="utf-8")
+
+    canonical_doc = research_dir / "RESEARCH_W3_DATASET_FOUNDRY_CONSUMER_SOURCE_REFRESH.md"
+    canonical_doc.write_text("# Research\nEvidence.\n", encoding="utf-8")
+
+    project = {
+        "name": "agent_ux",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(progress_log),
+        # stale mapping points at missing path
+        "docs": {
+            "research_RESEARCH_W3_DATASET_FOUNDRY_CONSUMER_SOURCE_REFRESH": str(
+                research_dir / "research_RESEARCH_W3_DATASET_FOUNDRY_CONSUMER_SOURCE_REFRESH.md"
+            ),
+        },
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_manage_docs_server(state_manager, project_root=project_root, session_id="qc-recovery-session"):
+        result = await manage_docs(
+            action="quality_check",
+            doc_name="RESEARCH_W3_DATASET_FOUNDRY_CONSUMER_SOURCE_REFRESH",
+            doc_category="research",
+            dry_run=True,
+            agent="test_agent",
+        )
+
+    assert result["ok"] is True, result
+    scope = result.get("scope", {})
+    assert scope.get("path") == str(canonical_doc)
+
+
+@pytest.mark.asyncio
+async def test_quality_check_research_prefers_canonical_research_dir_over_top_level_fallback(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "qc_precedence_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
+    research_dir = docs_dir / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    progress_log = docs_dir / "PROGRESS_LOG.md"
+    progress_log.write_text("# Log\n", encoding="utf-8")
+
+    doc_name = "RESEARCH_W3_DATASET_FOUNDRY_CONSUMER_SOURCE_REFRESH"
+    misplaced_top_level = docs_dir / f"{doc_name}.md"
+    canonical_doc = research_dir / f"{doc_name}.md"
+    misplaced_top_level.write_text("# Wrong\nTop-level misplaced content.\n", encoding="utf-8")
+    canonical_doc.write_text("# Right\nCanonical research content.\n", encoding="utf-8")
+
+    project = {
+        "name": "agent_ux",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(progress_log),
+        "docs": {},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_manage_docs_server(state_manager, project_root=project_root, session_id="qc-precedence-session"):
+        result = await manage_docs(
+            action="quality_check",
+            doc_name=doc_name,
+            doc_category="research",
+            dry_run=True,
+            agent="test_agent",
+        )
+
+    assert result["ok"] is True, result
+    scope = result.get("scope", {})
+    assert scope.get("path") == str(canonical_doc)
+    assert scope.get("path") != str(misplaced_top_level)
 
 
 @pytest.mark.asyncio
@@ -429,5 +535,19 @@ async def test_rehome_research_doc_refreshes_indexes_and_returns_path_metadata(
     assert response["requested_doc_name"] == "research_move"
     assert response["canonical_doc_name"] == "research_move"
     assert response["final_path"].endswith("RESEARCH_MOVE.md")
+    verification = response.get("rehome_verification") or {}
+    assert verification["file_location"]["ok"] is True
+    assert verification["registry_mapping"]["target_mapping_written"] is True
+    assert verification["quality_check_binding"]["doc"] == "research_move"
+    assert verification["quality_check_binding"]["attempted"] is True
+    assert isinstance(verification["quality_check_binding"]["ok"], bool)
+    assert isinstance((verification["quality_check_binding"].get("summary") or {}).get("total_warnings"), int)
+    assert isinstance((verification["quality_check_binding"].get("summary") or {}).get("readiness_blocker_count"), int)
+    readiness = verification.get("readiness") or {}
+    assert readiness["attempted"] is True
+    assert isinstance(readiness["ok"], bool)
+    assert isinstance(readiness["readiness_blocker_count"], int)
+    assert verification["index_freshness"]["source_research_index_refresh"] == "updated"
+    assert verification["index_freshness"]["target_research_index_refresh"] == "updated"
     assert source_research in refresh_calls
     assert target_research in refresh_calls

@@ -16,6 +16,7 @@ from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
 from scribe_mcp.doc_management import utils as utils_shared
+from scribe_mcp.doc_management.naming import normalize_research_doc_name
 from scribe_mcp.doc_management.manager import (
     DocumentOperationError,
     build_manage_docs_boundary_guidance,
@@ -91,15 +92,7 @@ def _project_docs_dir(project: Dict[str, Any], project_root: Path) -> Path:
 
 
 def _normalize_research_doc_name(doc_name: str) -> str:
-    """Normalize research artifact names to a stable single .md suffix."""
-    normalized = str(doc_name or "").strip()
-    while normalized.lower().endswith(".md"):
-        normalized = normalized[:-3]
-    safe_name = re.sub(r"[^\w\-_.]", "_", normalized)
-    safe_name = re.sub(r"_+", "_", safe_name).strip("_")
-    if not safe_name:
-        safe_name = f"research_{int(datetime.now().timestamp())}"
-    return safe_name
+    return normalize_research_doc_name(doc_name)
 
 
 async def _get_or_create_storage_project(backend: Any, project: Dict[str, Any]) -> Any:

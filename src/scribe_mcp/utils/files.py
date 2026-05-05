@@ -7,8 +7,7 @@ import hashlib
 import json
 import logging
 import os
-
-logger = logging.getLogger(__name__)
+import re
 import shutil
 import tempfile
 import time
@@ -20,6 +19,8 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.security.sandbox import safe_file_operation
+
+logger = logging.getLogger(__name__)
 
 # Cross-platform file locking
 try:
@@ -399,7 +400,12 @@ def preflight_backup(
     context: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
-    Create a preflight backup of the file in .scribe/backups/ directory.
+    Create a preflight backup for an existing file.
+
+    By default, backups are centralized under ``<repo>/.scribe/backups/``.
+    When ``context["managed_doc_archive"]`` is truthy and
+    ``context["project_docs_dir"]`` is provided (and resolves inside the repo),
+    backups are routed to ``<project_docs_dir>/archive/preflight/<backup_family>/``.
 
     Args:
         file_path: File to backup
@@ -407,7 +413,7 @@ def preflight_backup(
         context: Optional context for security validation
 
     Returns:
-        Path to the backup file in .scribe/backups/
+        Path to the created backup file
     """
     file_path = _ensure_safe_path(
         file_path,
@@ -422,37 +428,47 @@ def preflight_backup(
     # Determine effective repo root
     root = (repo_root or settings.project_root).resolve()
 
-    # Create centralized backup directory
-    backup_dir = root / ".scribe" / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate path-preserving filename
-    # Convert file path relative to repo root to use double underscores for directory separators
+    # Generate path-preserving filename for centralized backups.
     try:
         relative_path = file_path.relative_to(root)
     except ValueError:
-        # File is outside repo root, use absolute path components
-        relative_path = Path(*file_path.parts[-3:])  # Use last 3 components
+        relative_path = Path(*file_path.parts[-3:])
 
-    # Replace directory separators with __ to preserve path structure
     path_parts = list(relative_path.parts)
     if len(path_parts) > 1:
-        # Join directory parts with __, keep filename separate
         dir_prefix = "__".join(path_parts[:-1])
         filename = path_parts[-1]
         backup_name = f"{dir_prefix}__{filename}"
     else:
         backup_name = relative_path.name
 
-    # Add timestamp and .bak extension
+    route_context = context or {"component": "files", "op": "backup"}
+    managed_route = bool(route_context.get("managed_doc_archive"))
+    docs_dir_raw = route_context.get("project_docs_dir")
+    raw_backup_family = str(route_context.get("backup_family") or "").strip().lower()
+    allowed_families = {"planning", "research", "review", "agent", "case", "misc"}
+    if re.fullmatch(r"[a-z0-9_-]+", raw_backup_family or "") and raw_backup_family in allowed_families:
+        backup_family = raw_backup_family
+    else:
+        backup_family = "misc"
+
+    backup_dir = root / ".scribe" / "backups"
+    if managed_route and docs_dir_raw:
+        docs_dir = Path(str(docs_dir_raw))
+        if not docs_dir.is_absolute():
+            docs_dir = root / docs_dir
+        docs_dir = docs_dir.resolve()
+        if docs_dir == root or root in docs_dir.parents:
+            backup_dir = docs_dir / "archive" / "preflight" / backup_family
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
     backup_filename = f"{backup_name}.preflight-{timestamp}.bak"
     backup_path = backup_dir / backup_filename
 
     shutil.copy2(file_path, backup_path)
 
-    # Compatibility mirror: keep sibling backups only for core plan docs.
-    # Research and nested artifacts must remain clean (no local .bak files).
+    # Compatibility mirror: keep sibling backups only for centralized core plan docs.
     core_plan_docs = {
         "ARCHITECTURE_GUIDE.md",
         "PHASE_PLAN.md",
@@ -462,7 +478,7 @@ def preflight_backup(
         "SECURITY_LOG.md",
         "DOC_UPDATES.md",
     }
-    if file_path.name in core_plan_docs:
+    if not managed_route and file_path.name in core_plan_docs:
         legacy_backup_path = file_path.parent / f"{file_path.stem}.preflight-{timestamp}.bak"
         if legacy_backup_path != backup_path:
             try:

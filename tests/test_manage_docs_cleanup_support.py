@@ -47,7 +47,8 @@ def _isolated_server(
     try:
         async def _prepare_context_stub(**kwargs):
             state = await state_manager.load()
-            current_name = state.current_project
+            explicit_project = kwargs.get("explicit_project")
+            current_name = str(explicit_project).strip() if explicit_project else state.current_project
             if not current_name and getattr(state, "recent_projects", None):
                 current_name = state.recent_projects[0]
             current_project = state.get_project(current_name) if current_name else None
@@ -143,6 +144,51 @@ async def test_project_health_surfaces_recent_cross_project_docs(tmp_path: Path)
     assert result["active_project"] == active_project["name"]
     cross_project = result.get("cross_project_recent_docs") or []
     assert any("RESEARCH_DRIFTED.md" in entry.get("path", "") for entry in cross_project)
+    digest = result.get("organization_digest") or {}
+    ownership = digest.get("ownership_summary") or {}
+    assert isinstance(ownership.get("cross_project"), int)
+    status_sections = digest.get("status_sections") or {}
+    for key in ("organization", "index", "archive", "artifact_claims", "ownership", "dev_plan_roots"):
+        assert key in status_sections
+    archive = status_sections["archive"]
+    assert archive["cleanup_mode"] == "preview_only"
+    assert archive["destructive_default"] is False
+    roots = status_sections["dev_plan_roots"]["details"]
+    assert roots["modern"]["root_kind"] == "modern"
+    assert roots["legacy"]["root_kind"] == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_project_health_archive_preview_classifies_legacy_docs_lane(tmp_path: Path) -> None:
+    project_root = tmp_path / "cleanup_repo_legacy"
+    legacy_docs_dir = project_root / "docs" / "dev_plans" / "legacy_project"
+    research_dir = legacy_docs_dir / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    archive_group = legacy_docs_dir / "archive" / "preflight" / "research"
+    archive_group.mkdir(parents=True, exist_ok=True)
+    (archive_group / "evidence.md").write_text("archive evidence", encoding="utf-8")
+
+    active_project = {
+        "name": "legacy_project",
+        "root": str(project_root),
+        "docs_dir": str(legacy_docs_dir),
+        "progress_log": str(legacy_docs_dir / "PROGRESS_LOG.md"),
+        "docs": {"RESEARCH_SAMPLE": str(research_dir / "RESEARCH_SAMPLE.md")},
+    }
+    (research_dir / "RESEARCH_SAMPLE.md").write_text("# Sample", encoding="utf-8")
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(active_project["name"], active_project)
+    await _seed_runtime_session(state_manager, "cleanup-test-session", active_project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root):
+        result = await manage_docs(action="project_health", metadata={"limit": 10}, dry_run=True)
+
+    archive = ((result.get("organization_digest") or {}).get("status_sections") or {}).get("archive") or {}
+    preview_groups = archive.get("preview_groups") or []
+    assert preview_groups
+    assert all(group.get("root_kind") == "legacy" for group in preview_groups)
+    assert all(group.get("lane_class") == "compatibility" for group in preview_groups)
 
 
 @pytest.mark.asyncio
@@ -177,6 +223,36 @@ async def test_rehome_doc_moves_registered_research_doc_to_target_project(tmp_pa
     assert target_record is not None
     target_docs = json.loads(target_record.docs_json or "{}")
     assert target_docs["RESEARCH_DRIFTED"] == str(target_path)
+    verification = result.get("rehome_verification") or {}
+    assert verification["file_location"]["ok"] is True
+    assert verification["registry_mapping"]["source_mapping_removed"] is True
+    assert verification["registry_mapping"]["target_mapping_written"] is True
+    assert verification["quality_check_binding"]["project"] == target_project["name"]
+    assert verification["quality_check_binding"]["attempted"] is True
+    assert isinstance(verification["quality_check_binding"]["ok"], bool)
+    assert isinstance((verification["quality_check_binding"].get("summary") or {}).get("total_warnings"), int)
+    assert isinstance((verification["quality_check_binding"].get("summary") or {}).get("readiness_blocker_count"), int)
+    assert verification["readiness"]["attempted"] is True
+    assert isinstance(verification["readiness"]["ok"], bool)
+    assert isinstance(verification["readiness"]["readiness_blocker_count"], int)
+    assert verification["index_freshness"]["index_freshness_reported_separately"] is True
+
+    cached_state = await state_manager.load()
+    cached_target_project = cached_state.get_project(target_project["name"])
+    assert cached_target_project is not None
+    assert cached_target_project["docs"]["RESEARCH_DRIFTED"] == str(target_path)
+
+    with _isolated_server(state_manager, project_root=project_root):
+        quality_result = await manage_docs(
+            action="quality_check",
+            doc="RESEARCH_DRIFTED",
+            project=target_project["name"],
+            dry_run=True,
+        )
+
+    assert quality_result["ok"] is True
+    assert quality_result["scope"]["doc_name"] == "RESEARCH_DRIFTED"
+    assert quality_result["scope"]["path"] == str(target_path)
 
 
 @pytest.mark.asyncio

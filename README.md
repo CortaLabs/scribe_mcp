@@ -42,6 +42,15 @@ Scribe turns that into a tighter loop:
 - a Postgres-first runtime for shared use, plus explicit standalone SQLite for local-only workflows
 - CLI helpers for bootstrap, MCP server startup, migrations, backups, metrics, and Codex projection
 
+## Current release highlights
+
+`2.2.17` focuses on governed-doc hygiene and agent work organization:
+
+- `manage_docs quality_check` is scaffold-aware, so it can distinguish real placeholder residue and stale-doc risk from ordinary markdown syntax.
+- Project health surfaces organization, archive, index, ownership, and derived-truth signals instead of burying those clues in loose docs.
+- Managed-doc preflight snapshots stay inside the active dev-plan archive lane; `edit_file` keeps general file backups in `.scribe/backups/`.
+- Research artifacts now normalize duplicate names such as `research_RESEARCH_*`, remove stale `INDEX.invalid.backup` files after successful index writes, and prefer canonical `research/` paths during quality checks.
+
 ## What makes Scribe different
 
 The pitch is simple: keep the work record, the docs, and the repo operations in one system. The reason it holds up in practice is the machinery underneath it.

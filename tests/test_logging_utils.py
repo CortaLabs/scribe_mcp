@@ -410,6 +410,7 @@ async def test_resolve_logging_context_explicit_project_uses_storage_backend() -
     assert context.project["root"] == "/tmp/council_mcp_v2"
     assert context.project["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"
     assert context.project["docs"]["progress_log"] == "/tmp/council_mcp_v2/PROGRESS_LOG.md"
+    assert context.project["docs_dir"] == "/tmp/council_mcp_v2"
     assert context.resolution_source == "explicit_project"
     assert context.fallback_used is False
     assert context.fallback_chain == []

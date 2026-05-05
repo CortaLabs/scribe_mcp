@@ -1,11 +1,13 @@
 # Install and bootstrap
 
-Release line: `2.2.11`  
-Updated: `2026-04-18`
+Release line: `2.2.17`
+Updated: `2026-05-05`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 
 If you want the short product tour first, read [TOUR.md](TOUR.md). If you want the MCP-host setup details, read [mcp_server_guide.md](mcp_server_guide.md).
+
+This release line includes the managed-doc hygiene upgrade: scaffold-aware quality checks, project-local managed-doc preflight archives, centralized `edit_file` backups, canonical research artifact naming, and cleanup of stale research index backup files after successful index writes.
 
 ## Which path should you use?
 

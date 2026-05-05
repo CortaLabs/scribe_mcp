@@ -13,6 +13,7 @@ from collections import defaultdict
 from typing import Any, Dict, Mapping, Optional, Set
 
 from scribe_mcp.shared.session_scope import ResolvedScope, ScopeProvenance, build_resolved_scope
+from scribe_mcp.storage.base import ConflictError
 
 
 _CURRENT_CONTEXT: contextvars.ContextVar["ExecutionContext | None"] = contextvars.ContextVar(
@@ -106,18 +107,22 @@ class RouterContextManager:
             # TIER 3: Create new session (not found in cache or DB)
             session_id = str(uuid.uuid4())
 
-            # Cache immediately
-            self._transport_sessions[transport_session_id] = session_id
-
             # TIER 3b: Persist to database immediately
             if self._storage_backend and hasattr(self._storage_backend, "upsert_session"):
-                # NO SILENT ERRORS - let it fail loudly so we can see what's broken
-                await self._storage_backend.upsert_session(
-                    session_id=session_id,
-                    transport_session_id=transport_session_id,
-                    repo_root=None,  # Will be set later by set_project
-                    mode="sentinel",  # Default mode
-                )
+                try:
+                    await self._storage_backend.upsert_session(
+                        session_id=session_id,
+                        transport_session_id=transport_session_id,
+                        repo_root=None,  # Will be set later by set_project
+                        mode="sentinel",  # Default mode
+                    )
+                except ConflictError:
+                    existing = await self._storage_backend.get_session_by_transport(transport_session_id)
+                    if not existing or not existing.get("session_id"):
+                        raise
+                    session_id = str(existing["session_id"])
+
+            self._transport_sessions[transport_session_id] = session_id
 
             return session_id
 

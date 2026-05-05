@@ -135,6 +135,39 @@ _UNSAFE_PROJECT_WRITE_RESOLUTION_SOURCES = {
     "compat_recent_project",
 }
 _IN_PROGRESS_PHASE_RE = re.compile(r"##\s+(Phase\s+.+?)\s*\(In Progress\)")
+_DOC_KEY_ALIASES: Dict[str, str] = {
+    "architecture_guide": "architecture",
+    "architecture-guide": "architecture",
+    "phaseplan": "phase_plan",
+}
+
+
+def _canonical_doc_key(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace(".md", "")
+    normalized = normalized.replace("-", "_").replace(" ", "_")
+    return _DOC_KEY_ALIASES.get(normalized, normalized)
+
+
+def _health_doc_identity(entry: Dict[str, Any]) -> str:
+    path_value = str(entry.get("path") or "")
+    path = Path(path_value)
+    stem_key = _canonical_doc_key(path.stem) if path.suffix else ""
+    doc_type_key = _canonical_doc_key(entry.get("doc_type"))
+    project_slug = str(entry.get("project_slug") or "unscoped")
+    best_key = doc_type_key or stem_key or _canonical_doc_key(path.name)
+    return f"{project_slug}:{best_key}"
+
+
+def _dedupe_health_entries(entries: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    deduped: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in sorted(entries, key=lambda item: float(item.get("modified_at") or 0.0), reverse=True):
+        identity = _health_doc_identity(entry)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduped.append(entry)
+    return deduped
 
 
 def _extract_current_phase(phase_plan_path: Optional[str]) -> Optional[str]:
@@ -149,6 +182,18 @@ def _extract_current_phase(phase_plan_path: Optional[str]) -> Optional[str]:
     except OSError:
         return None
     return None
+
+
+def _classify_dev_plans_lane(*, project_root: Path, docs_dir: Path) -> Dict[str, str]:
+    resolved_root = project_root.expanduser().resolve()
+    resolved_docs_dir = docs_dir.expanduser().resolve()
+    modern_docs_dir = resolved_root / ".scribe" / "docs" / "dev_plans"
+    legacy_docs_dir = resolved_root / "docs" / "dev_plans"
+    if resolved_docs_dir == modern_docs_dir or modern_docs_dir in resolved_docs_dir.parents:
+        return {"root_kind": "modern", "lane_class": "canonical"}
+    if resolved_docs_dir == legacy_docs_dir or legacy_docs_dir in resolved_docs_dir.parents:
+        return {"root_kind": "legacy", "lane_class": "compatibility"}
+    return {"root_kind": "custom", "lane_class": "explicit"}
 
 
 def _collect_log_friction_signals(active_project: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -387,11 +432,16 @@ async def _load_project_record(
                 "root": record.repo_root,
                 "progress_log": record.progress_log_path,
             }
+            if record.progress_log_path:
+                payload["docs_dir"] = str(Path(record.progress_log_path).expanduser().resolve().parent)
             if getattr(record, "docs_json", None):
                 try:
                     payload["docs"] = json.loads(record.docs_json)
                 except (TypeError, json.JSONDecodeError):
                     payload["docs"] = {}
+                progress_log = payload["docs"].get("progress_log") if isinstance(payload.get("docs"), dict) else None
+                if isinstance(progress_log, str) and progress_log:
+                    payload["docs_dir"] = str(Path(progress_log).expanduser().resolve().parent)
             return payload
 
     state_manager = getattr(server_module, "state_manager", None)
@@ -442,7 +492,7 @@ async def _handle_project_health(
             }
         )
 
-    entries.sort(key=lambda item: item["modified_at"], reverse=True)
+    entries = _dedupe_health_entries(entries)
     active_slug = slugify_project_name(active_project.get("name", ""))
     grouped: Dict[str, list[Dict[str, Any]]] = {}
     for entry in entries[: max(limit * 3, limit)]:
@@ -485,6 +535,210 @@ async def _handle_project_health(
     ).to_dict()
     response["managed_doc_quality"] = managed_doc_quality
     response["readiness_summary"] = readiness
+    warnings = managed_doc_quality.get("warnings") if isinstance(managed_doc_quality, dict) else []
+    documents = managed_doc_quality.get("documents") if isinstance(managed_doc_quality, dict) else []
+    digest_items: list[Dict[str, Any]] = []
+    ownership_counts = {"active_project": 0, "cross_project": 0, "unscoped": 0}
+    normalized_warnings: list[Dict[str, Any]] = []
+    if isinstance(warnings, list) and warnings:
+        normalized_warnings.extend(warning for warning in warnings if isinstance(warning, dict))
+    elif isinstance(documents, list):
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            for warning_code in document.get("warning_codes") or []:
+                normalized_warnings.append(
+                    {
+                        "code": warning_code,
+                        "severity": "unknown",
+                        "blocking": warning_code in set(document.get("blocking_warning_codes") or []),
+                        "doc_name": document.get("doc_name"),
+                        "path": document.get("path"),
+                        "suggested_repair": None,
+                    }
+                )
+
+    for warning in normalized_warnings:
+        path = str(warning.get("path") or "")
+        project_slug = "unscoped"
+        if path:
+            matched = next((doc for doc in entries if doc.get("path") == path), None)
+            if matched:
+                project_slug = str(matched.get("project_slug") or "unscoped")
+        owner_scope = "active_project" if project_slug == active_slug else ("unscoped" if project_slug == "unscoped" else "cross_project")
+        ownership_counts[owner_scope] += 1
+        digest_items.append(
+            {
+                "warning_code": warning.get("code"),
+                "severity": warning.get("severity"),
+                "blocking": bool(warning.get("blocking")),
+                "source_doc_name": warning.get("doc_name"),
+                "source_path": path or None,
+                "source_project_slug": project_slug,
+                "ownership_scope": owner_scope,
+                "truth_label": "direct_artifact",
+                "next_safe_action": warning.get("suggested_repair"),
+            }
+        )
+    docs_dir = Path(str(active_project.get("docs_dir") or "")).expanduser()
+    project_root = Path(str(active_project.get("root") or "")).expanduser().resolve()
+    lane_classification = _classify_dev_plans_lane(project_root=project_root, docs_dir=docs_dir)
+    archive_preflight_dir = docs_dir / "archive" / "preflight"
+    archive_family_counts: Dict[str, int] = {}
+    archive_file_count = 0
+    if archive_preflight_dir.exists() and archive_preflight_dir.is_dir():
+        for child in archive_preflight_dir.iterdir():
+            if child.is_dir():
+                count = sum(1 for file_path in child.rglob("*") if file_path.is_file())
+                archive_family_counts[child.name] = count
+                archive_file_count += count
+        # Include root-level files as uncategorized archive artifacts.
+        root_level_count = sum(1 for file_path in archive_preflight_dir.iterdir() if file_path.is_file())
+        if root_level_count:
+            archive_family_counts["uncategorized"] = root_level_count
+            archive_file_count += root_level_count
+
+    active_docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+    registered_doc_paths: Dict[str, str] = {}
+    missing_registered_paths: list[str] = []
+    alias_by_path: Dict[str, list[str]] = {}
+    for alias, raw_path in active_docs.items():
+        path_str = str(raw_path) if isinstance(raw_path, str) else ""
+        if not path_str:
+            continue
+        resolved_path = str(Path(path_str).expanduser())
+        registered_doc_paths[alias] = resolved_path
+        alias_by_path.setdefault(resolved_path, []).append(alias)
+        if not Path(path_str).expanduser().exists():
+            missing_registered_paths.append(alias)
+
+    duplicate_claimed_paths = {
+        path_value: sorted(aliases)
+        for path_value, aliases in alias_by_path.items()
+        if len(aliases) > 1
+    }
+    active_doc_set = {str(Path(entry.get("path") or "").expanduser()) for entry in entries if entry.get("project_slug") == active_slug and entry.get("path")}
+    unregistered_active_docs = sorted(path_value for path_value in active_doc_set if path_value and path_value not in set(registered_doc_paths.values()))
+
+    modern_dev_plans_root = project_root / ".scribe" / "docs" / "dev_plans"
+    legacy_dev_plans_root = project_root / "docs" / "dev_plans"
+    dual_root_inventory = {
+        "modern": {
+            "root_kind": "modern",
+            "lane_class": "canonical",
+            "path": str(modern_dev_plans_root),
+            "exists": modern_dev_plans_root.exists(),
+        },
+        "legacy": {
+            "root_kind": "legacy",
+            "lane_class": "compatibility",
+            "path": str(legacy_dev_plans_root),
+            "exists": legacy_dev_plans_root.exists(),
+        },
+    }
+
+    index_warning_codes = {"SCF_INDEX_MISSING", "SCF_INDEX_STALE", "SCF_DOC_UNINDEXED"}
+    index_warnings = [item for item in digest_items if str(item.get("warning_code") or "") in index_warning_codes]
+
+    status_sections = {
+        "organization": {
+            "status": "needs_attention" if digest_items else "ok",
+            "truth_label": "derived_signal",
+            "summary": f"Organization digest contains {len(digest_items)} quality warning signals.",
+            "next_safe_action": "Review warning ownership scopes and resolve active-project warnings first."
+            if digest_items
+            else "No organization warning signals detected.",
+        },
+        "index": {
+            "status": "needs_attention" if index_warnings else "ok",
+            "truth_label": "derived_signal",
+            "summary": f"Detected {len(index_warnings)} index-related warning signals from managed-doc quality warnings.",
+            "next_safe_action": "Run manage_docs(action='quality_check', ...) and address index warning codes (missing/stale/unindexed)."
+            if index_warnings
+            else "No index warning codes detected.",
+        },
+        "archive": {
+            "status": "evidence_present" if archive_file_count > 0 else "no_evidence",
+            "truth_label": "direct_artifact",
+            "summary": f"Archive preflight contains {archive_file_count} files across {len(archive_family_counts)} families.",
+            "next_safe_action": "Inspect docs_dir/archive/preflight families before any archive cleanup."
+            if archive_file_count > 0
+            else "No archive preflight evidence found; generate/archive evidence before cleanup operations.",
+            "cleanup_mode": "preview_only",
+            "destructive_default": False,
+            "preview_groups": [
+                {
+                    "group": family,
+                    "file_count": count,
+                    "root_kind": lane_classification["root_kind"],
+                    "lane_class": lane_classification["lane_class"],
+                }
+                for family, count in sorted(archive_family_counts.items())
+            ],
+        },
+        "artifact_claims": {
+            "status": "needs_attention" if missing_registered_paths or duplicate_claimed_paths else "ok",
+            "truth_label": "derived_signal",
+            "summary": (
+                f"Registered docs: {len(registered_doc_paths)}; missing paths: {len(missing_registered_paths)}; "
+                f"duplicate path claims: {len(duplicate_claimed_paths)}; unregistered active docs: {len(unregistered_active_docs)}."
+            ),
+            "next_safe_action": "Repair missing doc registrations and deduplicate alias-to-path claims."
+            if missing_registered_paths or duplicate_claimed_paths
+            else "Artifact claims align for registered paths; monitor unregistered active docs as needed.",
+            "details": {
+                "missing_registered_paths": sorted(missing_registered_paths),
+                "duplicate_claimed_paths": duplicate_claimed_paths,
+                "unregistered_active_docs": unregistered_active_docs,
+            },
+        },
+        "ownership": {
+            "status": "needs_attention" if ownership_counts["cross_project"] > 0 else "ok",
+            "truth_label": "derived_signal",
+            "summary": (
+                f"Warning ownership distribution - active_project: {ownership_counts['active_project']}, "
+                f"cross_project: {ownership_counts['cross_project']}, unscoped: {ownership_counts['unscoped']}."
+            ),
+            "next_safe_action": "Rehome cross-project docs before mutation actions."
+            if ownership_counts["cross_project"] > 0
+            else "No cross-project ownership drift in warning ownership signals.",
+        },
+        "dev_plan_roots": {
+            "status": "needs_attention" if dual_root_inventory["legacy"]["exists"] else "ok",
+            "truth_label": "direct_artifact",
+            "summary": "Dual-root inventory distinguishes canonical .scribe/docs/dev_plans from legacy docs/dev_plans before any apply path.",
+            "next_safe_action": "Prefer canonical root for new writes; treat legacy root as compatibility/read-only inventory unless explicitly migrating.",
+            "details": dual_root_inventory,
+        },
+    }
+
+    response["organization_digest"] = {
+        "truth_model": {
+            "direct_artifact": "Derived from concrete files and analyzer warning payloads.",
+            "derived_signal": "Inferred grouping/ownership summaries from direct artifact observations.",
+        },
+        "quality_warning_digest": digest_items,
+        "ownership_summary": ownership_counts,
+        "status_sections": status_sections,
+        "derived_signals": [
+            {
+                "signal": "cross_project_quality_warnings_present",
+                "active": ownership_counts["cross_project"] > 0,
+                "truth_label": "derived_signal",
+                "next_safe_action": "Run manage_docs(action='rehome_doc', ...) for mis-owned docs before mutation."
+                if ownership_counts["cross_project"] > 0
+                else "No cross-project warning ownership drift detected.",
+            },
+            {
+                "signal": "readiness_blockers_present",
+                "active": bool(managed_doc_quality.get("readiness_blocker_count", 0)) if isinstance(managed_doc_quality, dict) else False,
+                "truth_label": "derived_signal",
+                "next_safe_action": "Address blocking quality warnings before marking phase gates ready."
+                if isinstance(managed_doc_quality, dict) and managed_doc_quality.get("readiness_blocker_count", 0)
+                else "No blocking quality warnings detected.",
+            },
+        ],
+    }
     return helper.apply_context_payload(response, context)
 
 
@@ -492,13 +746,144 @@ async def _handle_quality_check(
     *,
     active_project: Dict[str, Any],
     doc_name: Optional[str],
+    doc_category: Optional[str],
     metadata: Optional[Dict[str, Any]],
+    project_registry: Any,
+    append_entry: Callable[..., Awaitable[Any]],
+    logger: logging.Logger,
+    server_module: Any,
+    execution_context: Any,
+    agent_id: str,
     helper: LoggingToolMixin,
     context: LoggingContext,
 ) -> Dict[str, Any]:
     docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
-    target_name = str(doc_name or "").strip()
+    requested_name = str(doc_name or "").strip()
+    target_name = resolve_registered_doc_key(active_project, requested_name) if requested_name else ""
     path_str = docs.get(target_name) if target_name else None
+    runtime_warnings: list[str] = []
+    requested_category = str(doc_category or "").strip().lower()
+    requested_stem = requested_name[:-3] if requested_name.lower().endswith(".md") else requested_name
+    research_like = bool(requested_name) and (
+        requested_category == "research" or requested_stem.upper().startswith("RESEARCH_")
+    )
+    # For research requests, canonical research path must be authoritative before generic docs_dir fallback.
+    if (not isinstance(path_str, str) or not Path(path_str).exists()) and requested_name and research_like:
+        resolved_research = utils_shared.resolve_custom_doc_path(
+            project=active_project,
+            doc_category="research",
+            doc_name=requested_stem,
+        )
+        if resolved_research and resolved_research.exists():
+            candidate_key = _canonical_doc_key(requested_stem)
+            try:
+                await register_document_path(
+                    active_project,
+                    candidate_key,
+                    resolved_research,
+                    server_module=server_module,
+                    project_registry=project_registry,
+                    append_entry=append_entry,
+                    logger=logger,
+                    execution_context=execution_context,
+                    agent_id=agent_id,
+                )
+                docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+                target_name = resolve_registered_doc_key(active_project, requested_name) or candidate_key
+                path_str = docs.get(target_name) or str(resolved_research)
+            except Exception as exc:
+                logger.warning("quality_check research pre-bind failed for '%s': %s", requested_name, exc)
+                target_name = candidate_key
+                path_str = str(resolved_research)
+                runtime_warnings.append(
+                    f"quality_check used discovered research document '{requested_name}' at "
+                    f"'{resolved_research}' after registry pre-bind failed: {exc}"
+                )
+    if (not isinstance(path_str, str) or not Path(path_str).exists()) and requested_name:
+        candidate_key = _canonical_doc_key(requested_name)
+        docs_dir_raw = str(active_project.get("docs_dir") or "").strip()
+        docs_dir: Optional[Path] = Path(docs_dir_raw).expanduser() if docs_dir_raw else None
+        if docs_dir is None:
+            progress_log = str(
+                active_project.get("progress_log")
+                or (docs.get("progress_log") if isinstance(docs, dict) else "")
+                or ""
+            ).strip()
+            if progress_log:
+                docs_dir = Path(progress_log).expanduser().resolve().parent
+        candidates: list[Path] = []
+        if docs_dir:
+            if requested_name.lower().endswith(".md"):
+                candidates.append((docs_dir / requested_name).resolve())
+            else:
+                candidates.append((docs_dir / f"{requested_name}.md").resolve())
+            candidates.append((docs_dir / f"{candidate_key}.md").resolve())
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not candidate.exists():
+                continue
+            try:
+                await register_document_path(
+                    active_project,
+                    candidate_key,
+                    candidate,
+                    server_module=server_module,
+                    project_registry=project_registry,
+                    append_entry=append_entry,
+                    logger=logger,
+                    execution_context=execution_context,
+                    agent_id=agent_id,
+                )
+                docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+                target_name = resolve_registered_doc_key(active_project, requested_name) or candidate_key
+                path_str = docs.get(target_name)
+            except Exception as exc:
+                logger.warning("quality_check auto-registration failed for '%s': %s", requested_name, exc)
+                target_name = candidate_key
+                path_str = str(candidate)
+                runtime_warnings.append(
+                    f"quality_check used discovered unregistered document '{requested_name}' at '{candidate}' "
+                    f"after registry auto-registration failed: {exc}"
+                )
+            break
+    # Recovery lane for stale/missing registry after research doc rename:
+    # allow exact on-disk resolution only for research family, then optionally re-bind.
+    if (not isinstance(path_str, str) or not Path(path_str).exists()) and requested_name:
+        if research_like:
+            resolved_research = utils_shared.resolve_custom_doc_path(
+                project=active_project,
+                doc_category="research",
+                doc_name=requested_stem,
+            )
+            if resolved_research and resolved_research.exists():
+                candidate_key = _canonical_doc_key(requested_stem)
+                try:
+                    await register_document_path(
+                        active_project,
+                        candidate_key,
+                        resolved_research,
+                        server_module=server_module,
+                        project_registry=project_registry,
+                        append_entry=append_entry,
+                        logger=logger,
+                        execution_context=execution_context,
+                        agent_id=agent_id,
+                    )
+                    docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+                    target_name = resolve_registered_doc_key(active_project, requested_name) or candidate_key
+                    path_str = docs.get(target_name) or str(resolved_research)
+                except Exception as exc:
+                    logger.warning("quality_check research re-bind failed for '%s': %s", requested_name, exc)
+                    target_name = candidate_key
+                    path_str = str(resolved_research)
+                    runtime_warnings.append(
+                        f"quality_check used discovered research document '{requested_name}' at "
+                        f"'{resolved_research}' after registry re-bind failed: {exc}"
+                    )
     if not isinstance(path_str, str) or not Path(path_str).exists():
         return helper.apply_context_payload(helper.error_response("quality_check requires a valid doc_name/doc in the active project registry."), context)
     path = Path(path_str)
@@ -519,6 +904,7 @@ async def _handle_quality_check(
         "scope": {"type": "document", "doc_name": target_name, "path": str(path)},
         "summary": {**summary, "config_source": "metadata.quality" if isinstance((metadata or {}).get("quality"), dict) else "defaults"},
         "warnings": warnings,
+        "runtime_warnings": runtime_warnings,
         "readiness_blockers": readiness_blockers,
         "next_actions": [w.get("suggested_repair") for w in readiness_blockers[:3] if isinstance(w.get("suggested_repair"), str)],
     }
@@ -630,6 +1016,42 @@ async def _handle_rehome_doc(
     target_docs = dict(target_project.get("docs") or {})
     target_docs[target_doc_key] = str(target_path)
 
+    checkpoint_file_location = {
+        "ok": True,
+        "source_path": str(source_path),
+        "target_path": str(target_path),
+        "target_path_in_target_docs_dir": True,
+        "dry_run": dry_run,
+    }
+    checkpoint_registry_mapping = {
+        "source_doc_keys": removed_doc_keys,
+        "target_doc_key": target_doc_key,
+        "source_mapping_removed": False,
+        "target_mapping_written": False,
+    }
+    checkpoint_quality_binding = {
+        "attempted": False,
+        "ok": None,
+        "project": target_project_name,
+        "doc": target_doc_key,
+        "summary": None,
+        "error": None,
+    }
+    checkpoint_readiness = {
+        "attempted": False,
+        "ok": None,
+        "status": "deferred",
+        "readiness_blocker_count": None,
+        "total_warnings": None,
+        "quality_status": None,
+        "error": None,
+    }
+    checkpoint_index_freshness = {
+        "source_research_index_refresh": "not_applicable",
+        "target_research_index_refresh": "not_applicable",
+        "index_freshness_reported_separately": True,
+    }
+
     if not dry_run:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if move_mode:
@@ -641,20 +1063,47 @@ async def _handle_rehome_doc(
 
         for key in removed_doc_keys:
             source_docs.pop(key, None)
+        checkpoint_registry_mapping["source_mapping_removed"] = bool(removed_doc_keys)
         active_project["docs"] = source_docs
         target_project["docs"] = target_docs
+        checkpoint_registry_mapping["target_mapping_written"] = target_docs.get(target_doc_key) == str(target_path)
 
         backend = getattr(server_module, "storage_backend", None)
         if backend and hasattr(backend, "update_project_docs"):
             await backend.update_project_docs(active_project.get("name"), json.dumps(source_docs))
             await backend.update_project_docs(target_project_name, json.dumps(target_docs))
 
+        state_refresh_warnings: list[str] = []
+        state_manager = getattr(server_module, "state_manager", None)
+        if state_manager and hasattr(state_manager, "update_project_metadata"):
+            for project_name, project_payload in (
+                (active_project.get("name"), active_project),
+                (target_project_name, target_project),
+            ):
+                if not project_name:
+                    continue
+                try:
+                    await state_manager.update_project_metadata(
+                        str(project_name),
+                        {
+                            "root": project_payload.get("root"),
+                            "docs_dir": project_payload.get("docs_dir"),
+                            "progress_log": project_payload.get("progress_log"),
+                            "docs": project_payload.get("docs") or {},
+                            "repo_id": project_payload.get("repo_id"),
+                            "project_key": project_payload.get("project_key"),
+                        },
+                    )
+                except Exception as exc:
+                    state_refresh_warnings.append(
+                        f"Rehome persisted docs mapping for '{project_name}', but state cache refresh failed: {exc}"
+                    )
+
         authoritative_scope = resolve_authoritative_write_scope(
             context=execution_context,
             agent_session_id=None,
         )
         authoritative_session_id = authoritative_scope.get("authoritative_session_id")
-        state_manager = getattr(server_module, "state_manager", None)
         if state_manager and hasattr(state_manager, "set_current_project") and authoritative_session_id:
             await state_manager.set_current_project(
                 active_project.get("name"),
@@ -670,14 +1119,68 @@ async def _handle_rehome_doc(
             source_research_dir = source_docs_dir / "research"
             if source_research_dir.exists() and source_path.is_relative_to(source_research_dir):
                 await special_indexes_shared.update_research_index(source_research_dir, agent_id)
+                checkpoint_index_freshness["source_research_index_refresh"] = "updated"
         except Exception:
-            pass
+            checkpoint_index_freshness["source_research_index_refresh"] = "refresh_failed"
         try:
             target_research_dir = target_docs_dir / "research"
             if target_research_dir.exists() and target_path.is_relative_to(target_research_dir):
                 await special_indexes_shared.update_research_index(target_research_dir, agent_id)
+                checkpoint_index_freshness["target_research_index_refresh"] = "updated"
         except Exception:
-            pass
+            checkpoint_index_freshness["target_research_index_refresh"] = "refresh_failed"
+
+        checkpoint_file_location["ok"] = target_path.exists() and (not move_mode or not source_path.exists())
+        checkpoint_file_location["source_exists_after"] = source_path.exists()
+        checkpoint_file_location["target_exists_after"] = target_path.exists()
+
+        try:
+            target_text = target_path.read_text(encoding="utf-8")
+            quality_warnings = collect_managed_doc_quality_warnings(
+                text=target_text,
+                metadata={},
+                doc_name=target_doc_key,
+                path=target_path,
+                project=target_project,
+            )
+            warning_summary = summarize_quality_warnings(quality_warnings)
+            readiness_blocker_count = int(warning_summary.get("readiness_blocker_count") or 0)
+            total_warnings = int(warning_summary.get("total") or 0)
+            quality_status = "pass" if total_warnings == 0 else ("fail" if readiness_blocker_count > 0 else "warn")
+
+            checkpoint_quality_binding["attempted"] = True
+            checkpoint_quality_binding["ok"] = readiness_blocker_count == 0
+            checkpoint_quality_binding["summary"] = {
+                "quality_status": quality_status,
+                "total_warnings": total_warnings,
+                "readiness_blocker_count": readiness_blocker_count,
+            }
+
+            checkpoint_readiness["attempted"] = True
+            checkpoint_readiness["ok"] = readiness_blocker_count == 0
+            checkpoint_readiness["status"] = quality_status
+            checkpoint_readiness["readiness_blocker_count"] = readiness_blocker_count
+            checkpoint_readiness["total_warnings"] = total_warnings
+            checkpoint_readiness["quality_status"] = quality_status
+        except Exception as exc:
+            error_text = str(exc)
+            checkpoint_quality_binding["attempted"] = True
+            checkpoint_quality_binding["ok"] = False
+            checkpoint_quality_binding["error"] = error_text
+
+            checkpoint_readiness["attempted"] = True
+            checkpoint_readiness["ok"] = False
+            checkpoint_readiness["status"] = "error"
+            checkpoint_readiness["error"] = error_text
+    else:
+        checkpoint_quality_binding["ok"] = "deferred_dry_run"
+        checkpoint_quality_binding["summary"] = {"quality_status": "deferred_dry_run"}
+        checkpoint_readiness["ok"] = "deferred_dry_run"
+        checkpoint_readiness["status"] = "deferred_dry_run"
+        if source_path.is_relative_to(source_docs_dir / "research"):
+            checkpoint_index_freshness["source_research_index_refresh"] = "would_refresh"
+        if target_path.is_relative_to(target_docs_dir / "research"):
+            checkpoint_index_freshness["target_research_index_refresh"] = "would_refresh"
 
     response = {
         "ok": True,
@@ -693,7 +1196,16 @@ async def _handle_rehome_doc(
         "dry_run": dry_run,
         "removed_doc_keys": removed_doc_keys if move_mode else [],
         "target_doc_key": target_doc_key,
+        "rehome_verification": {
+            "file_location": checkpoint_file_location,
+            "registry_mapping": checkpoint_registry_mapping,
+            "quality_check_binding": checkpoint_quality_binding,
+            "readiness": checkpoint_readiness,
+            "index_freshness": checkpoint_index_freshness,
+        },
     }
+    if not dry_run and "state_refresh_warnings" in locals() and state_refresh_warnings:
+        response["warnings"] = state_refresh_warnings
     return helper.apply_context_payload(response, context)
 
 
@@ -1109,8 +1621,10 @@ async def handle_manage_docs_request(
         elif isinstance(raw_scaffold, str):
             scaffold_flag = raw_scaffold.strip().lower() in {"true", "1", "yes"}
 
-    if project is not None:
-        project = normalize_project_input(project)
+    raw_project_input = project
+    normalized_project_input = normalize_project_input(project) if project is not None else None
+    if normalized_project_input is not None:
+        project = normalized_project_input
 
     if context is not None and project is not None:
         try:
@@ -1146,6 +1660,18 @@ async def handle_manage_docs_request(
             return payload
 
     active_project = context.project or {}
+    if not active_project and raw_project_input:
+        fallback_project = await _load_project_record(
+            project_name=str(raw_project_input),
+            server_module=server_module,
+        )
+        if fallback_project is None and normalized_project_input and normalized_project_input != raw_project_input:
+            fallback_project = await _load_project_record(
+                project_name=str(normalized_project_input),
+                server_module=server_module,
+            )
+        if isinstance(fallback_project, dict) and fallback_project:
+            active_project = fallback_project
     original_doc_name = doc_name
     doc_name = resolve_registered_doc_key(active_project, doc_name) if doc_name else doc_name
     if original_doc_name and doc_name and original_doc_name != doc_name:
@@ -1199,7 +1725,14 @@ async def handle_manage_docs_request(
         response = await _handle_quality_check(
             active_project=active_project,
             doc_name=doc_name,
+            doc_category=doc_category,
             metadata=metadata if isinstance(metadata, dict) else {},
+            project_registry=project_registry,
+            append_entry=append_entry,
+            logger=logger,
+            server_module=server_module,
+            execution_context=execution_context,
+            agent_id=str(agent_id),
             helper=helper,
             context=context,
         )
