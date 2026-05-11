@@ -177,13 +177,13 @@ def test_research_name_normalization_collapses_duplicate_family_prefix() -> None
 
 
 @pytest.mark.asyncio
-async def test_research_create_respects_explicit_target_dir_override(tmp_path: Path) -> None:
+async def test_research_create_ignores_target_dir_without_explicit_override_flag(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
     docs_dir.mkdir(parents=True, exist_ok=True)
     progress_log = docs_dir / "PROGRESS_LOG.md"
     progress_log.write_text("# Log\n", encoding="utf-8")
-    explicit_dir = project_root / "docs" / "dev_plans" / "agent_ux" / "research"
+    repo_root_research_dir = project_root / "research"
 
     project = {
         "name": "agent_ux_doc_governance_hardening_20260416",
@@ -197,7 +197,7 @@ async def test_research_create_respects_explicit_target_dir_override(tmp_path: P
         project=project,
         action="create_research_doc",
         doc_name="RESEARCH_OVERRIDE",
-        target_dir=str(explicit_dir),
+        target_dir=str(repo_root_research_dir),
         content="# Research\n",
         metadata={},
         dry_run=False,
@@ -211,7 +211,49 @@ async def test_research_create_respects_explicit_target_dir_override(tmp_path: P
 
     assert result.get("ok") is True, result
     created_path = Path(result["path"])
-    assert created_path.parent == explicit_dir
+    assert created_path.parent == docs_dir / "research"
+    assert not (repo_root_research_dir / "RESEARCH_OVERRIDE.md").exists()
+    warning = result.get("placement_warning", "").lower()
+    assert "ignored research target_dir" in warning
+    assert "repo_research=true" in warning
+
+
+@pytest.mark.asyncio
+async def test_research_create_respects_target_dir_with_explicit_override_flag(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    progress_log = docs_dir / "PROGRESS_LOG.md"
+    progress_log.write_text("# Log\n", encoding="utf-8")
+    repo_root_research_dir = project_root / "research"
+
+    project = {
+        "name": "agent_ux_doc_governance_hardening_20260416",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(progress_log),
+        "docs": {"progress_log": str(progress_log)},
+    }
+
+    result = await handle_special_document_creation(
+        project=project,
+        action="create_research_doc",
+        doc_name="RESEARCH_OVERRIDE",
+        target_dir=str(repo_root_research_dir),
+        content="# Research\n",
+        metadata={"repo_research": True},
+        dry_run=False,
+        agent_id="test_agent",
+        storage_backend=None,
+        helper=_Helper(),
+        context=None,
+        project_registry=_ProjectRegistry(),
+        logger=logging.getLogger(__name__),
+    )
+
+    assert result.get("ok") is True, result
+    created_path = Path(result["path"])
+    assert created_path.parent == repo_root_research_dir
     assert "explicit research override active" in result.get("placement_warning", "").lower()
 
 

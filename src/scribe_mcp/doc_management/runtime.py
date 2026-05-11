@@ -217,6 +217,22 @@ def _is_manage_docs_write_intent(action: str) -> bool:
     return action in {"create", "rehome_doc"} or action in _MUTATION_ACTIONS
 
 
+def _looks_like_path(value: str) -> bool:
+    return "/" in value or "\\" in value or value.endswith(".md")
+
+
+def _default_rehome_relative_path(source_path: Path, project_root: Path) -> Path:
+    try:
+        repo_relative = source_path.relative_to(project_root)
+    except ValueError:
+        return Path(source_path.name)
+    if repo_relative.parts and repo_relative.parts[0] == "research":
+        return repo_relative
+    if source_path.parent.name == "research" or source_path.name.startswith("RESEARCH_"):
+        return Path("research") / source_path.name
+    return Path(source_path.name)
+
+
 def _case_registry_method(storage_backend: Any) -> Optional[Callable[..., Any]]:
     for method_name in (
         "upsert_case_registry_record",
@@ -936,16 +952,46 @@ async def _handle_rehome_doc(
             context,
         )
 
+    project_root = Path(str(active_project.get("root") or "")).expanduser().resolve()
     source_docs = dict(active_project.get("docs") or {})
     source_doc_key = resolve_registered_doc_key(active_project, doc_name)
     source_path_str = source_docs.get(source_doc_key)
+    source_registered = bool(source_path_str)
     if not source_path_str:
-        return helper.apply_context_payload(
-            helper.error_response(
-                f"rehome_doc requires a registered source document; '{doc_name}' is not registered.",
-            ),
-            context,
-        )
+        raw_source_path = metadata_mapping.get("source_path")
+        if not raw_source_path and _looks_like_path(str(doc_name)):
+            raw_source_path = doc_name
+        if not raw_source_path:
+            return helper.apply_context_payload(
+                helper.error_response(
+                    f"rehome_doc requires a registered source document or metadata.source_path; '{doc_name}' is not registered.",
+                ),
+                context,
+            )
+        source_candidate = Path(str(raw_source_path)).expanduser()
+        if not source_candidate.is_absolute():
+            source_candidate = project_root / source_candidate
+        source_path = source_candidate.resolve()
+        try:
+            source_path.relative_to(project_root)
+        except ValueError:
+            return helper.apply_context_payload(
+                helper.error_response(
+                    "rehome_doc source_path must stay within the active project's root.",
+                    extra={"source_path": str(source_path), "project_root": str(project_root)},
+                ),
+                context,
+            )
+        if not source_path.exists():
+            return helper.apply_context_payload(
+                helper.error_response(
+                    "rehome_doc source_path does not exist.",
+                    extra={"source_path": str(source_path)},
+                ),
+                context,
+            )
+        source_path_str = str(source_path)
+        source_doc_key = str(metadata_mapping.get("target_doc_name") or source_path.stem).strip() or source_path.stem
 
     target_project = await _load_project_record(
         project_name=target_project_name,
@@ -969,15 +1015,21 @@ async def _handle_rehome_doc(
     source_path = Path(source_path_str).expanduser().resolve()
 
     try:
-        relative_path = source_path.relative_to(source_docs_dir)
+        source_path.relative_to(project_root)
     except ValueError:
         return helper.apply_context_payload(
             helper.error_response(
-                "rehome_doc currently supports documents inside the source project's docs_dir only.",
-                extra={"path": str(source_path), "docs_dir": str(source_docs_dir)},
+                "rehome_doc source document must stay within the active project's root.",
+                extra={"path": str(source_path), "project_root": str(project_root)},
             ),
             context,
         )
+
+    target_doc_key = str(metadata_mapping.get("target_doc_name") or source_doc_key).strip() or source_doc_key
+    try:
+        relative_path = source_path.relative_to(source_docs_dir)
+    except ValueError:
+        relative_path = _default_rehome_relative_path(source_path, project_root)
 
     target_relative_path = metadata_mapping.get("target_relative_path")
     if isinstance(target_relative_path, str) and target_relative_path.strip():
@@ -987,7 +1039,6 @@ async def _handle_rehome_doc(
     overwrite = bool(metadata_mapping.get("overwrite"))
     raw_move_mode = metadata_mapping.get("move", True)
     move_mode = bool(raw_move_mode) if not isinstance(raw_move_mode, str) else raw_move_mode.strip().lower() in {"1", "true", "yes", "on"}
-    target_doc_key = str(metadata_mapping.get("target_doc_name") or source_doc_key).strip() or source_doc_key
 
     try:
         target_path.relative_to(target_docs_dir)
@@ -1026,6 +1077,7 @@ async def _handle_rehome_doc(
     checkpoint_registry_mapping = {
         "source_doc_keys": removed_doc_keys,
         "target_doc_key": target_doc_key,
+        "source_registered": source_registered,
         "source_mapping_removed": False,
         "target_mapping_written": False,
     }
@@ -1063,7 +1115,10 @@ async def _handle_rehome_doc(
 
         for key in removed_doc_keys:
             source_docs.pop(key, None)
-        checkpoint_registry_mapping["source_mapping_removed"] = bool(removed_doc_keys)
+        checkpoint_registry_mapping["source_mapping_removed"] = (
+            not source_registered
+            or all(key not in source_docs for key in removed_doc_keys)
+        )
         active_project["docs"] = source_docs
         target_project["docs"] = target_docs
         checkpoint_registry_mapping["target_mapping_written"] = target_docs.get(target_doc_key) == str(target_path)

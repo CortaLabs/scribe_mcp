@@ -256,6 +256,91 @@ async def test_rehome_doc_moves_registered_research_doc_to_target_project(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_rehome_doc_recovers_registered_repo_root_research_doc(tmp_path: Path) -> None:
+    project_root = tmp_path / "cleanup_repo_rehome_root_research"
+    source_project = _project_payload(project_root, "source_project")
+    target_project = _project_payload(project_root, "target_project")
+    misplaced_research_dir = project_root / "research"
+    misplaced_research_dir.mkdir(parents=True, exist_ok=True)
+    source_doc_path = misplaced_research_dir / "RESEARCH_DRIFTED.md"
+    source_doc_path.write_text("# Research\n\nMisplaced at repo root.\n", encoding="utf-8")
+    source_project["docs"]["RESEARCH_DRIFTED"] = str(source_doc_path)
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(target_project["name"], target_project)
+    await state_manager.set_current_project(source_project["name"], source_project)
+    await _seed_runtime_session(state_manager, "cleanup-test-session", source_project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root):
+        result = await manage_docs(
+            action="rehome_doc",
+            doc="RESEARCH_DRIFTED",
+            metadata={"target_project": target_project["name"]},
+            dry_run=False,
+        )
+
+    assert result["ok"] is True
+    assert not source_doc_path.exists()
+    target_path = Path(result["target_path"])
+    assert target_path == Path(target_project["docs_dir"]) / "research" / "RESEARCH_DRIFTED.md"
+    assert target_path.exists()
+
+    backend = getattr(state_manager, "_storage_backend", None)
+    assert backend is not None
+    source_record = await backend.fetch_project(source_project["name"])
+    target_record = await backend.fetch_project(target_project["name"])
+    assert source_record is not None
+    assert target_record is not None
+    assert "RESEARCH_DRIFTED" not in json.loads(source_record.docs_json or "{}")
+    assert json.loads(target_record.docs_json or "{}")["RESEARCH_DRIFTED"] == str(target_path)
+    verification = result.get("rehome_verification") or {}
+    assert verification["registry_mapping"]["source_mapping_removed"] is True
+    assert verification["registry_mapping"]["target_mapping_written"] is True
+    assert verification["index_freshness"]["target_research_index_refresh"] == "updated"
+
+
+@pytest.mark.asyncio
+async def test_rehome_doc_registers_unowned_repo_root_research_doc_on_move(tmp_path: Path) -> None:
+    project_root = tmp_path / "cleanup_repo_rehome_unowned_root_research"
+    active_project = _project_payload(project_root, "active_project")
+    target_project = _project_payload(project_root, "target_project")
+    misplaced_research_dir = project_root / "research"
+    misplaced_research_dir.mkdir(parents=True, exist_ok=True)
+    source_doc_path = misplaced_research_dir / "RESEARCH_UNOWNED.md"
+    source_doc_path.write_text("# Research\n\nUnowned misplaced doc.\n", encoding="utf-8")
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(target_project["name"], target_project)
+    await state_manager.set_current_project(active_project["name"], active_project)
+    await _seed_runtime_session(state_manager, "cleanup-test-session", active_project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root):
+        result = await manage_docs(
+            action="rehome_doc",
+            doc="research/RESEARCH_UNOWNED.md",
+            metadata={"target_project": target_project["name"]},
+            dry_run=False,
+        )
+
+    assert result["ok"] is True
+    target_path = Path(result["target_path"])
+    assert target_path == Path(target_project["docs_dir"]) / "research" / "RESEARCH_UNOWNED.md"
+    assert target_path.exists()
+    assert not source_doc_path.exists()
+
+    backend = getattr(state_manager, "_storage_backend", None)
+    assert backend is not None
+    target_record = await backend.fetch_project(target_project["name"])
+    assert target_record is not None
+    target_docs = json.loads(target_record.docs_json or "{}")
+    assert target_docs["RESEARCH_UNOWNED"] == str(target_path)
+    verification = result.get("rehome_verification") or {}
+    assert verification["registry_mapping"]["source_registered"] is False
+    assert verification["registry_mapping"]["source_mapping_removed"] is True
+    assert verification["registry_mapping"]["target_mapping_written"] is True
+
+
+@pytest.mark.asyncio
 async def test_manage_docs_supported_actions_manifest_surfaces_cleanup_actions(tmp_path: Path) -> None:
     project_root = tmp_path / "cleanup_repo_manifest"
     active_project = _project_payload(project_root, "active_project")

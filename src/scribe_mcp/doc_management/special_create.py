@@ -75,6 +75,19 @@ def _normalize_stage(value: Any) -> str:
     return stage or "general"
 
 
+def _is_truthy_metadata_flag(metadata: Dict[str, Any], key: str) -> bool:
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _research_target_dir_override_enabled(metadata: Dict[str, Any]) -> bool:
+    return _is_truthy_metadata_flag(metadata, "repo_research")
+
+
 def _project_docs_dir(project: Dict[str, Any], project_root: Path) -> Path:
     """Resolve canonical project docs directory for project-scoped artifacts."""
     progress_log_path = str(project.get("progress_log") or "").strip()
@@ -366,17 +379,38 @@ async def handle_special_document_creation(
             )
         safe_name = _normalize_research_doc_name(doc_name)
 
+        canonical_research_dir = docs_dir / "research"
+        research_dir = canonical_research_dir
         override_dir = target_dir or metadata.get("target_dir")
         if override_dir:
-            research_dir = Path(override_dir)
-            if not research_dir.is_absolute():
-                research_dir = project_root / research_dir
-            placement_warning = (
-                f"Explicit research override active: writing to '{research_dir.resolve()}/'. "
-                f"Canonical project research path is '{(docs_dir / 'research').resolve()}'."
-            )
-        else:
-            research_dir = docs_dir / "research"
+            requested_research_dir = Path(override_dir)
+            if not requested_research_dir.is_absolute():
+                requested_research_dir = project_root / requested_research_dir
+            try:
+                requested_is_canonical = (
+                    requested_research_dir.resolve() == canonical_research_dir.resolve()
+                )
+            except Exception:
+                requested_is_canonical = False
+
+            if requested_is_canonical:
+                research_dir = canonical_research_dir
+            elif _research_target_dir_override_enabled(metadata):
+                research_dir = requested_research_dir
+                placement_warning = (
+                    f"Explicit research override active: writing to '{research_dir.resolve()}/'. "
+                    f"Canonical project research path is '{canonical_research_dir.resolve()}'."
+                )
+            else:
+                placement_warning = (
+                    "Ignored research target_dir because active Scribe project research "
+                    "defaults to the canonical managed docs path. "
+                    f"Requested '{requested_research_dir.resolve()}/'; using "
+                    f"'{canonical_research_dir.resolve()}/'. Set metadata.repo_research=true "
+                    "to write outside the active project research directory."
+                )
+
+        if research_dir == canonical_research_dir:
             legacy_docs_dir_str = str(project.get("docs_dir") or "").strip()
             if legacy_docs_dir_str:
                 legacy_research_dir = Path(legacy_docs_dir_str) / "research"
