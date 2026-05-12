@@ -1,13 +1,13 @@
 # Install and bootstrap
 
-Release line: `2.2.17`
-Updated: `2026-05-05`
+Release line: `2.2.19`
+Updated: `2026-05-12`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 
 If you want the short product tour first, read [TOUR.md](TOUR.md). If you want the MCP-host setup details, read [mcp_server_guide.md](mcp_server_guide.md).
 
-This release line includes the managed-doc hygiene upgrade: scaffold-aware quality checks, project-local managed-doc preflight archives, centralized `edit_file` backups, canonical research artifact naming, and cleanup of stale research index backup files after successful index writes.
+This release line includes the changelog/versioning upgrade: project `CHANGELOG.md` scaffolds, derived global changelog reconciliation, advisory `pyproject.toml` version context, research-context drift warnings, and stricter managed-doc quality gates for lifecycle/status and malformed changelog scaffolds.
 
 ## Which path should you use?
 

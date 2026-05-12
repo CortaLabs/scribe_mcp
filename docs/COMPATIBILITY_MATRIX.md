@@ -1,32 +1,30 @@
 # Compatibility Matrix
 
-Baseline date: **2026-05-05**
-Release framing: **v2.2.17 compatibility baseline**
+Baseline date: **2026-05-12**
+Release framing: **v2.2.19 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.2.17 documentation wave:
+This baseline keeps compatibility posture for the 2.2.19 documentation wave:
 
-- **Core package version:** `scribe-mcp==2.2.17`
-- **Optional template package:** `scribe-council==2.2.17`
+- **Core package version:** `scribe-mcp==2.2.19`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
+- **Governed-memory posture:** project `CHANGELOG.md` is curated source; `.scribe/docs/GLOBAL_CHANGELOG.md` is derived output
 
 `v3` is out of scope for this baseline.
 
 ## Supported combinations
 
-| Core (`scribe-mcp`) | Optional templates (`scribe-council`) | Status | Intended use |
-| --- | --- | --- | --- |
-| `2.2.17` | — | Supported | Standard install for local/core usage. |
-| `2.2.17` | `2.2.17` | Supported | Add optional template bundle when template assets are needed. |
+| Core (`scribe-mcp`) | Status | Intended use |
+| --- | --- | --- |
+| `2.2.19` | Supported | Public Scribe install for local/core usage. |
 
 ## Not supported by this baseline
 
 | Combination / practice | Status | Why |
 | --- | --- | --- |
-| `scribe-council` without `scribe-mcp==2.2.17` | Unsupported | Optional package explicitly depends on `scribe-mcp==2.2.17`. |
 | Public onboarding that treats remote/client as generally available | Unsupported | Public release profile fail-closes remote/client startup. |
 | Standalone SQLite presented as default runtime posture | Unsupported | Runtime settings default storage backend to Postgres. |
 | Guidance that depends on repo-local/operator files as public setup | Unsupported | Those files are local convenience, not release contract. |
@@ -34,24 +32,17 @@ This baseline keeps compatibility posture for the 2.2.17 documentation wave:
 
 ## What is shipped
 
-### `scribe-mcp 2.2.17`
+### `scribe-mcp 2.2.19`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`
-- One compatibility shim remains in `src/scribe_mcp/council_templates/__init__.py`
 - Managed-doc hygiene includes scaffold-aware quality checks, project-local preflight archive routing, canonical research artifact naming, stale index-backup cleanup, and quality-check recovery for registered or discoverable package/research docs.
-
-### `scribe-council 2.2.17` (optional)
-
-- Ships optional template assets from `packages/scribe_council/src/scribe_council/**`
-- Provides `council.templates` entry point
-- Depends on `scribe-mcp==2.2.17`
+- Managed-doc project memory includes project `CHANGELOG.md`, derived global changelog reconciliation, advisory version context, research-context drift warnings, lifecycle/body-status mismatch warnings, and malformed changelog escaped-newline blocking checks.
 
 ## Versioning contract
 
 - `main` is release-bound for `scribe-mcp`: pushes that touch package/release surfaces trigger the PyPI publish workflow.
 - Any release-bound change must bump `pyproject.toml` before merge/push to `main`.
-- If the optional template package contract changes in lockstep, `packages/scribe_council/pyproject.toml` must be bumped too so the documented baseline stays truthful.
 
 ## Public boundary summary
 

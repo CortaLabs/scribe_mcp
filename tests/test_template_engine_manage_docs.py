@@ -337,6 +337,56 @@ async def test_manage_docs_apply_patch_and_replace_range(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_manage_docs_replace_range_dry_run_reports_changelog_quality_warnings(tmp_path: Path) -> None:
+    """Dry-run previews must expose changelog-specific quality blockers."""
+    project_root = tmp_path / "changelog_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "test_project"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    changelog_path = docs_dir / "CHANGELOG.md"
+    changelog_path.write_text(
+        "# Project Changelog\n\nUse one section per curated project outcome.\n",
+        encoding="utf-8",
+    )
+    original_text = changelog_path.read_text(encoding="utf-8")
+
+    project: Dict[str, object] = {
+        "name": "Changelog Project",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+        "docs": {"changelog": str(changelog_path)},
+        "defaults": {"agent": "QA Bot"},
+    }
+
+    change = await apply_doc_change(
+        project,
+        doc="changelog",
+        action="replace_range",
+        section=None,
+        content=(
+            "# Project Changelog\\n\\n"
+            "## Entry\\n"
+            "- `entry_id`: 20260512:bad\\n"
+            "- `entry_status`: accepted\\n"
+            "- `summary`: literal escaped newline sludge\\n"
+            "- `evidence_refs`: proof"
+        ),
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={},
+        dry_run=True,
+    )
+
+    codes = {warning.get("code") for warning in change.extra.get("scaffold_quality_warnings", [])}
+    assert "SCF_CHANGELOG_ESCAPED_NEWLINES" in codes
+    assert changelog_path.read_text(encoding="utf-8") == original_text
+
+
+@pytest.mark.asyncio
 async def test_manage_docs_apply_patch_mismatch_fails(tmp_path: Path) -> None:
     """Verify apply_patch fails with strict context mismatch."""
     project_root = tmp_path / "patch_repo_mismatch"
@@ -831,6 +881,64 @@ def test_toggle_checklist_status_updates_inline_section_anchor_without_appending
     assert "- [x] Ship docs | proof=commit_abc <!-- ID: p4_documents -->" in updated
     assert "<!-- ID: p4_documents -->" in updated
     assert "\n\n<!-- ID: p4_documents -->\n" not in updated
+
+
+def test_toggle_checklist_status_targets_lowercase_inline_item_id_without_appending() -> None:
+    original = (
+        "# Checklist\n"
+        "- [ ] <!-- id: p4-task-3 --> BLOCKED: Final quality gate pending.\n"
+        "- [ ] <!-- id: final-gate-1 --> Final review pending.\n"
+    )
+
+    updated = _toggle_checklist_status(
+        original,
+        "p4-task-3",
+        {"status": "done", "proof": "live project_health pass"},
+    )
+
+    assert "- [x] <!-- id: p4-task-3 --> BLOCKED: Final quality gate pending. | proof=live project_health pass" in updated
+    assert "- [ ] <!-- id: final-gate-1 --> Final review pending." in updated
+    assert "\n\n<!-- ID: p4-task-3 -->\n" not in updated
+
+
+@pytest.mark.asyncio
+async def test_status_update_does_not_treat_item_status_as_frontmatter_status(tmp_path: Path) -> None:
+    project_root = tmp_path / "status_update_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "p"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    checklist = docs_dir / "CHECKLIST.md"
+    checklist.write_text(
+        "---\n"
+        "status: in_progress\n"
+        "title: Checklist\n"
+        "---\n"
+        "# Checklist\n"
+        "- [ ] <!-- id: p4-task-3 --> Final quality gate pending.\n",
+        encoding="utf-8",
+    )
+    project = {
+        "name": "P",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "docs": {"checklist": str(checklist)},
+    }
+
+    change = await apply_doc_change(
+        project,
+        doc_name="checklist",
+        action="status_update",
+        section="p4-task-3",
+        content=None,
+        template=None,
+        metadata={"status": "done", "proof": "live project_health pass"},
+        dry_run=True,
+    )
+
+    parsed = parse_frontmatter(change.content_written)
+    assert parsed.frontmatter_data["status"] == "in_progress"
+    assert "- [x] <!-- id: p4-task-3 --> Final quality gate pending. | proof=live project_health pass" in parsed.body
+    frontmatter_updates = (change.extra.get("frontmatter_updates") or {})
+    assert "status" not in (frontmatter_updates.get("updated_keys") or [])
 
 
 def test_toggle_checklist_status_requires_explicit_scope_for_multi_item_section() -> None:

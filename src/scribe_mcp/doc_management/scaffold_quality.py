@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from scribe_mcp.utils.frontmatter import parse_frontmatter
+from scribe_mcp.doc_management.changelog import accepted_entries, is_valid_entry_id, parse_changelog_entries
+from scribe_mcp.doc_management.version_context import resolve_observed_context
 
 _READINESS_VALUES = {"ready", "done", "complete", "finished"}
 
@@ -16,10 +18,20 @@ DEFAULT_WARNING_POLICIES: Dict[str, Dict[str, Any]] = {
     "SCF_TODO_ONLY_SECTION": {"severity": "high", "blocking": True},
     "SCF_LOG_TEMPLATE_ONLY": {"severity": "high", "blocking": True},
     "SCF_FRONTMATTER_MISMATCH": {"severity": "critical", "blocking": True},
+    "SCF_LIFECYCLE_STATUS_MISMATCH": {"severity": "critical", "blocking": True},
     "SCF_INDEX_STALE": {"severity": "medium", "blocking": False},
     "SCF_INDEX_MISSING": {"severity": "medium", "blocking": False},
     "SCF_DOC_UNINDEXED": {"severity": "medium", "blocking": False},
     "SCF_NONCANONICAL_LOCATION": {"severity": "medium", "blocking": False},
+    "SCF_CHANGELOG_ENTRY_ID_MISSING": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_ENTRY_ID_INVALID": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_SUMMARY_MISSING": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_EVIDENCE_MISSING": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_DUPLICATE_SOURCE_KEY": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_RAW_PROGRESS_DUMP": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_AMBIGUOUS_BODY_STATUS": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_ESCAPED_NEWLINES": {"severity": "critical", "blocking": True},
+    "SCF_RESEARCH_CONTEXT_DRIFT": {"severity": "medium", "blocking": False},
 }
 
 _TEMPLATE_PROSE_PATTERNS = [
@@ -111,6 +123,15 @@ def _line_text(text: str, idx: int) -> str:
     if end == -1:
         end = len(text)
     return text[start:end]
+
+
+def _strip_markdown_status_markup(line: str) -> str:
+    stripped = line.strip()
+    stripped = re.sub(r"^\s{0,3}#{1,6}\s+", "", stripped)
+    stripped = re.sub(r"^\s*[-*]\s+", "", stripped)
+    stripped = stripped.strip()
+    stripped = stripped.replace("**", "").replace("__", "").strip("*_` ")
+    return stripped.strip()
 
 
 def _warning(code: str, message: str, text: str, idx: int, repair: str, suppression_reason: Optional[str] = None) -> Dict[str, Any]:
@@ -209,9 +230,11 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
     warnings: List[Dict[str, Any]] = []
     parsed = parse_frontmatter(text)
     body = parsed.body
-    readiness_claim = str(parsed.frontmatter_data.get("status", "")).strip().lower() in _READINESS_VALUES
+    frontmatter_status = str(parsed.frontmatter_data.get("status", "")).strip().lower()
+    readiness_claim = frontmatter_status in _READINESS_VALUES
 
     warnings.extend(_placeholder_residue_warnings(body))
+    warnings.extend(_lifecycle_status_warnings(body, frontmatter_status=frontmatter_status))
     warnings.extend(
         _conformance_warnings(
             body,
@@ -229,6 +252,54 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
         warning["excerpt"] = excerpt
     configured, _suppressed, _meta = _apply_quality_overrides(warnings, metadata=metadata)
     return configured
+
+
+def _classify_lifecycle_claim(line: str) -> Optional[str]:
+    normalized = _strip_markdown_status_markup(line).lower().replace("_", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    status_match = re.match(
+        r"^(?:status|handoff|handoff status)\s*:\s*(ready|complete|done|finished|blocked|draft|in progress|in-progress|wip)\b",
+        normalized,
+    )
+    if status_match:
+        return status_match.group(1).replace("-", " ")
+    if normalized in {"ready", "complete", "done", "finished", "blocked"}:
+        return normalized
+    return None
+
+
+def _lifecycle_status_warnings(body: str, *, frontmatter_status: str) -> List[Dict[str, Any]]:
+    warnings: List[Dict[str, Any]] = []
+    normalized_frontmatter = frontmatter_status.replace("_", " ").replace("-", " ")
+    frontmatter_ready = normalized_frontmatter in _READINESS_VALUES
+    frontmatter_blocked = normalized_frontmatter == "blocked"
+
+    offset = 0
+    for raw_line in body.splitlines(keepends=True):
+        line = raw_line.rstrip("\n")
+        claim = _classify_lifecycle_claim(line)
+        if claim and not _in_code_fence(body, offset) and not _is_quoted_line(body, offset):
+            claim_ready = claim in _READINESS_VALUES
+            claim_blocked = claim == "blocked"
+            claim_draftish = claim in {"draft", "in progress", "wip"}
+            mismatch = (
+                (claim_ready and not frontmatter_ready)
+                or (claim_blocked and not frontmatter_blocked)
+                or (claim_draftish and frontmatter_ready)
+            )
+            if mismatch:
+                warnings.append(
+                    _warning(
+                        "SCF_LIFECYCLE_STATUS_MISMATCH",
+                        "Body lifecycle handoff conflicts with frontmatter status.",
+                        body or "\n",
+                        offset,
+                        "Use frontmatter_update to align narrative document status with the body handoff, or revise the body handoff text.",
+                    )
+                )
+                break
+        offset += len(raw_line)
+    return warnings
 
 
 def _placeholder_residue_warnings(body: str) -> List[Dict[str, Any]]:
@@ -300,8 +371,13 @@ def collect_managed_doc_quality_warnings(
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     warnings = analyze_scaffold_quality(text=text, metadata=metadata, doc_name=doc_name)
+    if str(doc_name).strip().lower() == "changelog":
+        warnings.extend(_research_context_drift_warnings(text=text, project=project))
+    if str(doc_name).strip().lower() == "changelog":
+        warnings.extend(_changelog_warnings(text=text, doc_name=doc_name))
     if path is None or not is_research_doc_target(doc_name, path):
         return warnings
+    warnings.extend(_research_context_drift_warnings(text=text, project=project))
 
     doc_path = Path(path)
     docs_dir_value = project.get("docs_dir") if isinstance(project, Mapping) else None
@@ -318,6 +394,87 @@ def collect_managed_doc_quality_warnings(
     )
     configured, _suppressed, _meta = _apply_quality_overrides(warnings, metadata=metadata)
     return configured
+
+
+def _research_context_drift_warnings(*, text: str, project: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    warnings: List[Dict[str, Any]] = []
+    for entry in accepted_entries(parse_changelog_entries(text)):
+        observed = entry.observed_context or {}
+        source = str(observed.get("source") or "").strip()
+        value = str(observed.get("value") or "").strip()
+        if not source or not value or source == "unknown":
+            continue
+        if source not in {"manual", "pyproject", "git_commit", "git_tag"}:
+            continue
+        repo_root = Path(str((project or {}).get("root") or ".")).resolve()
+        pyproject_path = repo_root / "pyproject.toml"
+        current = resolve_observed_context(repo_root=repo_root, pyproject_path=pyproject_path)
+        if current.source != source:
+            continue
+        if current.value == value:
+            continue
+        marker = f"entry_id: {entry.entry_id}" if entry.entry_id else entry.title or "accepted-entry"
+        idx = text.find(marker)
+        idx = 0 if idx < 0 else idx
+        warnings.append(
+            _warning(
+                "SCF_RESEARCH_CONTEXT_DRIFT",
+                f"Historical observed_context changed for source '{source}': stored '{value}', current '{current.value}'.",
+                text,
+                idx,
+                "Review historical context; keep as-is if intentionally historical, or update with explicit evidence when needed.",
+            )
+        )
+    return warnings
+
+
+def _changelog_warnings(*, text: str, doc_name: str) -> List[Dict[str, Any]]:
+    warnings: List[Dict[str, Any]] = []
+    escaped_newline_count = text.count("\\n")
+    has_escaped_newline_sludge = escaped_newline_count >= 3 and any(
+        marker in text
+        for marker in (
+            "# Project Changelog\\n",
+            "Use one section per curated project outcome.\\n",
+            "## Entry Template\\n",
+            "- `entry_id`:",
+            "- `entry_status`:",
+            "- `summary`:",
+            "- `evidence_refs`:",
+        )
+    )
+    if has_escaped_newline_sludge:
+        warnings.append(
+            _warning(
+                "SCF_CHANGELOG_ESCAPED_NEWLINES",
+                "Changelog content appears serialized with literal escaped newlines.",
+                text,
+                0,
+                "Rewrite changelog with real multiline markdown instead of literal \\n escape sequences.",
+            )
+        )
+    entries = accepted_entries(parse_changelog_entries(text))
+    seen_keys: set[str] = set()
+    for entry in entries:
+        marker = f"entry_id: {entry.entry_id}" if entry.entry_id else entry.title or "accepted-entry"
+        idx = text.find(marker)
+        idx = 0 if idx < 0 else idx
+        if not entry.entry_id:
+            warnings.append(_warning("SCF_CHANGELOG_ENTRY_ID_MISSING", "Accepted changelog entry is missing entry_id.", text, idx, "Add entry_id in <yyyymmdd>:<slug> format."))
+        elif not is_valid_entry_id(entry.entry_id):
+            warnings.append(_warning("SCF_CHANGELOG_ENTRY_ID_INVALID", "Accepted changelog entry has invalid entry_id format.", text, idx, "Use entry_id format <yyyymmdd>:<slug>."))
+        if not entry.summary:
+            warnings.append(_warning("SCF_CHANGELOG_SUMMARY_MISSING", "Accepted changelog entry is missing summary.", text, idx, "Add a concise summary for accepted entry."))
+        if not entry.evidence_refs:
+            warnings.append(_warning("SCF_CHANGELOG_EVIDENCE_MISSING", "Accepted changelog entry is missing evidence_refs.", text, idx, "Add one or more concrete evidence_refs entries."))
+        if entry.entry_id in seen_keys and entry.entry_id:
+            warnings.append(_warning("SCF_CHANGELOG_DUPLICATE_SOURCE_KEY", "Duplicate changelog source key detected for accepted entries.", text, idx, "Keep one authoritative entry per (project_slug, entry_id)."))
+        seen_keys.add(entry.entry_id)
+        if _PROGRESS_PREFIX_PATTERN.search(entry.section_text) or "[agent:" in entry.section_text.lower():
+            warnings.append(_warning("SCF_CHANGELOG_RAW_PROGRESS_DUMP", "Accepted changelog entry looks like a raw progress-log dump.", text, idx, "Curate a human-authored changelog summary instead of dumping log lines."))
+        if re.search(r"(?im)^\s*status\s*:\s*accepted\s*$", entry.section_text):
+            warnings.append(_warning("SCF_CHANGELOG_AMBIGUOUS_BODY_STATUS", "Accepted entry uses ambiguous body lifecycle text ('Status: accepted').", text, idx, "Use entry_status for changelog entry state and keep lifecycle status in frontmatter only."))
+    return warnings
 
 
 def _research_warning(code: str, *, excerpt: str, message: str, repair: str) -> Dict[str, Any]:

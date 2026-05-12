@@ -7,6 +7,7 @@ instead of using flat-file parsing when the backend is available.
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch, Mock
+from types import SimpleNamespace
 from datetime import datetime
 
 from scribe_mcp.tools.query_entries import query_entries
@@ -80,6 +81,9 @@ async def test_query_entries_uses_database():
             mock_context.project = mock_project_context
             mock_context.recent_projects = []
             mock_context.reminders = []
+            mock_context.fallback_chain = []
+            mock_context.fallback_used = False
+            mock_context.resolution_source = "explicit_project"
             mock_resolve.return_value = mock_context
 
             with patch('scribe_mcp.tools.query_entries.load_project_config') as mock_load:
@@ -161,6 +165,9 @@ async def test_query_entries_message_filter():
             mock_context.project = mock_project_context
             mock_context.recent_projects = []
             mock_context.reminders = []
+            mock_context.fallback_chain = []
+            mock_context.fallback_used = False
+            mock_context.resolution_source = "explicit_project"
             mock_resolve.return_value = mock_context
 
             with patch('scribe_mcp.tools.query_entries.load_project_config') as mock_load:
@@ -223,10 +230,14 @@ async def test_query_entries_fallback_to_files():
         mock_server.state_manager.record_tool = AsyncMock(return_value={})
 
         with patch('scribe_mcp.tools.query_entries.resolve_logging_context') as mock_resolve:
-            mock_context = Mock()
-            mock_context.project = mock_project_context
-            mock_context.recent_projects = []
-            mock_context.reminders = []
+            mock_context = SimpleNamespace(
+                project=mock_project_context,
+                recent_projects=[],
+                reminders=[],
+                fallback_chain=[],
+                fallback_used=False,
+                resolution_source="explicit_project",
+            )
             mock_resolve.return_value = mock_context
 
             with patch('scribe_mcp.tools.query_entries.load_project_config') as mock_load:
@@ -257,6 +268,79 @@ async def test_query_entries_fallback_to_files():
 
     # Verify warning about DB failure
     assert any("Database query failed" in w for w in result_dict.get("validation_warnings", []))
+
+
+@pytest.mark.asyncio
+async def test_query_entries_opt_in_observed_context_surfacing(tmp_path):
+    docs_dir = tmp_path / ".scribe" / "docs" / "dev_plans" / "test_project"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    (docs_dir / "CHANGELOG.md").write_text(
+        """# Project Changelog
+
+## Entry
+- `entry_id`: 20260512:test-context
+- `entry_status`: accepted
+- `title`: Context
+- `summary`: Added context
+- `evidence_refs`:
+  - tests/test_query_entries_db.py
+- `observed_context`:
+  - `value`: 1.2.3
+  - `source`: pyproject
+  - `commit`: abc123
+  - `dirty`: false
+  - `observed_at`: 2026-05-12T00:00:00Z
+  - `confidence`: exact
+""",
+        encoding="utf-8",
+    )
+
+    mock_backend = MagicMock()
+    mock_backend.query_entries_paginated = AsyncMock(return_value=([], 0))
+    mock_project_record = MagicMock()
+    mock_project_record.id = 1
+    mock_project_record.name = "test_project"
+    mock_backend.fetch_project = AsyncMock(return_value=mock_project_record)
+    mock_project_context = {
+        "name": "test_project",
+        "root": str(tmp_path),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+    }
+
+    with patch('scribe_mcp.tools.query_entries.server_module') as mock_server:
+        mock_server.storage_backend = mock_backend
+        mock_server.state_manager.record_tool = AsyncMock(return_value={})
+        with patch('scribe_mcp.tools.query_entries.resolve_logging_context') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(
+                project=mock_project_context,
+                recent_projects=[],
+                reminders=[],
+                fallback_chain=[],
+                fallback_used=False,
+                resolution_source="explicit_project",
+            )
+            result = await query_entries(
+                agent="TestAgent",
+                project="test_project",
+                include_observed_context=True,
+                format="structured",
+            )
+
+    result_dict = extract_result(result)
+    assert result_dict["ok"] is True
+    assert "observed_context_signals" in result_dict
+    assert isinstance(result_dict["observed_context_signals"], list)
+    assert len(result_dict["observed_context_signals"]) == 1
+    signal = result_dict["observed_context_signals"][0]
+    assert signal["entry_id"] == "20260512:test-context"
+    assert signal["source"] == "pyproject"
+    assert signal["value"] == "1.2.3"
+    assert signal["path"].endswith("/.scribe/docs/dev_plans/test_project/CHANGELOG.md")
+    assert signal["observed_at"] == "2026-05-12T00:00:00Z"
+    assert signal["commit"] == "abc123"
+    assert signal["dirty"] is False
+    assert signal["confidence"] == "exact"
 
 
 @pytest.mark.asyncio
@@ -303,6 +387,9 @@ async def test_query_entries_returns_source_indicator():
             mock_context.project = mock_project_context
             mock_context.recent_projects = []
             mock_context.reminders = []
+            mock_context.fallback_chain = []
+            mock_context.fallback_used = False
+            mock_context.resolution_source = "explicit_project"
             mock_resolve.return_value = mock_context
 
             with patch('scribe_mcp.tools.query_entries.load_project_config') as mock_load:
@@ -352,6 +439,9 @@ async def test_query_entries_backend_missing():
             mock_context.project = mock_project_context
             mock_context.recent_projects = []
             mock_context.reminders = []
+            mock_context.fallback_chain = []
+            mock_context.fallback_used = False
+            mock_context.resolution_source = "explicit_project"
             mock_resolve.return_value = mock_context
 
             with patch('scribe_mcp.tools.query_entries.load_project_config') as mock_load:

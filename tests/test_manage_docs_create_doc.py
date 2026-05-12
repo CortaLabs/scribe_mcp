@@ -233,9 +233,64 @@ async def test_create_doc_allows_empty_body(tmp_path: Path) -> None:
     assert change.success
     path = Path(change.path)
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.has_frontmatter
     assert parsed.body.strip() == ""
 
 
+@pytest.mark.asyncio
+async def test_replace_section_cross_session_succeeds_when_review_report_registration_degraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = await _setup_project(tmp_path)
+    state_path = tmp_path / "state_cross_session.db"
+    state_manager = StateManager(path=state_path)
+    await state_manager.set_current_project(project["name"], project, agent_id="test")
+    await _seed_runtime_session(state_manager, project["root"], session_id="test-session")
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        create_result = await manage_docs(
+            agent="test-agent",
+            action="create",
+            metadata={"doc_type": "review", "stage": "phase_4_2"},
+        )
+        assert create_result["ok"] is True
+        created_path = Path(str(create_result["path"]))
+        assert created_path.exists()
+        created_doc_name = str(create_result["doc_name"])
+        before_text = created_path.read_text(encoding="utf-8")
+
+    # Simulate a new session with stale/missing custom-doc registry mapping.
+    state_reloaded = await state_manager.load()
+    persisted = dict(state_reloaded.get_project(project["name"]) or project)
+    persisted_docs = dict(persisted.get("docs", {}) or {})
+    persisted_docs.pop(created_doc_name, None)
+    persisted_docs.pop("review", None)
+    persisted["docs"] = persisted_docs
+    await state_manager.set_current_project(project["name"], persisted, agent_id="test")
+
+    async def _blocked_register(*_args, **_kwargs):
+        raise ValueError("Cannot establish authoritative session binding for manage_docs registration.")
+
+    from scribe_mcp.doc_management import runtime as runtime_shared
+    monkeypatch.setattr(runtime_shared, "register_document_path", _blocked_register)
+    monkeypatch.setattr(runtime_shared.utils_shared, "resolve_custom_doc_path", lambda **_kwargs: created_path)
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        replace_result = await manage_docs(
+            agent="test-agent",
+            action="replace_section",
+            doc_name=created_doc_name,
+            doc_category="review",
+            section="executive_summary",
+            content="## Executive Summary\n\nCross-session review recovery content.\n",
+            metadata={"allow_append": True},
+        )
+        assert replace_result["ok"] is True, replace_result
+        assert "warnings" in replace_result
+        assert any("registration degraded" in warning.lower() for warning in replace_result["warnings"])
+        after_text = created_path.read_text(encoding="utf-8")
+        assert after_text != before_text
+        assert "Cross-session review recovery content." in after_text
 @pytest.mark.asyncio
 async def test_create_doc_registry_warning(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
@@ -467,6 +522,37 @@ async def test_create_doc_with_md_suffix_does_not_double_append(tmp_path: Path) 
     assert change.path is not None
     assert str(change.path).endswith("already_named.md")
     assert not str(change.path).endswith(".md.md")
+
+
+@pytest.mark.asyncio
+async def test_create_review_report_allows_followup_replace_section_with_same_session_binding(tmp_path: Path) -> None:
+    """Regression: review report create + replace_section should succeed in one bound runtime session."""
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        create_result = await manage_docs(
+            action="create",
+            metadata={
+                "doc_type": "review",
+                "stage": "phase_4_2",
+            },
+            dry_run=False,
+        )
+        assert create_result.get("ok") is True, create_result
+        review_doc_name = str(create_result.get("doc_name") or "")
+        assert review_doc_name
+
+        replace_result = await manage_docs(
+            action="replace_section",
+            doc_name=review_doc_name,
+            section="executive_summary",
+            content="## Executive Summary\n\nReview content updated via manage_docs.\n",
+            dry_run=False,
+        )
+        assert replace_result.get("ok") is True, replace_result
 
 
 @pytest.mark.asyncio

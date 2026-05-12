@@ -71,6 +71,39 @@ Research artifacts belong in the canonical flat path:
 - `research/INDEX.md` is refreshed by managed lifecycle paths.
 - Noncanonical location, stale index, or unindexed docs are warning states and should be resolved before completion claims.
 
+## Changelog and Version Context (Operator Workflow)
+
+Use this minimal workflow when documenting accepted project outcomes.
+
+- Author curated entries in the project `CHANGELOG.md`.
+- Treat `.scribe/docs/GLOBAL_CHANGELOG.md` as derived output only.
+- Reconcile global entries only from project entries with `entry_status: accepted`.
+
+Required accepted-entry fields:
+- `entry_id`
+- `entry_status`
+- `summary`
+- `evidence_refs`
+
+Identity and dedupe:
+- `entry_id` format: `<yyyymmdd>:<slug>`
+- source key: `(project_slug, entry_id)`
+
+Version/context behavior is advisory:
+- Scribe observes context from manual metadata first, then `pyproject.toml`, then optional git fallback, then `unknown`.
+- There is no SemVer enforcement, no auto-bump, and no hidden release management.
+- Missing/unknown version context is allowed and non-blocking.
+
+Explicit repair and reconciliation path:
+- Use `frontmatter_update` when lifecycle status metadata needs repair.
+- Use `quality_check` for deterministic warnings and readiness checks.
+- Use `preview_reconciliation` before `apply_global_changelog`.
+- Preview and validation diagnose; they do not perform hidden mutation.
+
+Project artifact discoverability:
+- Research docs belong in `research/INDEX.md`.
+- Synthesis/review/project-level docs are not research docs and should surface through project-level artifact health/quality paths.
+
 ### EDIT Actions (Auto-Register)
 
 These actions automatically register unregistered documents before performing the operation:

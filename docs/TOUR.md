@@ -1,7 +1,7 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.2.17`
-Updated: `2026-05-05`
+Release line: `2.2.19`
+Updated: `2026-05-12`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
 
@@ -14,11 +14,14 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.2.17` tightens the governed-doc loop:
+Release `2.2.19` adds version-aware changelog memory to the governed-doc loop:
 
-- `quality_check` is scaffold-aware, so leftover template text and real stale-doc residue are easier to separate from ordinary markdown.
-- Managed-doc preflight snapshots stay with the active dev-plan archive, while `edit_file` backups continue to use the general `.scribe/backups/` lane.
-- Research artifacts normalize duplicate family prefixes such as `research_RESEARCH_*`, clean stale `INDEX.invalid.backup` files after a successful index refresh, and bind checks to canonical `research/` docs.
+- Project `CHANGELOG.md` is the curated source for accepted project outcomes.
+- `.scribe/docs/GLOBAL_CHANGELOG.md` is derived from accepted project entries through preview/apply reconciliation.
+- Changelog entry identity stays local (`<yyyymmdd>:<slug>`) while global dedupe uses `(project_slug, entry_id)`.
+- Version context is advisory only: Scribe observes `pyproject.toml` or explicit metadata without enforcing SemVer or auto-bumping.
+- Research context can warn when historical version evidence drifts, while active code remains the source of truth.
+- `quality_check` now blocks lifecycle mismatch, changelog escaped-newline sludge, and other scaffold/readiness failures.
 
 If you only remember one thing, make it this:
 

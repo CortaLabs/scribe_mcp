@@ -1,8 +1,10 @@
 import asyncio
+import logging
 import tempfile
 from pathlib import Path
 
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
+from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality
 
 
 def test_explicit_security_index_entrypoint_writes_security_heading():
@@ -79,3 +81,19 @@ def test_index_families_share_preflight_write_policy(monkeypatch):
     assert "AGENT_CARDS_INDEX.md" in written_index_names
     assert len(calls) == 5
     assert all(doc_dir is not None for _, doc_dir in calls)
+
+
+def test_review_report_template_default_render_has_no_placeholder_bracket_residue():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project = {"root": tmpdir, "name": "scaffold_hygiene_proj"}
+        rendered = asyncio.run(
+            special_indexes_shared.render_review_report_template(
+                project,
+                agent_id="test_agent",
+                prepared_metadata={"stage": "phase_1_review"},
+                logger=logging.getLogger(__name__),
+            )
+        )
+
+        warnings = analyze_scaffold_quality(text=rendered, doc_name="REVIEW_REPORT")
+        assert not any(w.get("code") == "SCF_PLACEHOLDER_BRACKET" for w in warnings)

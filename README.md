@@ -44,12 +44,13 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.2.17` focuses on governed-doc hygiene and agent work organization:
+`2.2.19` focuses on changelog/version-aware project memory and stricter managed-doc UX:
 
-- `manage_docs quality_check` is scaffold-aware, so it can distinguish real placeholder residue and stale-doc risk from ordinary markdown syntax.
-- Project health surfaces organization, archive, index, ownership, and derived-truth signals instead of burying those clues in loose docs.
-- Managed-doc preflight snapshots stay inside the active dev-plan archive lane; `edit_file` keeps general file backups in `.scribe/backups/`.
-- Research artifacts now normalize duplicate names such as `research_RESEARCH_*`, remove stale `INDEX.invalid.backup` files after successful index writes, and prefer canonical `research/` paths during quality checks.
+- Each Scribe project now gets a curated `CHANGELOG.md` alongside the planning docs; accepted entries reconcile into a derived `.scribe/docs/GLOBAL_CHANGELOG.md`.
+- Changelog entry identity is local and simple: `entry_id=<yyyymmdd>:<slug>`, deduped globally by `(project_slug, entry_id)`.
+- Version context is observed, not enforced: Scribe can read manual metadata, `pyproject.toml`, and git context without imposing SemVer or auto-bumping versions.
+- Research/version drift warnings help historical research stay useful while active code remains the source of truth.
+- Managed-doc quality checks now catch lifecycle body/frontmatter mismatches, malformed changelog scaffolds with literal `\n` sludge, noncanonical research placement, and checklist status-update edge cases.
 
 ## What makes Scribe different
 

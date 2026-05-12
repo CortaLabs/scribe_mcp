@@ -104,17 +104,18 @@ def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, A
 def build_readiness_summary(*, current_phase: Optional[str], managed_doc_quality: Dict[str, Any], log_signals: Optional[Sequence[Mapping[str, Any]]] = None) -> ReadinessSummary:
     log_signals = list(log_signals or [])
     log_blockers = sum(1 for signal in log_signals if bool(signal.get("blocking")))
-    warning_count = int(managed_doc_quality.get("total_warning_count", 0)) + len(log_signals)
+    log_warnings = [signal for signal in log_signals if bool(signal.get("blocking"))]
+    warning_count = int(managed_doc_quality.get("total_warning_count", 0)) + len(log_warnings)
     blocker_count = int(managed_doc_quality.get("readiness_blocker_count", 0)) + log_blockers
     log_friction = {
-        "status": "warn" if log_signals else "pass",
+        "status": "blocked" if log_blockers else ("advisory" if log_signals else "pass"),
         "signals": [dict(signal) for signal in log_signals],
     }
     next_actions: list[str] = []
     if managed_doc_quality.get("readiness_blocker_count", 0):
         next_actions.append("Resolve SCF_* readiness blockers in managed docs for the active phase.")
-    if log_signals:
-        next_actions.append("Address LOG_* progress-log friction signals to improve trace quality.")
+    if log_blockers:
+        next_actions.append("Address blocking LOG_* progress-log friction signals to improve trace quality.")
     if not next_actions:
         next_actions.append("Readiness checks are green for current phase scope.")
 

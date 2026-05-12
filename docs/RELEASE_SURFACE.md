@@ -1,7 +1,7 @@
 # Release Surface
 
-Baseline date: **2026-05-05**
-Applies to: **v2.2.17 public release line**
+Baseline date: **2026-05-12**
+Applies to: **v2.2.19 public release line**
 
 ## Public contract
 
@@ -11,11 +11,11 @@ Treat these as public release truth:
   - `pyproject.toml`
   - `MANIFEST.in`
   - `src/scribe_mcp/**`
-  - `packages/scribe_council/**` (optional package)
 - Public docs and examples:
   - `README.md`
   - `docs/**`
   - `docs/examples/**`
+  - `skills/**`
 
 ## Runtime truth in public docs
 
@@ -27,6 +27,7 @@ Public docs must keep these runtime truths aligned with current source:
 - `SCRIBE_REMOTE_URL` is documented as service root; `/health` and `/sse` are distinct paths with different roles.
 - Codex projection is documented through `scribe plugins project-codex`.
 - Managed-doc hygiene behavior is public release truth: scaffold-aware `quality_check`, grouped `project_health` signals, project-local managed-doc preflight archives, centralized `edit_file` backups, canonical research artifact naming, and stale index-backup cleanup.
+- Changelog/version memory behavior is public release truth: project `CHANGELOG.md` is curated source, `.scribe/docs/GLOBAL_CHANGELOG.md` is derived by preview/apply reconciliation, version context is advisory observed evidence, and malformed changelog escaped-newline content is a blocking quality failure.
 
 ## Local/operator boundary
 
@@ -35,6 +36,7 @@ Treat these as local/operator-only, not public contract:
 - Repo overlays and agent/tooling configuration at repo root
 - Local runtime state and logs under `.scribe/**`
 - Build output and caches (`build/`, `dist/`, `*.egg-info/`, `__pycache__/`)
+- Generated authoring/runtime overlays unless a future exported copy is intentionally tracked as public support material
 
 If a path is workstation-specific or runtime-generated, it is not public guidance.
 
@@ -43,9 +45,8 @@ If a path is workstation-specific or runtime-generated, it is not public guidanc
 Public docs should describe only shipped plugin/bridge surfaces:
 
 - Core runtime/plugin framework in `src/scribe_mcp/bridges/**`
-- Optional shipped template/extension assets in `packages/scribe_council/src/scribe_council/**`
 
-Do not present local manifests, local bridge config, or local operator adapters as shipped public surface.
+Do not present local manifests, local bridge config, unpromoted generated outputs, or local operator adapters as shipped public surface.
 
 ## Practical release check
 

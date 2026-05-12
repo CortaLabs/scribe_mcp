@@ -63,6 +63,7 @@ HIDDEN_ACTIONS = {
     "list_sections",
     "list_checklist_items",
     "preview_reconciliation",
+    "apply_global_changelog",
     "project_health",
     "quality_check",
     "scaffold_quality_check",
@@ -91,6 +92,7 @@ ACTION_ROUTER = {
     "list_sections": "query",
     "list_checklist_items": "query",
     "preview_reconciliation": "query",
+    "apply_global_changelog": "query",
     "search": "search",
     "batch": "batch",
 }
@@ -118,7 +120,7 @@ _MUTATION_ACTIONS = {
     "validate_crosslinks",
 }
 
-_CUSTOM_DOC_TYPES = {"research", "bugs", "reviews", "agent_cards"}
+_CUSTOM_DOC_TYPES = {"research", "bugs", "reviews", "review", "agent_cards"}
 _READ_ONLY_REGISTRATION_GATED_ACTIONS = {
     "list_sections",
     "list_checklist_items",
@@ -140,6 +142,7 @@ _DOC_KEY_ALIASES: Dict[str, str] = {
     "architecture-guide": "architecture",
     "phaseplan": "phase_plan",
 }
+_SINGLETON_HEALTH_DOC_TYPES = {"architecture", "phase_plan", "checklist"}
 
 
 def _canonical_doc_key(value: Any) -> str:
@@ -154,8 +157,10 @@ def _health_doc_identity(entry: Dict[str, Any]) -> str:
     stem_key = _canonical_doc_key(path.stem) if path.suffix else ""
     doc_type_key = _canonical_doc_key(entry.get("doc_type"))
     project_slug = str(entry.get("project_slug") or "unscoped")
-    best_key = doc_type_key or stem_key or _canonical_doc_key(path.name)
-    return f"{project_slug}:{best_key}"
+    if doc_type_key in _SINGLETON_HEALTH_DOC_TYPES:
+        return f"{project_slug}:{doc_type_key}"
+    best_key = stem_key or doc_type_key or _canonical_doc_key(path.name)
+    return f"{project_slug}:{best_key}:{path_value}"
 
 
 def _dedupe_health_entries(entries: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
@@ -634,7 +639,44 @@ async def _handle_project_health(
         if len(aliases) > 1
     }
     active_doc_set = {str(Path(entry.get("path") or "").expanduser()) for entry in entries if entry.get("project_slug") == active_slug and entry.get("path")}
-    unregistered_active_docs = sorted(path_value for path_value in active_doc_set if path_value and path_value not in set(registered_doc_paths.values()))
+
+    def _is_system_managed_index(path_value: str) -> bool:
+        candidate = Path(path_value).expanduser()
+        if candidate.name != "INDEX.md":
+            return False
+        try:
+            relative = candidate.relative_to(docs_dir)
+        except ValueError:
+            return False
+        return relative.parts == ("research", "INDEX.md")
+
+    def _is_indexed_research_doc(path_value: str) -> bool:
+        candidate = Path(path_value).expanduser()
+        if candidate.name == "INDEX.md":
+            return False
+        try:
+            relative = candidate.relative_to(docs_dir)
+        except ValueError:
+            return False
+        if not relative.parts or relative.parts[0] != "research":
+            return False
+        index_path = docs_dir / "research" / "INDEX.md"
+        if not index_path.exists():
+            return False
+        try:
+            index_text = index_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return candidate.name in index_text or relative.as_posix() in index_text
+
+    unregistered_active_docs = sorted(
+        path_value
+        for path_value in active_doc_set
+        if path_value
+        and path_value not in set(registered_doc_paths.values())
+        and not _is_system_managed_index(path_value)
+        and not _is_indexed_research_doc(path_value)
+    )
 
     modern_dev_plans_root = project_root / ".scribe" / "docs" / "dev_plans"
     legacy_dev_plans_root = project_root / "docs" / "dev_plans"
@@ -654,7 +696,28 @@ async def _handle_project_health(
     }
 
     index_warning_codes = {"SCF_INDEX_MISSING", "SCF_INDEX_STALE", "SCF_DOC_UNINDEXED"}
-    index_warnings = [item for item in digest_items if str(item.get("warning_code") or "") in index_warning_codes]
+    index_warnings: list[Dict[str, Any]] = []
+    for item in digest_items:
+        code = str(item.get("warning_code") or "")
+        if code not in index_warning_codes:
+            continue
+        source_path = str(item.get("source_path") or "")
+        matched_entry = next((entry for entry in entries if str(entry.get("path") or "") == source_path), None)
+        if matched_entry and str(matched_entry.get("doc_type") or "") != "research":
+            continue
+        if matched_entry is None and "/research/" not in source_path.replace("\\", "/"):
+            continue
+        index_warnings.append(item)
+
+    project_artifact_families = {"review_report", "agent_report_card", "bug_report", "security_report"}
+    project_artifact_docs = [entry for entry in entries if str(entry.get("doc_type") or "") in project_artifact_families]
+    project_artifact_warning_count = 0
+    for item in digest_items:
+        source_path = str(item.get("source_path") or "")
+        matched_entry = next((entry for entry in project_artifact_docs if str(entry.get("path") or "") == source_path), None)
+        source_doc_name = str(item.get("source_doc_name") or "").lower()
+        if matched_entry or source_doc_name.startswith(("review_report", "agent_report_card", "bug_report", "security_report")):
+            project_artifact_warning_count += 1
 
     status_sections = {
         "organization": {
@@ -668,10 +731,19 @@ async def _handle_project_health(
         "index": {
             "status": "needs_attention" if index_warnings else "ok",
             "truth_label": "derived_signal",
-            "summary": f"Detected {len(index_warnings)} index-related warning signals from managed-doc quality warnings.",
-            "next_safe_action": "Run manage_docs(action='quality_check', ...) and address index warning codes (missing/stale/unindexed)."
+            "summary": f"Detected {len(index_warnings)} research-index warning signals from managed-doc quality warnings.",
+            "next_safe_action": "Run manage_docs(action='quality_check', ...) for research docs and address index warning codes (missing/stale/unindexed)."
             if index_warnings
-            else "No index warning codes detected.",
+            else "No research-index warning codes detected.",
+        },
+        "project_artifacts": {
+            "status": "needs_attention" if project_artifact_warning_count > 0 else ("evidence_present" if project_artifact_docs else "no_evidence"),
+            "truth_label": "direct_artifact",
+            "summary": (
+                f"Discovered {len(project_artifact_docs)} project-level synthesis/review artifact(s); "
+                f"{project_artifact_warning_count} warning signal(s) currently attached."
+            ),
+            "next_safe_action": "Use manage_docs(action='quality_check', doc_name=...) for synthesis/review docs and rely on project-level docs indexes (e.g., REVIEW_INDEX.md), not research/INDEX.md.",
         },
         "archive": {
             "status": "evidence_present" if archive_file_count > 0 else "no_evidence",
@@ -693,14 +765,14 @@ async def _handle_project_health(
             ],
         },
         "artifact_claims": {
-            "status": "needs_attention" if missing_registered_paths or duplicate_claimed_paths else "ok",
+            "status": "needs_attention" if missing_registered_paths or duplicate_claimed_paths or unregistered_active_docs else "ok",
             "truth_label": "derived_signal",
             "summary": (
                 f"Registered docs: {len(registered_doc_paths)}; missing paths: {len(missing_registered_paths)}; "
                 f"duplicate path claims: {len(duplicate_claimed_paths)}; unregistered active docs: {len(unregistered_active_docs)}."
             ),
             "next_safe_action": "Repair missing doc registrations and deduplicate alias-to-path claims."
-            if missing_registered_paths or duplicate_claimed_paths
+            if missing_registered_paths or duplicate_claimed_paths or unregistered_active_docs
             else "Artifact claims align for registered paths; monitor unregistered active docs as needed.",
             "details": {
                 "missing_registered_paths": sorted(missing_registered_paths),
@@ -720,10 +792,10 @@ async def _handle_project_health(
             else "No cross-project ownership drift in warning ownership signals.",
         },
         "dev_plan_roots": {
-            "status": "needs_attention" if dual_root_inventory["legacy"]["exists"] else "ok",
+            "status": "compatibility_present" if dual_root_inventory["legacy"]["exists"] else "ok",
             "truth_label": "direct_artifact",
             "summary": "Dual-root inventory distinguishes canonical .scribe/docs/dev_plans from legacy docs/dev_plans before any apply path.",
-            "next_safe_action": "Prefer canonical root for new writes; treat legacy root as compatibility/read-only inventory unless explicitly migrating.",
+            "next_safe_action": "No active migration action required; keep using canonical .scribe/docs/dev_plans for new writes and treat legacy docs/dev_plans as read-only compatibility inventory unless explicitly migrating.",
             "details": dual_root_inventory,
         },
     }
@@ -940,6 +1012,7 @@ async def _handle_rehome_doc(
     agent_id: str,
 ) -> Dict[str, Any]:
     metadata_mapping = metadata if isinstance(metadata, dict) else {}
+    requested_target_dir = str(metadata_mapping.get("target_dir") or "").strip()
     target_project_name = str(metadata_mapping.get("target_project") or "").strip()
     if not target_project_name:
         return helper.apply_context_payload(
@@ -1034,6 +1107,8 @@ async def _handle_rehome_doc(
     target_relative_path = metadata_mapping.get("target_relative_path")
     if isinstance(target_relative_path, str) and target_relative_path.strip():
         relative_path = Path(target_relative_path.strip())
+    elif requested_target_dir:
+        relative_path = Path(requested_target_dir) / source_path.name
 
     target_path = (target_docs_dir / relative_path).resolve()
     overwrite = bool(metadata_mapping.get("overwrite"))
@@ -1794,10 +1869,13 @@ async def handle_manage_docs_request(
         return _attach_manage_docs_project_context(response, context=context)
 
     if action == "rehome_doc":
+        rehome_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        if isinstance(target_dir, str) and target_dir.strip() and not rehome_metadata.get("target_dir"):
+            rehome_metadata["target_dir"] = target_dir.strip()
         response = await _handle_rehome_doc(
             active_project=active_project,
             doc_name=doc_name,
-            metadata=metadata if isinstance(metadata, dict) else {},
+            metadata=rehome_metadata,
             dry_run=dry_run,
             helper=helper,
             context=context,
@@ -1841,19 +1919,30 @@ async def handle_manage_docs_request(
                 for registration_key in (doc_name, doc_category):
                     if registration_key in docs_mapping:
                         continue
-                    reload_warning = await register_document_path(
-                        active_project,
-                        registration_key,
-                        resolved_path,
-                        server_module=server_module,
-                        project_registry=project_registry,
-                        append_entry=append_entry,
-                        logger=logger,
-                        execution_context=execution_context,
-                        agent_id=str(agent_id),
-                    )
-                    if reload_warning:
-                        runtime_warnings.append(reload_warning)
+                    try:
+                        reload_warning = await register_document_path(
+                            active_project,
+                            registration_key,
+                            resolved_path,
+                            server_module=server_module,
+                            project_registry=project_registry,
+                            append_entry=append_entry,
+                            logger=logger,
+                            execution_context=execution_context,
+                            agent_id=str(agent_id),
+                        )
+                        if reload_warning:
+                            runtime_warnings.append(reload_warning)
+                    except Exception as reg_exc:
+                        # Deterministic custom-doc path resolution already located a real file.
+                        # Keep mutation flow available even when durable registration is degraded.
+                        staged_docs = dict(active_project.get("docs", {}) or {})
+                        staged_docs[registration_key] = str(resolved_path)
+                        active_project["docs"] = staged_docs
+                        runtime_warnings.append(
+                            "Custom document registration degraded; using deterministic path "
+                            f"fallback for '{registration_key}' at '{resolved_path}': {reg_exc}"
+                        )
                 try:
                     context = await helper.prepare_context(
                         tool_name="manage_docs",

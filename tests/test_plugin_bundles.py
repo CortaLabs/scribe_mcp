@@ -12,7 +12,7 @@ from scribe_mcp.scripts.project_codex_plugin import project_codex_plugin
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_PLUGIN_ROOT = REPO_ROOT / "plugins" / "claude"
 CODEX_PLUGIN_ROOT = REPO_ROOT / "plugins" / "codex"
-MARKETPLACE_PATH = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
+MARKETPLACE_PATH = CODEX_PLUGIN_ROOT / "marketplace.json"
 ALLOWED_PUBLIC_AGENTS = [
     "scribe-architect",
     "scribe-bug-hunter",
@@ -332,3 +332,9 @@ def test_scribe_cli_projects_codex_plugin_rejects_private_catalog_content(tmp_pa
     assert exit_code == 1
     assert "error: invalid Codex plugin catalog:" in captured.err
     assert "private/council-only content" in captured.err
+
+
+def test_roster_review_agent_uses_registered_slug_for_scribe_sign_in() -> None:
+    roster_text = (REPO_ROOT / ".council" / "roster.yaml").read_text(encoding="utf-8")
+    assert "You sign into Scribe as `scribe-review-agent`" in roster_text
+    assert "You sign into Scribe as `ReviewAgent`" not in roster_text

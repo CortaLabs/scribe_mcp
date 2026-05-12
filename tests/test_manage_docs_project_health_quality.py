@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from scribe_mcp import server as server_module
+from scribe_mcp.doc_management.utils import ScribeSourceDocument
 from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
@@ -111,8 +112,9 @@ async def test_project_health_includes_managed_doc_quality(tmp_path: Path) -> No
     log_friction = readiness.get("log_friction") or {}
     signals = log_friction.get("signals") or []
     assert signals
+    assert log_friction.get("status") == "advisory"
     assert {s.get("code") for s in signals} == {"LOG_MISSING_CATEGORY", "LOG_MISSING_TAGS"}
-    assert readiness.get("warning_count", 0) == quality.get("total_warning_count", 0) + len(signals)
+    assert readiness.get("warning_count", 0) == quality.get("total_warning_count", 0)
     assert readiness.get("blocker_count", 0) == quality.get("readiness_blocker_count", 0)
     organization_digest = result.get("organization_digest") or {}
     assert isinstance(organization_digest.get("quality_warning_digest"), list)
@@ -122,7 +124,7 @@ async def test_project_health_includes_managed_doc_quality(tmp_path: Path) -> No
     derived = organization_digest.get("derived_signals") or []
     assert any(item.get("truth_label") == "derived_signal" for item in derived)
     status_sections = organization_digest.get("status_sections") or {}
-    required_keys = {"organization", "index", "archive", "artifact_claims", "ownership"}
+    required_keys = {"organization", "index", "project_artifacts", "archive", "artifact_claims", "ownership"}
     assert required_keys.issubset(set(status_sections.keys()))
     for key in required_keys:
         section = status_sections.get(key) or {}
@@ -163,7 +165,7 @@ async def test_project_health_counts_research_hygiene_for_path_registered_docs(t
     status_sections = organization_digest.get("status_sections") or {}
     index_section = status_sections.get("index") or {}
     assert index_section.get("status") == "needs_attention"
-    assert "index-related warning" in str(index_section.get("summary", "")).lower()
+    assert "research-index warning" in str(index_section.get("summary", "")).lower()
 
 
 @pytest.mark.asyncio
@@ -218,6 +220,56 @@ async def test_project_health_marks_index_needs_attention_for_unindexed_doc_warn
 
 
 @pytest.mark.asyncio
+async def test_project_health_does_not_treat_non_research_warning_as_research_index_failure(tmp_path: Path) -> None:
+    project_root = tmp_path / "non_research_index_repo"
+    active_project = _project_payload(project_root, "active_project")
+    docs_dir = Path(active_project["docs_dir"])
+    review_doc = docs_dir / "REVIEW_REPORT_PHASE_2.md"
+    review_doc.write_text("# Review\n", encoding="utf-8")
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(active_project["name"], active_project)
+    await _seed_runtime_session(state_manager, "non-research-index-test-session", active_project["root"])
+
+    quality_payload = {
+        "status": "warn",
+        "documents": [
+            {
+                "doc_name": "review_report_phase_2",
+                "path": str(review_doc),
+                "project_slug": "active_project",
+                "warning_count": 1,
+                "warning_codes": ["SCF_DOC_UNINDEXED"],
+            }
+        ],
+        "readiness_blocker_count": 0,
+        "total_warning_count": 1,
+        "warnings": [
+            {
+                "code": "SCF_DOC_UNINDEXED",
+                "severity": "warning",
+                "blocking": False,
+                "doc_name": "review_report_phase_2",
+                "path": str(review_doc),
+                "suggested_repair": "Refresh relevant index.",
+            }
+        ],
+    }
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="non-research-index-test-session"):
+        with patch("scribe_mcp.doc_management.runtime.collect_managed_doc_quality_state", return_value=quality_payload):
+            result = await manage_docs(action="project_health", metadata={"limit": 5}, dry_run=True)
+
+    assert result["ok"] is True
+    status_sections = (result.get("organization_digest") or {}).get("status_sections") or {}
+    index_section = status_sections.get("index") or {}
+    project_artifacts = status_sections.get("project_artifacts") or {}
+    assert index_section.get("status") == "ok"
+    assert project_artifacts.get("status") == "needs_attention"
+    assert "synthesis/review artifact" in str(project_artifacts.get("summary", "")).lower()
+
+
+@pytest.mark.asyncio
 async def test_project_health_reports_archive_preflight_status(tmp_path: Path) -> None:
     project_root = tmp_path / "archive_quality_repo"
     active_project = _project_payload(project_root, "active_project")
@@ -268,3 +320,62 @@ async def test_project_health_reports_artifact_claim_status_for_duplicates_and_m
     duplicates = details.get("duplicate_claimed_paths") or {}
     assert str(registered_path) in duplicates
     assert set(duplicates[str(registered_path)]) >= {"architecture", "architecture_alias"}
+
+
+@pytest.mark.asyncio
+async def test_project_health_ignores_system_research_index_for_unregistered_claims(tmp_path: Path) -> None:
+    project_root = tmp_path / "artifact_claims_index_repo"
+    active_project = _project_payload(project_root, "active_project")
+    docs_dir = Path(active_project["docs_dir"])
+    research_dir = docs_dir / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    research_index = research_dir / "INDEX.md"
+    indexed_doc = research_dir / "RESEARCH_INDEXED.md"
+    indexed_doc.write_text("# Indexed\n", encoding="utf-8")
+    unregistered_doc = research_dir / "RESEARCH_UNREGISTERED.md"
+    unregistered_doc.write_text("# Unregistered\n", encoding="utf-8")
+    research_index.write_text(
+        "# Research Documents Index\n\n"
+        "- **[RESEARCH_INDEXED](RESEARCH_INDEXED.md)**\n",
+        encoding="utf-8",
+    )
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(active_project["name"], active_project)
+    await _seed_runtime_session(state_manager, "artifact-claims-index-test-session", active_project["root"])
+
+    discovered_docs = [
+        ScribeSourceDocument(
+            path=research_index,
+            source_family="dev_plan",
+            doc_type="research",
+            project_slug="active_project",
+        ),
+        ScribeSourceDocument(
+            path=indexed_doc,
+            source_family="dev_plan",
+            doc_type="research",
+            project_slug="active_project",
+        ),
+        ScribeSourceDocument(
+            path=unregistered_doc,
+            source_family="dev_plan",
+            doc_type="research",
+            project_slug="active_project",
+        ),
+    ]
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="artifact-claims-index-test-session"):
+        with patch("scribe_mcp.doc_management.runtime.utils_shared.discover_scribe_source_documents", return_value=discovered_docs):
+            result = await manage_docs(action="project_health", metadata={"limit": 5}, dry_run=True)
+
+    assert result["ok"] is True
+    organization_digest = result.get("organization_digest") or {}
+    status_sections = organization_digest.get("status_sections") or {}
+    artifact_section = status_sections.get("artifact_claims") or {}
+    assert artifact_section.get("status") == "needs_attention"
+    details = artifact_section.get("details") or {}
+    unregistered = details.get("unregistered_active_docs") or []
+    assert str(research_index) not in unregistered
+    assert str(indexed_doc) not in unregistered
+    assert str(unregistered_doc) in unregistered

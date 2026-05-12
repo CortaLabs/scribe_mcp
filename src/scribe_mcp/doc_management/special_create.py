@@ -699,19 +699,10 @@ async def handle_special_document_creation(
                 logger.warning("Failed to update index for %s: %s", doc_label, exc)
 
         registration_warning: Optional[str] = None
-        if storage_backend and project:
+        if project:
             try:
                 project_name = project.get("name")
                 if project_name:
-                    authoritative_scope = resolve_authoritative_write_scope(
-                        context=execution_context,
-                        agent_session_id=None,
-                    )
-                    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
-                    if not authoritative_session_id:
-                        raise ValueError(
-                            "Cannot establish authoritative session binding for manage_docs create registration."
-                        )
                     registration_keys: list[str] = []
                     if primary_doc_key and str(primary_doc_key).strip():
                         registration_keys.append(str(primary_doc_key).strip())
@@ -727,9 +718,17 @@ async def handle_special_document_creation(
                     for key in registration_keys:
                         current_docs[key] = str(target_path)
                     project["docs"] = current_docs
-                    docs_json = json.dumps(current_docs)
-                    await storage_backend.update_project_docs(project_name, docs_json)
                     state_manager = getattr(server_module, "state_manager", None)
+                    authoritative_scope = resolve_authoritative_write_scope(
+                        context=execution_context,
+                        agent_session_id=None,
+                    )
+                    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+                    if storage_backend:
+                        docs_json = json.dumps(current_docs)
+                        await storage_backend.update_project_docs(project_name, docs_json)
+                    else:
+                        registration_warning = "Doc registration used state-only fallback: storage backend unavailable."
                     if state_manager and hasattr(state_manager, "set_current_project"):
                         await state_manager.set_current_project(
                             project_name,
@@ -739,6 +738,12 @@ async def handle_special_document_creation(
                             resolved_scope=authoritative_scope.get("resolved_scope"),
                             mirror_global=False,
                         )
+                        if not authoritative_session_id:
+                            message = (
+                                "Doc registration could not bind authoritative session; "
+                                "state updated without session binding."
+                            )
+                            registration_warning = f"{registration_warning}; {message}" if registration_warning else message
                     try:
                         project_registry.record_doc_update(
                             project_name=project_name,

@@ -36,6 +36,7 @@ from scribe_mcp.shared.logging_utils import (
     resolve_logging_context,
 )
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
+from scribe_mcp.doc_management.changelog import accepted_entries, parse_changelog_entries
 
 VALID_MESSAGE_MODES = {"substring", "regex", "exact"}
 VALID_SEARCH_SCOPES = {"project", "global", "all_projects", "research", "bugs", "all", "sentinel"}
@@ -1199,6 +1200,7 @@ async def query_entries(
     category: Optional[List[str]] = None,  # Filter by categories (e.g., ["bug", "security"])
     min_confidence: Optional[float] = None,  # Minimum confidence threshold (0.0-1.0)
     priority_sort: bool = False,  # If True, sort by priority (critical first) then by time
+    include_observed_context: bool = False,  # Opt-in surfacing for historical verification signals
     **_kwargs: Any,  # tolerate unknown kwargs (contract: tools never TypeError)
 ) -> Dict[str, Any]:
     """Search the project log with flexible filters and pagination.
@@ -1430,6 +1432,10 @@ async def query_entries(
 
         if context.reminders:
             search_result["reminders"] = list(context.reminders)
+        if include_observed_context:
+            search_result["observed_context_signals"] = await _collect_observed_context_signals(
+                project=context.project or {},
+            )
         _attach_resolution_metadata(search_result, context)
         # Route through formatter for readable/structured/compact output
         return await default_formatter.finalize_tool_response(
@@ -1563,6 +1569,42 @@ async def _resolve_cross_project_projects(
         projects.append(global_config)
 
     return projects
+
+
+async def _collect_observed_context_signals(*, project: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Opt-in historical observed_context surfacing from project changelog accepted entries."""
+    docs_dir_value = project.get("docs_dir")
+    if not isinstance(docs_dir_value, str) or not docs_dir_value:
+        return []
+    changelog_path = Path(docs_dir_value) / "CHANGELOG.md"
+    if not changelog_path.exists():
+        return []
+    try:
+        text = changelog_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    signals: List[Dict[str, Any]] = []
+    for entry in accepted_entries(parse_changelog_entries(text)):
+        observed = entry.observed_context or {}
+        source = str(observed.get("source") or "").strip()
+        value = str(observed.get("value") or "").strip()
+        if not source or not value:
+            continue
+        signals.append(
+            {
+                "entry_id": entry.entry_id,
+                "title": entry.title,
+                "source": source,
+                "value": value,
+                "observed_at": observed.get("observed_at"),
+                "commit": observed.get("commit"),
+                "dirty": observed.get("dirty"),
+                "confidence": observed.get("confidence"),
+                "path": str(changelog_path),
+            }
+        )
+    return signals
 
 
 def _project_has_document_types(

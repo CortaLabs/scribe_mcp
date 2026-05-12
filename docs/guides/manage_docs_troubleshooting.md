@@ -54,6 +54,32 @@ Canonical research path guidance:
 - `research/INDEX.md` is refreshed via managed lifecycle paths.
 - Noncanonical paths and stale/orphan/unindexed docs should be treated as warning conditions, not "done".
 
+## Changelog and Reconciliation Troubleshooting
+
+Minimal model:
+- Project `CHANGELOG.md` is the curated authored source.
+- `.scribe/docs/GLOBAL_CHANGELOG.md` is derived from accepted project entries.
+- Accepted entries require `entry_id`, `entry_status`, `summary`, and `evidence_refs`.
+- `entry_id` format is `<yyyymmdd>:<slug>`, and entry identity uses `(project_slug, entry_id)`.
+
+If global output is missing or drifted:
+1. Run `quality_check` and fix blocking accepted-entry warnings.
+2. Run `preview_reconciliation` to inspect missing, changed, duplicate, or orphaned states.
+3. Run `apply_global_changelog` only after preview looks correct.
+
+If lifecycle status looks contradictory:
+1. Repair narrative-doc lifecycle metadata with `frontmatter_update`.
+2. Re-run `quality_check` and confirm warnings clear.
+
+Version/context clarifications:
+- Context observation is advisory only (manual metadata -> `pyproject.toml` -> git fallback -> `unknown`).
+- Unknown/missing context is valid and non-blocking.
+- Scribe does not enforce SemVer, auto-bump versions, or perform hidden release management.
+
+Discoverability boundaries:
+- Keep research artifacts in `research/INDEX.md`.
+- Do not force synthesis/review/project-level docs into research indexing; those belong to project-level artifact health/quality surfacing.
+
 ## Quick Diagnosis
 
 **Common symptoms and immediate checks:**

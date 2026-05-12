@@ -14,6 +14,7 @@ include docs/GLOBAL_DEPLOYMENT_GUIDE.md
 include docs/STARTUP_PROBE_CONTRACT.md
 include docs/next_steps.md
 include deploy/README.md
+include skills/scribe-integration/SKILL.md
 include docs/examples/mcp.json.example
 include docs/examples/opencode.json.example
 include docs/guides/LIVE_MCP_IMPACT_REPORT_2026-04-17.md

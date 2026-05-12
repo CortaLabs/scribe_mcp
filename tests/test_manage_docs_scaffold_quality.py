@@ -189,3 +189,39 @@ def test_noncanonical_warning_for_nested_research_path_is_actionable(tmp_path: P
     noncanonical = [w for w in warnings if w.get("code") == "SCF_NONCANONICAL_LOCATION"]
     assert noncanonical
     assert "not in canonical flat research placement" in str(noncanonical[0].get("message"))
+
+
+def test_lifecycle_mismatch_body_ready_with_frontmatter_draft_blocks():
+    text = """---
+status: draft
+---
+Status: ready
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="SPEC")
+    codes = _codes(warnings)
+    assert "SCF_LIFECYCLE_STATUS_MISMATCH" in codes
+
+
+def test_lifecycle_mismatch_body_blocked_with_frontmatter_ready_blocks():
+    text = """---
+status: ready
+---
+Status: blocked
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="SPEC")
+    codes = _codes(warnings)
+    assert "SCF_LIFECYCLE_STATUS_MISMATCH" in codes
+
+
+def test_lifecycle_mismatch_false_positive_guards_for_prose_quotes_and_fences():
+    text = """---
+status: draft
+---
+ready for discussion
+> Status: ready
+```md
+Status: blocked
+```
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="SPEC")
+    assert "SCF_LIFECYCLE_STATUS_MISMATCH" not in _codes(warnings)

@@ -28,7 +28,7 @@ from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
 from scribe_mcp.utils.error_handler import sanitize_error_message
-from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality
+from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
 import re
 
 # Setup logging for doc management operations
@@ -811,6 +811,10 @@ async def apply_doc_change(
                 )
 
         allow_frontmatter_create = action in {"frontmatter_update", "replace_section", "append", "replace_range", "replace_text", "apply_patch", "normalize_headers", "generate_toc", "validate_crosslinks", "create_doc"}
+        frontmatter_metadata = metadata
+        if action == "status_update" and isinstance(metadata, dict) and "status" in metadata:
+            frontmatter_metadata = dict(metadata)
+            frontmatter_metadata.pop("status", None)
 
         try:
             updated_text, frontmatter_extra, frontmatter_line_count = _apply_frontmatter_pipeline(
@@ -819,7 +823,7 @@ async def apply_doc_change(
                 doc_name=doc_name,
                 doc_category=doc_category,
                 project=project,
-                metadata=metadata,
+                metadata=frontmatter_metadata,
                 date_str=date_str,
                 action=action,
                 actor_id=actor_id,
@@ -985,10 +989,12 @@ async def apply_doc_change(
             extra={
                 **(extra if "extra" in locals() else {}),
                 **frontmatter_extra,
-                "scaffold_quality_warnings": analyze_scaffold_quality(
+                "scaffold_quality_warnings": collect_managed_doc_quality_warnings(
                     text=updated_text,
                     metadata=metadata if isinstance(metadata, dict) else None,
                     doc_name=doc_name,
+                    path=doc_path,
+                    project=project,
                 ),
                 "document_info": document_info,
             },
@@ -2835,6 +2841,12 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     done_states = {"done", "completed", "complete", "true", "yes", "checked", "finished"}
     pending_states = {"pending", "todo", "not done", "open", "incomplete", "undone"}
 
+    def html_id_pattern(section_id: str) -> re.Pattern[str]:
+        return re.compile(
+            r"<!--\s*id\s*:\s*" + re.escape(section_id) + r"\s*-->",
+            re.IGNORECASE,
+        )
+
     def resolve_token(existing_line: Optional[str]) -> str:
         if desired in done_states:
             return "[x]"
@@ -2852,7 +2864,7 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
             label_text = trimmed[len("- [x] "):]
         else:
             return None
-        label_text = re.sub(r"\s*<!--\s*ID:\s*[^>]+-->\s*$", "", label_text).rstrip()
+        label_text = re.sub(r"\s*<!--\s*id\s*:\s*[^>]+-->\s*$", "", label_text, flags=re.IGNORECASE).rstrip()
         return label_text.split(" | ", 1)[0].strip()
 
     def update_checklist_line(line: str, token: str) -> str:
@@ -2862,7 +2874,7 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
             new_line = line.replace("- [ ]", f"- {token}", 1)
 
         trailing_anchor = ""
-        anchor_match = re.search(r"\s*(<!--\s*ID:\s*[^>]+-->)\s*$", new_line)
+        anchor_match = re.search(r"\s*(<!--\s*id\s*:\s*[^>]+-->)\s*$", new_line, flags=re.IGNORECASE)
         if anchor_match:
             trailing_anchor = " " + anchor_match.group(1)
             new_line = new_line[: anchor_match.start()].rstrip()
@@ -2882,19 +2894,20 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     section_end_idx: int = len(lines)
 
     if section_marker:
+        inline_id_pattern = html_id_pattern(section)
         for idx, line in enumerate(lines):
             stripped = line.strip()
             if stripped == section_marker:
                 section_start_idx = idx
                 break
-            if section_marker in line:
+            if section_marker in line or inline_id_pattern.search(line):
                 inline_target_idx = idx
                 break
 
         if section_start_idx is not None:
             for idx in range(section_start_idx + 1, len(lines)):
                 stripped = lines[idx].strip()
-                if stripped.startswith("<!-- ID:") and stripped != section_marker:
+                if re.match(r"<!--\s*id\s*:", stripped, flags=re.IGNORECASE) and stripped != section_marker:
                     section_end_idx = idx
                     break
         elif inline_target_idx is None and not allow_append:

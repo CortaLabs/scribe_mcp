@@ -184,7 +184,9 @@ async def test_project_health_archive_preview_classifies_legacy_docs_lane(tmp_pa
     with _isolated_server(state_manager, project_root=project_root):
         result = await manage_docs(action="project_health", metadata={"limit": 10}, dry_run=True)
 
-    archive = ((result.get("organization_digest") or {}).get("status_sections") or {}).get("archive") or {}
+    status_sections = (result.get("organization_digest") or {}).get("status_sections") or {}
+    assert (status_sections.get("dev_plan_roots") or {}).get("status") == "compatibility_present"
+    archive = status_sections.get("archive") or {}
     preview_groups = archive.get("preview_groups") or []
     assert preview_groups
     assert all(group.get("root_kind") == "legacy" for group in preview_groups)
@@ -339,6 +341,49 @@ async def test_rehome_doc_registers_unowned_repo_root_research_doc_on_move(tmp_p
     assert verification["registry_mapping"]["source_mapping_removed"] is True
     assert verification["registry_mapping"]["target_mapping_written"] is True
 
+
+@pytest.mark.asyncio
+async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_path(tmp_path: Path) -> None:
+    project_root = tmp_path / "cleanup_repo_rehome_same_project_research"
+    project = _project_payload(project_root, "active_project")
+    docs_dir = Path(project["docs_dir"])
+    source_doc_path = docs_dir / "RESEARCH_CHANGELOG_UX_AGENT_CONTRACT_MAAT.md"
+    source_doc_path.write_text("# Research\n\nNoncanonical root research doc.\n", encoding="utf-8")
+    project["docs"]["RESEARCH_CHANGELOG_UX_AGENT_CONTRACT_MAAT"] = str(source_doc_path)
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root):
+        result = await manage_docs(
+            action="rehome_doc",
+            doc="RESEARCH_CHANGELOG_UX_AGENT_CONTRACT_MAAT",
+            target_dir="research",
+            metadata={"target_project": project["name"]},
+            dry_run=False,
+        )
+
+    assert result["ok"] is True, result
+    target_path = Path(result["target_path"])
+    expected_path = docs_dir / "research" / "RESEARCH_CHANGELOG_UX_AGENT_CONTRACT_MAAT.md"
+    assert target_path == expected_path
+    assert target_path.exists()
+    assert not source_doc_path.exists()
+    assert result["target_path"] != str(source_doc_path)
+
+    with _isolated_server(state_manager, project_root=project_root):
+        quality = await manage_docs(
+            action="quality_check",
+            doc="RESEARCH_CHANGELOG_UX_AGENT_CONTRACT_MAAT",
+            project=project["name"],
+            dry_run=True,
+        )
+
+    assert quality["ok"] is True, quality
+    warning_codes = {item.get("code") for item in quality.get("warnings", [])}
+    assert "SCF_NONCANONICAL_LOCATION" not in warning_codes
+    assert "SCF_DOC_UNINDEXED" not in warning_codes
 
 @pytest.mark.asyncio
 async def test_manage_docs_supported_actions_manifest_surfaces_cleanup_actions(tmp_path: Path) -> None:

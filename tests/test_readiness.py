@@ -52,7 +52,8 @@ def test_readiness_summary_counts_align_with_project_health_shape() -> None:
     summary = build_readiness_summary(current_phase=None, managed_doc_quality=managed, log_signals=signals).to_dict()
 
     assert summary["managed_doc_quality"]["readiness_blocker_count"] == 2
-    assert summary["warning_count"] == 4
+    assert summary["log_friction"]["status"] == "advisory"
+    assert summary["warning_count"] == 3
     assert summary["blocker_count"] == 2
 
 
@@ -86,3 +87,20 @@ def test_collect_managed_doc_quality_filters_future_phase_index_warning(tmp_path
     doc = quality["documents"][0]
     assert "SCF_INDEX_STALE" in doc["warning_codes"]
     assert "SCF_INDEX_STALE" not in doc["readiness_blocker_codes"]
+
+
+def test_readiness_includes_lifecycle_status_mismatch_as_blocker(tmp_path: Path) -> None:
+    spec = tmp_path / "SPEC.md"
+    spec.write_text("---\nstatus: draft\n---\n\nStatus: ready\n", encoding="utf-8")
+
+    project = {
+        "docs": {"spec": str(spec)},
+        "name": "demo",
+        "root": str(tmp_path),
+    }
+    quality = collect_managed_doc_quality_state(project)
+
+    assert quality["readiness_blocker_count"] >= 1
+    doc = quality["documents"][0]
+    assert "SCF_LIFECYCLE_STATUS_MISMATCH" in doc["warning_codes"]
+    assert "SCF_LIFECYCLE_STATUS_MISMATCH" in doc["readiness_blocker_codes"]

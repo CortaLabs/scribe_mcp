@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from scribe_mcp import server as server_module
+from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
+from scribe_mcp.tools import manage_docs as manage_docs_module
 from scribe_mcp.tools.manage_docs import manage_docs
 
 
@@ -24,12 +27,17 @@ def _isolated_server(state_manager, project_root=None):
         "state_manager": server_module.state_manager,
         "storage_backend": server_module.storage_backend,
     }
+    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
     orig_exec_ctx = getattr(server_module, "get_execution_context", None)
     orig_agent_id = getattr(server_module, "get_agent_identity", None)
 
     server_module.state_manager = state_manager
     server_module.storage_backend = None
-    server_module.get_execution_context = lambda: None
+    server_module.get_execution_context = lambda: SimpleNamespace(
+        mode="project",
+        session_id="checklist-test-session",
+        stable_session_id="checklist-test-session",
+    )
     server_module.get_agent_identity = lambda: None
 
     # Patch repo-scoping to accept the test project root.
@@ -39,6 +47,19 @@ def _isolated_server(state_manager, project_root=None):
     fake_config = RepoConfig(repo_slug="test", repo_root=fake_root)
 
     try:
+        async def _prepare_context_stub(**kwargs):
+            state = await state_manager.load()
+            current_project = state.get_project(state.current_project) if state.current_project else None
+            return LoggingContext(
+                tool_name="manage_docs",
+                project=current_project,
+                recent_projects=list(getattr(state, "recent_projects", []) or []),
+                state_snapshot={},
+                reminders=[],
+                resolution_source="session_binding",
+            )
+
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
         with patch(
             "scribe_mcp.config.repo_config.get_current_repo_config",
             return_value=(fake_root, fake_config),
@@ -51,6 +72,7 @@ def _isolated_server(state_manager, project_root=None):
             server_module.get_execution_context = orig_exec_ctx
         if orig_agent_id is not None:
             server_module.get_agent_identity = orig_agent_id
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
 
 
 async def _setup_project(tmp_path: Path) -> dict:
@@ -223,3 +245,38 @@ async def test_status_update_frontmatter_intent_returns_exact_mismatch_code(tmp_
         error = result.get("error", "")
         assert "frontmatter_update" in error
         assert "metadata.frontmatter" in error
+
+
+@pytest.mark.asyncio
+async def test_status_update_targets_lowercase_inline_item_id(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    checklist_path = Path(project["docs"]["checklist"])
+    checklist_path.write_text(
+        "\n".join(
+            [
+                "# Checklist",
+                "- [ ] <!-- id: p4-task-3 --> BLOCKED: Final quality gate pending.",
+                "- [ ] <!-- id: final-gate-1 --> Final review pending.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="status_update",
+            doc="checklist",
+            section="p4-task-3",
+            metadata={"status": "done", "proof": "live project_health pass"},
+            dry_run=True,
+        )
+
+    assert result.get("ok") is True, result
+    diff = str(result.get("diff") or "")
+    assert "- [x] <!-- id: p4-task-3 --> BLOCKED: Final quality gate pending. | proof=live project_health pass" in diff
+    assert "+- [x] <!-- id: final-gate-1 -->" not in diff
+    assert "-- [ ] <!-- id: final-gate-1 -->" not in diff
+    assert "\n\n<!-- ID: p4-task-3 -->\n" not in diff

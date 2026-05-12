@@ -161,6 +161,14 @@ async def _gather_project_inventory(project: Dict[str, Any]) -> Dict[str, Any]:
             "modified": False
         }
 
+    changelog_file = dev_plan_dir / "CHANGELOG.md"
+    if changelog_file.exists():
+        result["docs"]["changelog"] = {
+            "exists": True,
+            "lines": default_formatter._get_doc_line_count(changelog_file),
+            "modified": False
+        }
+
     # Progress log
     prog_file = Path(progress_log)
     if prog_file.exists():
@@ -629,6 +637,7 @@ async def set_project(
         "architecture": str(docs_dir / "ARCHITECTURE_GUIDE.md"),
         "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
         "checklist": str(docs_dir / "CHECKLIST.md"),
+        "changelog": str(docs_dir / "CHANGELOG.md"),
         "progress_log": str(resolved_log),
     }
 
@@ -639,7 +648,7 @@ async def set_project(
     if docs_were_generated:
         from scribe_mcp.utils.integrity import compute_file_hash
         baseline_hashes = {}
-        for doc_type in ["architecture", "phase_plan", "checklist"]:
+        for doc_type in ["architecture", "phase_plan", "checklist", "changelog"]:
             doc_path = docs.get(doc_type)
             if doc_path and Path(doc_path).exists():
                 try:
@@ -1317,6 +1326,7 @@ async def _ensure_documents(
         "architecture": docs_dir / "ARCHITECTURE_GUIDE.md",
         "phase_plan": docs_dir / "PHASE_PLAN.md",
         "checklist": docs_dir / "CHECKLIST.md",
+        "changelog": docs_dir / "CHANGELOG.md",
         "progress_log": docs_dir / "PROGRESS_LOG.md",
         "doc_log": docs_dir / "DOC_LOG.md",
         "security_log": docs_dir / "SECURITY_LOG.md",
@@ -1341,6 +1351,23 @@ async def _ensure_documents(
             "status": "docs_already_exist",
             "message": f"All documentation files already exist for project '{name}'"
         }
+
+    changelog_path = docs_dir / "CHANGELOG.md"
+    changelog_template = (
+        "# Project Changelog\n\n"
+        "Use one section per curated project outcome.\n\n"
+        "## Entry Template\n"
+        "- `entry_id`: <yyyymmdd>:<slug>\n"
+        "- `entry_status`: draft|accepted|superseded\n"
+        "- `title`: <one concise outcome title>\n"
+        "- `summary`: <short human-readable outcome summary>\n"
+        "- `evidence_refs`:\n"
+        "  - <path-or-proof-reference>\n"
+    )
+
+    if (overwrite or not changelog_path.exists() or changelog_path.stat().st_size == 0):
+        changelog_path.parent.mkdir(parents=True, exist_ok=True)
+        changelog_path.write_text(changelog_template, encoding="utf-8")
 
     # Generate missing files (or all if overwriting)
     from scribe_mcp.tools import generate_doc_templates as doc_templates

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.2.18"
+version = "2.2.19"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -99,6 +99,9 @@ include = ["scribe_mcp*"]
 "share/doc/scribe-mcp/examples" = [
   "docs/examples/mcp.json.example",
   "docs/examples/opencode.json.example",
+]
+"share/doc/scribe-mcp/skills/scribe-integration" = [
+  "skills/scribe-integration/SKILL.md",
 ]
 "share/doc/scribe-mcp/guides" = [
   "docs/guides/LIVE_MCP_IMPACT_REPORT_2026-04-17.md",

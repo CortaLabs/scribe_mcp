@@ -14,7 +14,7 @@ The targeted regressions are fixed in live MCP use.
 
 The remaining issues observed during verification are runtime noise, not failures of the targeted fix:
 
-- bridge bootstrap warns that `council_mcp` does not define a runtime plugin
+- bridge bootstrap warns when a configured peer package does not define a runtime plugin
 - some Postgres reminder cooldown queries are slow
 - pytest teardown still emits occasional asyncpg cleanup warnings
 

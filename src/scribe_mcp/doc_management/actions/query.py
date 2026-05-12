@@ -7,6 +7,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from scribe_mcp.doc_management.changelog import (
+    parse_global_changelog_entries,
+    preview_global_reconciliation,
+    reconcile_global_changelog,
+    render_global_changelog,
+)
 from scribe_mcp.utils.estimator import PaginationCalculator
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.utils.slug import slugify_project_name
@@ -196,6 +202,14 @@ async def handle_query_actions(
 
     if action == "preview_reconciliation":
         return await _handle_preview_reconciliation(
+            project,
+            metadata=metadata if isinstance(metadata, dict) else {},
+            helper=helper,
+            context=context,
+        )
+
+    if action == "apply_global_changelog":
+        return await _handle_apply_global_changelog(
             project,
             metadata=metadata if isinstance(metadata, dict) else {},
             helper=helper,
@@ -525,6 +539,15 @@ async def _handle_preview_reconciliation(
     helper: Any,
     context: Any,
 ) -> Dict[str, Any]:
+    preview_type = str(metadata.get("preview_type") or "").strip().lower()
+    if preview_type == "changelog":
+        return await _handle_changelog_reconciliation_preview(
+            project=project,
+            metadata=metadata,
+            helper=helper,
+            context=context,
+        )
+
     docs_mapping = project.get("docs") or {}
     phase_doc_name = _resolve_planning_doc_name(
         project=project,
@@ -661,3 +684,94 @@ async def _handle_preview_reconciliation(
         },
     }
     return helper.apply_context_payload(response, context)
+
+
+async def _handle_changelog_reconciliation_preview(
+    project: Dict[str, Any],
+    metadata: Dict[str, Any],
+    helper: Any,
+    context: Any,
+) -> Dict[str, Any]:
+    docs_mapping = project.get("docs") or {}
+    changelog_doc_name = _resolve_registered_doc_name(project, str(metadata.get("changelog_doc_name") or "CHANGELOG"))
+    if changelog_doc_name is None:
+        return helper.apply_context_payload(
+            helper.error_response("preview_reconciliation changelog mode requires a registered CHANGELOG document."),
+            context,
+        )
+
+    changelog_path = Path(str(docs_mapping.get(changelog_doc_name)))
+    global_path = Path(str(project.get("root") or "") ) / ".scribe" / "docs" / "GLOBAL_CHANGELOG.md"
+
+    if not changelog_path.exists():
+        return helper.apply_context_payload(helper.error_response(f"Changelog path '{changelog_path}' does not exist."), context)
+
+    project_text = await asyncio.to_thread(changelog_path.read_text, encoding="utf-8")
+    global_text = ""
+    if global_path.exists():
+        global_text = await asyncio.to_thread(global_path.read_text, encoding="utf-8")
+
+    project_slug = slugify_project_name(str(project.get("name") or ""))
+    preview = preview_global_reconciliation(
+        project_slug=project_slug,
+        project_changelog_text=project_text,
+        global_changelog_text=global_text,
+    )
+    preview.update(
+        {
+            "ok": True,
+            "action": "preview_reconciliation",
+            "preview_type": "changelog",
+            "project_changelog_doc": changelog_doc_name,
+            "project_changelog_path": str(changelog_path),
+            "global_changelog_path": str(global_path),
+        }
+    )
+    return helper.apply_context_payload(preview, context)
+
+
+async def _handle_apply_global_changelog(
+    project: Dict[str, Any],
+    metadata: Dict[str, Any],
+    helper: Any,
+    context: Any,
+) -> Dict[str, Any]:
+    docs_mapping = project.get("docs") or {}
+    changelog_doc_name = _resolve_registered_doc_name(project, str(metadata.get("changelog_doc_name") or "CHANGELOG"))
+    if changelog_doc_name is None:
+        return helper.apply_context_payload(
+            helper.error_response("apply_global_changelog requires a registered CHANGELOG document."),
+            context,
+        )
+    changelog_path = Path(str(docs_mapping.get(changelog_doc_name)))
+    global_path = Path(str(project.get("root") or "")) / ".scribe" / "docs" / "GLOBAL_CHANGELOG.md"
+    if not changelog_path.exists():
+        return helper.apply_context_payload(helper.error_response(f"Changelog path '{changelog_path}' does not exist."), context)
+    project_text = await asyncio.to_thread(changelog_path.read_text, encoding="utf-8")
+    project_slug = slugify_project_name(str(project.get("name") or ""))
+    previous_text = ""
+    if global_path.exists():
+        previous_text = await asyncio.to_thread(global_path.read_text, encoding="utf-8")
+    rendered = reconcile_global_changelog(
+        project_slug=project_slug,
+        project_changelog_text=project_text,
+        existing_global_changelog_text=previous_text,
+    )
+    writes_performed = rendered != previous_text
+    if writes_performed:
+        await asyncio.to_thread(global_path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(global_path.write_text, rendered, encoding="utf-8")
+    applied_entries = parse_global_changelog_entries(rendered, default_source_project=project_slug)
+    return helper.apply_context_payload(
+        {
+            "ok": True,
+            "action": "apply_global_changelog",
+            "project_changelog_doc": changelog_doc_name,
+            "project_changelog_path": str(changelog_path),
+            "global_changelog_path": str(global_path),
+            "writes_performed": writes_performed,
+            "applied_entry_count": len(applied_entries),
+            "applied_source_keys": [list(entry.source_key) for entry in applied_entries],
+        },
+        context,
+    )

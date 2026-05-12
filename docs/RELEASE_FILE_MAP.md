@@ -1,7 +1,7 @@
 # Release File Map
 
-Baseline date: **2026-05-05**
-Coverage: **v2.2.17 public release line**
+Baseline date: **2026-05-12**
+Coverage: **v2.2.19 public release line**
 
 ## Table of contents
 
@@ -9,6 +9,7 @@ Coverage: **v2.2.17 public release line**
 - [Public contract anchors](#public-contract-anchors)
 - [Shipped package source](#shipped-package-source)
 - [Public support material](#public-support-material)
+- [Public skills](#public-skills)
 - [Local/operator-only paths](#localoperator-only-paths)
 - [Generated output](#generated-output)
 
@@ -27,7 +28,7 @@ Coverage: **v2.2.17 public release line**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.17` and CLI scripts. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.19` and CLI scripts. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -49,13 +50,6 @@ Coverage: **v2.2.17 public release line**
 | `src/scribe_mcp/doc_management/**` | Shipped package source | Document management runtime. |
 | `src/scribe_mcp/bridges/**` | Shipped package source | Bridge/plugin runtime framework. |
 | `src/scribe_mcp/config/**` | Shipped package source | Runtime settings and config helpers. |
-| `src/scribe_mcp/council_templates/__init__.py` | Shipped package source | Compatibility shim retained in this baseline. |
-
-### Optional package (`scribe-council`)
-
-| Path | Classification | Notes |
-| --- | --- | --- |
-| `packages/scribe_council/pyproject.toml` | Shipped package source | Defines optional package at `2.2.17`. |
 
 ## Versioning contract
 
@@ -63,9 +57,7 @@ Coverage: **v2.2.17 public release line**
 | --- | --- |
 | Release-bound pushes to `main` must include a fresh package version in `pyproject.toml`. | `main` auto-triggers PyPI publishing for package/release-surface changes. |
 | Compatibility docs must be updated in the same change as the version bump. | Prevents repo docs from lagging the published package contract. |
-| If `scribe-council` stays lockstep with `scribe-mcp`, bump `packages/scribe_council/pyproject.toml` too. | Keeps the optional package dependency contract truthful. |
-| `packages/scribe_council/src/scribe_council/**` | Shipped package source | Optional template bundle and assets. |
-| `packages/scribe_council/src/scribe_council/council_templates/**` | Shipped package source | Optional `council.templates` provider surface. |
+| Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
 
 ## Public support material
 
@@ -73,8 +65,15 @@ Coverage: **v2.2.17 public release line**
 | --- | --- | --- |
 | `docs/**` | Public support material | User-facing docs and guides. |
 | `docs/examples/**` | Public support material | Public example configs and snippets. |
+| `skills/**` | Public support material | Public skills copied from generated output when intentionally promoted. |
 | `tests/**` | Public support material | Verification material (not runtime state). |
 | `deploy/**` | Public support material | Deployment references. |
+
+## Public skills
+
+| Path | Classification | Notes |
+| --- | --- | --- |
+| `skills/scribe-integration/SKILL.md` | Public support material | Public copy of the generated Scribe integration skill. The template source is not published here. |
 
 ## Local/operator-only paths
 
@@ -83,6 +82,7 @@ Coverage: **v2.2.17 public release line**
 | `.scribe/**` | Local/operator-only | Local runtime state, logs, and data. |
 | Repo-root operator overlays/config files | Local/operator-only | Workstation convenience; not public contract. |
 | Agent/tooling workspace directories | Local/operator-only | Local authoring/runtime aids only. |
+| Generated authoring/runtime overlays | Local/operator-only / generated | Not public Scribe release truth unless a future exported copy is deliberately tracked. |
 
 ## Generated output
 
