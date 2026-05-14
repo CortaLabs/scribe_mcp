@@ -1,7 +1,7 @@
 # Release Surface
 
 Baseline date: **2026-05-12**
-Applies to: **v2.2.19 public release line**
+Applies to: **v2.2.20 public release line**
 
 ## Public contract
 

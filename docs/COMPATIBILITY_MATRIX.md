@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
 Baseline date: **2026-05-12**
-Release framing: **v2.2.19 compatibility baseline**
+Release framing: **v2.2.20 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.2.19 documentation wave:
+This baseline keeps compatibility posture for the 2.2.20 documentation wave:
 
-- **Core package version:** `scribe-mcp==2.2.19`
+- **Core package version:** `scribe-mcp==2.2.20`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,7 +19,7 @@ This baseline keeps compatibility posture for the 2.2.19 documentation wave:
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.2.19` | Supported | Public Scribe install for local/core usage. |
+| `2.2.20` | Supported | Public Scribe install for local/core usage. |
 
 ## Not supported by this baseline
 
@@ -32,7 +32,7 @@ This baseline keeps compatibility posture for the 2.2.19 documentation wave:
 
 ## What is shipped
 
-### `scribe-mcp 2.2.19`
+### `scribe-mcp 2.2.20`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`

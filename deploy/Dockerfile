@@ -11,9 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 COPY pyproject.toml ./
+COPY MANIFEST.in ./
 COPY README.md LICENSE ./
 COPY docs/ ./docs/
 COPY deploy/README.md ./deploy/README.md
+COPY skills/scribe-integration/SKILL.md ./skills/scribe-integration/SKILL.md
 COPY src/ ./src/
 
 # Install package runtime deps (including PostgreSQL driver from core deps).

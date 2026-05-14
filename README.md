@@ -44,7 +44,7 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.2.19` focuses on changelog/version-aware project memory and stricter managed-doc UX:
+`2.2.20` focuses on changelog/version-aware project memory and stricter managed-doc UX:
 
 - Each Scribe project now gets a curated `CHANGELOG.md` alongside the planning docs; accepted entries reconcile into a derived `.scribe/docs/GLOBAL_CHANGELOG.md`.
 - Changelog entry identity is local and simple: `entry_id=<yyyymmdd>:<slug>`, deduped globally by `(project_slug, entry_id)`.

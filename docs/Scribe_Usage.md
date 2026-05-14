@@ -1,6 +1,6 @@
 # Scribe MCP usage guide
 
-Release line: `2.2.19`
+Release line: `2.2.20`
 Updated: `2026-05-12`
 
 This guide is about day-to-day usage once Scribe is installed.
@@ -15,7 +15,7 @@ Install behavior reminder for day-to-day operators:
 - use `scribe install --commit --yes` for approved non-interactive commit flows
 - use `--project-codex` only when you explicitly want Codex projection after core install
 
-In `2.2.19`, managed-doc hygiene includes changelog/version memory: use `quality_check` before handoff, author accepted outcomes in project `CHANGELOG.md`, preview global reconciliation before applying it, and treat version context as observed evidence rather than release policy.
+In `2.2.20`, managed-doc hygiene includes changelog/version memory: use `quality_check` before handoff, author accepted outcomes in project `CHANGELOG.md`, preview global reconciliation before applying it, and treat version context as observed evidence rather than release policy.
 
 ## The short mental model
 

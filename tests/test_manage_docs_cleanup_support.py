@@ -385,6 +385,37 @@ async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_pa
     assert "SCF_NONCANONICAL_LOCATION" not in warning_codes
     assert "SCF_DOC_UNINDEXED" not in warning_codes
 
+
+@pytest.mark.asyncio
+async def test_rehome_doc_target_dir_never_creates_nested_scribe_tree(tmp_path: Path) -> None:
+    project_root = tmp_path / "cleanup_repo_rehome_no_nested_scribe"
+    project = _project_payload(project_root, "active_project")
+    docs_dir = Path(project["docs_dir"])
+    source_doc_path = docs_dir / "RESEARCH_NESTED_SCRIBE_GUARD.md"
+    source_doc_path.write_text("# Research\n\nGuard nested .scribe paths.\n", encoding="utf-8")
+    project["docs"]["RESEARCH_NESTED_SCRIBE_GUARD"] = str(source_doc_path)
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root):
+        result = await manage_docs(
+            action="rehome_doc",
+            doc="RESEARCH_NESTED_SCRIBE_GUARD",
+            target_dir=".scribe/docs/dev_plans/active_project/research",
+            metadata={"target_project": project["name"]},
+            dry_run=True,
+        )
+
+    assert result["ok"] is True, result
+    target_path = Path(result["target_path"])
+    expected_path = docs_dir / "research" / "RESEARCH_NESTED_SCRIBE_GUARD.md"
+    assert target_path == expected_path
+    assert ".scribe" not in target_path.relative_to(docs_dir).parts
+    assert f"{docs_dir}/.scribe" not in str(target_path)
+
+
 @pytest.mark.asyncio
 async def test_manage_docs_supported_actions_manifest_surfaces_cleanup_actions(tmp_path: Path) -> None:
     project_root = tmp_path / "cleanup_repo_manifest"

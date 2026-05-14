@@ -238,6 +238,32 @@ def _default_rehome_relative_path(source_path: Path, project_root: Path) -> Path
     return Path(source_path.name)
 
 
+def _coerce_rehome_relative_path(
+    candidate: Path,
+    *,
+    target_docs_dir: Path,
+    target_project_root: Path,
+) -> Path:
+    """Keep caller-provided rehome targets relative to the target docs root."""
+    if candidate.is_absolute():
+        try:
+            return candidate.expanduser().resolve().relative_to(target_docs_dir)
+        except ValueError as exc:
+            raise ValueError(
+                "rehome_doc target path must stay within the target project's docs_dir."
+            ) from exc
+
+    if ".scribe" not in candidate.parts:
+        return candidate
+
+    try:
+        return (target_project_root / candidate).resolve().relative_to(target_docs_dir)
+    except ValueError as exc:
+        raise ValueError(
+            "rehome_doc target paths must be docs-relative; nested .scribe paths are not allowed."
+        ) from exc
+
+
 def _case_registry_method(storage_backend: Any) -> Optional[Callable[..., Any]]:
     for method_name in (
         "upsert_case_registry_record",
@@ -1085,6 +1111,7 @@ async def _handle_rehome_doc(
     else:
         target_progress = Path(str(target_project.get("progress_log") or "")).expanduser()
         target_docs_dir = target_progress.parent.resolve()
+    target_project_root = Path(str(target_project.get("root") or project_root)).expanduser().resolve()
     source_path = Path(source_path_str).expanduser().resolve()
 
     try:
@@ -1103,12 +1130,47 @@ async def _handle_rehome_doc(
         relative_path = source_path.relative_to(source_docs_dir)
     except ValueError:
         relative_path = _default_rehome_relative_path(source_path, project_root)
+    if ".scribe" in relative_path.parts:
+        relative_path = _default_rehome_relative_path(source_path, project_root)
 
     target_relative_path = metadata_mapping.get("target_relative_path")
-    if isinstance(target_relative_path, str) and target_relative_path.strip():
-        relative_path = Path(target_relative_path.strip())
-    elif requested_target_dir:
-        relative_path = Path(requested_target_dir) / source_path.name
+    try:
+        if isinstance(target_relative_path, str) and target_relative_path.strip():
+            relative_path = _coerce_rehome_relative_path(
+                Path(target_relative_path.strip()),
+                target_docs_dir=target_docs_dir,
+                target_project_root=target_project_root,
+            )
+        elif requested_target_dir:
+            requested_dir = _coerce_rehome_relative_path(
+                Path(requested_target_dir),
+                target_docs_dir=target_docs_dir,
+                target_project_root=target_project_root,
+            )
+            relative_path = requested_dir / source_path.name
+        else:
+            relative_path = _coerce_rehome_relative_path(
+                relative_path,
+                target_docs_dir=target_docs_dir,
+                target_project_root=target_project_root,
+            )
+    except ValueError as exc:
+        return helper.apply_context_payload(
+            helper.error_response(
+                str(exc),
+                extra={"target_docs_dir": str(target_docs_dir)},
+            ),
+            context,
+        )
+
+    if ".scribe" in relative_path.parts:
+        return helper.apply_context_payload(
+            helper.error_response(
+                "rehome_doc target paths must be docs-relative; nested .scribe paths are not allowed.",
+                extra={"target_relative_path": str(relative_path), "target_docs_dir": str(target_docs_dir)},
+            ),
+            context,
+        )
 
     target_path = (target_docs_dir / relative_path).resolve()
     overwrite = bool(metadata_mapping.get("overwrite"))

@@ -1,6 +1,6 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.2.19`
+Release line: `2.2.20`
 Updated: `2026-05-12`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
@@ -14,7 +14,7 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.2.19` adds version-aware changelog memory to the governed-doc loop:
+Release `2.2.20` adds version-aware changelog memory to the governed-doc loop:
 
 - Project `CHANGELOG.md` is the curated source for accepted project outcomes.
 - `.scribe/docs/GLOBAL_CHANGELOG.md` is derived from accepted project entries through preview/apply reconciliation.
