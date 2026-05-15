@@ -195,6 +195,7 @@ async def test_project_health_marks_index_needs_attention_for_unindexed_doc_warn
         ],
         "readiness_blocker_count": 0,
         "total_warning_count": 1,
+        "readiness_blocker_counts_by_code": {"SCF_CHANGELOG_CURRENT_VERSION_MISSING": 1},
         "warnings": [
             {
                 "code": "SCF_DOC_UNINDEXED",
@@ -217,6 +218,10 @@ async def test_project_health_marks_index_needs_attention_for_unindexed_doc_warn
     status_sections = organization_digest.get("status_sections") or {}
     index_section = status_sections.get("index") or {}
     assert index_section.get("status") == "needs_attention"
+    derived = organization_digest.get("derived_signals") or []
+    release_signal = next(item for item in derived if item.get("signal") == "release_changelog_coverage_missing")
+    assert release_signal.get("active") is True
+    assert "preview_reconciliation" in str(release_signal.get("next_safe_action", ""))
 
 
 @pytest.mark.asyncio

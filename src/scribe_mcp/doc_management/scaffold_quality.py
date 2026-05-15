@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from scribe_mcp.utils.frontmatter import parse_frontmatter
-from scribe_mcp.doc_management.changelog import accepted_entries, is_valid_entry_id, parse_changelog_entries
+from scribe_mcp.doc_management.changelog import (
+    accepted_entries,
+    is_valid_entry_id,
+    parse_changelog_entries,
+    preview_current_release_coverage,
+)
 from scribe_mcp.doc_management.version_context import resolve_observed_context
 
 _READINESS_VALUES = {"ready", "done", "complete", "finished"}
@@ -31,6 +36,7 @@ DEFAULT_WARNING_POLICIES: Dict[str, Dict[str, Any]] = {
     "SCF_CHANGELOG_RAW_PROGRESS_DUMP": {"severity": "critical", "blocking": True},
     "SCF_CHANGELOG_AMBIGUOUS_BODY_STATUS": {"severity": "critical", "blocking": True},
     "SCF_CHANGELOG_ESCAPED_NEWLINES": {"severity": "critical", "blocking": True},
+    "SCF_CHANGELOG_CURRENT_VERSION_MISSING": {"severity": "critical", "blocking": True},
     "SCF_RESEARCH_CONTEXT_DRIFT": {"severity": "medium", "blocking": False},
 }
 
@@ -374,7 +380,7 @@ def collect_managed_doc_quality_warnings(
     if str(doc_name).strip().lower() == "changelog":
         warnings.extend(_research_context_drift_warnings(text=text, project=project))
     if str(doc_name).strip().lower() == "changelog":
-        warnings.extend(_changelog_warnings(text=text, doc_name=doc_name))
+        warnings.extend(_changelog_warnings(text=text, doc_name=doc_name, project=project))
     if path is None or not is_research_doc_target(doc_name, path):
         return warnings
     warnings.extend(_research_context_drift_warnings(text=text, project=project))
@@ -428,7 +434,7 @@ def _research_context_drift_warnings(*, text: str, project: Optional[Mapping[str
     return warnings
 
 
-def _changelog_warnings(*, text: str, doc_name: str) -> List[Dict[str, Any]]:
+def _changelog_warnings(*, text: str, doc_name: str, project: Optional[Mapping[str, Any]] = None) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
     escaped_newline_count = text.count("\\n")
     has_escaped_newline_sludge = escaped_newline_count >= 3 and any(
@@ -474,6 +480,30 @@ def _changelog_warnings(*, text: str, doc_name: str) -> List[Dict[str, Any]]:
             warnings.append(_warning("SCF_CHANGELOG_RAW_PROGRESS_DUMP", "Accepted changelog entry looks like a raw progress-log dump.", text, idx, "Curate a human-authored changelog summary instead of dumping log lines."))
         if re.search(r"(?im)^\s*status\s*:\s*accepted\s*$", entry.section_text):
             warnings.append(_warning("SCF_CHANGELOG_AMBIGUOUS_BODY_STATUS", "Accepted entry uses ambiguous body lifecycle text ('Status: accepted').", text, idx, "Use entry_status for changelog entry state and keep lifecycle status in frontmatter only."))
+
+    repo_root = Path(str((project or {}).get("root") or ".")).resolve()
+    coverage = preview_current_release_coverage(
+        project_changelog_text=text,
+        repo_root=repo_root,
+        pyproject_path=repo_root / "pyproject.toml",
+    )
+    if coverage.get("status") == "missing":
+        current = coverage.get("current_context") if isinstance(coverage.get("current_context"), Mapping) else {}
+        current_version = str(current.get("value") or "unknown")
+        warnings.append(
+            _warning(
+                "SCF_CHANGELOG_CURRENT_VERSION_MISSING",
+                f"Managed CHANGELOG is missing accepted coverage for current package version '{current_version}'.",
+                text or "\n",
+                0,
+                (
+                    "Add or update an accepted managed changelog entry for the current pyproject version; "
+                    f"set observed_context.source=pyproject and observed_context.value={current_version}. "
+                    'Then run manage_docs(action="preview_reconciliation", metadata={"preview_type": "changelog"}) '
+                    'and manage_docs(action="apply_global_changelog") before release closeout.'
+                ),
+            )
+        )
     return warnings
 
 

@@ -1,4 +1,9 @@
-from scribe_mcp.doc_management.changelog import accepted_entries, is_valid_entry_id, parse_changelog_entries
+from scribe_mcp.doc_management.changelog import (
+    accepted_entries,
+    is_valid_entry_id,
+    parse_changelog_entries,
+    preview_current_release_coverage,
+)
 
 
 def test_parse_changelog_entries_and_accept_filter() -> None:
@@ -59,3 +64,67 @@ def test_parse_observed_context_block() -> None:
     assert context["dirty"] is False
     assert context["observed_at"] == "2026-05-12T00:00:00Z"
     assert context["confidence"] == "exact"
+
+
+def test_preview_current_release_coverage_pass(tmp_path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "demo"\nversion = "1.2.3"\n', encoding="utf-8")
+    changelog = """# Project Changelog
+
+## Entry
+- `entry_id`: 20260512:covered
+- `entry_status`: accepted
+- `title`: Covered
+- `summary`: covered
+- `evidence_refs`:
+  - tests/doc_management/test_changelog_model.py
+- `observed_context`:
+  - `value`: 1.2.3
+  - `source`: pyproject
+"""
+    result = preview_current_release_coverage(
+        project_changelog_text=changelog,
+        repo_root=tmp_path,
+        pyproject_path=pyproject,
+    )
+    assert result["status"] == "pass"
+    assert result["matching_entry_ids"] == ["20260512:covered"]
+    assert result["writes_performed"] is False
+
+
+def test_preview_current_release_coverage_missing(tmp_path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "demo"\nversion = "1.2.3"\n', encoding="utf-8")
+    changelog = """# Project Changelog
+
+## Entry
+- `entry_id`: 20260512:not-covered
+- `entry_status`: accepted
+- `title`: Not covered
+- `summary`: not covered
+- `evidence_refs`:
+  - tests/doc_management/test_changelog_model.py
+- `observed_context`:
+  - `value`: 9.9.9
+  - `source`: pyproject
+"""
+    result = preview_current_release_coverage(
+        project_changelog_text=changelog,
+        repo_root=tmp_path,
+        pyproject_path=pyproject,
+    )
+    assert result["status"] == "missing"
+    assert result["matching_entry_ids"] == []
+    assert "observed_context.source=pyproject" in result["suggested_repair"]
+    assert result["writes_performed"] is False
+
+
+def test_preview_current_release_coverage_not_applicable_without_pyproject(tmp_path) -> None:
+    result = preview_current_release_coverage(
+        project_changelog_text="# Project Changelog\n",
+        repo_root=tmp_path,
+        pyproject_path=tmp_path / "missing.toml",
+    )
+    assert result["status"] == "not_applicable"
+    assert result["matching_entry_ids"] == []
+    assert result["writes_performed"] is False

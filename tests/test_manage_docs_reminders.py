@@ -498,3 +498,51 @@ async def test_quality_reminders_runtime_efficiency_budget_and_suppression(tmp_p
 
     suppressed_cats = {r.get("category") for r in suppressed}
     assert "runtime_budget_custom" not in suppressed_cats
+
+
+@pytest.mark.asyncio
+async def test_quality_reminders_emit_release_changelog_coverage_signal(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+
+    from scribe_mcp import reminders as reminders_module
+    from scribe_mcp.utils.reminder_engine import ReminderContext
+
+    with patch("scribe_mcp.reminders._resolve_reminder_storage", return_value=None):
+        reminders_module._reminder_engine = None
+        engine = reminders_module._get_engine()
+        context = ReminderContext(
+            tool_name="manage_docs",
+            project_name=project["name"],
+            project_root=project["root"],
+            agent_id="qa",
+            session_id=None,
+            total_entries=0,
+            minutes_since_log=None,
+            last_log_time=None,
+            docs_status={},
+            docs_changed=[],
+            current_phase="Phase 2",
+            session_age_minutes=None,
+            variables={
+                "readiness_summary": {
+                    "current_phase": "Phase 2",
+                    "managed_doc_quality": {
+                        "readiness_blocker_count": 1,
+                        "frontmatter_mismatch_count": 0,
+                        "stale_research_index_count": 0,
+                        "readiness_blocker_counts_by_code": {"SCF_CHANGELOG_CURRENT_VERSION_MISSING": 1},
+                    },
+                    "log_friction": {},
+                },
+                "quality_reminder_cooldown_minutes": 60,
+                "quality_reminder_categories": {"release_changelog_coverage": "release_changelog_coverage"},
+                "quality_reminder_suppress_codes": [],
+            },
+            operation_status="failure",
+        )
+        with patch.object(engine, "_should_show_reminder_async", return_value=True):
+            result = engine.to_dict_list(await reminders_module._quality_state_reminders(engine, context))
+
+    release = [r for r in result if r.get("category") == "release_changelog_coverage"]
+    assert release
+    assert "CHANGELOG coverage" in str(release[0].get("message", ""))

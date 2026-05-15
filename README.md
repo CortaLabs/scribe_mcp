@@ -44,13 +44,14 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.2.20` focuses on changelog/version-aware project memory and stricter managed-doc UX:
+`2.2.21` focuses on agent-safe reference provenance, scoped case identity, and preserve-first managed-doc metadata:
 
-- Each Scribe project now gets a curated `CHANGELOG.md` alongside the planning docs; accepted entries reconcile into a derived `.scribe/docs/GLOBAL_CHANGELOG.md`.
-- Changelog entry identity is local and simple: `entry_id=<yyyymmdd>:<slug>`, deduped globally by `(project_slug, entry_id)`.
-- Version context is observed, not enforced: Scribe can read manual metadata, `pyproject.toml`, and git context without imposing SemVer or auto-bumping versions.
-- Research/version drift warnings help historical research stay useful while active code remains the source of truth.
-- Managed-doc quality checks now catch lifecycle body/frontmatter mismatches, malformed changelog scaffolds with literal `\n` sludge, noncanonical research placement, and checklist status-update edge cases.
+- `link_fix` now validates execution/session/entry references through a shared resolver before mutating case state.
+- Bare or forged 32-hex tokens are no longer silently trusted; accepted IDs must come from current execution lineage, an authoritative session key, or an in-scope Scribe entry.
+- BUG and security case registry ownership is scoped by repo/project identity, so the same case ID cannot mutate the wrong project.
+- Managed-doc frontmatter is preserve-first: empty or null incoming values do not erase existing custom metadata, and runtime-owned fields stay tool-owned.
+- Agent onboarding docs now describe accepted `link_fix` reference forms, rejection recovery, and the frontmatter mutation contract.
+- Release governance now treats missing current-version changelog coverage as blocking quality truth: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is raised through `quality_check`, reflected in reminders, and visible in managed-doc `project_health` digests until coverage is repaired and reconciliation proof is run.
 
 ## What makes Scribe different
 

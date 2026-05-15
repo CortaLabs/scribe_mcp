@@ -350,6 +350,8 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
     residue = int(quality.get("readiness_blocker_count", 0) or 0)
     mismatch = int(quality.get("frontmatter_mismatch_count", 0) or 0)
     stale = int(quality.get("stale_research_index_count", 0) or 0)
+    blocker_counts_by_code = quality.get("readiness_blocker_counts_by_code") if isinstance(quality.get("readiness_blocker_counts_by_code"), dict) else {}
+    release_changelog_missing = int(blocker_counts_by_code.get("SCF_CHANGELOG_CURRENT_VERSION_MISSING", 0) or 0)
     runtime_budget_status = str((log_friction.get("runtime_efficiency") or {}).get("budget_status") or "")
     if not runtime_budget_status and isinstance(context.variables, dict):
         runtime_efficiency = context.variables.get("runtime_efficiency")
@@ -366,6 +368,22 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
                 emoji="⚠️",
                 message=f"{current_phase}: {residue} readiness blocker(s) remain. Clear SCF_* blockers in active docs before claiming done.",
                 category=_cfg("scaffold_residue", "scaffold_residue"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                cooldown_minutes=default_cooldown,
+            )
+        )
+    if release_changelog_missing > 0 and "SCF_CHANGELOG_CURRENT_VERSION_MISSING" not in suppressed:
+        reminders.append(
+            ReminderInstance(
+                key="quality.release_changelog_coverage_missing",
+                level="warning",
+                emoji="🧾",
+                message=(
+                    f"{current_phase}: current package version is missing accepted managed CHANGELOG coverage "
+                    f"({release_changelog_missing}). Add accepted CHANGELOG coverage for the active pyproject version, "
+                    "then run preview_reconciliation/apply_global_changelog before release closeout."
+                ),
+                category=_cfg("release_changelog_coverage", "release_changelog_coverage"),
                 variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
                 cooldown_minutes=default_cooldown,
             )
@@ -540,6 +558,7 @@ async def _build_legacy_context(
                 "frontmatter_mismatch": str(combined_cfg.get("frontmatter_mismatch_category", "frontmatter_mismatch")),
                 "stale_research_index": str(combined_cfg.get("stale_research_index_category", "stale_research_index")),
                 "runtime_efficiency_budget": str(combined_cfg.get("runtime_efficiency_budget_category", "runtime_efficiency_budget")),
+                "release_changelog_coverage": str(combined_cfg.get("release_changelog_coverage_category", "release_changelog_coverage")),
             },
             "quality_reminder_suppress_codes": [str(code) for code in (combined_cfg.get("suppress_warning_codes") or []) if str(code).strip()],
         },

@@ -1,7 +1,7 @@
 # Release Surface
 
 Baseline date: **2026-05-12**
-Applies to: **v2.2.20 public release line**
+Applies to: **v2.2.21 public release line**
 
 ## Public contract
 
@@ -28,6 +28,7 @@ Public docs must keep these runtime truths aligned with current source:
 - Codex projection is documented through `scribe plugins project-codex`.
 - Managed-doc hygiene behavior is public release truth: scaffold-aware `quality_check`, grouped `project_health` signals, project-local managed-doc preflight archives, centralized `edit_file` backups, canonical research artifact naming, and stale index-backup cleanup.
 - Changelog/version memory behavior is public release truth: project `CHANGELOG.md` is curated source, `.scribe/docs/GLOBAL_CHANGELOG.md` is derived by preview/apply reconciliation, version context is advisory observed evidence, and malformed changelog escaped-newline content is a blocking quality failure.
+- Missing current-version changelog coverage is a blocking warning (`SCF_CHANGELOG_CURRENT_VERSION_MISSING`) surfaced by `quality_check`, reminders, and `project_health` quality digests.
 
 ## Local/operator boundary
 

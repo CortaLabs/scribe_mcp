@@ -1,6 +1,6 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.2.20`
+Release line: `2.2.21`
 Updated: `2026-05-12`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
@@ -14,14 +14,15 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.2.20` adds version-aware changelog memory to the governed-doc loop:
+Release `2.2.21` hardens the governed-doc and case workflow agents use during real repairs:
 
-- Project `CHANGELOG.md` is the curated source for accepted project outcomes.
-- `.scribe/docs/GLOBAL_CHANGELOG.md` is derived from accepted project entries through preview/apply reconciliation.
-- Changelog entry identity stays local (`<yyyymmdd>:<slug>`) while global dedupe uses `(project_slug, entry_id)`.
-- Version context is advisory only: Scribe observes `pyproject.toml` or explicit metadata without enforcing SemVer or auto-bumping.
-- Research context can warn when historical version evidence drifts, while active code remains the source of truth.
-- `quality_check` now blocks lifecycle mismatch, changelog escaped-newline sludge, and other scaffold/readiness failures.
+- `link_fix` validates execution/session/entry references before recording fix evidence.
+- Accepted reference forms are explicit: current execution lineage, the authoritative session key, or a mirrored in-scope Scribe entry.
+- Forged bare 32-hex values and transport/process session IDs fail closed instead of becoming accidental authority.
+- BUG/security case registry records are repo/project scoped before mutation.
+- Managed-doc frontmatter preserves existing custom fields by default and keeps runtime-owned attribution fields under tool control.
+- The agent guide documents the recovery path when provenance, case ownership, or frontmatter mutation validation fails.
+- Managed-doc release governance now raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` when the active package version lacks accepted changelog coverage, and that warning flows through `quality_check`, reminders, and `project_health`.
 
 If you only remember one thing, make it this:
 

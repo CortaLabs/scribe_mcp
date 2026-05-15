@@ -250,3 +250,40 @@ async def test_quality_check_uses_discovered_doc_when_auto_registration_fails(
         assert result["scope"]["path"] == str(closeout)
         assert result["scope"]["doc_name"] == "package_5_1_verification_closeout"
         assert "authoritative session binding" in result["runtime_warnings"][0]
+
+
+@pytest.mark.asyncio
+async def test_quality_check_changelog_emits_current_version_missing_warning(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_changelog_release"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    (project_root / "pyproject.toml").write_text("[project]\nname='q'\nversion='9.9.0'\n", encoding="utf-8")
+
+    changelog = docs_dir / "CHANGELOG.md"
+    changelog.write_text(
+        """# Project Changelog
+
+## Prior release
+- `entry_id`: 20260514:prior
+- `entry_status`: accepted
+- `title`: Prior
+- `summary`: Prior summary
+- `evidence_refs`:
+  - tests/prior.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 9.8.0
+""",
+        encoding="utf-8",
+    )
+    project = {"name": "Q", "root": str(project_root), "docs": {"CHANGELOG": str(changelog)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-changelog-release-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-changelog-release-session"):
+        result = await manage_docs(action="quality_check", doc_name="CHANGELOG", dry_run=True)
+
+    codes = {w.get("code") for w in result.get("warnings", [])}
+    assert "SCF_CHANGELOG_CURRENT_VERSION_MISSING" in codes

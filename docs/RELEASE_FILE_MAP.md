@@ -1,7 +1,7 @@
 # Release File Map
 
 Baseline date: **2026-05-12**
-Coverage: **v2.2.20 public release line**
+Coverage: **v2.2.21 public release line**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **v2.2.20 public release line**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.20` and CLI scripts. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.21` and CLI scripts. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -58,6 +58,7 @@ Coverage: **v2.2.20 public release line**
 | Release-bound pushes to `main` must include a fresh package version in `pyproject.toml`. | `main` auto-triggers PyPI publishing for package/release-surface changes. |
 | Compatibility docs must be updated in the same change as the version bump. | Prevents repo docs from lagging the published package contract. |
 | Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
+| Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
 
 ## Public support material
 

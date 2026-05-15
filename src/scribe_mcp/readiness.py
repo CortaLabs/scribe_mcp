@@ -55,6 +55,9 @@ def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, A
     frontmatter_mismatch_count = 0
     stale_research_index_count = 0
     total_warnings = 0
+    warning_counts_by_code: dict[str, int] = {}
+    readiness_blocker_counts_by_code: dict[str, int] = {}
+    normalized_warnings: list[dict[str, Any]] = []
 
     for key, doc_path in docs.items():
         if not isinstance(doc_path, str) or not doc_path.endswith(".md"):
@@ -74,12 +77,26 @@ def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, A
         blockers = []
         for warning in warnings:
             code = str(warning.get("code") or "")
+            if code:
+                warning_counts_by_code[code] = warning_counts_by_code.get(code, 0) + 1
             if code == "SCF_FRONTMATTER_MISMATCH":
                 frontmatter_mismatch_count += 1
             if code in {"SCF_INDEX_STALE", "SCF_INDEX_MISSING", "SCF_DOC_UNINDEXED"}:
                 stale_research_index_count += 1
             if bool(warning.get("blocking")) and not _is_future_phase_warning(current_phase, warning):
                 blockers.append(warning)
+                if code:
+                    readiness_blocker_counts_by_code[code] = readiness_blocker_counts_by_code.get(code, 0) + 1
+            normalized_warnings.append(
+                {
+                    "code": code,
+                    "severity": warning.get("severity"),
+                    "blocking": bool(warning.get("blocking")),
+                    "doc_name": str(key),
+                    "path": str(path),
+                    "suggested_repair": warning.get("suggested_repair"),
+                }
+            )
 
         blocker_count += len(blockers)
         documents.append(
@@ -88,6 +105,7 @@ def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, A
                 "path": str(path),
                 "warning_codes": [w.get("code") for w in warnings],
                 "readiness_blocker_codes": [w.get("code") for w in blockers],
+                "blocking_warning_codes": [w.get("code") for w in blockers],
             }
         )
 
@@ -97,6 +115,9 @@ def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, A
         "frontmatter_mismatch_count": frontmatter_mismatch_count,
         "stale_research_index_count": stale_research_index_count,
         "total_warning_count": total_warnings,
+        "warnings": normalized_warnings,
+        "warning_counts_by_code": warning_counts_by_code,
+        "readiness_blocker_counts_by_code": readiness_blocker_counts_by_code,
         "documents": documents,
     }
 

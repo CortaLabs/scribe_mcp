@@ -851,6 +851,17 @@ async def _handle_project_health(
                 if isinstance(managed_doc_quality, dict) and managed_doc_quality.get("readiness_blocker_count", 0)
                 else "No blocking quality warnings detected.",
             },
+            {
+                "signal": "release_changelog_coverage_missing",
+                "active": bool((managed_doc_quality.get("readiness_blocker_counts_by_code") or {}).get("SCF_CHANGELOG_CURRENT_VERSION_MISSING", 0))
+                if isinstance(managed_doc_quality, dict)
+                else False,
+                "truth_label": "derived_signal",
+                "next_safe_action": "Add or update an accepted managed CHANGELOG entry for the active pyproject version, then run preview_reconciliation and apply_global_changelog before release closeout."
+                if isinstance(managed_doc_quality, dict)
+                and bool((managed_doc_quality.get("readiness_blocker_counts_by_code") or {}).get("SCF_CHANGELOG_CURRENT_VERSION_MISSING", 0))
+                else "No missing current-version managed CHANGELOG coverage warning detected.",
+            },
         ],
     }
     return helper.apply_context_payload(response, context)

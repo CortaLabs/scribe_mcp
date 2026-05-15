@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
+from scribe_mcp.doc_management.version_context import resolve_observed_context
 
 _ENTRY_ID_RE = re.compile(r"^\d{8}:[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -141,6 +143,69 @@ def preview_global_reconciliation(
             "skips": skipped,
         },
         "writes_performed": False,
+    }
+
+
+def preview_current_release_coverage(
+    *,
+    project_changelog_text: str,
+    repo_root: Path | None,
+    pyproject_path: Path | None,
+) -> dict[str, Any]:
+    current_context = resolve_observed_context(repo_root=repo_root, pyproject_path=pyproject_path)
+    accepted = accepted_entries(parse_changelog_entries(project_changelog_text))
+    accepted_entry_ids = sorted(entry.entry_id for entry in accepted)
+    unversioned_entry_ids = sorted(entry.entry_id for entry in accepted if entry.observed_context is None)
+
+    if current_context.source != "pyproject" or current_context.value == "unknown":
+        return {
+            "status": "not_applicable",
+            "current_context": {
+                "value": current_context.value,
+                "source": current_context.source,
+                "commit": current_context.commit,
+                "dirty": current_context.dirty,
+                "observed_at": current_context.observed_at,
+                "confidence": current_context.confidence,
+            },
+            "matching_entry_ids": [],
+            "accepted_entry_ids": accepted_entry_ids,
+            "unversioned_entry_ids": unversioned_entry_ids,
+            "writes_performed": False,
+            "suggested_repair": "",
+        }
+
+    matching_entry_ids = sorted(
+        entry.entry_id
+        for entry in accepted
+        if entry.observed_context is not None
+        and entry.observed_context.get("source") == "pyproject"
+        and entry.observed_context.get("value") == current_context.value
+    )
+
+    status = "pass" if matching_entry_ids else "missing"
+    suggested_repair = ""
+    if status == "missing":
+        suggested_repair = (
+            "Add or update an accepted managed changelog entry with "
+            f"observed_context.source=pyproject and observed_context.value={current_context.value}."
+        )
+
+    return {
+        "status": status,
+        "current_context": {
+            "value": current_context.value,
+            "source": current_context.source,
+            "commit": current_context.commit,
+            "dirty": current_context.dirty,
+            "observed_at": current_context.observed_at,
+            "confidence": current_context.confidence,
+        },
+        "matching_entry_ids": matching_entry_ids,
+        "accepted_entry_ids": accepted_entry_ids,
+        "unversioned_entry_ids": unversioned_entry_ids,
+        "writes_performed": False,
+        "suggested_repair": suggested_repair,
     }
 
 

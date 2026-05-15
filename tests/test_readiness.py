@@ -21,6 +21,10 @@ def test_readiness_preserves_scf_codes_and_counts(tmp_path: Path) -> None:
     doc = quality["documents"][0]
     assert "SCF_FRONTMATTER_MISMATCH" in doc["warning_codes"]
     assert "SCF_FRONTMATTER_MISMATCH" in doc["readiness_blocker_codes"]
+    assert "SCF_FRONTMATTER_MISMATCH" in doc["blocking_warning_codes"]
+    assert quality["warning_counts_by_code"]["SCF_FRONTMATTER_MISMATCH"] >= 1
+    assert quality["readiness_blocker_counts_by_code"]["SCF_FRONTMATTER_MISMATCH"] >= 1
+    assert any(w.get("code") == "SCF_FRONTMATTER_MISMATCH" for w in quality["warnings"])
 
 
 def test_readiness_phase_scoping_does_not_force_false_failure() -> None:

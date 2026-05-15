@@ -1,6 +1,6 @@
 # MCP server guide
 
-Release line: `2.2.20`
+Release line: `2.2.21`
 Updated: `2026-05-12`
 
 This guide shows how to run Scribe as an MCP server for hosts such as Codex or Claude-compatible clients.
@@ -114,6 +114,8 @@ For this release line, the public naming story is:
 - `SCRIBE_REMOTE_URL`
 - `SCRIBE_REMOTE_AUTH_TOKEN`
 - `SCRIBE_TRANSPORT_AUTH_TOKEN` for server-side transport enforcement
+
+Release-governance reminder for operators: missing accepted changelog coverage for the active package version raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` through `manage_docs` quality/readiness flows (`quality_check`, reminders, `project_health`) until coverage and reconciliation proof are complete.
 
 Compatibility aliases may exist, but these are the names public docs should lead with.
 
