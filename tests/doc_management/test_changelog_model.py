@@ -1,5 +1,6 @@
 from scribe_mcp.doc_management.changelog import (
     accepted_entries,
+    accepted_entries_with_safe_provenance,
     is_valid_entry_id,
     parse_changelog_entries,
     preview_current_release_coverage,
@@ -128,3 +129,89 @@ def test_preview_current_release_coverage_not_applicable_without_pyproject(tmp_p
     assert result["status"] == "not_applicable"
     assert result["matching_entry_ids"] == []
     assert result["writes_performed"] is False
+
+
+def test_accepted_entries_with_safe_provenance_blocks_unknown_manual_and_missing_context() -> None:
+    text = """# Project Changelog
+
+## Safe
+- `entry_id`: 20260512:safe
+- `entry_status`: accepted
+- `title`: Safe
+- `summary`: Safe summary
+- `evidence_refs`:
+  - tests/a.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 1.2.3
+
+## Unknown
+- `entry_id`: 20260512:unknown
+- `entry_status`: accepted
+- `title`: Unknown
+- `summary`: Unknown summary
+- `evidence_refs`:
+  - tests/b.py
+- `observed_context`:
+  - `source`: unknown
+  - `value`: old
+
+## Manual backfill
+- `entry_id`: 20260512:manual
+- `entry_status`: accepted
+- `title`: Manual
+- `summary`: Manual summary
+- `evidence_refs`:
+  - tests/c.py
+- `observed_context`:
+  - `source`: manual_backfill
+  - `value`: old
+
+## Missing context
+- `entry_id`: 20260512:missing
+- `entry_status`: accepted
+- `title`: Missing
+- `summary`: Missing summary
+- `evidence_refs`:
+  - tests/d.py
+"""
+    safe, blocked = accepted_entries_with_safe_provenance(parse_changelog_entries(text))
+    assert [entry.entry_id for entry in safe] == ["20260512:safe"]
+    assert blocked == [
+        {"entry_id": "20260512:manual", "reason": "unsafe_observed_source:manual_backfill"},
+        {"entry_id": "20260512:missing", "reason": "missing_observed_context"},
+        {"entry_id": "20260512:unknown", "reason": "unsafe_observed_source:unknown"},
+    ]
+
+
+def test_accepted_entries_with_safe_provenance_blocks_empty_values_for_allowed_sources() -> None:
+    text = """# Project Changelog
+
+## Empty git tag
+- `entry_id`: 20260512:empty-git-tag
+- `entry_status`: accepted
+- `title`: Empty git tag
+- `summary`: Empty value must fail closed.
+- `evidence_refs`:
+  - tests/a.py
+- `observed_context`:
+  - `source`: git_tag
+  - `value`:
+
+## Empty release manifest
+- `entry_id`: 20260512:empty-release-manifest
+- `entry_status`: accepted
+- `title`: Empty release manifest
+- `summary`: Empty value must fail closed.
+- `evidence_refs`:
+  - tests/b.py
+- `observed_context`:
+  - `source`: release_manifest
+  - `value`:
+"""
+    safe, blocked = accepted_entries_with_safe_provenance(parse_changelog_entries(text))
+    assert safe == []
+    assert blocked == [
+        {"entry_id": "20260512:empty-git-tag", "reason": "missing_observed_value"},
+        {"entry_id": "20260512:empty-release-manifest", "reason": "missing_observed_value"},
+    ]

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp.doc_management.changelog import (
+    accepted_entries_with_safe_provenance,
+    parse_changelog_entries,
     parse_global_changelog_entries,
     preview_global_reconciliation,
     reconcile_global_changelog,
@@ -749,6 +751,21 @@ async def _handle_apply_global_changelog(
         return helper.apply_context_payload(helper.error_response(f"Changelog path '{changelog_path}' does not exist."), context)
     project_text = await asyncio.to_thread(changelog_path.read_text, encoding="utf-8")
     project_slug = slugify_project_name(str(project.get("name") or ""))
+    _safe_entries, blocked_entries = accepted_entries_with_safe_provenance(parse_changelog_entries(project_text))
+    if blocked_entries:
+        return helper.apply_context_payload(
+            {
+                "ok": False,
+                "error": "apply_global_changelog blocked: accepted changelog entries contain unsafe or missing observed_context provenance.",
+                "action": "apply_global_changelog",
+                "project_changelog_doc": changelog_doc_name,
+                "project_changelog_path": str(changelog_path),
+                "global_changelog_path": str(global_path),
+                "writes_performed": False,
+                "provenance_blocked_entries": blocked_entries,
+            },
+            context,
+        )
     previous_text = ""
     if global_path.exists():
         previous_text = await asyncio.to_thread(global_path.read_text, encoding="utf-8")

@@ -56,6 +56,32 @@ def accepted_entries(entries: Sequence[ChangelogEntry]) -> list[ChangelogEntry]:
     return [entry for entry in entries if entry.entry_status == "accepted"]
 
 
+def accepted_entries_with_safe_provenance(
+    entries: Sequence[ChangelogEntry],
+) -> tuple[list[ChangelogEntry], list[dict[str, str]]]:
+    allowed = {"pyproject", "git_tag", "release_manifest"}
+    safe: list[ChangelogEntry] = []
+    blocked: list[dict[str, str]] = []
+    for entry in accepted_entries(entries):
+        context = entry.observed_context
+        if context is None:
+            blocked.append({"entry_id": entry.entry_id, "reason": "missing_observed_context"})
+            continue
+        source = str(context.get("source") or "").strip().lower()
+        value = str(context.get("value") or "").strip()
+        if not source:
+            blocked.append({"entry_id": entry.entry_id, "reason": "missing_observed_source"})
+            continue
+        if source not in allowed:
+            blocked.append({"entry_id": entry.entry_id, "reason": f"unsafe_observed_source:{source}"})
+            continue
+        if not value or value.lower() == "unknown":
+            blocked.append({"entry_id": entry.entry_id, "reason": "missing_observed_value"})
+            continue
+        safe.append(entry)
+    return safe, sorted(blocked, key=lambda item: item["entry_id"])
+
+
 def parse_global_entry_ids(text: str) -> list[str]:
     return [m.group(1).strip() for m in re.finditer(r"(?m)^-\s*`?source_entry_id`?\s*:\s*(.+)$", text)]
 
@@ -102,7 +128,7 @@ def preview_global_reconciliation(
     project_changelog_text: str,
     global_changelog_text: str,
 ) -> dict[str, Any]:
-    accepted = accepted_entries(parse_changelog_entries(project_changelog_text))
+    accepted, blocked_entries = accepted_entries_with_safe_provenance(parse_changelog_entries(project_changelog_text))
     source_ids = [entry.entry_id for entry in accepted]
     duplicate_source_keys = sorted({entry_id for entry_id in source_ids if source_ids.count(entry_id) > 1})
 
@@ -136,6 +162,7 @@ def preview_global_reconciliation(
         "duplicate_source_keys": duplicate_source_keys,
         "orphaned_global_entries": orphaned_global_entries,
         "unversioned_entries": unversioned_entries,
+        "provenance_blocked_entries": blocked_entries,
         "source_entry_ids": {
             "adds": missing_in_global,
             "updates": sorted(changed_since_global),
@@ -236,7 +263,7 @@ def reconcile_global_changelog(
     project_changelog_text: str,
     existing_global_changelog_text: str,
 ) -> str:
-    accepted = accepted_entries(parse_changelog_entries(project_changelog_text))
+    accepted, _ = accepted_entries_with_safe_provenance(parse_changelog_entries(project_changelog_text))
     existing_entries = parse_global_changelog_entries(existing_global_changelog_text, default_source_project="")
 
     kept_other_projects = [entry for entry in existing_entries if entry.source_project != project_slug]

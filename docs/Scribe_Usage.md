@@ -1,6 +1,6 @@
 # Scribe MCP usage guide
 
-Release line: `2.2.21`
+Release line: `2.2.22`
 Updated: `2026-05-12`
 
 This guide is about day-to-day usage once Scribe is installed.
@@ -15,7 +15,7 @@ Install behavior reminder for day-to-day operators:
 - use `scribe install --commit --yes` for approved non-interactive commit flows
 - use `--project-codex` only when you explicitly want Codex projection after core install
 
-In `2.2.21`, Scribe tightens the workflow agents use to close bug/security cases and edit managed documents: `link_fix` validates execution/session/entry provenance before mutation, case registry ownership is repo/project scoped, and frontmatter edits preserve existing custom metadata unless a supported explicit delete is requested.
+In `2.2.22`, Scribe ships the provenance-safe changelog/global reconciliation guard patch: accepted changelog entries now require a non-empty `observed_context.value` for all allowed safe sources (`pyproject`, `git_tag`, `release_manifest`) before preview/apply reconciliation can treat them as safe.
 Release governance in this line also blocks missing current-version changelog coverage: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is emitted by `quality_check`, echoed in reminders, and shown in `project_health` quality signals until fixed.
 
 ## The short mental model

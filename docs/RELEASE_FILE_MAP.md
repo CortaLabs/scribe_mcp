@@ -1,7 +1,7 @@
 # Release File Map
 
 Baseline date: **2026-05-12**
-Coverage: **v2.2.21 public release line**
+Coverage: **v2.2.22 public release line**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **v2.2.21 public release line**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.21` and CLI scripts. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.2.22` and CLI scripts. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
