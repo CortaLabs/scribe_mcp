@@ -108,6 +108,16 @@ class StorageBackend(ABC):
     ) -> None:
         """Insert a progress log entry and update metrics."""
 
+    @abstractmethod
+    async def fetch_entry_by_id(
+        self,
+        *,
+        entry_id: str,
+        repo_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return minimal mirrored-entry proof for an entry id scoped by repo/project."""
+
     async def record_doc_change(
         self,
         project: ProjectRecord,

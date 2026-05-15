@@ -367,7 +367,7 @@ class PostgresStorage(StorageBackend):
                 doc_type, doc_name, doc_path, title, status, severity, source_tool, metadata, updated_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, NOW())
-            ON CONFLICT(case_id) DO UPDATE SET
+            ON CONFLICT(project_key, case_id) DO UPDATE SET
                 case_type = EXCLUDED.case_type,
                 project_name = EXCLUDED.project_name,
                 repo_root = EXCLUDED.repo_root,
@@ -757,6 +757,43 @@ class PostgresStorage(StorageBackend):
                 }
             )
         return results
+
+    async def fetch_entry_by_id(
+        self,
+        *,
+        entry_id: str,
+        repo_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        clauses = ["e.id = $1"]
+        params: List[Any] = [entry_id]
+        if repo_id:
+            params.append(repo_id)
+            clauses.append(f"p.repo_id = ${len(params)}")
+        if project_name:
+            params.append(project_name)
+            clauses.append(f"p.name = ${len(params)}")
+
+        row = await self._fetchrow(
+            f"""
+            SELECT e.id AS entry_id, p.name AS project_name, p.repo_id, e.ts, e.agent, e.log_type
+            FROM scribe_entries e
+            JOIN scribe_projects p ON p.id = e.project_id
+            WHERE {' AND '.join(clauses)}
+            LIMIT 1;
+            """,
+            *params,
+        )
+        if not row:
+            return None
+        return {
+            "entry_id": row["entry_id"],
+            "project_name": row["project_name"],
+            "repo_id": row["repo_id"],
+            "timestamp": self._format_ts(row["ts"]),
+            "agent": row["agent"],
+            "log_type": row["log_type"],
+        }
 
     async def query_entries(
         self,
@@ -2301,7 +2338,7 @@ class PostgresStorage(StorageBackend):
         await self._execute(
             """
             CREATE TABLE IF NOT EXISTS case_registry (
-                case_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
                 case_type TEXT NOT NULL,
                 project_name TEXT NOT NULL,
                 repo_root TEXT NOT NULL,
@@ -2316,8 +2353,28 @@ class PostgresStorage(StorageBackend):
                 source_tool TEXT,
                 metadata JSONB,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (project_key, case_id)
             );
+            """
+        )
+        await self._execute(
+            "ALTER TABLE case_registry DROP CONSTRAINT IF EXISTS case_registry_pkey;"
+        )
+        await self._execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'case_registry_project_key_case_id_key'
+                ) THEN
+                    ALTER TABLE case_registry
+                    ADD CONSTRAINT case_registry_project_key_case_id_key UNIQUE(project_key, case_id);
+                END IF;
+            END
+            $$;
             """
         )
         await self._execute(

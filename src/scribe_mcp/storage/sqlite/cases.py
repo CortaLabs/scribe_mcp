@@ -78,11 +78,12 @@ def _row_to_case(row: Any) -> CaseRegistryRecord:
 async def ensure_case_registry_schema(
     *,
     execute_fn: AsyncExecute,
+    fetchone_fn: AsyncFetchOne,
 ) -> None:
     await execute_fn(
         """
         CREATE TABLE IF NOT EXISTS case_registry (
-            case_id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL,
             case_type TEXT NOT NULL,
             project_name TEXT NOT NULL,
             repo_root TEXT NOT NULL,
@@ -97,11 +98,68 @@ async def ensure_case_registry_schema(
             source_tool TEXT,
             metadata TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (project_key, case_id)
         );
         """,
         (),
     )
+    existing_pk = await fetchone_fn(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'case_registry';",
+        (),
+    )
+    existing_sql = str(existing_pk["sql"]) if existing_pk and existing_pk["sql"] else ""
+    if "PRIMARY KEY (project_key, case_id)" not in existing_sql:
+        await execute_fn(
+            """
+            CREATE TABLE IF NOT EXISTS case_registry_v2 (
+                case_id TEXT NOT NULL,
+                case_type TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                repo_id TEXT NOT NULL,
+                project_key TEXT NOT NULL,
+                doc_type TEXT NOT NULL,
+                doc_name TEXT NOT NULL,
+                doc_path TEXT NOT NULL,
+                title TEXT,
+                status TEXT,
+                severity TEXT,
+                source_tool TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (project_key, case_id)
+            );
+            """,
+            (),
+        )
+        await execute_fn(
+            """
+            INSERT OR REPLACE INTO case_registry_v2 (
+                case_id, case_type, project_name, repo_root, repo_id, project_key,
+                doc_type, doc_name, doc_path, title, status, severity, source_tool,
+                metadata, created_at, updated_at
+            )
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY project_key, case_id
+                           ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, rowid DESC
+                       ) AS rn
+                FROM case_registry
+            )
+            SELECT
+                case_id, case_type, project_name, repo_root, repo_id, project_key,
+                doc_type, doc_name, doc_path, title, status, severity, source_tool,
+                metadata, created_at, updated_at
+            FROM ranked
+            WHERE rn = 1;
+            """,
+            (),
+        )
+        await execute_fn("DROP TABLE case_registry;", ())
+        await execute_fn("ALTER TABLE case_registry_v2 RENAME TO case_registry;", ())
     await execute_fn(
         "CREATE INDEX IF NOT EXISTS idx_case_registry_repo_project ON case_registry(repo_id, project_name);",
         (),
@@ -142,7 +200,7 @@ async def upsert_case_registry_record(
     metadata_json = json.dumps(metadata, sort_keys=True) if metadata is not None else None
 
     async with write_lock:
-        await ensure_case_registry_schema(execute_fn=execute_fn)
+        await ensure_case_registry_schema(execute_fn=execute_fn, fetchone_fn=fetchone_fn)
         await execute_fn(
             """
             INSERT INTO case_registry (
@@ -151,7 +209,7 @@ async def upsert_case_registry_record(
                 created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT(case_id) DO UPDATE SET
+            ON CONFLICT(project_key, case_id) DO UPDATE SET
                 case_type = excluded.case_type,
                 project_name = excluded.project_name,
                 repo_root = excluded.repo_root,
@@ -185,7 +243,10 @@ async def upsert_case_registry_record(
             ),
         )
 
-    row = await fetchone_fn("SELECT * FROM case_registry WHERE case_id = ?;", (case_id,))
+    row = await fetchone_fn(
+        "SELECT * FROM case_registry WHERE project_key = ? AND case_id = ?;",
+        (project_key, case_id),
+    )
     if row is None:
         raise RuntimeError("Failed to upsert case registry record")
     return _row_to_case(row)
@@ -201,7 +262,7 @@ async def fetch_case_registry_record(
     project_name: Optional[str] = None,
 ) -> Optional[CaseRegistryRecord]:
     await initialise_fn()
-    await ensure_case_registry_schema(execute_fn=execute_fn)
+    await ensure_case_registry_schema(execute_fn=execute_fn, fetchone_fn=fetchone_fn)
 
     clauses = ["case_id = ?"]
     params: List[Any] = [case_id]
@@ -225,6 +286,7 @@ async def query_case_registry_records(
     *,
     initialise_fn: AsyncInitialise,
     execute_fn: AsyncExecute,
+    fetchone_fn: AsyncFetchOne,
     fetchall_fn: AsyncFetchAll,
     repo_root: Optional[str] = None,
     project_name: Optional[str] = None,
@@ -233,7 +295,7 @@ async def query_case_registry_records(
     offset: int = 0,
 ) -> List[CaseRegistryRecord]:
     await initialise_fn()
-    await ensure_case_registry_schema(execute_fn=execute_fn)
+    await ensure_case_registry_schema(execute_fn=execute_fn, fetchone_fn=fetchone_fn)
 
     clauses = ["1=1"]
     params: List[Any] = []

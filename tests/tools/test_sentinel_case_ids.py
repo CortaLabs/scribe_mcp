@@ -44,7 +44,8 @@ async def test_open_bug_repeated_allocates_unique_case_ids(tmp_path: Path) -> No
 
     with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
          patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
-         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage), \
+         patch("scribe_mcp.tools.sentinel_tools._register_case_registry_ownership", AsyncMock(return_value=(True, None))):
         first = await open_bug(
             agent="test-agent",
             title="Repeated bug A",
@@ -84,7 +85,8 @@ async def test_open_security_repeated_allocates_unique_case_ids(tmp_path: Path) 
 
     with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
          patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
-         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage), \
+         patch("scribe_mcp.tools.sentinel_tools._register_case_registry_ownership", AsyncMock(return_value=(True, None))):
         first = await open_security(
             agent="test-agent",
             title="Repeated security A",
@@ -119,7 +121,8 @@ async def test_open_bug_and_security_mixed_do_not_collide_or_regress_doc_creatio
 
     with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
          patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
-         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage), \
+         patch("scribe_mcp.tools.sentinel_tools._register_case_registry_ownership", AsyncMock(return_value=(True, None))):
         bug = await open_bug(
             agent="test-agent",
             title="Mixed bug",

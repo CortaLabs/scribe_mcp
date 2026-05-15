@@ -738,6 +738,20 @@ class RemoteStorageBackend(StorageBackend):
         )
         return result or []
 
+    async def fetch_entry_by_id(
+        self,
+        *,
+        entry_id: str,
+        repo_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return await self._call(
+            "fetch_entry_by_id",
+            entry_id=entry_id,
+            repo_id=repo_id,
+            project_name=project_name,
+        )
+
     async def fetch_recent_entries_paginated(
         self,
         *,

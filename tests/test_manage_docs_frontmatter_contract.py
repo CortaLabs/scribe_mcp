@@ -36,13 +36,13 @@ async def test_response_exposes_compact_frontmatter_summaries_by_default(tmp_pat
     change = await apply_doc_change(
         project,
         doc="architecture",
-        action="replace_range",
+        action="frontmatter_update",
         section=None,
-        content="# Title\n\nBody updated\n",
+        content=None,
         patch=None,
         patch_source_hash=None,
-        start_line=1,
-        end_line=3,
+        start_line=None,
+        end_line=None,
         template=None,
         metadata={"agent_id": "CoderAgent-Phase1", "tags": "priority"},
         dry_run=False,
@@ -62,13 +62,13 @@ async def test_include_frontmatter_extra_exposes_merged_frontmatter(tmp_path: Pa
     change = await apply_doc_change(
         project,
         doc="architecture",
-        action="replace_range",
+        action="frontmatter_update",
         section=None,
-        content="# Title\n\nBody updated\n",
+        content=None,
         patch=None,
         patch_source_hash=None,
-        start_line=1,
-        end_line=3,
+        start_line=None,
+        end_line=None,
         template=None,
         metadata={"include_frontmatter_extra": True, "agent_id": "CoderAgent-Phase1"},
         dry_run=False,
@@ -105,13 +105,13 @@ async def test_edit_ignores_raw_edit_trace_and_created_by_override(tmp_path: Pat
     change = await apply_doc_change(
         project,
         doc="architecture",
-        action="replace_range",
+        action="frontmatter_update",
         section=None,
-        content="# Title\n\nBody updated\n",
+        content=None,
         patch=None,
         patch_source_hash=None,
-        start_line=1,
-        end_line=3,
+        start_line=None,
+        end_line=None,
         template=None,
         metadata={
             "agent_id": "CoderAgent-Phase1",
@@ -138,7 +138,61 @@ async def test_edit_ignores_raw_edit_trace_and_created_by_override(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_explicit_metadata_actor_id_is_not_overridden_by_internal_identity(
+async def test_edit_ignores_maintained_by_overrides_from_metadata_and_frontmatter(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                "id: arch-doc",
+                'title: "Title"',
+                "doc_type: architecture",
+                "created_by: LegacyCreator",
+                "maintained_by: LegacyMaintainer",
+                "---",
+                "# Title",
+                "",
+                "Body",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={
+            "agent_id": "CoderAgent-Phase1",
+            "maintained_by": "OverrideIgnored",
+            "frontmatter": {"maintained_by": "FrontmatterOverrideIgnored"},
+        },
+        dry_run=False,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.frontmatter_data.get("maintained_by") == "CoderAgent-Phase1"
+
+    ignored = change.extra.get("frontmatter_ignored_keys") or []
+    fields = {item.get("field") for item in ignored if isinstance(item, dict)}
+    assert "metadata.frontmatter.maintained_by" in fields
+
+    hint_codes = {item.get("code") for item in (change.extra.get("metadata_hints") or []) if isinstance(item, dict)}
+    assert "maintained_by_ignored" in hint_codes
+
+
+@pytest.mark.asyncio
+async def test_runtime_actor_identity_overrides_metadata_actor_for_authoritative_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = await _setup_project(tmp_path)
@@ -155,23 +209,49 @@ async def test_explicit_metadata_actor_id_is_not_overridden_by_internal_identity
     change = await apply_doc_change(
         project,
         doc="architecture",
-        action="replace_range",
+        action="frontmatter_update",
         section=None,
-        content="# Title\n\nBody updated\n",
+        content=None,
         patch=None,
         patch_source_hash=None,
-        start_line=1,
-        end_line=3,
+        start_line=None,
+        end_line=None,
         template=None,
         metadata={"agent_id": "ReviewAgent"},
         dry_run=False,
     )
 
     assert change.success
-    assert change.extra.get("attribution", {}).get("actor_id") == "ReviewAgent"
+    assert change.extra.get("attribution", {}).get("actor_id") == "agent-20260417-deadbeef"
 
     parsed = parse_frontmatter(Path(project["docs"]["architecture"]).read_text(encoding="utf-8"))
-    assert parsed.frontmatter_data.get("maintained_by") == "ReviewAgent"
+    assert parsed.frontmatter_data.get("maintained_by") == "agent-20260417-deadbeef"
+
+
+@pytest.mark.asyncio
+async def test_replace_range_does_not_create_frontmatter_without_explicit_opt_in(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text("# No Frontmatter\n\nBody\n", encoding="utf-8")
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="# No Frontmatter\n\nBody updated\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={},
+        dry_run=False,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.has_frontmatter is False
 
 
 @pytest.mark.asyncio

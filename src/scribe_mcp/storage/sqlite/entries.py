@@ -216,6 +216,46 @@ async def fetch_recent_entries(
     return results
 
 
+async def fetch_entry_by_id(
+    *,
+    initialise_fn: AsyncInitialise,
+    fetchone_fn: AsyncFetchOne,
+    entry_id: str,
+    repo_id: Optional[str] = None,
+    project_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    await initialise_fn()
+    clauses = ["e.id = ?"]
+    params: List[Any] = [entry_id]
+    if repo_id:
+        clauses.append("p.repo_id = ?")
+        params.append(repo_id)
+    if project_name:
+        clauses.append("p.name = ?")
+        params.append(project_name)
+
+    row = await fetchone_fn(
+        f"""
+        SELECT e.id AS entry_id, p.name AS project_name, p.repo_id, e.ts, e.agent, e.log_type
+        FROM scribe_entries e
+        JOIN scribe_projects p ON p.id = e.project_id
+        WHERE {' AND '.join(clauses)}
+        LIMIT 1;
+        """,
+        tuple(params),
+    )
+    if row is None:
+        return None
+    return {
+        "entry_id": row["entry_id"],
+        "project_name": row["project_name"],
+        "repo_id": row["repo_id"],
+        "timestamp": row["ts"],
+        "agent": row["agent"],
+        "log_type": row["log_type"],
+    }
+
+
 async def query_entries(
     *,
     initialise_fn: AsyncInitialise,

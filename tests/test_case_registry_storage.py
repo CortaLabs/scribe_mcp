@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from pathlib import Path
 
 from scribe_mcp.storage.models import compute_project_key, compute_repo_id, normalize_repo_root
@@ -135,6 +136,212 @@ def test_case_registry_query_filters_by_repo_project_and_case_type(tmp_path: Pat
             )
 
             assert [item.case_id for item in scoped] == ["BUG-2026-04-17-0101"]
+        finally:
+            await storage.close()
+
+    asyncio.run(_run())
+
+
+def test_case_registry_allows_same_case_id_across_distinct_project_scopes(tmp_path: Path) -> None:
+    async def _run() -> None:
+        storage = SQLiteStorage(tmp_path / "case-registry-scope.sqlite3")
+        await storage.setup()
+        try:
+            repo_root = str(tmp_path / "repo")
+            case_id = "BUG-2026-05-15-0001"
+
+            await storage.upsert_case_registry_record(
+                case_id=case_id,
+                case_type="bug",
+                project_name="project_alpha",
+                repo_root=repo_root,
+                doc_type="bug",
+                doc_name=case_id,
+                doc_path=".scribe/docs/bugs/project_alpha/report.md",
+                status="open",
+                metadata={"owner": "alpha"},
+            )
+            await storage.upsert_case_registry_record(
+                case_id=case_id,
+                case_type="bug",
+                project_name="project_beta",
+                repo_root=repo_root,
+                doc_type="bug",
+                doc_name=case_id,
+                doc_path=".scribe/docs/bugs/project_beta/report.md",
+                status="open",
+                metadata={"owner": "beta"},
+            )
+
+            alpha = await storage.fetch_case_registry_record(
+                case_id,
+                repo_root=repo_root,
+                project_name="project_alpha",
+            )
+            beta = await storage.fetch_case_registry_record(
+                case_id,
+                repo_root=repo_root,
+                project_name="project_beta",
+            )
+            assert alpha is not None and beta is not None
+            assert alpha.metadata == {"owner": "alpha"}
+            assert beta.metadata == {"owner": "beta"}
+        finally:
+            await storage.close()
+
+    asyncio.run(_run())
+
+
+def test_case_registry_upsert_readback_respects_project_scope_with_duplicate_case_id(tmp_path: Path) -> None:
+    async def _run() -> None:
+        storage = SQLiteStorage(tmp_path / "case-registry-upsert-readback-scope.sqlite3")
+        await storage.setup()
+        try:
+            repo_root = str(tmp_path / "repo")
+            case_id = "BUG-2026-05-15-0002"
+
+            await storage.upsert_case_registry_record(
+                case_id=case_id,
+                case_type="bug",
+                project_name="project_alpha",
+                repo_root=repo_root,
+                doc_type="bug",
+                doc_name=case_id,
+                doc_path=".scribe/docs/bugs/project_alpha/report.md",
+                status="open",
+                metadata={"owner": "alpha"},
+            )
+
+            await storage.upsert_case_registry_record(
+                case_id=case_id,
+                case_type="bug",
+                project_name="project_beta",
+                repo_root=repo_root,
+                doc_type="bug",
+                doc_name=case_id,
+                doc_path=".scribe/docs/bugs/project_beta/report.md",
+                status="open",
+                metadata={"owner": "beta"},
+            )
+
+            updated_alpha = await storage.upsert_case_registry_record(
+                case_id=case_id,
+                case_type="bug",
+                project_name="project_alpha",
+                repo_root=repo_root,
+                doc_type="bug",
+                doc_name=case_id,
+                doc_path=".scribe/docs/bugs/project_alpha/report.md",
+                status="investigating",
+                metadata={"owner": "alpha", "state": "updated"},
+            )
+
+            assert updated_alpha.project_name == "project_alpha"
+            assert updated_alpha.status == "investigating"
+            assert updated_alpha.metadata == {"owner": "alpha", "state": "updated"}
+        finally:
+            await storage.close()
+
+    asyncio.run(_run())
+
+
+def test_case_registry_migrates_legacy_case_id_primary_key_without_metadata_loss(tmp_path: Path) -> None:
+    db_path = tmp_path / "case-registry-legacy.sqlite3"
+    repo_root = str(tmp_path / "repo")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE case_registry (
+                case_id TEXT PRIMARY KEY,
+                case_type TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                repo_id TEXT NOT NULL,
+                project_key TEXT NOT NULL,
+                doc_type TEXT NOT NULL,
+                doc_name TEXT NOT NULL,
+                doc_path TEXT NOT NULL,
+                title TEXT,
+                status TEXT NOT NULL,
+                severity TEXT,
+                source_tool TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO case_registry (
+                case_id, case_type, project_name, repo_root, repo_id, project_key, doc_type,
+                doc_name, doc_path, title, status, severity, source_tool, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                "BUG-2026-05-15-0420",
+                "bug",
+                "legacy_project",
+                repo_root,
+                "legacy-repo-id",
+                "legacy-project-key",
+                "bug",
+                "BUG-2026-05-15-0420",
+                ".scribe/docs/bugs/legacy/report.md",
+                "Legacy title",
+                "open",
+                "high",
+                "open_bug",
+                '{"owner":"legacy"}',
+                "2026-05-15T00:00:00Z",
+                "2026-05-15T00:00:00Z",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    async def _run() -> None:
+        storage = SQLiteStorage(db_path)
+        await storage.setup()
+        try:
+            migrated = await storage.fetch_case_registry_record(
+                "BUG-2026-05-15-0420",
+                repo_root=repo_root,
+                project_name="legacy_project",
+            )
+            assert migrated is not None
+            assert migrated.title == "Legacy title"
+            assert migrated.metadata == {"owner": "legacy"}
+
+            await storage.upsert_case_registry_record(
+                case_id="BUG-2026-05-15-0420",
+                case_type="bug",
+                project_name="new_project_same_case_id",
+                repo_root=repo_root,
+                doc_type="bug",
+                doc_name="BUG-2026-05-15-0420",
+                doc_path=".scribe/docs/bugs/new/report.md",
+                status="open",
+                metadata={"owner": "new"},
+            )
+
+            legacy = await storage.fetch_case_registry_record(
+                "BUG-2026-05-15-0420",
+                repo_root=repo_root,
+                project_name="legacy_project",
+            )
+            new = await storage.fetch_case_registry_record(
+                "BUG-2026-05-15-0420",
+                repo_root=repo_root,
+                project_name="new_project_same_case_id",
+            )
+
+            assert legacy is not None and new is not None
+            assert legacy.metadata == {"owner": "legacy"}
+            assert new.metadata == {"owner": "new"}
         finally:
             await storage.close()
 

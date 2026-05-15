@@ -150,6 +150,43 @@ async def test_link_fix_denies_wrong_repo_ownership() -> None:
 
 
 @pytest.mark.asyncio
+async def test_link_fix_denies_case_from_different_project_in_same_repo_scope() -> None:
+    backend = _RegistryBackend(repo_root="/tmp/repo")
+    backend.return_default_record = False
+
+    async def _scoped_fetch(case_id: str, **kwargs: Any) -> Any:
+        if kwargs.get("project_name") == "integrate_bug_management_system_20260417":
+            return None
+        return SimpleNamespace(
+            case_id=case_id,
+            case_type="bug",
+            repo_root="/tmp/repo",
+            project_name="other_project",
+            doc_type="bug",
+            doc_name=case_id,
+            doc_path=f"/tmp/repo/docs/bugs/runtime/{case_id}/report.md",
+            metadata={},
+        )
+
+    backend.fetch_case_registry_record = _scoped_fetch  # type: ignore[method-assign]
+
+    with (
+        patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=_ctx(repo_root="/tmp/repo")),
+        patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend),
+    ):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-04-17-1111",
+            execution_id="exec-live",
+            artifact_ref="src/module.py:10",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is False
+    assert "active repo/project scope" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_link_fix_succeeds_with_matching_repo_ownership() -> None:
     backend = _RegistryBackend(repo_root="/tmp/repo")
 

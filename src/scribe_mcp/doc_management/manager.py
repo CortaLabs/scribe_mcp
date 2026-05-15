@@ -758,17 +758,15 @@ async def apply_doc_change(
 
         date_str = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         actor_id = "Scribe"
-        has_explicit_metadata_actor = False
         if isinstance(metadata, dict):
             metadata_actor = metadata.get("agent_id")
             if isinstance(metadata_actor, str) and metadata_actor.strip():
                 actor_id = metadata_actor.strip()
-                has_explicit_metadata_actor = True
         try:
             from scribe_mcp import server as server_module
 
             agent_identity = server_module.get_agent_identity()
-            if agent_identity and not has_explicit_metadata_actor:
+            if agent_identity:
                 resolved_actor = await agent_identity.get_or_create_agent_id()
                 if isinstance(resolved_actor, str) and resolved_actor.strip():
                     actor_id = resolved_actor.strip()
@@ -810,7 +808,10 @@ async def apply_doc_change(
                     sanitize_error_message(str(e)),
                 )
 
-        allow_frontmatter_create = action in {"frontmatter_update", "replace_section", "append", "replace_range", "replace_text", "apply_patch", "normalize_headers", "generate_toc", "validate_crosslinks", "create_doc"}
+        explicit_create_if_missing = bool(
+            isinstance(metadata, dict) and metadata.get("frontmatter_create_if_missing") is True
+        )
+        allow_frontmatter_create = action in {"frontmatter_update", "create_doc"} or explicit_create_if_missing
         frontmatter_metadata = metadata
         if action == "status_update" and isinstance(metadata, dict) and "status" in metadata:
             frontmatter_metadata = dict(metadata)
@@ -3100,6 +3101,9 @@ _WORKFLOW_FRONTMATTER_KEYS = {
 }
 _TRACE_INPUT_KEYS = ("run_id", "stage", "session_id", "work_item_id")
 _LIST_WORKFLOW_KEYS = {"tags", "owners"}
+_WORKFLOW_RESERVED_DOC_FIELDS = {"case_id", "doc_name", "doc_type", "project_name", "project_key", "repo_root", "repo_id"}
+_RUNTIME_OWNED_FRONTMATTER_FIELDS = {"created_by", "maintained_by", "edit_trace"}
+_RESERVED_DELETE_FIELDS = _RUNTIME_OWNED_FRONTMATTER_FIELDS | _WORKFLOW_RESERVED_DOC_FIELDS
 _PRESERVED_WORKFLOW_KEYS = {
     "summary",
     "tags",
@@ -3184,6 +3188,7 @@ def _apply_frontmatter_pipeline(
         return updated_body, summary, 0
 
     updates: Dict[str, Any] = {}
+    delete_keys: set[str] = set()
     updates["title"] = _extract_title(updated_body, doc_name.replace("_", " ").title())
 
     auto_related_docs_disabled = (
@@ -3204,6 +3209,21 @@ def _apply_frontmatter_pipeline(
     trace_overrides: Dict[str, Any] = {}
 
     if isinstance(metadata, dict):
+        requested_delete_keys = set(_normalize_string_list(metadata.get("frontmatter_delete")))
+        delete_keys = set()
+        for key in requested_delete_keys:
+            if key in _RESERVED_DELETE_FIELDS:
+                frontmatter_ignored_keys.append(
+                    {"field": f"metadata.frontmatter_delete.{key}", "reason": "reserved_field_delete_ignored"}
+                )
+                metadata_hints.append(
+                    {
+                        "code": "reserved_frontmatter_delete_ignored",
+                        "message": f"{key} is reserved/runtime-owned and cannot be deleted via frontmatter_delete.",
+                    }
+                )
+                continue
+            delete_keys.add(key)
         if is_create and not str(metadata.get("summary", "")).strip():
             metadata_hints.append(
                 {
@@ -3257,6 +3277,17 @@ def _apply_frontmatter_pipeline(
 
     if isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict):
         for key, value in metadata["frontmatter"].items():
+            if key in _WORKFLOW_RESERVED_DOC_FIELDS and doc_name in {"BUG_REPORT", "SECURITY_REPORT"}:
+                frontmatter_ignored_keys.append(
+                    {"field": f"metadata.frontmatter.{key}", "reason": "workflow_reserved_field_managed_by_tool"}
+                )
+                metadata_hints.append(
+                    {
+                        "code": "workflow_reserved_field_ignored",
+                        "message": f"{key} is workflow-reserved for {doc_name} and authored by manage_docs.",
+                    }
+                )
+                continue
             if key == "edit_trace":
                 frontmatter_ignored_keys.append(
                     {"field": "metadata.frontmatter.edit_trace", "reason": "reserved_field_managed_by_tool"}
@@ -3284,7 +3315,13 @@ def _apply_frontmatter_pipeline(
                     trace_overrides[key] = value
                 continue
             if key == "maintained_by":
-                explicit_maintained_by = str(value or "").strip() or None
+                frontmatter_ignored_keys.append(
+                    {"field": "metadata.frontmatter.maintained_by", "reason": "reserved_field_managed_by_tool"}
+                )
+                metadata_hints.append(
+                    {"code": "maintained_by_ignored", "message": "maintained_by is reserved and authored by manage_docs."}
+                )
+                continue
             if key in _LIST_WORKFLOW_KEYS and isinstance(value, str):
                 updates[key] = _normalize_string_list(value)
                 metadata_hints.append(
@@ -3297,9 +3334,6 @@ def _apply_frontmatter_pipeline(
                 updates[key] = value
             if key not in frontmatter_updates_summary["updated_keys"]:
                 frontmatter_updates_summary["updated_keys"].append(key)
-
-    if "maintained_by" in updates and updates.get("maintained_by") is not None:
-        explicit_maintained_by = str(updates.get("maintained_by") or "").strip() or None
 
     existing_frontmatter = dict(parsed.frontmatter_data or {})
     existing_trace = (
@@ -3325,9 +3359,8 @@ def _apply_frontmatter_pipeline(
             }
         )
 
-    maintained_by = explicit_maintained_by or actor_id
-    if not explicit_maintained_by:
-        frontmatter_updates_summary["defaulted_keys"].append("maintained_by")
+    maintained_by = actor_id
+    frontmatter_updates_summary["defaulted_keys"].append("maintained_by")
     updates["created_by"] = created_by
     updates["maintained_by"] = maintained_by
 
@@ -3358,6 +3391,7 @@ def _apply_frontmatter_pipeline(
                     updated_parsed.frontmatter_raw,
                     updated_parsed.frontmatter_data,
                     updates,
+                    delete_keys=delete_keys,
                 )
                 line_count = len(frontmatter_raw.splitlines())
                 new_text = frontmatter_raw + updated_parsed.body
@@ -3448,7 +3482,7 @@ def _apply_frontmatter_pipeline(
         )
 
     frontmatter_raw, merged = apply_frontmatter_updates(
-        parsed.frontmatter_raw, parsed.frontmatter_data, updates
+        parsed.frontmatter_raw, parsed.frontmatter_data, updates, delete_keys=delete_keys
     )
     line_count = len(frontmatter_raw.splitlines())
     new_text = frontmatter_raw + updated_body

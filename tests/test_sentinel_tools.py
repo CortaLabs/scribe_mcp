@@ -80,6 +80,11 @@ class _DummyStateManager:
 class _RegistryBackend:
     def __init__(self) -> None:
         self.records: Dict[str, SimpleNamespace] = {}
+        self.entries: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+
+    def compute_repo_id(self, repo_root: str) -> str:
+        import hashlib
+        return hashlib.sha256(repo_root.encode("utf-8")).hexdigest()
 
     def seed_case(
         self,
@@ -87,6 +92,7 @@ class _RegistryBackend:
         case_id: str,
         repo_root: str = "/tmp",
         project_name: str = "test-project",
+        project_key: str | None = None,
         doc_type: str | None = None,
         doc_name: str | None = None,
         doc_path: str | None = None,
@@ -97,6 +103,7 @@ class _RegistryBackend:
             case_type=kind,
             repo_root=repo_root,
             project_name=project_name,
+            project_key=project_key or project_name,
             doc_type=doc_type or kind,
             doc_name=doc_name or case_id,
             doc_path=doc_path or f"{repo_root}/docs/{'security' if kind == 'security' else 'bugs'}/runtime/{case_id}/report.md",
@@ -110,6 +117,12 @@ class _RegistryBackend:
 
     async def fetch_case_registry_record(self, case_id: str, **_kwargs: Any):
         return self.records.get(case_id)
+
+    def seed_entry(self, *, entry_id: str, repo_root: str = "/tmp", project_name: str = "test-project") -> None:
+        self.entries[(entry_id, self.compute_repo_id(repo_root), project_name)] = {"entry_id": entry_id}
+
+    async def fetch_entry_by_id(self, entry_id: str, repo_id: str, project_name: str):
+        return self.entries.get((entry_id, repo_id, project_name))
 
 
 @pytest.fixture(autouse=True)
@@ -394,7 +407,7 @@ async def test_link_fix_happy_path_updates_bug_report_document() -> None:
     mock_manage = AsyncMock(return_value={"ok": True, "path": "/tmp/report.md"})
 
     backend = _RegistryBackend()
-    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    backend.seed_case(case_id="BUG-2026-03-15-0001", project_key="repo-key:test-project")
 
     with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
          patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
@@ -506,7 +519,7 @@ async def test_link_fix_doc_update_failure_still_returns_ok() -> None:
     mock_manage = AsyncMock(return_value={"ok": False, "error": "DOC_NOT_FOUND: doc_name 'BUG-2026-03-15-0001' is not registered"})
 
     backend = _RegistryBackend()
-    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    backend.seed_case(case_id="BUG-2026-03-15-0001", project_key="repo-key:test-project")
 
     with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
          patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
@@ -533,6 +546,8 @@ async def test_link_fix_doc_update_failure_still_returns_ok() -> None:
     assert "doc_update_warning" in result, (
         "When doc update fails, link_fix should include doc_update_warning in response"
     )
+    assert result["case_event"] == {"event": "fix_link_partial"}
+    assert result["meta"]["case_event"] == "fix_link_partial"
     mock_warning.assert_called()
 
 
@@ -628,7 +643,7 @@ async def test_link_fix_accepts_parent_execution_id() -> None:
     mock_manage = AsyncMock(return_value={"ok": True})
 
     backend = _RegistryBackend()
-    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    backend.seed_case(case_id="BUG-2026-03-15-0001", project_key="repo-key:test-project")
 
     with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
          patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
@@ -645,6 +660,11 @@ async def test_link_fix_accepts_parent_execution_id() -> None:
 
     assert result["ok"] is True
     _assert_operator_envelope(result)
+    assert result["resolved_references"]["execution"]["kind"] == "parent_execution"
+    assert result["resolved_references"]["execution"]["source"] == "runtime_parent_execution"
+    assert result["case_scope"]["project_key"] == "repo-key:test-project"
+    assert result["case_event"]["event"] == "report_body_updated"
+    assert result["meta"]["case_event"] == "report_body_updated"
 
 
 @pytest.mark.asyncio
@@ -681,14 +701,78 @@ async def test_link_fix_accepts_active_session_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_link_fix_accepts_scribe_entry_id() -> None:
+    """Agents may pass a durable Scribe entry id when active execution ids are not exposed."""
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.parent_execution_id = None
+
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value={"ok": True})
+
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    backend.seed_entry(entry_id="6abe4eb43c1d6449831306e73735f574")
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="6abe4eb43c1d6449831306e73735f574",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is True
+    _assert_operator_envelope(result)
+
+
+@pytest.mark.asyncio
+async def test_link_fix_rejects_forged_or_out_of_scope_entry_id() -> None:
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.parent_execution_id = None
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001")
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", AsyncMock()) as mock_append, \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", AsyncMock()) as mock_manage, \
+         patch("scribe_mcp.tools.sentinel_tools._register_case_registry_fix_link", AsyncMock()) as mock_registry:
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="6abe4eb43c1d6449831306e73735f574",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is False
+    mock_append.assert_not_called()
+    mock_manage.assert_not_called()
+    mock_registry.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_link_fix_rejects_transport_process_identifier() -> None:
     """link_fix must not treat process transport IDs as trusted execution provenance."""
     ctx = _make_execution_context("project")
     ctx.execution_id = "exec-live-123"
     ctx.parent_execution_id = None
-    ctx.transport_session_id = "process:runtime-abc"
+    ctx.resolved_scope.transport_session_id = "process:runtime-abc"
 
-    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx):
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", AsyncMock()) as mock_append, \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", AsyncMock()) as mock_manage, \
+         patch("scribe_mcp.tools.sentinel_tools._register_case_registry_fix_link", AsyncMock()) as mock_registry:
         result = await link_fix(
             agent="test-agent",
             case_id="BUG-2026-03-15-0001",
@@ -699,7 +783,10 @@ async def test_link_fix_rejects_transport_process_identifier() -> None:
 
     assert result["ok"] is False
     _assert_operator_envelope(result)
-    assert "execution_id" in result.get("error", "")
+    assert "execution_id does not match active execution context" in result.get("error", "")
+    mock_append.assert_not_called()
+    mock_manage.assert_not_called()
+    mock_registry.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -752,6 +839,17 @@ async def test_link_fix_execution_lineage_through_execute_tool_call_runtime_path
 
     assert result["ok"] is True
     _assert_operator_envelope(result)
+    execution_ref = result["resolved_references"]["execution"]
+    assert execution_ref["raw"] == parent_context.execution_id
+    assert execution_ref["source"] == "runtime_parent_execution"
+    assert execution_ref["kind"] == "parent_execution"
+    assert execution_ref["entry_proven"] is False
+    assert result["case_scope"]["mode"] == "project"
+    assert result["case_scope"]["project_name"] == "test-project"
+    assert result["case_scope"]["project_key"] == "test-project"
+    assert "repo_id" in result["case_scope"]
+    assert result["case_event"] == {"event": "report_body_updated"}
+    assert result["meta"]["case_event"] == "report_body_updated"
 
 
 @pytest.mark.asyncio

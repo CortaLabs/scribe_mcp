@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 import yaml
 
@@ -83,14 +83,30 @@ def apply_frontmatter_updates(
     frontmatter_raw: str,
     data: Dict[str, Any],
     updates: Dict[str, Any],
+    *,
+    delete_keys: Optional[Set[str]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Apply updates to frontmatter while preserving original formatting when possible."""
-    if not updates:
+    delete_keys = set(delete_keys or set())
+    if not updates and not delete_keys:
         return frontmatter_raw, data
 
-    complex_update = any(isinstance(value, (list, dict)) for value in updates.values())
     merged = dict(data)
-    merged.update(updates)
+    for key in delete_keys:
+        merged.pop(key, None)
+
+    def _is_destructive_empty(value: Any) -> bool:
+        return value is None or (isinstance(value, str) and not value.strip())
+
+    for key, value in updates.items():
+        if key in delete_keys:
+            continue
+        existing = merged.get(key)
+        if key in merged and existing not in (None, "", [], {}) and _is_destructive_empty(value):
+            continue
+        merged[key] = value
+
+    complex_update = any(isinstance(value, (list, dict)) for value in updates.values()) or bool(delete_keys)
     if complex_update:
         return _rewrite_frontmatter_block(merged), merged
 
@@ -99,10 +115,16 @@ def apply_frontmatter_updates(
         return frontmatter_raw, merged
 
     content_lines = [line for line in lines[1:-1] if line.strip() != "..."]
-    keys_remaining = dict(updates)
+    keys_remaining = {k: v for k, v in updates.items() if k not in delete_keys}
     for idx, line in enumerate(content_lines):
         stripped = line.lstrip()
         indent = line[: len(line) - len(stripped)]
+        stripped_line = stripped.strip()
+        if ":" in stripped_line:
+            key_prefix = stripped_line.split(":", 1)[0].strip()
+            if key_prefix in delete_keys:
+                content_lines[idx] = ""
+                continue
         for key in list(keys_remaining.keys()):
             if stripped.startswith(f"{key}:"):
                 value = _format_yaml_scalar(keys_remaining[key])

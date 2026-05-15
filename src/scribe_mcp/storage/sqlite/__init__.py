@@ -224,6 +224,7 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
         return await case_ops.query_case_registry_records(
             initialise_fn=self._initialise,
             execute_fn=self._execute,
+            fetchone_fn=self._fetchone,
             fetchall_fn=self._fetchall,
             repo_root=repo_root,
             project_name=project_name,
@@ -337,6 +338,21 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
             offset=offset,
         )
 
+    async def fetch_entry_by_id(
+        self,
+        *,
+        entry_id: str,
+        repo_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return await entry_ops.fetch_entry_by_id(
+            initialise_fn=self._initialise,
+            fetchone_fn=self._fetchone,
+            entry_id=entry_id,
+            repo_id=repo_id,
+            project_name=project_name,
+        )
+
     async def query_entries(
         self,
         *,
@@ -433,7 +449,7 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
                 db_path=self._path,
                 logger=logger,
             )
-            await case_ops.ensure_case_registry_schema(execute_fn=self._execute)
+            await case_ops.ensure_case_registry_schema(execute_fn=self._execute, fetchone_fn=self._fetchone)
 
             self._initialised = True
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from scribe_mcp import server as server_module
 from scribe_mcp.doc_management import utils as doc_utils
+from scribe_mcp.shared.reference_resolution import build_reference_scope, resolve_reference
 from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import additive_local_tool
@@ -382,41 +384,65 @@ def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[st
     return event_type
 
 
-def _validate_link_fix_execution_id(context: Any, execution_id: str) -> Optional[str]:
-    """Validate link_fix execution provenance against active execution context.
-
-    Returns:
-        None when valid; otherwise an error string.
-    """
+async def _resolve_link_fix_execution_reference(context: Any, execution_id: str) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     if not isinstance(execution_id, str) or not execution_id.strip():
-        return "execution_id is required"
+        return None, "execution_id is required"
 
-    provided_id = execution_id.strip()
-    allowed_ids: set[str] = set()
-
-    current_execution_id = getattr(context, "execution_id", None)
-    if isinstance(current_execution_id, str) and current_execution_id.strip():
-        allowed_ids.add(current_execution_id.strip())
-
-    parent_execution_id = getattr(context, "parent_execution_id", None)
-    if isinstance(parent_execution_id, str) and parent_execution_id.strip():
-        allowed_ids.add(parent_execution_id.strip())
-
-    authoritative_session_key = resolve_context_authoritative_session_key(context)
-    if isinstance(authoritative_session_key, str) and authoritative_session_key.strip():
-        allowed_ids.add(authoritative_session_key.strip())
-
-    # When execution context does not expose IDs (e.g., legacy tests), avoid false negatives.
-    if not allowed_ids:
-        return None
-
-    if provided_id not in allowed_ids:
-        return (
+    scope = build_reference_scope(context)
+    resolution = resolve_reference(execution_id, "execution_id", scope)
+    if not resolution.ok and resolution.compatibility_hint != "potential_entry_reference_requires_storage_lookup":
+        return None, (
             "execution_id does not match active execution context "
-            "(must be current/parent execution_id or the active session key)"
+            "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
         )
 
-    return None
+    if resolution.ok:
+        if resolution.source == "runtime_transport_session":
+            return None, (
+                "execution_id does not match active execution context "
+                "(transport session identifiers are not accepted; use current/parent execution_id, "
+                "authoritative session key, or a Scribe entry id)"
+            )
+        if resolution.kind not in {"execution", "parent_execution", "session", "authoritative_session_key", "entry"}:
+            return None, (
+                "execution_id does not match active execution context "
+                "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
+            )
+        return {
+            "raw": execution_id,
+            "kind": resolution.kind,
+            "source": resolution.source,
+            "value": resolution.resolved_value or execution_id,
+            "entry_proven": False,
+        }, None
+
+    repo_root, project_name, _ownership_meta = _active_repo_project_authority(context, None)
+    backend = getattr(server_module, "storage_backend", None)
+    if backend is None or not repo_root or not project_name:
+        return None, (
+            "execution_id does not match active execution context "
+            "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
+        )
+    repo_id = backend.compute_repo_id(repo_root)
+    entry = await backend.fetch_entry_by_id(
+        entry_id=execution_id.strip(),
+        repo_id=repo_id,
+        project_name=project_name,
+    )
+    if not isinstance(entry, dict):
+        return None, (
+            "execution_id does not match active execution context "
+            "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
+        )
+    return {
+        "raw": execution_id,
+        "kind": "entry",
+        "source": "storage_scope_lookup",
+        "value": execution_id.strip(),
+        "entry_proven": True,
+        "scope_repo_id": repo_id,
+        "scope_project_name": project_name,
+    }, None
 
 
 def _active_repo_project_authority(context: Any, fallback_project_name: Optional[str] = None) -> tuple[Optional[str], Optional[str], dict[str, Any]]:
@@ -557,13 +583,21 @@ async def _load_and_authorize_case_registry_record(
     if backend is None or not hasattr(backend, "fetch_case_registry_record"):
         return None, "shared case registry backend is unavailable"
 
-    case_record = await backend.fetch_case_registry_record(case_id=case_id)
-    if case_record is None:
-        return None, f"case_id '{case_id}' is not registered in the shared case registry"
-
     active_repo_root, _, _ = _active_repo_project_authority(context)
     if not active_repo_root:
         return None, "unable to resolve authoritative repo_root for case ownership validation"
+    active_project_name = getattr(getattr(context, "resolved_scope", None), "project_name", None)
+
+    case_record = await backend.fetch_case_registry_record(
+        case_id=case_id,
+        repo_root=active_repo_root,
+        project_name=active_project_name,
+    )
+    if case_record is None:
+        return None, (
+            f"case_id '{case_id}' is not registered in the shared case registry "
+            "for the active repo/project scope"
+        )
 
     record_repo_root = str(getattr(case_record, "repo_root", "") or "").strip()
     if not record_repo_root:
@@ -1302,7 +1336,7 @@ async def link_fix(
     """Link a fix artifact to a BUG/SEC case."""
     context = _get_context()
 
-    execution_id_error = _validate_link_fix_execution_id(context, execution_id)
+    resolved_execution, execution_id_error = await _resolve_link_fix_execution_reference(context, execution_id)
     if execution_id_error:
         return _operator_envelope(
             ok=False,
@@ -1310,7 +1344,7 @@ async def link_fix(
             case_id=str(case_id or ""),
             warnings=[execution_id_error],
             next_step=(
-                "Run link_fix from the active execution chain and use the current or parent execution_id."
+                "Run link_fix with the current/parent execution_id, active session key, or a Scribe entry id."
             ),
             error=execution_id_error,
         )
@@ -1371,11 +1405,12 @@ async def link_fix(
         if kind == "SEC":
             meta["security_event"] = "1"
 
+        case_event_name = "fix_linked"
         result = await append_entry_tool(
             message=message,
             status="success" if landing_status in ("merged", "landed", "done") else "info",
             agent=agent,
-            meta=meta,
+            meta={**meta, "case_event": case_event_name},
             format="structured",  # Returns plain dict, not MCP-wrapped
         )
 
@@ -1479,20 +1514,53 @@ async def link_fix(
             path=str(result.get("path", "")),
             project_name=str(result.get("project_name", "")),
         )
+        response["resolved_references"] = {
+            "execution": dict(resolved_execution or {}),
+            "case": {"raw": case_id, "kind": kind.lower(), "source": "case_id_prefix", "value": case_id},
+            "artifact": {"raw": artifact_ref, "kind": "artifact", "source": "link_fix_argument", "value": artifact_ref},
+        }
+        response["case_scope"] = {
+            "mode": "project",
+            "project_name": str(getattr(case_record, "project_name", "") or ""),
+            "project_key": str(
+                getattr(case_record, "project_key", None)
+                or getattr(case_record, "project_name", "")
+                or ""
+            ),
+            "repo_id": str(getattr(case_record, "repo_id", "") or ""),
+        }
+        response["case_event"] = {"event": case_event_name}
         response["case_registry"] = {
             "doc_name": str(getattr(case_record, "doc_name", "") or ""),
             "doc_type": str(getattr(case_record, "doc_type", "") or ""),
             "project_name": str(getattr(case_record, "project_name", "") or ""),
         }
+        report_event_name = "report_body_updated"
         if doc_update_warning:
+            report_event_name = "fix_link_partial"
             response["warnings"].append(doc_update_warning)
             response["doc_update_warning"] = doc_update_warning
             response["partial"] = True
+            response["case_event"] = {"event": report_event_name}
+            response["meta"] = {**response.get("meta", {}), "case_event": report_event_name}
             response["next_step"] = (
                 f"Fix report updates for {case_id} via manage_docs replace_section (appendix/resolution_plan)."
             )
         else:
+            response["case_event"] = {"event": report_event_name}
+            response["meta"] = {**response.get("meta", {}), "case_event": report_event_name}
             response["next_step"] = "No follow-up required."
+        await append_entry_tool(
+            message=f"[CASE REPORT EVENT] {case_id}: {report_event_name}",
+            status="info",
+            agent=agent,
+            meta={
+                **meta,
+                "case_event": report_event_name,
+                "report_event": report_event_name,
+            },
+            format="structured",
+        )
         return response
 
     # Sentinel mode: original behavior

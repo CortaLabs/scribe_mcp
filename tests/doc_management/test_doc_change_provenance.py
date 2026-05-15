@@ -78,6 +78,7 @@ async def test_managed_edit_records_session_provenance_in_doc_change_metadata(tm
         agent_id="CoderAgent",
         helper=SimpleNamespace(apply_context_payload=lambda payload, _ctx: payload, error_response=lambda message: {"ok": False, "error": message}),
         context=context,
+        execution_context=None,
         deprecation_warning=None,
         apply_doc_change=_apply_doc_change,
         get_or_create_storage_project=_get_or_create_storage_project,

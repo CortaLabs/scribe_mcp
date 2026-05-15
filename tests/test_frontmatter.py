@@ -38,7 +38,7 @@ async def _setup_project(tmp_path: Path) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_frontmatter_created_and_updated(tmp_path: Path) -> None:
+async def test_frontmatter_not_created_for_body_only_edit_without_opt_in(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
 
@@ -60,15 +60,31 @@ async def test_frontmatter_created_and_updated(tmp_path: Path) -> None:
     assert change.success
     text = path.read_text(encoding="utf-8")
     parsed = parse_frontmatter(text)
+    assert parsed.has_frontmatter is False
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_update_can_create_frontmatter(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={"frontmatter": {"status": "draft"}},
+        dry_run=False,
+    )
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert parsed.has_frontmatter
-    assert parsed.frontmatter_data.get("title") == "Title"
-    assert parsed.frontmatter_data.get("doc_type") == "architecture"
-    assert parsed.frontmatter_data.get("created_by") == "Scribe"
-    assert parsed.frontmatter_data.get("maintained_by") == "Scribe"
-    assert parsed.frontmatter_data.get("edit_trace", {}).get("tool") == "manage_docs"
-    last_updated = str(parsed.frontmatter_data.get("last_updated") or "")
-    assert last_updated
-    assert last_updated.endswith("UTC")
+    assert parsed.frontmatter_data.get("status") == "draft"
 
 
 @pytest.mark.asyncio
@@ -128,7 +144,7 @@ async def test_frontmatter_preserves_custom_fields(tmp_path: Path) -> None:
     change = await apply_doc_change(
         project,
         doc="architecture",
-        action="replace_range",
+        action="frontmatter_update",
         section=None,
         content="# Custom Title\n\nBody updated\n",
         patch=None,
@@ -155,13 +171,13 @@ async def test_frontmatter_explicit_updates(tmp_path: Path) -> None:
     change = await apply_doc_change(
         project,
         doc="architecture",
-        action="replace_range",
+        action="frontmatter_update",
         section=None,
-        content="# Title\n\nBody updated\n",
+        content=None,
         patch=None,
         patch_source_hash=None,
-        start_line=1,
-        end_line=3,
+        start_line=None,
+        end_line=None,
         template=None,
         metadata={"frontmatter": {"status": "authoritative"}},
         dry_run=False,
@@ -171,6 +187,72 @@ async def test_frontmatter_explicit_updates(tmp_path: Path) -> None:
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert parsed.frontmatter_data.get("status") == "authoritative"
 
+
+@pytest.mark.asyncio
+async def test_preserve_first_blocks_empty_scalar_overwrite(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text("---\nsummary: Keep me\n---\n# Title\n\nBody\n", encoding="utf-8")
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        metadata={"frontmatter": {"summary": ""}},
+        template=None,
+        dry_run=False,
+    )
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.frontmatter_data.get("summary") == "Keep me"
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_delete_explicitly_removes_key(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text("---\nsummary: Remove me\n---\n# Title\n\nBody\n", encoding="utf-8")
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        metadata={"frontmatter_delete": ["summary"]},
+        template=None,
+        dry_run=False,
+    )
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert "summary" not in parsed.frontmatter_data
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_delete_ignores_reserved_and_runtime_owned_fields(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text(
+        "---\nsummary: Keep or remove\ncreated_by: LegacyCreator\nmaintained_by: LegacyMaintainer\nproject_name: sample\n---\n# Title\n\nBody\n",
+        encoding="utf-8",
+    )
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        metadata={"frontmatter_delete": ["summary", "created_by", "maintained_by", "project_name"]},
+        template=None,
+        dry_run=False,
+    )
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    fm = parsed.frontmatter_data
+    assert "summary" not in fm
+    assert fm.get("created_by") == "LegacyCreator"
+    assert fm.get("maintained_by") == change.extra.get("attribution", {}).get("actor_id")
+    assert fm.get("project_name") == "sample"
 
 @pytest.mark.asyncio
 async def test_replace_range_content_frontmatter_updates_document_frontmatter(tmp_path: Path) -> None:
@@ -212,6 +294,7 @@ async def test_frontmatter_auto_updates_related_docs_from_links(tmp_path: Path) 
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
 
+    path.write_text("---\ntitle: Title\n---\n# Title\n\nBody\n", encoding="utf-8")
     change = await apply_doc_change(
         project,
         doc="architecture",
