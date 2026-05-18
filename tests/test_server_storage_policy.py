@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,11 +16,21 @@ from scribe_mcp.state.manager import StateManager
 from scribe_mcp.storage.sqlite import SQLiteStorage
 
 
+@pytest.fixture(autouse=True)
+def _restore_scribe_logger_after_server_import():
+    yield
+    scribe_logger = logging.getLogger("scribe_mcp")
+    scribe_logger.handlers.clear()
+    scribe_logger.propagate = True
+    scribe_logger.setLevel(logging.NOTSET)
+
+
 def _fake_settings(**overrides) -> SimpleNamespace:
     base = {
         "mode": "auto",
         "storage_backend": "postgres",
         "db_url": None,
+        "project_root": Path(__file__).parent / "_storage_policy_fixture_repo",
         "sqlite_path": Path("runtime.sqlite3"),
         "postgres_schema": "scribe",
         "postgres_pool_min_size": 2,
