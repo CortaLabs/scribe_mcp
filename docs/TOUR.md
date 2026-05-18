@@ -1,6 +1,6 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.2.24`
+Release line: `2.2.25`
 Updated: `2026-05-17`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
@@ -14,7 +14,7 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.2.24` hardens the governed-doc and case workflow agents use during real repairs:
+Release `2.2.25` hardens the governed-doc and case workflow agents use during real repairs:
 
 - `link_fix` validates execution/session/entry references before recording fix evidence.
 - Accepted reference forms are explicit: current execution lineage, the authoritative session key, or a mirrored in-scope Scribe entry.

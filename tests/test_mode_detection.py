@@ -20,7 +20,8 @@ from scribe_mcp.config.mode_detection import (
 class FakeSettings:
     """Minimal settings stub for testing."""
     def __init__(self, mode="auto", remote_server_url=None, remote_connect_timeout=3.0,
-                 remote_fallback=True, db_url=None, storage_backend=None, release_profile="internal"):
+                 remote_fallback=True, db_url=None, storage_backend=None, release_profile="internal",
+                 project_root=None):
         self.mode = mode
         self.remote_server_url = remote_server_url
         self.remote_connect_timeout = remote_connect_timeout
@@ -29,6 +30,7 @@ class FakeSettings:
         self.storage_backend = storage_backend or ("postgres" if db_url else "sqlite")
         self.release_profile = release_profile
         self.public_release = release_profile == "public"
+        self.project_root = project_root or Path(__file__).parent / "_mode_detection_fixture_repo"
 
 
 @pytest.mark.asyncio
