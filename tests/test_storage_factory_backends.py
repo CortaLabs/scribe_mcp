@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +32,7 @@ def _fake_settings(**overrides):
         "remote_fallback": False,
         "release_profile": "internal",
         "public_release": False,
+        "project_root": Path("."),
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -85,6 +87,7 @@ def test_create_storage_backend_allows_explicit_standalone_sqlite(monkeypatch) -
 
 
 def test_create_storage_backend_rejects_server_mode_with_sqlite_even_with_db_url(monkeypatch) -> None:
+    monkeypatch.setenv("SCRIBE_STORAGE_BACKEND", "sqlite")
     monkeypatch.setattr(
         settings_module,
         "settings",

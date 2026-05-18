@@ -58,6 +58,13 @@ def _load_global_runtime_dotenv(load_dotenv_fn: Optional[Any] = None) -> bool:
         return False
 
 
+def _dotenv_loading_disabled(env: Optional[Dict[str, str]] = None) -> bool:
+    """Return True when runtime explicitly disables dotenv file loading."""
+    effective_env = env or os.environ
+    raw = str(effective_env.get("SCRIBE_DISABLE_DOTENV", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _load_env_json(name: str) -> Dict[str, Any]:
     """Return JSON data from the environment when available."""
     raw = os.environ.get(name)
@@ -357,8 +364,9 @@ class Settings:
         # 1) process env (already present)
         # 2) repo root .env
         # 3) user/global runtime.env
-        _load_repo_root_dotenv()
-        _load_global_runtime_dotenv()
+        if not _dotenv_loading_disabled():
+            _load_repo_root_dotenv()
+            _load_global_runtime_dotenv()
 
         project_root = Path(os.environ.get("SCRIBE_ROOT", _default_root())).resolve()
         default_repo_root_raw = _optional_env("SCRIBE_REPO_ROOT", "REPO_ROOT")

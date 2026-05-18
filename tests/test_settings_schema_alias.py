@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import scribe_mcp.config.settings as settings_module
 
 
@@ -67,3 +69,33 @@ def test_settings_load_prefers_canonical_db_path_env(monkeypatch, tmp_path) -> N
     loaded = settings_module.Settings.load()
 
     assert loaded.sqlite_path == canonical_path
+
+
+def test_settings_load_skips_dotenv_loaders_when_disabled(monkeypatch, tmp_path) -> None:
+    calls: list[Path] = []
+
+    def _record_loader(dotenv_path: Path, override: bool = False) -> None:
+        calls.append(Path(dotenv_path))
+
+    monkeypatch.setenv("SCRIBE_ROOT", str(tmp_path))
+    monkeypatch.setenv("SCRIBE_DISABLE_DOTENV", "1")
+    monkeypatch.setattr(settings_module, "load_dotenv", _record_loader)
+
+    settings_module.Settings.load()
+
+    assert calls == []
+
+
+def test_settings_load_calls_dotenv_loader_when_enabled(monkeypatch, tmp_path) -> None:
+    calls: list[Path] = []
+
+    def _record_loader(dotenv_path: Path, override: bool = False) -> None:
+        calls.append(Path(dotenv_path))
+
+    monkeypatch.setenv("SCRIBE_ROOT", str(tmp_path))
+    monkeypatch.delenv("SCRIBE_DISABLE_DOTENV", raising=False)
+    monkeypatch.setattr(settings_module, "load_dotenv", _record_loader)
+
+    settings_module.Settings.load()
+
+    assert len(calls) == 2

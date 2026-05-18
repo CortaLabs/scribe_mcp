@@ -155,7 +155,11 @@ def test_repo_db_path_is_inactive_with_warning_under_postgres(monkeypatch, tmp_p
             self.args = args
             self.kwargs = kwargs
 
-    sys.modules["scribe_mcp.storage.postgres"] = types.SimpleNamespace(PostgresStorage=_FakePostgresStorage)
+    monkeypatch.setitem(
+        sys.modules,
+        "scribe_mcp.storage.postgres",
+        types.SimpleNamespace(PostgresStorage=_FakePostgresStorage),
+    )
 
     with caplog.at_level("WARNING"):
         backend = storage_module.create_storage_backend(mode=OperatingMode.SERVER)
