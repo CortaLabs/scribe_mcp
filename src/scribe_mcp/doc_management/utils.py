@@ -40,6 +40,16 @@ def hash_text(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def strip_trailing_whitespace_lines(content: str) -> str:
+    """Remove trailing spaces/tabs from each line while preserving final newline shape."""
+    if not content:
+        return content
+    normalized = "\n".join(line.rstrip(" \t") for line in content.splitlines())
+    if content.endswith(("\n", "\r")):
+        normalized += "\n"
+    return normalized
+
+
 def _split_into_sections(raw: str) -> List[str]:
     lines = raw.splitlines()
     sections: List[List[str]] = []

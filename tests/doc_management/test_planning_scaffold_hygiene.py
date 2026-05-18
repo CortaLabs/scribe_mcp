@@ -37,8 +37,10 @@ def test_planning_templates_render_neutral_scaffolds_and_stay_queryable(tmp_path
     assert "Integrate Jinja2 template engine with security sandboxing" not in checklist
     assert "Implement file system watcher for manual edit detection" not in checklist
 
-    assert "Define scoped objective" in phase_plan
+    assert "Describe the first bounded outcome" in phase_plan
     assert "Add package-specific acceptance item with expected verification command" in checklist
+    assert not any(line.endswith((" ", "\t")) for line in phase_plan.splitlines())
+    assert not any(line.endswith((" ", "\t")) for line in checklist.splitlines())
 
     docs_dir = tmp_path / ".scribe" / "docs" / "dev_plans" / "scaffold_hygiene"
     docs_dir.mkdir(parents=True, exist_ok=True)

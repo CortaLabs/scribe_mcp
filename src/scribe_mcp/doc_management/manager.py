@@ -27,6 +27,7 @@ from scribe_mcp.templates import template_root
 from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
+from scribe_mcp.doc_management.utils import strip_trailing_whitespace_lines
 from scribe_mcp.utils.error_handler import sanitize_error_message
 from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
 import re
@@ -725,6 +726,7 @@ async def apply_doc_change(
         except Exception as e:
             raise DocumentOperationError(f"Failed to apply {action} operation: {e}")
 
+        updated_body = strip_trailing_whitespace_lines(updated_body)
         after_hash = _hash_text(updated_body)
 
         body_diff_preview = compile_unified_diff(
@@ -808,6 +810,7 @@ async def apply_doc_change(
                     sanitize_error_message(str(e)),
                 )
 
+        updated_body = strip_trailing_whitespace_lines(updated_body)
         explicit_create_if_missing = bool(
             isinstance(metadata, dict) and metadata.get("frontmatter_create_if_missing") is True
         )
@@ -3247,6 +3250,8 @@ def _apply_frontmatter_pipeline(
                 updates[key] = normalized
             else:
                 updates[key] = metadata.get(key)
+                if key == "maintained_by":
+                    explicit_maintained_by = str(metadata.get(key) or "").strip() or None
             frontmatter_updates_summary["updated_keys"].append(key)
 
         for trace_key in _TRACE_INPUT_KEYS:
@@ -3359,8 +3364,9 @@ def _apply_frontmatter_pipeline(
             }
         )
 
-    maintained_by = actor_id
-    frontmatter_updates_summary["defaulted_keys"].append("maintained_by")
+    maintained_by = explicit_maintained_by or actor_id
+    if explicit_maintained_by is None:
+        frontmatter_updates_summary["defaulted_keys"].append("maintained_by")
     updates["created_by"] = created_by
     updates["maintained_by"] = maintained_by
 
@@ -3563,7 +3569,7 @@ def _build_create_doc_body(
             body = "\n".join(sections).rstrip()
     if not body.endswith("\n"):
         body += "\n"
-    return body
+    return strip_trailing_whitespace_lines(body)
 
 
 def _extract_header_anchors(text: str) -> set[str]:

@@ -63,7 +63,7 @@ def _resolve_inline_special_content(
         return None
     if not inline_content.endswith("\n"):
         inline_content += "\n"
-    return inline_content
+    return utils_shared.strip_trailing_whitespace_lines(inline_content)
 
 
 def _normalize_stage(value: Any) -> str:
@@ -154,10 +154,11 @@ async def _render_special_template(
                 agent_id,
                 extra=extra_metadata,
             )
-        return engine.render_template(
+        rendered = engine.render_template(
             template_name=f"documents/{template_name}",
             metadata=prepared_metadata,
         )
+        return utils_shared.strip_trailing_whitespace_lines(rendered)
     except (ImportError, TemplateEngineError) as exc:
         raise DocumentOperationError(f"Failed to render template '{template_name}': {exc}") from exc
 

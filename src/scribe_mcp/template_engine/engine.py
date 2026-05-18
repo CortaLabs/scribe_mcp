@@ -35,6 +35,16 @@ def get_template_root():
     """Get template root directory."""
     return templates_dir()
 
+
+def _strip_trailing_whitespace_lines(content: str) -> str:
+    """Keep rendered text git-clean without changing paragraph structure."""
+    if not content:
+        return content
+    normalized = "\n".join(line.rstrip(" \t") for line in content.splitlines())
+    if content.endswith(("\n", "\r")):
+        normalized += "\n"
+    return normalized
+
 # Setup logging for template engine
 template_logger = logging.getLogger(__name__)
 
@@ -397,7 +407,7 @@ class Jinja2TemplateEngine:
             safe_context = SafeDict(context)
             result = template_string.format_map(safe_context)
             template_logger.debug("Legacy template rendering successful")
-            return result
+            return _strip_trailing_whitespace_lines(result)
         except Exception as e:
             template_logger.error(f"Legacy template rendering failed: {e}")
             raise TemplateRenderError(f"Both Jinja2 and legacy template rendering failed: {e}")
@@ -435,6 +445,7 @@ class Jinja2TemplateEngine:
 
             # Render template (environment already has StrictUndefined configured)
             result = template.render(**context)
+            result = _strip_trailing_whitespace_lines(result)
 
             template_logger.debug(f"Successfully rendered template '{template_name}' ({len(result)} chars)")
             return result
@@ -486,6 +497,7 @@ class Jinja2TemplateEngine:
 
             # Render template string (environment already has StrictUndefined configured)
             result = template.render(**context)
+            result = _strip_trailing_whitespace_lines(result)
 
             template_logger.debug(f"Successfully rendered template string ({len(result)} chars)")
             return result

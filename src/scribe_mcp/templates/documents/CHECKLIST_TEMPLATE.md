@@ -36,8 +36,8 @@
 {% endif %}
 
 {% call section("Final Verification", "final_verification") %}
-- [ ] All checklist items checked with proofs attached.  
-- [ ] Stakeholder sign-off recorded (name + date).  
+- [ ] All checklist items checked with proofs attached.
+- [ ] Stakeholder sign-off recorded (name + date).
 - [ ] Retro completed and lessons learned documented.
 {% endcall %}
 {% endblock %}

@@ -44,7 +44,7 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.2.22` focuses on agent-safe reference provenance, scoped case identity, preserve-first managed-doc metadata, and a provenance-safe changelog/global reconciliation guard:
+`2.2.23` focuses on git-clean managed-doc scaffolds, agent-safe reference provenance, scoped case identity, preserve-first managed-doc metadata, and a provenance-safe changelog/global reconciliation guard:
 
 - `link_fix` now validates execution/session/entry references through a shared resolver before mutating case state.
 - Bare or forged 32-hex tokens are no longer silently trusted; accepted IDs must come from current execution lineage, an authoritative session key, or an in-scope Scribe entry.

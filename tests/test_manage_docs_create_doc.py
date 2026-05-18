@@ -150,6 +150,40 @@ async def test_create_doc_from_body(tmp_path: Path) -> None:
     assert parsed.frontmatter_data.get("doc_type") == "lore_drop"
     assert parsed.frontmatter_data.get("category") == "lore"
     assert "# Lore Drop" in parsed.body
+    assert not any(line.endswith((" ", "\t")) for line in parsed.body.splitlines())
+
+
+@pytest.mark.asyncio
+async def test_create_doc_strips_trailing_whitespace_from_body(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    target_dir = Path(project["docs_dir"]) / "custom"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    change = await apply_doc_change(
+        project,
+        doc="custom_doc",
+        action="create_doc",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        edit=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={
+            "doc_name": "whitespace_safe_doc",
+            "doc_type": "note",
+            "body": "# Whitespace  \nBody\t\n",
+            "target_dir": str(target_dir),
+        },
+        dry_run=False,
+    )
+
+    assert change.success
+    written = Path(change.path).read_text(encoding="utf-8")
+    assert not any(line.endswith((" ", "\t")) for line in written.splitlines())
+    assert "# Whitespace\n" in written
 
 
 @pytest.mark.asyncio

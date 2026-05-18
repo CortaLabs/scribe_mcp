@@ -65,9 +65,9 @@ For each subsystem:
    - **Error Handling:** {{ subsystem.error_handling | default("Document failure modes and recovery strategy.") }}
   {% endfor %}
 {% else %}
-1. **Purpose** – why it exists.  
-2. **Interfaces** – inputs, outputs, data contracts, schemas.  
-3. **Implementation Notes** – libraries, algorithms, patterns.  
+1. **Purpose** – why it exists.
+2. **Interfaces** – inputs, outputs, data contracts, schemas.
+3. **Implementation Notes** – libraries, algorithms, patterns.
 4. **Error Handling** – failure modes and recovery strategy.
 {% endif %}
 {% endcall %}

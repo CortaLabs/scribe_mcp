@@ -63,12 +63,12 @@
 ---
 
 ## Status Flow Guide
-1. **open** → Initial discovery and logging  
-2. **investigating** → Root cause analysis  
-3. **in_progress** → Fix under development  
-4. **fixed** → Fix implemented, ready for testing  
-5. **verified** → Fix tested and confirmed  
-6. **closed** → Issue resolved and documented  
+1. **open** → Initial discovery and logging
+2. **investigating** → Root cause analysis
+3. **in_progress** → Fix under development
+4. **fixed** → Fix implemented, ready for testing
+5. **verified** → Fix tested and confirmed
+6. **closed** → Issue resolved and documented
 7. **wont_fix** → Issue accepted as-is (include justification)
 
 ---

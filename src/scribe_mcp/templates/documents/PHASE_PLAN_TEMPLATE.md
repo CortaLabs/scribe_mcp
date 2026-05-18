@@ -58,7 +58,7 @@ Update this table as {{ product }} evolves. Confidence values should change as k
 - [ ] Criteria 1 states how success is proven.
 - [ ] Criteria 2 states what evidence is required.
 
-**Dependencies:** List any upstream constraints or prerequisites.  
+**Dependencies:** List any upstream constraints or prerequisites.
 **Notes:** Capture decisions, assumptions, or risks for this phase.
 {% endcall %}
 
@@ -81,7 +81,7 @@ Update status and evidence as work progresses. Always link to PROGRESS_LOG entri
 {% endcall %}
 
 {% call section("Retro Notes & Adjustments", "retro_notes") %}
-- Summarise lessons learned after each phase completes.  
+- Summarise lessons learned after each phase completes.
 - Document any scope changes or re-planning decisions here.
 {% endcall %}
 {% endblock %}
