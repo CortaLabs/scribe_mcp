@@ -46,9 +46,21 @@ status: in_progress
 
 def test_nonblocking_code_catalog_defaults_present():
     from scribe_mcp.doc_management.scaffold_quality import DEFAULT_WARNING_POLICIES
-    for code in ["SCF_INDEX_STALE", "SCF_INDEX_MISSING", "SCF_DOC_UNINDEXED", "SCF_NONCANONICAL_LOCATION"]:
+    for code in ["SCF_INDEX_STALE", "SCF_INDEX_MISSING", "SCF_DOC_UNINDEXED", "SCF_NONCANONICAL_LOCATION", "SCF_TRAILING_WHITESPACE"]:
         assert code in DEFAULT_WARNING_POLICIES
         assert DEFAULT_WARNING_POLICIES[code]["blocking"] is False
+
+
+def test_trailing_whitespace_emits_quality_warning():
+    text = (
+        "---\n"
+        "status: in_progress\n"
+        "---\n"
+        "Line with trailing space" + " " + "\n"
+        "Clean line\n"
+    )
+    warnings = analyze_scaffold_quality(text=text, doc_name="SPEC")
+    assert "SCF_TRAILING_WHITESPACE" in _codes(warnings)
 
 
 def test_template_prose_scaffold_phrase_triggers():

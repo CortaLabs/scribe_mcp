@@ -398,6 +398,90 @@ async def test_set_project_allows_explicit_rebind_outside_current_session_projec
 
 
 @pytest.mark.asyncio
+async def test_read_recent_allows_explicit_other_project_same_repo(monkeypatch) -> None:
+    monkeypatch.delenv("SCRIBE_RELEASE_PROFILE", raising=False)
+
+    class _SameRepoBackend(_ExplicitOverrideBackend):
+        async def fetch_project(self, name: str):
+            if name == "trusted-project":
+                return SimpleNamespace(
+                    name="trusted-project",
+                    repo_root="/tmp/shared-repo",
+                    progress_log_path="/tmp/shared-repo/trusted/PROGRESS_LOG.md",
+                    docs_json=None,
+                )
+            if name == "other-project":
+                return SimpleNamespace(
+                    name="other-project",
+                    repo_root="/tmp/shared-repo",
+                    progress_log_path="/tmp/shared-repo/other/PROGRESS_LOG.md",
+                    docs_json=None,
+                )
+            return None
+
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return _BindingState()
+
+    server_module = SimpleNamespace(
+        state_manager=SimpleNamespace(record_tool=_record_tool, load=_load_state),
+        storage_backend=_SameRepoBackend(),
+        get_execution_context=lambda: SimpleNamespace(
+            mode="project",
+            stable_session_id="session-security",
+            session_id="session-security",
+        ),
+        get_agent_identity=lambda: None,
+    )
+
+    context = await resolve_logging_context(
+        tool_name="read_recent",
+        server_module=server_module,
+        explicit_project="other-project",
+        require_project=True,
+        recovery_mode="none",
+    )
+
+    assert context.project is not None
+    assert context.project["name"] == "other-project"
+    assert context.resolution_source == "explicit_project"
+
+
+@pytest.mark.asyncio
+async def test_read_recent_rejects_explicit_other_project_different_repo(monkeypatch) -> None:
+    monkeypatch.delenv("SCRIBE_RELEASE_PROFILE", raising=False)
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return _BindingState()
+
+    server_module = SimpleNamespace(
+        state_manager=SimpleNamespace(record_tool=_record_tool, load=_load_state),
+        storage_backend=_ExplicitOverrideBackend(),
+        get_execution_context=lambda: SimpleNamespace(
+            mode="project",
+            stable_session_id="session-security",
+            session_id="session-security",
+        ),
+        get_agent_identity=lambda: None,
+    )
+
+    with pytest.raises(logging_utils_module.ProjectResolutionError) as excinfo:
+        await resolve_logging_context(
+            tool_name="read_recent",
+            server_module=server_module,
+            explicit_project="other-project",
+            require_project=True,
+            recovery_mode="none",
+        )
+
+    assert "not authorized for this session" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
 async def test_public_release_rejects_global_current_recent_fallback_rehydration(monkeypatch) -> None:
     monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "public")
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
@@ -606,9 +605,55 @@ async def test_link_fix_meta_contains_queryable_fix_link() -> None:
     assert "fix_link" in captured_meta, "link_fix must include fix_link in meta for queryability"
     assert "artifact_ref" in captured_meta["fix_link"]
     assert "execution_id" in captured_meta["fix_link"]
+    assert captured_meta["fix_link"]["execution_id"] == "exec-live-123"
+    assert "execution_ref" in captured_meta["fix_link"]
+    assert "artifact_ref_meta" in captured_meta["fix_link"]
     # Verify case_id is top-level in meta for query_entries meta_filters
     assert "case_id" in captured_meta
     assert captured_meta["case_id"] == "BUG-2026-03-15-0001"
+
+
+@pytest.mark.asyncio
+async def test_link_fix_structures_git_commit_and_scribe_artifact_references() -> None:
+    ctx = _make_execution_context("project")
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value={"ok": True})
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="SEC-2026-03-15-0001")
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="SEC-2026-03-15-0001",
+            execution_id="exec-live-123",
+            artifact_ref="commit:abc1234",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is True
+    assert result["resolved_references"]["artifact_meta"]["kind"] == "git_commit"
+    assert result["resolved_references"]["artifact_meta"]["value"] == "abc1234"
+
+    fix_link_meta = mock_append.call_args.kwargs["meta"]["fix_link"]
+    assert fix_link_meta["artifact_ref_meta"]["kind"] == "git_commit"
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+        result_scribe = await link_fix(
+            agent="test-agent",
+            case_id="SEC-2026-03-15-0001",
+            execution_id="exec-live-123",
+            artifact_ref="scribe://project/x/entry/y",
+            landing_status="landed",
+        )
+
+    assert result_scribe["ok"] is True
+    assert result_scribe["resolved_references"]["artifact_meta"]["kind"] == "scribe_reference"
 
 
 @pytest.mark.asyncio
@@ -630,6 +675,38 @@ async def test_link_fix_rejects_execution_id_not_in_active_context() -> None:
     assert result["ok"] is False
     _assert_operator_envelope(result)
     assert "execution_id" in result.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_link_fix_sentinel_mode_returns_and_persists_structured_refs() -> None:
+    ctx = _make_execution_context("sentinel")
+    captured_event: Dict[str, Any] = {}
+
+    def _capture_case_event(_context: Any, **kwargs: Any) -> None:
+        captured_event.update(kwargs)
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.append_case_event", side_effect=_capture_case_event):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="exec-live-123",
+            artifact_ref="commit:abc1234",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is True
+    _assert_operator_envelope(result)
+    assert result["mode"] == "sentinel"
+    assert result["resolved_references"]["execution"]["value"] == "exec-live-123"
+    assert result["resolved_references"]["artifact_meta"]["kind"] == "git_commit"
+    assert result["resolved_references"]["artifact_meta"]["value"] == "abc1234"
+
+    fix_link = captured_event["data"]["fix_link"]
+    assert fix_link["execution_id"] == "exec-live-123"
+    assert fix_link["artifact_ref"] == "commit:abc1234"
+    assert fix_link["execution_ref"]["value"] == "exec-live-123"
+    assert fix_link["artifact_ref_meta"]["kind"] == "git_commit"
 
 
 @pytest.mark.asyncio
@@ -699,6 +776,83 @@ async def test_link_fix_accepts_active_session_key() -> None:
     assert result["ok"] is True
     _assert_operator_envelope(result)
 
+@pytest.mark.asyncio
+async def test_link_fix_defaults_execution_id_to_current_context() -> None:
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.authoritative_session_key = "session-stable-789"
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value={"ok": True})
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+    assert result["ok"] is True
+    assert result["resolved_references"]["execution"]["value"] == "session-stable-789"
+
+
+@pytest.mark.asyncio
+async def test_link_fix_legacy_positional_order_remains_compatible() -> None:
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.authoritative_session_key = "session-stable-789"
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    captured_meta: dict[str, Any] = {}
+
+    async def _capture_append_entry(**kwargs: Any) -> Dict[str, Any]:
+        captured_meta.update(kwargs.get("meta", {}))
+        return _make_append_entry_result()
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", side_effect=_capture_append_entry), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", AsyncMock(return_value={"ok": True})):
+        result = await link_fix(
+            "test-agent",
+            "BUG-2026-03-15-0001",
+            "exec-live-123",
+            "src/legacy_positional.py:42",
+            "merged",
+        )
+
+    assert result["ok"] is True
+    assert captured_meta["fix_link"]["execution_id"] == "exec-live-123"
+    assert captured_meta["fix_link"]["artifact_ref"] == "src/legacy_positional.py:42"
+    assert captured_meta["landing_status"] == "merged"
+
+
+@pytest.mark.asyncio
+async def test_link_fix_accepts_execution_alias_active() -> None:
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    ctx.authoritative_session_key = "session-stable-789"
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    mock_manage = AsyncMock(return_value={"ok": True})
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001")
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", mock_manage):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="active",
+            artifact_ref="src/db.py:100",
+            landing_status="merged",
+        )
+    assert result["ok"] is True
+    assert result["resolved_references"]["execution"]["value"] == "session-stable-789"
+
 
 @pytest.mark.asyncio
 async def test_link_fix_accepts_scribe_entry_id() -> None:
@@ -756,6 +910,35 @@ async def test_link_fix_rejects_forged_or_out_of_scope_entry_id() -> None:
     mock_append.assert_not_called()
     mock_manage.assert_not_called()
     mock_registry.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_link_fix_uses_registry_doc_name_for_report_updates() -> None:
+    ctx = _make_execution_context("project")
+    ctx.execution_id = "exec-live-123"
+    mock_append = AsyncMock(return_value=_make_append_entry_result())
+    backend = _RegistryBackend()
+    backend.seed_case(case_id="BUG-2026-03-15-0001", doc_name="bug-report-custom")
+    captured_doc_names: list[str] = []
+
+    async def _capture_manage_docs(**kwargs: Any) -> Dict[str, Any]:
+        captured_doc_names.append(str(kwargs.get("doc_name", "")))
+        return {"ok": True}
+
+    with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
+         patch("scribe_mcp.tools.sentinel_tools.server_module.storage_backend", backend), \
+         patch("scribe_mcp.tools.append_entry.append_entry", mock_append), \
+         patch("scribe_mcp.tools.manage_docs.manage_docs", side_effect=_capture_manage_docs):
+        result = await link_fix(
+            agent="test-agent",
+            case_id="BUG-2026-03-15-0001",
+            execution_id="current",
+            artifact_ref="commit:deadbee",
+            landing_status="merged",
+        )
+
+    assert result["ok"] is True
+    assert result.get("partial") is not True
+    assert captured_doc_names == ["bug-report-custom", "bug-report-custom"]
 
 
 @pytest.mark.asyncio

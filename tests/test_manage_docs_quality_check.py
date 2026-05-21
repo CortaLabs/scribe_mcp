@@ -287,3 +287,53 @@ async def test_quality_check_changelog_emits_current_version_missing_warning(tmp
 
     codes = {w.get("code") for w in result.get("warnings", [])}
     assert "SCF_CHANGELOG_CURRENT_VERSION_MISSING" in codes
+
+
+@pytest.mark.asyncio
+async def test_quality_check_accepts_repo_relative_markdown_report_path(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_relative_path"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "active"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    arch = docs_dir / "ARCHITECTURE_GUIDE.md"
+    arch.write_text("# Architecture\n", encoding="utf-8")
+
+    report = project_root / "docs" / "bugs" / "case_001" / "report.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Bug Report\n\nObserved behavior.\n", encoding="utf-8")
+
+    project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-relative-path-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-relative-path-session"):
+        result = await manage_docs(action="quality_check", doc_name="docs/bugs/case_001/report.md", dry_run=True)
+
+    assert result["ok"] is True
+    assert result["scope"]["path"] == str(report.resolve())
+    assert result["scope"]["doc_name"] == "report"
+
+
+@pytest.mark.asyncio
+async def test_quality_check_accepts_absolute_markdown_path_from_other_dev_plan_project(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_absolute_path"
+    active_docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "active"
+    active_docs_dir.mkdir(parents=True, exist_ok=True)
+    phase = active_docs_dir / "PHASE_PLAN.md"
+    phase.write_text("# Phase Plan\n", encoding="utf-8")
+
+    other_doc = project_root / ".scribe" / "docs" / "dev_plans" / "other_project" / "PACKAGE_9_1_REPORT.md"
+    other_doc.parent.mkdir(parents=True, exist_ok=True)
+    other_doc.write_text("# Package Report\n\nCross-project quality check target.\n", encoding="utf-8")
+
+    project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-absolute-path-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-absolute-path-session"):
+        result = await manage_docs(action="quality_check", doc_name=str(other_doc.resolve()), dry_run=True)
+
+    assert result["ok"] is True
+    assert result["scope"]["path"] == str(other_doc.resolve())
+    assert result["scope"]["doc_name"] == "package_9_1_report"

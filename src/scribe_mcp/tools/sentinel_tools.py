@@ -36,6 +36,19 @@ _BUG_TEMPLATE_FIELDS = [
     "immediate_actions",
 ]
 
+
+def _normalize_artifact_reference(artifact_ref: str) -> dict[str, Any]:
+    raw = str(artifact_ref or "").strip()
+    if not raw:
+        return {"raw": raw, "kind": "artifact", "source": "link_fix_argument", "value": raw}
+    if re.fullmatch(r"[0-9a-f]{7,40}", raw):
+        return {"raw": raw, "kind": "git_commit", "source": "link_fix_argument", "value": raw}
+    if raw.startswith("commit:"):
+        return {"raw": raw, "kind": "git_commit", "source": "link_fix_argument", "value": raw.split(":", 1)[1].strip()}
+    if raw.startswith("scribe://"):
+        return {"raw": raw, "kind": "scribe_reference", "source": "link_fix_argument", "value": raw}
+    return {"raw": raw, "kind": "artifact", "source": "link_fix_argument", "value": raw}
+
 def _operator_envelope(
     *,
     ok: bool,
@@ -384,9 +397,17 @@ def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[st
     return event_type
 
 
-async def _resolve_link_fix_execution_reference(context: Any, execution_id: str) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+async def _resolve_link_fix_execution_reference(context: Any, execution_id: Optional[str]) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    alias_value = execution_id if isinstance(execution_id, str) else ""
+    alias_token = alias_value.strip().lower()
+    if alias_token in {"", "current", "active", "session"}:
+        authoritative = resolve_context_authoritative_session_key(context)
+        if isinstance(authoritative, str) and authoritative.strip():
+            execution_id = authoritative.strip()
+        else:
+            execution_id = str(getattr(context, "execution_id", "") or "").strip()
     if not isinstance(execution_id, str) or not execution_id.strip():
-        return None, "execution_id is required"
+        return None, "execution_id is required and no active execution/session context is available"
 
     scope = build_reference_scope(context)
     resolution = resolve_reference(execution_id, "execution_id", scope)
@@ -544,6 +565,8 @@ async def _register_case_registry_fix_link(
     case_id: str,
     execution_id: str,
     artifact_ref: str,
+    normalized_execution_ref: Optional[dict[str, Any]] = None,
+    normalized_artifact_ref: Optional[dict[str, Any]] = None,
     landing_status: str,
 ) -> tuple[bool, Optional[str]]:
     backend = getattr(server_module, "storage_backend", None)
@@ -564,6 +587,8 @@ async def _register_case_registry_fix_link(
             "fix_link": {
                 "execution_id": execution_id,
                 "artifact_ref": artifact_ref,
+                "execution_ref": normalized_execution_ref or {"value": execution_id},
+                "artifact_ref_meta": normalized_artifact_ref or {"value": artifact_ref},
                 "landing_status": landing_status,
             },
         },
@@ -1329,12 +1354,38 @@ async def open_security(
 async def link_fix(
     agent: str,
     case_id: str,
-    execution_id: str,
-    artifact_ref: str,
-    landing_status: str,
+    execution_id: str = "current",
+    artifact_ref: str = "",
+    landing_status: str = "",
 ) -> Dict[str, Any]:
     """Link a fix artifact to a BUG/SEC case."""
     context = _get_context()
+    if not isinstance(execution_id, str):
+        execution_id = str(execution_id or "")
+    execution_id = execution_id.strip() or "current"
+    artifact_ref = str(artifact_ref or "").strip()
+    landing_status = str(landing_status or "").strip()
+    if not artifact_ref:
+        message = "artifact_ref is required"
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            case_id=str(case_id or ""),
+            warnings=[message],
+            next_step="Provide artifact_ref and retry link_fix.",
+            error=message,
+        )
+    if not landing_status:
+        message = "landing_status is required"
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            case_id=str(case_id or ""),
+            warnings=[message],
+            next_step="Provide landing_status and retry link_fix.",
+            error=message,
+        )
+    normalized_artifact_ref = _normalize_artifact_reference(artifact_ref)
 
     resolved_execution, execution_id_error = await _resolve_link_fix_execution_reference(context, execution_id)
     if execution_id_error:
@@ -1390,13 +1441,16 @@ async def link_fix(
         import logging as _logging
         _logger = _logging.getLogger(__name__)
 
+        resolved_execution_value = str((resolved_execution or {}).get("value") or execution_id)
         message = f"[FIX LINKED] {case_id}: {artifact_ref} ({landing_status})"
         meta = {
             "case_type": "bug" if kind == "BUG" else "security",
             "case_id": case_id,
             "fix_link": {
-                "execution_id": execution_id,
+                "execution_id": resolved_execution_value,
                 "artifact_ref": artifact_ref,
+                "execution_ref": resolved_execution or {"value": execution_id},
+                "artifact_ref_meta": normalized_artifact_ref,
             },
             "landing_status": landing_status,
         }
@@ -1429,8 +1483,10 @@ async def link_fix(
             case_record=case_record,
             context=context,
             case_id=case_id,
-            execution_id=execution_id,
+            execution_id=resolved_execution_value,
             artifact_ref=artifact_ref,
+            normalized_execution_ref=resolved_execution,
+            normalized_artifact_ref=normalized_artifact_ref,
             landing_status=landing_status,
         )
         if not registry_ok:
@@ -1449,15 +1505,16 @@ async def link_fix(
         doc_update_warning: str | None = None
         try:
             # Update the appendix section with fix reference details
+            report_doc_name = str(getattr(case_record, "doc_name", "") or case_id)
             appendix_content = (
-                f"- **Fix Reference:** {artifact_ref} (execution: {execution_id})\n"
+                f"- **Fix Reference:** {artifact_ref} (execution: {resolved_execution_value})\n"
                 f"- **Landing Status:** {landing_status}\n"
                 f"- **Fix Linked By:** {agent}\n"
             )
             appendix_result = await manage_docs_tool(
                 agent=agent,
                 action="replace_section",
-                doc_name=case_id,
+                doc_name=report_doc_name,
                 section="appendix",
                 content=appendix_content,
             )
@@ -1469,7 +1526,7 @@ async def link_fix(
                 )
                 _logger.warning(
                     "link_fix: failed to update appendix section for %s: %s",
-                    case_id,
+                    report_doc_name,
                     doc_update_warning,
                 )
             else:
@@ -1479,12 +1536,12 @@ async def link_fix(
                     f"Fix landed with status: **{landing_status}**\n\n"
                     f"### Fix Details\n"
                     f"- Artifact: {artifact_ref}\n"
-                    f"- Execution ID: {execution_id}\n"
+                    f"- Execution ID: {resolved_execution_value}\n"
                 )
                 resolution_result = await manage_docs_tool(
                     agent=agent,
                     action="replace_section",
-                    doc_name=case_id,
+                    doc_name=report_doc_name,
                     section="resolution_plan",
                     content=resolution_content,
                 )
@@ -1496,7 +1553,7 @@ async def link_fix(
                     )
                     _logger.warning(
                         "link_fix: failed to update resolution_plan for %s: %s",
-                        case_id,
+                        report_doc_name,
                         doc_update_warning,
                     )
         except Exception as exc:
@@ -1518,6 +1575,7 @@ async def link_fix(
             "execution": dict(resolved_execution or {}),
             "case": {"raw": case_id, "kind": kind.lower(), "source": "case_id_prefix", "value": case_id},
             "artifact": {"raw": artifact_ref, "kind": "artifact", "source": "link_fix_argument", "value": artifact_ref},
+            "artifact_meta": dict(normalized_artifact_ref),
         }
         response["case_scope"] = {
             "mode": "project",
@@ -1573,15 +1631,24 @@ async def link_fix(
             "fix_link": {
                 "execution_id": execution_id,
                 "artifact_ref": artifact_ref,
+                "execution_ref": resolved_execution or {"value": execution_id},
+                "artifact_ref_meta": normalized_artifact_ref,
             },
             "landing_status": landing_status,
         },
         include_md=True,
     )
-    return _operator_envelope(
+    response = _operator_envelope(
         ok=True,
         mode="sentinel",
         case_id=str(case_id),
         artifacts=[{"type": "fix_artifact", "ref": str(artifact_ref)}],
         next_step="Fix link appended in sentinel mode.",
     )
+    response["resolved_references"] = {
+        "execution": dict(resolved_execution or {}),
+        "case": {"raw": case_id, "kind": kind.lower(), "source": "case_id_prefix", "value": case_id},
+        "artifact": {"raw": artifact_ref, "kind": "artifact", "source": "link_fix_argument", "value": artifact_ref},
+        "artifact_meta": dict(normalized_artifact_ref),
+    }
+    return response

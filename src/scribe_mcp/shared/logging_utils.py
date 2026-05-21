@@ -310,8 +310,11 @@ async def resolve_logging_context(
         explicit_name = str(explicit_project).strip()
         explicit_alias = normalize_project_input(explicit_name)
         allow_set_project_rebind = tool_name == "set_project"
+        allow_cross_project_read = tool_name in {"read_recent"}
+        session_project_root = str(project.get("root", "")).strip() if isinstance(project, dict) else ""
         if (
             not allow_set_project_rebind
+            and not allow_cross_project_read
             and exec_context
             and getattr(exec_context, "mode", None) == "project"
             and authorized_project_names
@@ -323,7 +326,7 @@ async def resolve_logging_context(
                     f"Explicit project override '{explicit_project}' does not match the session-bound active project.",
                     recent_projects,
                 )
-        elif public_release and not allow_set_project_rebind:
+        elif public_release and not allow_set_project_rebind and not allow_cross_project_read:
             if explicit_name not in authorized_project_names and (
                 not explicit_alias or explicit_alias not in authorized_project_names
             ):
@@ -368,6 +371,13 @@ async def resolve_logging_context(
                 "root": record.repo_root,
                 "progress_log": record.progress_log_path,
             }
+            explicit_project_root = str(record.repo_root or "").strip()
+            if allow_cross_project_read and session_project_root and explicit_project_root:
+                if explicit_project_root != session_project_root:
+                    raise ProjectResolutionError(
+                        f"Explicit project override '{explicit_project}' is not authorized for this session.",
+                        recent_projects,
+                    )
             resolution_source = "explicit_project"
             if getattr(record, "docs_json", None):
                 try:

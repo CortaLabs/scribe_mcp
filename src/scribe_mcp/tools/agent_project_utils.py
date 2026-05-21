@@ -176,6 +176,8 @@ def resolve_authoritative_write_scope(
     authoritative_candidates = (
         getattr(resolved_scope, "authoritative_session_key", None),
         getattr(context, "authoritative_session_key", None),
+        getattr(resolved_scope, "stable_session_id", None),
+        getattr(context, "stable_session_id", None) if context else None,
         getattr(context, "session_id", None) if context else None,
         getattr(resolved_scope, "agent_session_id", None),
         agent_session_id,

@@ -16,8 +16,6 @@ from scribe_mcp.log_intelligence import build_report_from_path
 from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key
 from scribe_mcp.doc_management.scaffold_quality import (
     collect_managed_doc_quality_warnings,
-    configured_log_quality_exclusion_paths,
-    is_managed_doc_quality_target,
     summarize_quality_warnings,
 )
 from scribe_mcp.readiness import build_readiness_summary, collect_managed_doc_quality_state
@@ -882,10 +880,38 @@ async def _handle_quality_check(
     helper: LoggingToolMixin,
     context: LoggingContext,
 ) -> Dict[str, Any]:
+    def _resolve_explicit_markdown_path(raw_value: str) -> Optional[Path]:
+        candidate_raw = str(raw_value or "").strip()
+        if not candidate_raw:
+            return None
+        if "/" not in candidate_raw and "\\" not in candidate_raw:
+            return None
+        candidate = Path(candidate_raw).expanduser()
+        if not candidate.is_absolute():
+            project_root_raw = str(active_project.get("root") or "").strip()
+            if not project_root_raw:
+                return None
+            candidate = (Path(project_root_raw).expanduser() / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
+        if candidate.suffix.lower() != ".md":
+            return None
+        if not candidate.exists():
+            return None
+        project_root = Path(str(active_project.get("root") or "")).expanduser().resolve()
+        if project_root not in candidate.parents and candidate != project_root:
+            return None
+        return candidate
+
     docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
     requested_name = str(doc_name or "").strip()
-    target_name = resolve_registered_doc_key(active_project, requested_name) if requested_name else ""
-    path_str = docs.get(target_name) if target_name else None
+    explicit_md_path = _resolve_explicit_markdown_path(requested_name)
+    if explicit_md_path is not None:
+        path_str = str(explicit_md_path)
+        target_name = _canonical_doc_key(explicit_md_path.stem)
+    else:
+        target_name = resolve_registered_doc_key(active_project, requested_name) if requested_name else ""
+        path_str = docs.get(target_name) if target_name else None
     runtime_warnings: list[str] = []
     requested_category = str(doc_category or "").strip().lower()
     requested_stem = requested_name[:-3] if requested_name.lower().endswith(".md") else requested_name
@@ -1010,7 +1036,17 @@ async def _handle_quality_check(
                         f"'{resolved_research}' after registry re-bind failed: {exc}"
                     )
     if not isinstance(path_str, str) or not Path(path_str).exists():
-        return helper.apply_context_payload(helper.error_response("quality_check requires a valid doc_name/doc in the active project registry."), context)
+        explicit_md_path = _resolve_explicit_markdown_path(requested_name)
+        if explicit_md_path is not None:
+            path_str = str(explicit_md_path)
+            target_name = _canonical_doc_key(explicit_md_path.stem)
+    if not isinstance(path_str, str) or not Path(path_str).exists():
+        return helper.apply_context_payload(
+            helper.error_response(
+                "quality_check requires a valid doc_name/doc in the active project registry or a valid markdown path under the project root."
+            ),
+            context,
+        )
     path = Path(path_str)
     text = path.read_text(encoding="utf-8")
     warnings = collect_managed_doc_quality_warnings(

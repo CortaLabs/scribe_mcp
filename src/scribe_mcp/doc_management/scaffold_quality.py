@@ -38,6 +38,7 @@ DEFAULT_WARNING_POLICIES: Dict[str, Dict[str, Any]] = {
     "SCF_CHANGELOG_ESCAPED_NEWLINES": {"severity": "critical", "blocking": True},
     "SCF_CHANGELOG_CURRENT_VERSION_MISSING": {"severity": "critical", "blocking": True},
     "SCF_RESEARCH_CONTEXT_DRIFT": {"severity": "medium", "blocking": False},
+    "SCF_TRAILING_WHITESPACE": {"severity": "medium", "blocking": False},
 }
 
 _TEMPLATE_PROSE_PATTERNS = [
@@ -240,6 +241,7 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
     readiness_claim = frontmatter_status in _READINESS_VALUES
 
     warnings.extend(_placeholder_residue_warnings(body))
+    warnings.extend(_trailing_whitespace_warnings(body))
     warnings.extend(_lifecycle_status_warnings(body, frontmatter_status=frontmatter_status))
     warnings.extend(
         _conformance_warnings(
@@ -258,6 +260,25 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
         warning["excerpt"] = excerpt
     configured, _suppressed, _meta = _apply_quality_overrides(warnings, metadata=metadata)
     return configured
+
+
+def _trailing_whitespace_warnings(body: str) -> List[Dict[str, Any]]:
+    for idx, line in enumerate(body.splitlines(), start=1):
+        if line.endswith((" ", "\t")):
+            offset = 0
+            if idx > 1:
+                prior = body.splitlines(keepends=True)[: idx - 1]
+                offset = sum(len(item) for item in prior)
+            return [
+                _warning(
+                    "SCF_TRAILING_WHITESPACE",
+                    "Trailing whitespace found in document body.",
+                    body or "\n",
+                    offset,
+                    "Remove trailing spaces/tabs from edited lines (manage_docs writes should normalize this automatically).",
+                )
+            ]
+    return []
 
 
 def _classify_lifecycle_claim(line: str) -> Optional[str]:

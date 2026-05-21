@@ -246,10 +246,10 @@ async def test_link_fix_preserves_existing_case_metadata_when_merging_fix_detail
     metadata = backend.upserts[-1]["metadata"]
     assert metadata["category"] == "runtime"
     assert metadata["query_key"] == "db-pool"
-    assert metadata["fix_link"] == {
-        "execution_id": "exec-live",
-        "artifact_ref": "src/module.py:10",
-        "landing_status": "merged",
-    }
+    assert metadata["fix_link"]["execution_id"] == "exec-live"
+    assert metadata["fix_link"]["artifact_ref"] == "src/module.py:10"
+    assert metadata["fix_link"]["landing_status"] == "merged"
+    assert metadata["fix_link"]["execution_ref"]["value"] == "exec-live"
+    assert metadata["fix_link"]["artifact_ref_meta"]["kind"] == "artifact"
     assert metadata["execution_provenance"]["execution_id"] == "exec-live"
     assert metadata["execution_provenance"]["stable_session_id"] == "session-1"
