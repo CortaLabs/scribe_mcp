@@ -1,0 +1,115 @@
+# Review Report: General Stage
+
+**Review Date:** 2026-05-24 05:37:49 UTC
+**Reviewer:** scribe-review-agent
+**Project:** quality_check_infrastructure_20260524
+**Stage:** general
+**Review Type:** Post-Implementation
+
+---
+
+<!-- ID: executive_summary -->
+## Executive Summary
+
+**Overall Decision:** PASS
+
+**Score:** 96/100
+
+**Confidence Level:** High
+
+**Key Findings:**
+- The repaired regression test now directly proves the prior blocker behaviors: list-contained fenced block capture, blockquote-contained fenced text current non-capture behavior, table and inline-code exclusion from fenced scopes, indented-code non-fence preservation, and unclosed-fence tagging.
+- CHECKLIST item `p1-context-parser` is now truthful against the test evidence and the required command results.
+- Package 1.1 public `quality_check` compatibility remains intact via passing `tests/test_manage_docs_quality_check.py`.
+- No Phase 2 / Package 2.1 implementation work was introduced by this proof repair.
+
+**Residual Risk:** blockquote-contained fenced blocks are still documented as current non-capture behavior rather than supported fenced scopes. That is acceptable for Package 1.2 because the package contract promised a regression corpus and parser gate, not expanded container capture semantics, but it remains a future behavior choice if downstream rules need it.
+<!-- ID: phase_review_results -->
+## Phase Review Results
+
+### Package 1.2 Revalidation
+**Grade:** 96/100
+**Status:** PASS
+
+**Why:** This gate revalidates Forge Package 1.2 after a prior BLOCK for insufficient proof, and must decide whether the repaired evidence now supports routing dependent work.
+
+**What Was Checked:**
+- `tests/doc_management/test_quality_context.py` for the exact container and fence assertions named in the blocker.
+- `CHECKLIST.md` item `p1-context-parser` for truthful proof language.
+- `tests/test_manage_docs_quality_check.py` for Package 1.1 public compatibility.
+- `tests/test_manage_docs_scaffold_quality.py` and `git diff --check` for adjacent regression and whitespace hygiene.
+- Package plan/architecture wording to determine whether blockquote non-capture is acceptable current behavior for Package 1.2.
+
+**How It Was Verified:**
+- Read the repaired test and managed checklist proof directly.
+- Cross-checked Package 1.2 scope in `PHASE_PLAN.md` and `ARCHITECTURE_GUIDE.md`.
+- Ran the required commands and recorded outcomes.
+
+**Findings:**
+- PASS: the repaired test now proves the missing behaviors instead of only carrying fixture examples.
+- PASS: the checklist no longer overclaims unsupported coverage.
+- PASS: Package 1.1 compatibility evidence remains green.
+- PASS WITH RESIDUAL RISK: blockquote-contained fenced text is asserted as current non-capture behavior; this is acceptable for the bounded Package 1.2 contract.
+<!-- ID: detailed_analysis -->
+## Detailed Analysis
+
+### Evidence
+- In `tests/doc_management/test_quality_context.py`, the repaired assertions now verify:
+  - list-contained fenced content is included in fenced scopes;
+  - blockquote-contained fenced content is not included in fenced scopes by current provider behavior;
+  - table text and inline code are excluded from fenced scopes;
+  - indented code is preserved in `context.body_text` and not modeled as a fenced scope;
+  - unclosed fences are tagged with an explicit `unclosed=true` attribute.
+- In `CHECKLIST.md`, `p1-context-parser` now states those exact behavior boundaries and ties them to the required commands.
+
+### Contract Judgment
+- Package 1.2 required a regression corpus covering blockquotes, lists, tables, inline code, indented code, and unclosed fences.
+- The package did not promise that every container form would be captured as fenced scope. It promised evaluation and bounded compatibility through the selected provider or fallback adapter.
+- Because the repaired test explicitly documents blockquote-contained fenced text as current non-capture behavior, the evidence is now truthful and sufficient for Package 1.2.
+
+### Scope Control
+- The proof repair did not introduce a new registry, facade shift, or Phase 2 file. Current working-tree changes remain on existing Phase 1/adjacent files and do not show a Package 2.1 implementation artifact.
+- `tests/test_manage_docs_quality_check.py` still passes, so the Package 1.1 public compatibility lane remains intact.
+<!-- ID: recommendations -->
+## Recommendations
+
+### Immediate Actions
+- Route Phase 2 / Package 2.1 only with this PASS attached to Package 1.2.
+- Preserve the current blockquote non-capture behavior as an explicit known boundary unless a later package intentionally broadens container capture semantics.
+
+### Verification Commands
+- `pytest -q tests/doc_management/test_quality_context.py` -> 2 passed
+- `pytest -q tests/test_manage_docs_quality_check.py` -> 11 passed
+- `pytest -q tests/test_manage_docs_scaffold_quality.py` -> 18 passed
+- `git diff --check` -> clean
+
+### Legal To Route
+- Phase 2 / Package 2.1: YES
+<!-- ID: agent_performance_assessment -->
+## Agent Performance Assessment
+
+| Agent | Role | Grade | Comments |
+|-------|------|-------|----------|
+| Ramanujan | Forge | 96/100 | Applied a narrow proof repair that addressed the exact blocker without broadening implementation scope. |
+| scribe-review-agent | Review | 96/100 | Revalidated the repaired proof against package contract, command evidence, and routing legality. |
+<!-- ID: compliance_verification -->
+## Compliance Verification
+
+**Scribe Protocol Compliance:** COMPLIANT
+
+- Required startup completed with project binding, recent-log rehydration, and validation-start logging.
+- Managed review artifact created in the correct project area.
+- Required commands were run and recorded.
+- Review remained read-only and package-scoped.
+<!-- ID: final_decision -->
+## Final Decision
+
+**PASS**
+
+**Score:** 96/100
+
+**Rationale:** The prior blocker was a proof gap, not an implementation defect. The repaired `tests/doc_management/test_quality_context.py` now contains meaningful assertions for the exact container and fence behaviors that were previously only present as examples, and CHECKLIST item `p1-context-parser` now truthfully reflects that evidence. Package 1.1 public `quality_check` compatibility still passes, scaffold-quality tests stay green, and no Phase 2 implementation work was smuggled into this repair.
+
+**Legal-To-Route Decision:** Phase 2 / Package 2.1 is legal to route.
+
+**Residual Risk:** blockquote-contained fenced blocks are still treated as non-captured current behavior. If later rule behavior requires fenced-scope capture inside blockquotes, that should be introduced intentionally in a later package instead of being implied retroactively here.

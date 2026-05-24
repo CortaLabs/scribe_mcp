@@ -237,3 +237,49 @@ Status: blocked
 """
     warnings = analyze_scaffold_quality(text=text, doc_name="SPEC")
     assert "SCF_LIFECYCLE_STATUS_MISMATCH" not in _codes(warnings)
+
+
+def test_nested_fenced_placeholder_does_not_trigger_false_positive():
+    text = """---
+status: in_progress
+---
+````md
+```md
+[fill this section]
+```
+````
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_inline_code_placeholder_example_is_suppressed():
+    text = """---
+status: in_progress
+---
+Use `[fill this section]` as a literal syntax example in docs.
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_indented_code_placeholder_example_is_suppressed():
+    text = """---
+status: in_progress
+---
+    [fill this section]
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_table_content_with_brackets_does_not_trigger_placeholder_false_positive():
+    text = """---
+status: in_progress
+---
+| field | example |
+| --- | --- |
+| token | [abc-123] |
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)

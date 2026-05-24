@@ -1,0 +1,204 @@
+
+# 🏗️ Architecture Guide — quality_check_infrastructure_20260524
+**Author:** Scribe
+**Version:** Draft v0.1
+**Status:** Draft
+**Last Updated:** 2026-05-24 03:03:31 UTC
+
+> Architecture guide for quality_check_infrastructure_20260524.
+
+---
+## 1. Problem Statement
+<!-- ID: problem_statement -->
+- **Context:** `manage_docs(action="quality_check")` already protects managed-doc readiness, but its current markdown handling is still heuristic and line-oriented. The verified false-positive pressure point is fenced-code handling, especially nested examples and alternate fence styles.
+- **Primary Goal:** redesign the quality-check internals into a markdown-aware, deterministic infrastructure layer without changing the public action surface or creating a parallel system.
+- **Secondary Goals:**
+  - Preserve current useful readiness blockers for scaffold residue, lifecycle mismatches, research-index hygiene, and changelog structure.
+  - Partition slow or environment-coupled checks into explicit non-default modes.
+  - Give downstream agents and CI a stable warning taxonomy and additive structured result contract.
+- **Non-Goals:**
+  - No standalone linter platform.
+  - No mandatory LLM review.
+  - No mandatory external Vale execution.
+  - No big-bang rewrite or replacement files.
+- **Success Metrics:**
+  - Nested and alternate fence regressions stop producing false placeholder or lifecycle hits.
+  - Existing callers continue to use `manage_docs(action="quality_check")` successfully.
+  - Output keys used today remain stable while new structured fields are additive.
+  - Implementation packages can execute sequentially without reopening architecture.
+## 2. Requirements & Constraints
+<!-- ID: requirements_constraints -->
+- **Functional Requirements:**
+  - Keep `manage_docs(action="quality_check")` and the `scaffold_quality_check` alias stable.
+  - Support a markdown-aware document classification layer that distinguishes frontmatter, prose, headings, blockquotes, lists, tables, inline code, indented code, and fenced code.
+  - Add a deterministic rule registry with stable rule IDs, doc-type predicates, gate-mode predicates, source-owner metadata, and explicit ordering.
+  - Preserve current collector reuse seams and changelog/version helpers rather than duplicating their logic.
+  - Keep warning and summary payloads backwards compatible through additive fields.
+- **Non-Functional Requirements:**
+  - Deterministic local execution by default.
+  - No network calls in any mode.
+  - No subprocess dependence in `local_default` mode.
+  - Stable warning ordering for humans and CI consumers.
+- **Constraints:**
+  - Verified source of truth is `runtime._handle_quality_check` plus the existing collector helpers in `scaffold_quality.py`.
+  - `pyproject.toml` has no current markdown parser dependency, so parser adoption must be evaluated rather than assumed.
+  - Release coverage and version-context checks already exist and should remain reuse-first, but they must move behind explicit gating.
+  - Generated outputs are never the authority surface for remediation guidance.
+- **Key Risks And Mitigations:**
+  - Parser mismatch risk: use a provider interface and regression gate before committing to a new dependency.
+  - Scope creep risk: split rules by mode and owner so `quality_check` does not become a general prose platform.
+  - Migration risk: keep `scaffold_quality.py` as the compatibility facade until the new package is fully adopted.
+  - Consumer drift risk: keep current top-level response keys unchanged and add schema versioning only additively.
+## 3. Architecture Overview
+<!-- ID: architecture_overview -->
+- **Solution Summary:** replace the heuristic-only scanner with a layered quality pipeline while preserving the current runtime entrypoint and compatibility facade.
+- **Component Breakdown:**
+  - **Runtime Control Plane:** `src/scribe_mcp/doc_management/runtime.py` keeps target resolution, alias handling, and final response assembly. It should normalize the requested mode and pass a resolved `DocumentContext` plus rule results into the existing response shape.
+  - **Compatibility Facade:** `src/scribe_mcp/doc_management/scaffold_quality.py` remains the import-stable facade that exports `collect_managed_doc_quality_warnings` and `summarize_quality_warnings` during the migration.
+  - **Quality Core Package:** new internal modules under `src/scribe_mcp/doc_management/quality/` own context building, scope providers, rule specs, registry ordering, and result normalization.
+  - **Existing Helper Reuse:** `src/scribe_mcp/utils/frontmatter.py`, `src/scribe_mcp/doc_management/changelog.py`, and `src/scribe_mcp/doc_management/version_context.py` remain the owning helpers for frontmatter and release-aware evidence.
+- **Primary Data Flow:**
+  1. Runtime resolves the document target and requested mode.
+  2. A context builder parses frontmatter and classifies markdown scopes.
+  3. The registry selects rules by doc type and mode.
+  4. Rules emit normalized findings in deterministic order.
+  5. Runtime renders the existing top-level response plus additive structured details.
+- **External Integrations:**
+  - No external network service.
+  - Optional parser dependency only after evaluation.
+  - Existing release/version helpers reused only in gated modes.
+## 4. Detailed Design
+<!-- ID: detailed_design -->
+### A. DocumentContext And Scope Provider
+- **Purpose:** classify a single markdown document once, then let rules consume structured scopes instead of raw regex-only line scans.
+- **Proposed Internal Shapes:**
+  - `DocumentContext`: raw text, parsed frontmatter, body text, doc name, resolved path, doc-type hints, mode, content hash, parser backend, and ordered scope records.
+  - `DocumentScope`: scope kind, start line, end line, start offset, end offset, container chain, and optional attributes such as fence marker, fence length, and info string.
+- **Responsibility Boundary:** `DocumentContext` owns markdown structure. Rules do not reparse the document.
+- **Parser Strategy:**
+  - Evaluate `markdown-it-py` first because research and current repo dependencies show no existing parser and the nested-fence problem needs CommonMark-style fence semantics.
+  - Keep Marko as the fallback candidate if dependency fit or position mapping blocks the first choice.
+  - If both fail the gate, ship a temporary heuristic scope provider behind the same interface. The interface is mandatory; the dependency is conditional.
+
+### B. Rule Registry And Collector Contract
+- **Registry Contract:** each rule declares `rule_id`, `title`, `category`, `severity`, `default_blocking`, `gate_modes`, `doc_types`, `scope_kinds`, `suppressibility`, `source_owner`, and `rule_version`.
+- **Collector Contract:** a collector receives `DocumentContext` and returns normalized findings only. It must be deterministic and side-effect free in `local_default` mode.
+- **Ordering:** registry order is explicit in code; output ordering is path, line, column, rule ID.
+- **Suppressibility Policy:**
+  - Keep `metadata.quality` suppressions for compatibility.
+  - Allow suppressions only for advisory or migration-safe rules.
+  - Block suppressions for scaffold-critical, source-authority, research-index integrity, and release-integrity rules.
+  - Do not add inline markdown suppressions in the first slice.
+
+### C. Warning And Result Schema
+- **Preserved Top-Level Keys:** `ok`, `quality_status`, `scope`, `summary`, `warnings`, `runtime_warnings`, `readiness_blockers`, `next_actions`.
+- **Additive Warning Fields:** `category`, `gate_scope`, `scope_kind`, `doc_types`, `suppressible`, `suppressed`, `source_owner`, `rule_version`, and `metadata`.
+- **Additive Summary Fields:** `mode`, `schema_version`, `warning_codes`, `suppressed_count`, and deterministic severity totals.
+- **Compatibility Rule:** existing consumers must still work if they only read the current keys.
+
+### D. Gate Modes
+- **`local_default`:** default public mode. Runs only deterministic, doc-local checks. No subprocesses, no runtime probes, no broad release reconciliation.
+- **`release_gate`:** optional stronger mode. Adds version-aware changelog coverage, research-context drift, and other cross-doc release checks that already have reuse seams.
+- **`runtime_proof`:** explicit route and payload contract proof lane. Used to verify runtime alias handling, explicit markdown-path resolution, and live response compatibility after implementation.
+- **Internal Mutation Guard:** existing mutation-time readiness enforcement remains separate from the public mode contract.
+
+### E. Migration Strategy
+- **Step 1:** introduce `src/scribe_mcp/doc_management/quality/` modules for context, registry, rules, and result normalization.
+- **Step 2:** keep `collect_managed_doc_quality_warnings` in `scaffold_quality.py`, but make it delegate to the new core while preserving its signature.
+- **Step 3:** migrate rule families one cluster at a time: scaffold and lifecycle first, research hygiene second, changelog structure third, release-only checks last.
+- **Step 4:** move `_handle_quality_check` to mode-aware orchestration while keeping response keys stable.
+- **Step 5:** only after parity is proven, reduce leftover legacy helpers inside `scaffold_quality.py`.
+- **Explicit Non-Plan:** do not introduce `quality_check_v2`, `scaffold_quality_v2`, or a second runtime route.
+## 5. Directory Structure (Keep Updated)
+<!-- ID: directory_structure -->
+```text
+src/scribe_mcp/doc_management/
+  runtime.py
+  scaffold_quality.py
+  changelog.py
+  version_context.py
+  quality/
+    __init__.py
+    context.py
+    scopes.py
+    registry.py
+    results.py
+    rules/
+      __init__.py
+      scaffold.py
+      research.py
+      changelog.py
+      release_gate.py
+
+tests/
+  test_manage_docs_quality_check.py
+  test_manage_docs_scaffold_quality.py
+  doc_management/
+    test_changelog_quality.py
+    test_research_context_drift.py
+    test_quality_context.py
+    test_quality_registry.py
+    test_quality_release_modes.py
+```
+- `scaffold_quality.py` remains in place as the compatibility facade during migration.
+- New quality modules live under `doc_management/quality/` rather than as sibling replacement files.
+- Regression additions should stay beside the current quality-check suites rather than forming a disconnected test tree.
+## 6. Data & Storage
+<!-- ID: data_storage -->
+- **Primary Data Sources:** managed markdown documents on disk, document frontmatter, and existing project registry metadata.
+- **Runtime-Derived Inputs:** mode selection, resolved document path, and optional release-context data from `version_context.py` in non-default modes.
+- **No New Durable Store:** this redesign does not introduce a database table, object store, or separate rule ledger in the first slice.
+- **Determinism Requirements:**
+  - Findings must be reproducible from document content plus explicit mode and metadata.
+  - If caching is later approved, the cache key must include content hash, parser backend, registry version, and mode.
+- **Ownership Boundary:** rule metadata belongs in code under the quality package; generated docs and runtime reminders remain consumers, not the authority source.
+## 7. Testing & Validation Strategy
+<!-- ID: testing_strategy -->
+- **Regression Focus:**
+  - Outer quadruple fences containing inner triple fences.
+  - Tilde fences.
+  - Blockquoted fences.
+  - List-contained fences.
+  - Inline code and indented code.
+  - Table rows containing placeholder-like text.
+  - Research-index hygiene and noncanonical research placement.
+  - `scaffold_quality_check` alias routing.
+  - Changelog structure versus release-only coverage behavior.
+  - Output-schema stability for existing top-level keys.
+- **Unit Tests:**
+  - Context builder and scope classification.
+  - Registry ordering and rule selection by mode and doc type.
+  - Rule-family tests for scaffold, research, changelog, and release-gate clusters.
+- **Integration Tests:**
+  - `manage_docs(action="quality_check")` default mode on representative docs.
+  - Alias-route proof for `scaffold_quality_check`.
+  - Release-gate proof for changelog coverage warnings.
+  - Runtime-proof response compatibility after implementation.
+- **Validation Rule:** no implementation slice is complete until the new regression corpus proves the original fence failure is fixed and the old response keys still exist.
+## 8. Deployment & Operations
+<!-- ID: deployment_operations -->
+- **Default Operating Mode:** `local_default` is the authoring and readiness baseline. It must stay deterministic, local, and quick.
+- **Optional Stronger Modes:**
+  - `release_gate` is for release-closeout and CI-adjacent checks that need broader evidence.
+  - `runtime_proof` is for explicit post-implementation proof of alias routing and live payload compatibility.
+- **Guidance Ownership:** next-action text must point to the correct owner surface: managed-doc edits, source templates, research index refresh, or changelog reconciliation. It must never prescribe generated-output hand edits.
+- **Performance Rule:** no cache ships in the first slice. If profiling later justifies caching, it must be transparent, content-hash keyed, and safe to disable.
+- **Operational Closeout:** implementation handoff requires targeted tests plus managed-doc `quality_check` proof on the updated planning artifacts and runtime-proof evidence on the new quality path.
+## 9. Open Questions & Follow-Ups
+<!-- ID: open_questions -->
+| Item | Owner | Status | Notes |
+|------|-------|--------|-------|
+| Should templates support conditionals per phase? | Docs Lead | TODO | Evaluate after initial rollout. |
+Close each question once answered and reference the relevant section above.
+
+
+---
+## 10. References & Appendix
+<!-- ID: references_appendix -->
+- PROGRESS_LOG.md
+- ARCHITECTURE_GUIDE.md
+
+Generated via generate_doc_templates.
+
+
+---

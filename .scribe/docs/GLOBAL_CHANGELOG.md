@@ -24,3 +24,13 @@
 - `source_project`: link_fix_emergency_repair_20260521
 - `source_entry_id`: 20260521:link-fix-quality-read-recent-ux
 - `summary`: Release 2.2.27 makes `link_fix` usable without `scribe_doctor`, adds typed fix artifact metadata, repairs report update targeting, lets `quality_check` inspect repo markdown paths and reports outside the active registry, reports trailing markdown whitespace via `SCF_TRAILING_WHITESPACE`, allows same-repo cross-project `read_recent` inspection without rebinding, and restores stable-session authority for document registration.
+
+## Quality check infrastructure research and architecture package
+- `source_project`: quality_check_infrastructure_20260524
+- `source_entry_id`: 20260524:quality-check-infrastructure-planning
+- `summary`: Created a governed research and architecture package for turning `manage_docs quality_check` into a markdown-aware, lightweight infrastructure gate while preserving the existing public action contract.
+
+## Quality check infrastructure release
+- `source_project`: quality_check_infrastructure_20260524
+- `source_entry_id`: 20260524:quality-check-infrastructure-release
+- `summary`: Release 2.3.0 turns `manage_docs quality_check` into a markdown-aware, lightweight infrastructure gate with nested codeblock protection, structured context parsing, registry-backed scaffold/research/changelog/release-gate rule families, additive result metadata, explicit and inferred `release_gate` checks for current-version changelog coverage and research-context drift, unsuppressible integrity blockers, alias-route proof, explicit markdown-path proof, and a measured no-cache decision.

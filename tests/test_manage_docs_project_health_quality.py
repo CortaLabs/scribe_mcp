@@ -159,6 +159,16 @@ async def test_project_health_counts_research_hygiene_for_path_registered_docs(t
     quality = result.get("managed_doc_quality") or {}
     research_entry = next(doc for doc in quality.get("documents", []) if doc.get("doc_name") == "research_frontmatter")
     assert "SCF_INDEX_MISSING" in research_entry.get("warning_codes", [])
+    from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
+
+    direct_warnings = collect_managed_doc_quality_warnings(
+        text=research_doc.read_text(encoding="utf-8"),
+        doc_name="research_frontmatter",
+        path=research_doc,
+        project={"docs_dir": str(docs_dir)},
+    )
+    research_warning = next(w for w in direct_warnings if w.get("code") == "SCF_INDEX_MISSING")
+    assert research_warning.get("source_owner") == "research"
     organization_digest = result.get("organization_digest") or {}
     warning_digest = organization_digest.get("quality_warning_digest") or []
     assert any(item.get("warning_code") == "SCF_INDEX_MISSING" for item in warning_digest)
@@ -215,6 +225,8 @@ async def test_project_health_marks_index_needs_attention_for_unindexed_doc_warn
     organization_digest = result.get("organization_digest") or {}
     warning_digest = organization_digest.get("quality_warning_digest") or []
     assert any(item.get("warning_code") == "SCF_DOC_UNINDEXED" for item in warning_digest)
+    quality_warnings = quality_payload.get("warnings") or []
+    assert quality_warnings[0].get("source_owner") is None
     status_sections = organization_digest.get("status_sections") or {}
     index_section = status_sections.get("index") or {}
     assert index_section.get("status") == "needs_attention"

@@ -18,6 +18,8 @@ from scribe_mcp.doc_management.scaffold_quality import (
     collect_managed_doc_quality_warnings,
     summarize_quality_warnings,
 )
+from scribe_mcp.doc_management.quality.results import DEFAULT_MODE, SCHEMA_VERSION, normalize_warnings
+from scribe_mcp.doc_management.quality.rules.release_gate import resolve_quality_mode
 from scribe_mcp.readiness import build_readiness_summary, collect_managed_doc_quality_state
 from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
@@ -1049,13 +1051,17 @@ async def _handle_quality_check(
         )
     path = Path(path_str)
     text = path.read_text(encoding="utf-8")
+    mode_info = resolve_quality_mode(metadata=metadata, project_root=Path(str(active_project.get("root") or "")).resolve())
+    quality_metadata = metadata or {}
+    quality_cfg = quality_metadata.get("quality") if isinstance(quality_metadata.get("quality"), dict) else {}
     warnings = collect_managed_doc_quality_warnings(
         text=text,
-        metadata=metadata or {},
+        metadata={**quality_metadata, "quality": {**quality_cfg, "mode": mode_info["mode"]}},
         doc_name=target_name,
         path=path,
         project=active_project,
     )
+    warnings = normalize_warnings(warnings)
     summary = summarize_quality_warnings(warnings)
     readiness_blockers = [w for w in warnings if bool(w.get("blocking"))]
     status = "pass" if not warnings else ("fail" if readiness_blockers else "warn")
@@ -1063,7 +1069,18 @@ async def _handle_quality_check(
         "ok": True,
         "quality_status": status,
         "scope": {"type": "document", "doc_name": target_name, "path": str(path)},
-        "summary": {**summary, "config_source": "metadata.quality" if isinstance((metadata or {}).get("quality"), dict) else "defaults"},
+        "summary": {
+            **summary,
+            "config_source": "metadata.quality" if isinstance((metadata or {}).get("quality"), dict) else "defaults",
+            "mode": mode_info["mode"],
+            "schema_version": SCHEMA_VERSION,
+            "category": "quality_check",
+            "gate_scope": "manage_docs",
+            "scope_kind": "document",
+            "release_trigger": mode_info["release_trigger"],
+            "release_trigger_source": mode_info["trigger_source"],
+            "release_triggers": mode_info.get("release_triggers", []),
+        },
         "warnings": warnings,
         "runtime_warnings": runtime_warnings,
         "readiness_blockers": readiness_blockers,

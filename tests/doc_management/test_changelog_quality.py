@@ -1,3 +1,5 @@
+import subprocess
+
 from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
 
 
@@ -72,8 +74,11 @@ Use one section per curated project outcome.
     assert "SCF_CHANGELOG_ESCAPED_NEWLINES" in codes
 
 
-def test_changelog_quality_warns_when_current_pyproject_version_coverage_missing(tmp_path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='2.4.0'\n", encoding="utf-8")
+def test_changelog_quality_structural_checks_do_not_require_version_or_subprocess(monkeypatch) -> None:
+    def _boom(*args, **kwargs):
+        raise AssertionError("subprocess should not be called for structural changelog checks")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
     text = """# Project Changelog
 
 ## Prior release
@@ -83,38 +88,10 @@ def test_changelog_quality_warns_when_current_pyproject_version_coverage_missing
 - `summary`: Prior summary
 - `evidence_refs`:
   - tests/prior.py
-- `observed_context`:
-  - `source`: pyproject
-  - `value`: 2.3.9
 """
     warnings = collect_managed_doc_quality_warnings(
         text=text,
         doc_name="CHANGELOG",
-        project={"root": str(tmp_path)},
-    )
-    codes = _codes(warnings)
-    assert "SCF_CHANGELOG_CURRENT_VERSION_MISSING" in codes
-
-
-def test_changelog_quality_does_not_warn_when_current_pyproject_version_is_covered(tmp_path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='2.4.0'\n", encoding="utf-8")
-    text = """# Project Changelog
-
-## Current release
-- `entry_id`: 20260515:current
-- `entry_status`: accepted
-- `title`: Current
-- `summary`: Current summary
-- `evidence_refs`:
-  - tests/current.py
-- `observed_context`:
-  - `source`: pyproject
-  - `value`: 2.4.0
-"""
-    warnings = collect_managed_doc_quality_warnings(
-        text=text,
-        doc_name="CHANGELOG",
-        project={"root": str(tmp_path)},
     )
     codes = _codes(warnings)
     assert "SCF_CHANGELOG_CURRENT_VERSION_MISSING" not in codes

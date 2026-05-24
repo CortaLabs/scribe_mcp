@@ -1,0 +1,112 @@
+
+# 🔬 Research Quality Check Governance Authoring — quality_check_infrastructure_20260524
+**Author:** Scribe
+**Version:** v0.1
+**Status:** In Progress
+**Last Updated:** 2026-05-24 03:07:05 UTC
+
+> Governance/template/managed-authoring analysis for elevating manage_docs quality_check into lightweight infrastructure.
+
+---
+## Executive Summary
+<!-- ID: executive_summary -->
+`manage_docs(action="quality_check")` should become the **managed-authoring readiness lens** for Scribe docs: deterministic, markdown-structure-aware, and governance-aligned, without duplicating template-generation or release orchestration systems.
+
+**Primary Objective:** Define governance boundaries so quality_check catches document-chain readiness defects (scaffold residue, malformed managed metadata, doc-chain incompleteness, contradictory status claims) while delegating generation-time and release-time concerns to their owning systems.
+
+**Key Takeaways:**
+- Quality_check should own **document-surface quality and managed readiness evidence**, not template rendering correctness or roster/agent generation integrity.
+- Validation must be split by lifecycle stage: mutation-time checks, on-demand quality_check, generation-time strictness, and release-gate checks.
+- Warning taxonomy should encode: severity, blocking intent, gate scope, doc-type applicability, suppressibility policy, and runtime applicability.
+- Extensibility should use a lightweight check-registry/collector contract instead of expanding monolithic logic in `manager.py`.
+- Source-authority messaging in findings must guide next_actions away from hand-editing generated outputs and toward source templates + managed workflows.
+
+**Confidence:** High (0.91)
+## Research Scope
+<!-- ID: research_scope -->
+**Research Lead:** maat
+
+**Investigation Window:** 2026-05-24
+
+**Focus Areas:**
+- Managed authoring lifecycle boundaries for quality_check.
+- Source authority and generated-surface governance integration.
+- Check taxonomy and gate-scope semantics.
+- Extension architecture for future doc-type checks.
+
+**Dependencies & Constraints:**
+- No source edits in this lane; governance analysis only.
+- Existing Council/Scribe contracts (templates as source, generated docs as outputs, Scribe managed docs as process authority) remain authoritative.
+- Lightweight deterministic checks are mandatory; no heavy runtime requirements.
+## Findings
+<!-- ID: findings -->
+### Finding 1: Quality_check owns managed-doc readiness, not generation correctness
+- **Summary:** quality_check should validate authored managed documents and their readiness claims; template rendering correctness belongs to `council update`/generation pipeline and strict template resolution rules.
+- **Evidence:** AGENTS governance in this repo explicitly marks templates/roster/compiler logic as source authority and generated outputs as non-authoritative surfaces.
+- **Confidence:** High (0.93)
+
+### Finding 2: Validation responsibility must be lifecycle-partitioned
+- **Summary:** mutation-time manage_docs checks should enforce structural document integrity, while on-demand quality_check performs readiness analysis; generation-time catches strict undefined/template issues; release/changelog workflows enforce package-version and release coverage gates.
+- **Evidence:** SPEC goals + current Scribe reminders/warnings model already distinguish scaffold residue and release-changelog readiness concerns.
+- **Confidence:** High (0.90)
+
+### Finding 3: Warning taxonomy needs gate scope + suppressibility policy
+- **Summary:** each warning should encode: `code`, `severity`, `blocking`, `gate_scope`, `doc_types`, `suppressible`, `runtime_only`, and `suggested_repair` to prevent category confusion and to keep machine/human consumers aligned.
+- **Evidence:** Existing quality_check response shape already carries severity/blocking/location/excerpt; governance gap is primarily policy semantics and routing.
+- **Confidence:** High (0.89)
+
+### Finding 4: Extension should be registry-based collector plugins
+- **Summary:** future checks should register through a lightweight provider interface with doc-type predicates and shared context, avoiding a god-module in manager.py.
+- **Evidence:** managed-authoring surfaces (research/spec/architecture/checklist/bug/security/changelog) need distinct rules but shared runner/output contract.
+- **Confidence:** Medium-High (0.84)
+
+### Finding 5: Source authority rules must shape next_actions text
+- **Summary:** quality_check output should route users to owning authority (template, roster, manage_docs mutation, release workflow) and explicitly avoid prescribing edits to generated outputs.
+- **Evidence:** Repo governance bands repeatedly prohibit hand-edits on generated surfaces and require source-template changes + regeneration.
+- **Confidence:** High (0.92)
+
+### Additional Notes
+- Lightweight scope is strategic: too much policy at quality_check level risks duplicate enforcement with generation and release systems.
+- Some checks should be release-gate-only to reduce noise in early research/planning iterations.
+## Technical Analysis
+<!-- ID: technical_analysis -->
+**Code Patterns Identified:**
+- Single action surface (`manage_docs action=quality_check`) should stay stable; internal checks can become modular providers.
+- Shared warning payload contract should remain normalized across check families to preserve backward compatibility.
+
+**System Interactions:**
+- `manage_docs` mutation actions: enforce document-shape and lifecycle metadata consistency.
+- `quality_check`: evaluate authored markdown + frontmatter + managed readiness chain for a target doc/scope.
+- Template generation (`council update` + StrictUndefined rules): enforce template variable correctness and generated-surface determinism.
+- Release/changelog workflows: enforce package version/changelog completeness at release boundary, not as universal doc-edit blocker.
+
+**Risk Assessment:**
+- Risk: checker scope creep into full linter platform. Mitigation: explicit out-of-scope list + extension registration guardrails.
+- Risk: duplicate/conflicting blockers across manage_docs/generation/release lanes. Mitigation: gate_scope field and owner mapping table.
+- Risk: suppressions becoming policy bypass. Mitigation: allow suppressions only for advisory/document-type warnings, never for critical source-authority or scaffold-blocker warnings.
+## Recommendations
+<!-- ID: recommendations -->
+### Immediate Next Steps
+- Define a validation ownership matrix (mutation-time vs quality_check vs generation vs release).
+- Add taxonomy fields to warning schema (especially `gate_scope`, `doc_types`, `suppressible`, `runtime_only`).
+- Draft registry contract for check providers with deterministic ordering and stable IDs.
+- Add source-authority-aware remediation mapping so next_actions always point to owning surfaces.
+- Keep nested fenced-code handling as a required regression lane under markdown-aware parsing.
+
+### Long-Term Opportunities
+- Doc-type policy packs (research/spec/checklist/bug/security/release docs) sharing one warning contract.
+- Optional category filtering in quality_check invocations for faster iterative workflows.
+- Analytics on warning classes to improve templates and reduce recurring scaffold residue.
+
+### Rejected Heavyweight Paths
+- No standalone external lint service for baseline readiness.
+- No mandatory LLM review for deterministically detectable issues.
+- No parallel doc-governance engine that duplicates generation or release logic.
+- No migration of source authority from templates/roster/manage_docs to generated outputs.
+## Appendix
+<!-- ID: appendix -->
+- **References:** [Link to diagrams, ADRs, whitepapers, or related documents]
+- **Attachments:** [List supporting artifacts or datasets]
+
+
+---

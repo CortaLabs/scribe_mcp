@@ -2,16 +2,24 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence
 
 from scribe_mcp.utils.frontmatter import parse_frontmatter
+from scribe_mcp.doc_management.quality.results import summarize_quality_warnings
+from scribe_mcp.doc_management.quality.context import DocumentContextBuilder
+from scribe_mcp.doc_management.quality.rules.research import build_research_index_hygiene_warnings
+from scribe_mcp.doc_management.quality.rules.scaffold import evaluate_scaffold_rules
+from scribe_mcp.doc_management.quality.rules.changelog import build_changelog_structure_warnings
 from scribe_mcp.doc_management.changelog import (
     accepted_entries,
-    is_valid_entry_id,
-    parse_changelog_entries,
     preview_current_release_coverage,
+    parse_changelog_entries,
 )
 from scribe_mcp.doc_management.version_context import resolve_observed_context
+from scribe_mcp.doc_management.quality.rules.release_gate import UNSUPPRESSIBLE_BLOCKER_CODES
+
+if TYPE_CHECKING:
+    from scribe_mcp.doc_management.quality.context import DocumentContext
 
 _READINESS_VALUES = {"ready", "done", "complete", "finished"}
 
@@ -114,8 +122,14 @@ def _line_loc(text: str, idx: int) -> Dict[str, int]:
     return {"line": line, "column": col}
 
 
-def _in_code_fence(text: str, idx: int) -> bool:
-    return text[:idx].count("```") % 2 == 1
+def _in_code_fence(body: str, idx: int, context: Optional["DocumentContext"] = None) -> bool:
+    if context is not None:
+        return (
+            context.offset_in_scope(idx, kind="fenced_code")
+            or context.offset_in_scope(idx, kind="inline_code")
+            or context.offset_in_scope(idx, kind="indented_code")
+        )
+    return body[:idx].count("```") % 2 == 1
 
 
 def _is_quoted_line(text: str, idx: int) -> bool:
@@ -180,19 +194,12 @@ def _is_markdown_link_label(line: str, match_start: int, match_end: int) -> bool
     return False
 
 
-def summarize_quality_warnings(warnings: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
-    severity_counts: Dict[str, int] = {}
-    blocked = 0
-    for warning in warnings:
-        severity = str(warning.get("severity") or "unknown")
-        severity_counts[severity] = severity_counts.get(severity, 0) + 1
-        if bool(warning.get("blocking")):
-            blocked += 1
-    return {
-        "total_warnings": len(warnings),
-        "severity_counts": severity_counts,
-        "readiness_blocker_count": blocked,
-    }
+def _is_table_row(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("|") and stripped.count("|") >= 2
+
+
+# Compatibility export; canonical implementation lives in quality.results.
 
 
 def _apply_quality_overrides(
@@ -218,6 +225,10 @@ def _apply_quality_overrides(
             suppressed.append(entry)
             continue
         if code in suppressions:
+            if code in UNSUPPRESSIBLE_BLOCKER_CODES or bool(entry.get("blocking")) and str(entry.get("severity") or "").lower() == "critical":
+                entry["suppression_reason"] = "suppression_ignored_for_integrity_blocker"
+                visible.append(entry)
+                continue
             entry["suppression_reason"] = str(suppressions[code] or "suppressed_by_config")
             suppressed.append(entry)
             continue
@@ -237,18 +248,17 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
     warnings: List[Dict[str, Any]] = []
     parsed = parse_frontmatter(text)
     body = parsed.body
+    context = DocumentContextBuilder().build(text=text, doc_name=doc_name, metadata=metadata)
     frontmatter_status = str(parsed.frontmatter_data.get("status", "")).strip().lower()
     readiness_claim = frontmatter_status in _READINESS_VALUES
 
-    warnings.extend(_placeholder_residue_warnings(body))
-    warnings.extend(_trailing_whitespace_warnings(body))
-    warnings.extend(_lifecycle_status_warnings(body, frontmatter_status=frontmatter_status))
     warnings.extend(
-        _conformance_warnings(
-            body,
-            readiness_claim=readiness_claim,
+        evaluate_scaffold_rules(
+            body=body,
             doc_name=doc_name,
-            existing_warnings=warnings,
+            frontmatter_status=frontmatter_status,
+            readiness_claim=readiness_claim,
+            document_context=context,
         )
     )
 
@@ -295,7 +305,7 @@ def _classify_lifecycle_claim(line: str) -> Optional[str]:
     return None
 
 
-def _lifecycle_status_warnings(body: str, *, frontmatter_status: str) -> List[Dict[str, Any]]:
+def _lifecycle_status_warnings(body: str, *, frontmatter_status: str, context: Optional["DocumentContext"] = None) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
     normalized_frontmatter = frontmatter_status.replace("_", " ").replace("-", " ")
     frontmatter_ready = normalized_frontmatter in _READINESS_VALUES
@@ -305,7 +315,7 @@ def _lifecycle_status_warnings(body: str, *, frontmatter_status: str) -> List[Di
     for raw_line in body.splitlines(keepends=True):
         line = raw_line.rstrip("\n")
         claim = _classify_lifecycle_claim(line)
-        if claim and not _in_code_fence(body, offset) and not _is_quoted_line(body, offset):
+        if claim and not _in_code_fence(body, offset, context=context) and not _is_quoted_line(body, offset):
             claim_ready = claim in _READINESS_VALUES
             claim_blocked = claim == "blocked"
             claim_draftish = claim in {"draft", "in progress", "wip"}
@@ -329,10 +339,10 @@ def _lifecycle_status_warnings(body: str, *, frontmatter_status: str) -> List[Di
     return warnings
 
 
-def _placeholder_residue_warnings(body: str) -> List[Dict[str, Any]]:
+def _placeholder_residue_warnings(body: str, *, context: Optional["DocumentContext"] = None) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
     for m in re.finditer(r"\[[^\]]{4,}\]", body):
-        if _in_code_fence(body, m.start()) or _is_quoted_line(body, m.start()):
+        if _in_code_fence(body, m.start(), context=context) or _is_quoted_line(body, m.start()):
             continue
         line = _line_text(body, m.start())
         line_idx = m.start() - (body.rfind("\n", 0, m.start()) + 1)
@@ -341,6 +351,8 @@ def _placeholder_residue_warnings(body: str) -> List[Dict[str, Any]]:
         if _is_progress_prefix_bracket(line, line_idx):
             continue
         if _is_markdown_link_label(line, line_idx, line_idx + (m.end() - m.start())):
+            continue
+        if _is_table_row(line):
             continue
         stripped = line.strip()
         line = stripped
@@ -352,7 +364,7 @@ def _placeholder_residue_warnings(body: str) -> List[Dict[str, Any]]:
 
     for pat in _TEMPLATE_PROSE_PATTERNS:
         m = re.search(pat, body, re.IGNORECASE)
-        if m and not _in_code_fence(body, m.start()) and not _is_quoted_line(body, m.start()):
+        if m and not _in_code_fence(body, m.start(), context=context) and not _is_quoted_line(body, m.start()):
             warnings.append(_warning("SCF_TEMPLATE_PROSE", "Template prose residue detected.", body, m.start(), "Remove scaffold prose and replace with project-specific evidence."))
             break
 
@@ -398,13 +410,19 @@ def collect_managed_doc_quality_warnings(
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     warnings = analyze_scaffold_quality(text=text, metadata=metadata, doc_name=doc_name)
-    if str(doc_name).strip().lower() == "changelog":
+    is_research_target = path is not None and is_research_doc_target(doc_name, path)
+
+    quality_runtime = ((metadata or {}).get("_quality_runtime") or {}) if isinstance((metadata or {}).get("_quality_runtime"), dict) else {}
+    quality_mode = str(quality_runtime.get("mode") or ((metadata or {}).get("quality") or {}).get("mode") or "local_default")
+    if doc_name.lower() == "changelog":
+        warnings.extend(_changelog_warnings(text=text))
+        if quality_mode == "release_gate":
+            warnings.extend(_changelog_current_version_coverage_warnings(text=text, project=project))
+            warnings.extend(_research_context_drift_warnings(text=text, project=project))
+    elif is_research_target and quality_mode == "release_gate":
         warnings.extend(_research_context_drift_warnings(text=text, project=project))
-    if str(doc_name).strip().lower() == "changelog":
-        warnings.extend(_changelog_warnings(text=text, doc_name=doc_name, project=project))
-    if path is None or not is_research_doc_target(doc_name, path):
+    if not is_research_target:
         return warnings
-    warnings.extend(_research_context_drift_warnings(text=text, project=project))
 
     doc_path = Path(path)
     docs_dir_value = project.get("docs_dir") if isinstance(project, Mapping) else None
@@ -417,6 +435,7 @@ def collect_managed_doc_quality_warnings(
             research_dir=research_dir,
             changed_path=doc_path,
             canonical_research_dir=canonical_research_dir,
+            warning_policies=DEFAULT_WARNING_POLICIES,
         )
     )
     configured, _suppressed, _meta = _apply_quality_overrides(warnings, metadata=metadata)
@@ -455,198 +474,28 @@ def _research_context_drift_warnings(*, text: str, project: Optional[Mapping[str
     return warnings
 
 
-def _changelog_warnings(*, text: str, doc_name: str, project: Optional[Mapping[str, Any]] = None) -> List[Dict[str, Any]]:
-    warnings: List[Dict[str, Any]] = []
-    escaped_newline_count = text.count("\\n")
-    has_escaped_newline_sludge = escaped_newline_count >= 3 and any(
-        marker in text
-        for marker in (
-            "# Project Changelog\\n",
-            "Use one section per curated project outcome.\\n",
-            "## Entry Template\\n",
-            "- `entry_id`:",
-            "- `entry_status`:",
-            "- `summary`:",
-            "- `evidence_refs`:",
-        )
-    )
-    if has_escaped_newline_sludge:
-        warnings.append(
-            _warning(
-                "SCF_CHANGELOG_ESCAPED_NEWLINES",
-                "Changelog content appears serialized with literal escaped newlines.",
-                text,
-                0,
-                "Rewrite changelog with real multiline markdown instead of literal \\n escape sequences.",
-            )
-        )
-    entries = accepted_entries(parse_changelog_entries(text))
-    seen_keys: set[str] = set()
-    for entry in entries:
-        marker = f"entry_id: {entry.entry_id}" if entry.entry_id else entry.title or "accepted-entry"
-        idx = text.find(marker)
-        idx = 0 if idx < 0 else idx
-        if not entry.entry_id:
-            warnings.append(_warning("SCF_CHANGELOG_ENTRY_ID_MISSING", "Accepted changelog entry is missing entry_id.", text, idx, "Add entry_id in <yyyymmdd>:<slug> format."))
-        elif not is_valid_entry_id(entry.entry_id):
-            warnings.append(_warning("SCF_CHANGELOG_ENTRY_ID_INVALID", "Accepted changelog entry has invalid entry_id format.", text, idx, "Use entry_id format <yyyymmdd>:<slug>."))
-        if not entry.summary:
-            warnings.append(_warning("SCF_CHANGELOG_SUMMARY_MISSING", "Accepted changelog entry is missing summary.", text, idx, "Add a concise summary for accepted entry."))
-        if not entry.evidence_refs:
-            warnings.append(_warning("SCF_CHANGELOG_EVIDENCE_MISSING", "Accepted changelog entry is missing evidence_refs.", text, idx, "Add one or more concrete evidence_refs entries."))
-        if entry.entry_id in seen_keys and entry.entry_id:
-            warnings.append(_warning("SCF_CHANGELOG_DUPLICATE_SOURCE_KEY", "Duplicate changelog source key detected for accepted entries.", text, idx, "Keep one authoritative entry per (project_slug, entry_id)."))
-        seen_keys.add(entry.entry_id)
-        if _PROGRESS_PREFIX_PATTERN.search(entry.section_text) or "[agent:" in entry.section_text.lower():
-            warnings.append(_warning("SCF_CHANGELOG_RAW_PROGRESS_DUMP", "Accepted changelog entry looks like a raw progress-log dump.", text, idx, "Curate a human-authored changelog summary instead of dumping log lines."))
-        if re.search(r"(?im)^\s*status\s*:\s*accepted\s*$", entry.section_text):
-            warnings.append(_warning("SCF_CHANGELOG_AMBIGUOUS_BODY_STATUS", "Accepted entry uses ambiguous body lifecycle text ('Status: accepted').", text, idx, "Use entry_status for changelog entry state and keep lifecycle status in frontmatter only."))
+def _changelog_warnings(*, text: str) -> List[Dict[str, Any]]:
+    return build_changelog_structure_warnings(text=text, warning_builder=_warning)
 
+
+def _changelog_current_version_coverage_warnings(*, text: str, project: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     repo_root = Path(str((project or {}).get("root") or ".")).resolve()
     coverage = preview_current_release_coverage(
         project_changelog_text=text,
         repo_root=repo_root,
         pyproject_path=repo_root / "pyproject.toml",
     )
-    if coverage.get("status") == "missing":
-        current = coverage.get("current_context") if isinstance(coverage.get("current_context"), Mapping) else {}
-        current_version = str(current.get("value") or "unknown")
-        warnings.append(
-            _warning(
-                "SCF_CHANGELOG_CURRENT_VERSION_MISSING",
-                f"Managed CHANGELOG is missing accepted coverage for current package version '{current_version}'.",
-                text or "\n",
-                0,
-                (
-                    "Add or update an accepted managed changelog entry for the current pyproject version; "
-                    f"set observed_context.source=pyproject and observed_context.value={current_version}. "
-                    'Then run manage_docs(action="preview_reconciliation", metadata={"preview_type": "changelog"}) '
-                    'and manage_docs(action="apply_global_changelog") before release closeout.'
-                ),
-            )
+    if coverage.get("status") != "missing":
+        return []
+    context = coverage.get("current_context") if isinstance(coverage.get("current_context"), dict) else {}
+    expected = str(context.get("value") or "unknown")
+    idx = 0
+    return [
+        _warning(
+            "SCF_CHANGELOG_CURRENT_VERSION_MISSING",
+            f"Accepted CHANGELOG coverage is missing for current project version '{expected}'.",
+            text or "\n",
+            idx,
+            str(coverage.get("suggested_repair") or "Add an accepted changelog entry covering the current project version."),
         )
-    return warnings
-
-
-def _research_warning(code: str, *, excerpt: str, message: str, repair: str) -> Dict[str, Any]:
-    policy = DEFAULT_WARNING_POLICIES[code]
-    return {
-        "code": code,
-        "severity": policy["severity"],
-        "blocking": bool(policy["blocking"]),
-        "location": {"line": 1, "column": 1},
-        "excerpt": excerpt,
-        "message": message,
-        "suggested_repair": repair,
-    }
-
-
-def build_research_index_hygiene_warnings(
-    *,
-    research_dir: Path,
-    changed_path: Optional[Path] = None,
-    canonical_research_dir: Optional[Path] = None,
-) -> List[Dict[str, Any]]:
-    warnings: List[Dict[str, Any]] = []
-    research_dir = research_dir.resolve()
-    canonical_dir = (canonical_research_dir or research_dir).resolve()
-    index_path = research_dir / "INDEX.md"
-    research_docs = sorted(
-        p for p in research_dir.rglob("*.md") if p.name != "INDEX.md" and not p.name.startswith("_")
-    )
-    index_text = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
-
-    if changed_path and changed_path.suffix.lower() == ".md" and changed_path.name != "INDEX.md":
-        changed_resolved = changed_path.resolve()
-        try:
-            relative_to_canonical = changed_resolved.relative_to(canonical_dir)
-            noncanonical = len(relative_to_canonical.parts) != 1
-        except ValueError:
-            noncanonical = True
-        if noncanonical:
-            nested_inside_canonical = False
-            try:
-                changed_resolved.relative_to(canonical_dir)
-                nested_inside_canonical = True
-            except ValueError:
-                nested_inside_canonical = False
-            warnings.append(
-                _research_warning(
-                    "SCF_NONCANONICAL_LOCATION",
-                    excerpt=str(changed_path),
-                    message=(
-                        "Research artifact is not in canonical flat research placement. "
-                        "Files are expected directly under .scribe/docs/dev_plans/<project>/research/."
-                        if nested_inside_canonical
-                        else "Research artifact is outside canonical research storage and may not be indexed as expected."
-                    ),
-                    repair=(
-                        "Rehome the artifact to the top-level canonical research directory and regenerate research/INDEX.md."
-                        if nested_inside_canonical
-                        else "Move the artifact into the canonical research directory and regenerate research/INDEX.md."
-                    ),
-                )
-            )
-
-    if not index_path.exists():
-        warnings.append(
-            _research_warning(
-                "SCF_INDEX_MISSING",
-                excerpt=str(index_path),
-                message="Research index is missing.",
-                repair="Run a research-doc create/edit flow to regenerate research/INDEX.md.",
-            )
-        )
-        return warnings
-
-    if changed_path and changed_path.suffix.lower() == ".md":
-        try:
-            rel_name = changed_path.name
-            if rel_name != "INDEX.md" and rel_name not in index_text:
-                warnings.append(
-                    _research_warning(
-                        "SCF_DOC_UNINDEXED",
-                        excerpt=rel_name,
-                        message="Research document is unindexed: it is not listed in research/INDEX.md.",
-                        repair="Regenerate the research index by editing or creating a research document.",
-                    )
-                )
-        except Exception:
-            pass
-
-    for match in re.finditer(r"\]\(([^)]+\.md)\)", index_text):
-        linked = match.group(1).strip()
-        if "://" in linked or linked.startswith("#"):
-            continue
-        linked_path = (research_dir / linked).resolve()
-        try:
-            linked_path.relative_to(research_dir)
-        except ValueError:
-            continue
-        if not linked_path.exists():
-            warnings.append(
-                _research_warning(
-                    "SCF_DOC_UNINDEXED",
-                    excerpt=linked,
-                    message="Research index references an orphaned artifact that no longer exists.",
-                    repair="Regenerate research/INDEX.md so removed or rehomed artifacts are dropped from the index.",
-                )
-            )
-            break
-
-    for doc in research_docs:
-        try:
-            display_name = str(doc.relative_to(research_dir))
-        except ValueError:
-            display_name = doc.name
-        if doc.name not in index_text and display_name not in index_text:
-            warnings.append(
-                _research_warning(
-                    "SCF_INDEX_STALE",
-                    excerpt=display_name,
-                    message="Research index appears stale relative to research artifacts.",
-                    repair="Trigger research index refresh through managed-doc mutation flow.",
-                )
-            )
-            break
-    return warnings
+    ]

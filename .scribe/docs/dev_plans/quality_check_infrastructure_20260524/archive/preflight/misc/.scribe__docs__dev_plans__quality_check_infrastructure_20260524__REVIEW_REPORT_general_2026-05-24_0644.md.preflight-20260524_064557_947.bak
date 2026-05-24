@@ -1,0 +1,88 @@
+# Review Report: General Stage
+
+**Review Date:** 2026-05-24 06:44:15 UTC
+**Reviewer:** scribe-review-agent
+**Project:** quality_check_infrastructure_20260524
+**Stage:** general
+**Review Type:** Post-Implementation
+
+---
+
+<!-- ID: executive_summary -->
+Package 2.3 review result: PASS, 96/100.
+
+Why: This gate decides whether the research hygiene rule migration is complete enough to unblock Phase 3 routing.
+
+What: I verified the new research rule module, the `scaffold_quality.py` compatibility facade, the targeted project-health tests, the checklist proof for `p2-research-rules`, and the required pytest plus `git diff --check` commands. I also checked the current dirty tree to distinguish Package 2.3 scope from unrelated in-flight work.
+
+How: Read-only source inspection and direct command execution in the current workspace. Evidence showed stable research warning IDs and blocking semantics, explicit `source_owner: research` metadata on direct research warnings, preserved project-health compatibility, and no Package 2.3 replacement-file sprawl.
+<!-- ID: phase_review_results -->
+Package reviewed: Forge Package 2.3, Research Hygiene Rule Migration.
+
+Status: PASS.
+
+Score: 96/100.
+
+Legal to route Phase 3 / Package 3.1: YES.
+
+Verified package outcomes:
+- `src/scribe_mcp/doc_management/quality/rules/research.py` now owns research placement and index hygiene checks.
+- `SCF_NONCANONICAL_LOCATION`, `SCF_INDEX_MISSING`, `SCF_DOC_UNINDEXED`, and `SCF_INDEX_STALE` remain the warning IDs emitted by the direct research rule path.
+- Direct research warnings include `source_owner: research`.
+- `src/scribe_mcp/doc_management/scaffold_quality.py` remains the compatibility facade and still owns changelog and release-context behavior instead of migrating it into the new research module.
+- `tests/test_manage_docs_project_health_quality.py` exercises project-health compatibility and explicitly checks direct research warning owner metadata.
+- `CHECKLIST.md` `p2-research-rules` proof is readable, non-truncated, and consistent with the reviewed behavior.
+<!-- ID: detailed_analysis -->
+Findings: none blocking.
+
+Evidence summary:
+- `research.py` builds research-only warning payloads through `_research_warning`, pulling severity and blocking from shared policies while stamping `source_owner` as `research`.
+- The noncanonical, missing-index, unindexed-doc, orphaned-link, and stale-index paths are still present in the migrated rule module with the same warning codes and non-blocking medium policy inherited from `DEFAULT_WARNING_POLICIES`.
+- `collect_managed_doc_quality_warnings` in `scaffold_quality.py` still gates research hygiene through `is_research_doc_target`, keeps changelog/release-context handling in the facade, and delegates only research index hygiene into the new module.
+- `tests/test_manage_docs_project_health_quality.py` verifies `SCF_INDEX_MISSING` reaches project health for registered research docs, confirms direct warnings carry `source_owner == "research"`, and confirms non-research `SCF_DOC_UNINDEXED` warnings do not masquerade as research index failures.
+- `CHECKLIST.md` line item `p2-research-rules` states the moved module, preserved codes, source-owner metadata, project_health coverage, and required command set without visible truncation.
+- Current workspace also contains unrelated in-flight changes in `src/scribe_mcp/doc_management/runtime.py` and `tests/test_manage_docs_quality_check.py`; I treated those as adjacent dirty-tree context rather than Package 2.3 scope because they were not part of the reported Package 2.3 handoff.
+
+Residual risk:
+- `tests/doc_management/test_quality_registry.py` is still a general deterministic-order test and does not specifically assert registry registration of the research evaluator. This is a small coverage gap, not a blocker, because the direct behavioral tests and command suite already prove the migrated path in the current tree.
+<!-- ID: recommendations -->
+Recommendation: accept Package 2.3 and route Phase 3 / Package 3.1.
+
+Follow-up note:
+- When Phase 3 work lands, keep release-mode and changelog tests clearly separated from research hygiene proofs so later validation can attribute failures to the correct package boundary.
+<!-- ID: agent_performance_assessment -->
+Forge Package 2.3 implementation quality: strong.
+
+Why: The package goal was a focused migration with compatibility guarantees.
+
+What: The implementation isolated research hygiene into a dedicated module, preserved compatibility in the facade, added targeted project-health coverage, and avoided replacement files.
+
+How: The changed code matched the package contract and the required regression lanes passed cleanly. I deducted four points for leaving registry-specific research registration unasserted in the dedicated registry test file.
+<!-- ID: compliance_verification -->
+## Compliance Verification
+
+**Scribe Protocol Compliance:** PARTIALLY_COMPLIANT
+
+- [ ] Minimum logging requirements met
+- [ ] Documentation standards followed
+- [ ] Quality gate procedures completed
+- [ ] Cross-project validation performed
+
+---
+
+<!-- ID: final_decision -->
+## Final Decision
+
+**REQUIRES_REVISION**
+
+**Rationale:** Decision rationale should reference concrete evidence from findings and verification.
+
+**Conditions for Proceeding:**
+- [ ] Complete required remediation tasks and capture verification evidence.
+- [ ] Re-run applicable validation and document outcome in the managed report.
+
+**Expected Timeline:** To be confirmed by owner after remediation scope review.
+
+---
+
+*This review report is part of the quality assurance process for quality_check_infrastructure_20260524.*

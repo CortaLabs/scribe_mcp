@@ -31,6 +31,7 @@ def test_context_drift_warns_only_on_same_source_material_change(tmp_path: Path)
         doc_name="changelog",
         path=tmp_path / "CHANGELOG.md",
         project={"root": str(tmp_path), "docs_dir": str(tmp_path)},
+        metadata={"quality": {"mode": "release_gate"}},
     )
     codes = {w.get("code") for w in warnings}
     assert "SCF_RESEARCH_CONTEXT_DRIFT" in codes
@@ -65,6 +66,7 @@ def test_context_drift_suppressed_for_unknown_observed_source(tmp_path: Path) ->
         doc_name="changelog",
         path=tmp_path / "CHANGELOG.md",
         project={"root": str(tmp_path), "docs_dir": str(tmp_path)},
+        metadata={"quality": {"mode": "release_gate"}},
     )
     assert all(w.get("code") != "SCF_RESEARCH_CONTEXT_DRIFT" for w in warnings)
 
@@ -77,5 +79,6 @@ def test_context_drift_suppressed_when_stored_source_differs_from_current_resolv
         doc_name="changelog",
         path=tmp_path / "CHANGELOG.md",
         project={"root": str(tmp_path), "docs_dir": str(tmp_path)},
+        metadata={"quality": {"mode": "release_gate"}},
     )
     assert all(w.get("code") != "SCF_RESEARCH_CONTEXT_DRIFT" for w in warnings)

@@ -76,6 +76,11 @@ async def test_quality_check_returns_structured_quality_proof(tmp_path: Path) ->
     first = result["warnings"][0]
     for key in ("code", "severity", "blocking", "location", "excerpt", "message", "suggested_repair"):
         assert key in first
+    for key in ("category", "gate_scope", "scope_kind", "suppressible", "source_owner", "rule_version"):
+        assert key in first
+    for key in ("ok", "quality_status", "scope", "summary", "warnings", "runtime_warnings", "readiness_blockers", "next_actions"):
+        assert key in result
+    assert result["summary"]["mode"] == "local_default"
 
 
 @pytest.mark.asyncio
@@ -253,7 +258,7 @@ async def test_quality_check_uses_discovered_doc_when_auto_registration_fails(
 
 
 @pytest.mark.asyncio
-async def test_quality_check_changelog_emits_current_version_missing_warning(tmp_path: Path) -> None:
+async def test_quality_check_changelog_does_not_require_current_version_coverage_in_local_default(tmp_path: Path) -> None:
     project_root = tmp_path / "quality_repo_changelog_release"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -286,6 +291,70 @@ async def test_quality_check_changelog_emits_current_version_missing_warning(tmp
         result = await manage_docs(action="quality_check", doc_name="CHANGELOG", dry_run=True)
 
     codes = {w.get("code") for w in result.get("warnings", [])}
+    assert "SCF_CHANGELOG_CURRENT_VERSION_MISSING" not in codes
+    assert result["summary"]["mode"] == "local_default"
+    assert result["summary"]["release_trigger"] is None
+
+
+@pytest.mark.asyncio
+async def test_quality_check_explicit_release_mode_records_trigger(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_release_mode"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    phase = docs_dir / "PHASE_PLAN.md"
+    phase.write_text("# Phase Plan\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-release-mode-session", project["root"])
+
+    metadata = {"quality": {"mode": "release_gate", "release_trigger": "manual_release_intent"}}
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-release-mode-session"):
+        result = await manage_docs(action="quality_check", doc_name="PHASE_PLAN", metadata=metadata, dry_run=True)
+
+    assert result["summary"]["mode"] == "release_gate"
+    assert result["summary"]["release_trigger"] == "manual_release_intent"
+    assert result["summary"]["release_trigger_source"] == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_quality_check_inferred_release_mode_emits_current_version_missing(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_inferred_release_mode"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    (project_root / "pyproject.toml").write_text("[project]\nname='q'\nversion='9.9.0'\n", encoding="utf-8")
+
+    changelog = docs_dir / "CHANGELOG.md"
+    changelog.write_text(
+        """# Project Changelog
+
+## Prior release
+- `entry_id`: 20260514:prior
+- `entry_status`: accepted
+- `title`: Prior
+- `summary`: Prior summary
+- `evidence_refs`:
+  - tests/prior.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 9.8.0
+""",
+        encoding="utf-8",
+    )
+    project = {"name": "Q", "root": str(project_root), "docs": {"CHANGELOG": str(changelog)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-inferred-release-mode-session", project["root"])
+
+    metadata = {"quality": {"infer_release_gate": True, "release_trigger": "manual_release_intent"}}
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-inferred-release-mode-session"):
+        result = await manage_docs(action="quality_check", doc_name="CHANGELOG", metadata=metadata, dry_run=True)
+
+    codes = {w.get("code") for w in result.get("warnings", [])}
+    assert result["summary"]["mode"] == "release_gate"
+    assert result["summary"]["release_trigger_source"] == "inferred"
     assert "SCF_CHANGELOG_CURRENT_VERSION_MISSING" in codes
 
 
@@ -337,3 +406,55 @@ async def test_quality_check_accepts_absolute_markdown_path_from_other_dev_plan_
     assert result["ok"] is True
     assert result["scope"]["path"] == str(other_doc.resolve())
     assert result["scope"]["doc_name"] == "package_9_1_report"
+
+
+@pytest.mark.asyncio
+async def test_quality_check_alias_route_matches_scaffold_quality_check(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_alias_route"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    phase = docs_dir / "PHASE_PLAN.md"
+    phase.write_text("# Phase Plan\n\nShippable evidence content.\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-alias-route-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-alias-route-session"):
+        primary = await manage_docs(action="quality_check", doc_name="PHASE_PLAN", dry_run=True)
+        alias = await manage_docs(action="scaffold_quality_check", doc_name="PHASE_PLAN", dry_run=True)
+
+    assert primary == alias
+
+
+@pytest.mark.asyncio
+async def test_quality_check_and_alias_preserve_legacy_top_level_keys(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_schema_stability"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    arch = docs_dir / "ARCHITECTURE_GUIDE.md"
+    arch.write_text("---\nstatus: complete\n---\n[fill this section]\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-schema-session", project["root"])
+
+    legacy_keys = {
+        "ok",
+        "quality_status",
+        "scope",
+        "summary",
+        "warnings",
+        "runtime_warnings",
+        "readiness_blockers",
+        "next_actions",
+    }
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-schema-session"):
+        primary = await manage_docs(action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+        alias = await manage_docs(action="scaffold_quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+
+    for payload in (primary, alias):
+        assert legacy_keys.issubset(payload.keys())
