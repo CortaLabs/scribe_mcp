@@ -316,6 +316,7 @@ async def test_quality_check_explicit_release_mode_records_trigger(tmp_path: Pat
     assert result["summary"]["mode"] == "release_gate"
     assert result["summary"]["release_trigger"] == "manual_release_intent"
     assert result["summary"]["release_trigger_source"] == "explicit"
+    assert result["summary"]["release_triggers"] == ["manual_release_intent"]
 
 
 @pytest.mark.asyncio

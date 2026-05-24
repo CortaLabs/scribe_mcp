@@ -34,3 +34,8 @@
 - `source_project`: quality_check_infrastructure_20260524
 - `source_entry_id`: 20260524:quality-check-infrastructure-release
 - `summary`: Release 2.3.0 turns `manage_docs quality_check` into a markdown-aware, lightweight infrastructure gate with nested codeblock protection, structured context parsing, registry-backed scaffold/research/changelog/release-gate rule families, additive result metadata, explicit and inferred `release_gate` checks for current-version changelog coverage and research-context drift, unsuppressible integrity blockers, alias-route proof, explicit markdown-path proof, and a measured no-cache decision.
+
+## Quality check infrastructure hardening release
+- `source_project`: quality_check_infrastructure_20260524
+- `source_entry_id`: 20260524:quality-check-infrastructure-hardening-2-3-1
+- `summary`: Release 2.3.1 closes the post-2.3.0 quality_check hardening gaps by adding the declared `markdown-it-py` runtime dependency, making `MarkdownItScopeProvider` parser-backed for fenced, indented, and inline code scopes with deterministic fallback, enforcing explicit warning severity ordering, proving release-gate trigger metadata in the runtime payload, adding mixed-markdown torture coverage, and fixing repeated identical inline-code localization so duplicate literals map to distinct occurrences.

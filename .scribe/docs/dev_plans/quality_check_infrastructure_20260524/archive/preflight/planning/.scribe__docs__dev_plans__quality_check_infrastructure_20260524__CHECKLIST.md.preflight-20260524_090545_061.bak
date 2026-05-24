@@ -6,7 +6,7 @@ doc_name: checklist
 category: engineering
 status: ready
 version: v1.0
-last_updated: 2026-05-24 06:07:03 UTC
+last_updated: 2026-05-24 09:05:32 UTC
 maintained_by: agent-20260524-025636-a27de3e3
 created_by: agent-20260524-033158-52dee72d
 owners:
@@ -22,9 +22,9 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-05-24 03:48:34 UTC
   created_via: replace_range
-  last_edited_at: 2026-05-24 06:07:03 UTC
+  last_edited_at: 2026-05-24 09:05:32 UTC
   last_edited_by: agent-20260524-025636-a27de3e3
-  last_action: replace_range
+  last_action: status_update
 ---
 
 ## Architecture Closeout
@@ -52,33 +52,32 @@ Dependency: `p1-contract-mode`.
 - [x] <!-- id: p2-registry --> Package 2.1 ships the deterministic registry while keeping `scaffold_quality.py` as the compatibility facade. | proof=Deterministic registry infrastructure exists in `src/scribe_mcp/doc_management/quality/registry.py` with stable ordering and activation predicates, with internal exports in `src/scribe_mcp/doc_management/quality/__init__.py`. `src/scribe_mcp/doc_management/scaffold_quality.py` remains the import-stable compatibility facade for `collect_managed_doc_quality_warnings` and `summarize_quality_warnings` without migrating production rule families in Package 2.1. Verification target: `pytest -q tests/doc_management/test_quality_registry.py`.
 Proof: unit tests show stable registry ordering and existing helper imports still pass.
 Dependency: `p1-contract-mode`, `p1-context-parser`.
-- [x] <!-- id: p2-scaffold-rules --> Package 2.2 migrates scaffold and lifecycle rules onto scoped evaluation without changing existing warning IDs unexpectedly. | proof=SCF scaffold, lifecycle, trailing-whitespace, and readiness-conformance evaluation moved into `src/scribe_mcp/doc_management/quality/rules/scaffold.py` and is delegated from `scaffold_quality.py` while preserving warning IDs, blocking semantics, payload shape, and facade helpers. Regression tests in `tests/test_manage_docs_scaffold_quality.py` cover nested fenced placeholders and markdown table bracket text false-positive suppression. Verification: scaffold_quality 20 passed, quality_registry 1 passed, quality_context 2 passed, quality_check 11 passed, git diff --check clean.
+- [x] <!-- id: p2-scaffold-rules --> Package 2.2 migrates scaffold and lifecycle rules onto scoped evaluation without changing existing warning IDs unexpectedly. | proof=SCF scaffold, lifecycle, trailing-whitespace, and readiness-conformance evaluation moved into `src/scribe_mcp/doc_management/quality/rules/scaffold.py` and is delegated from `scaffold_quality.py` while preserving warning IDs, blocking semantics, payload shape, and facade helpers. Regression tests in `tests/test_manage_docs_scaffold_quality.py` cover nested fenced placeholders, inline-code placeholder examples, indented-code placeholder examples, markdown table bracket text false-positive suppression, and authored placeholders still warning. Verification: scaffold_quality 22 passed, quality_registry 1 passed, quality_context 2 passed, quality_check 11 passed, git diff --check clean.
 Proof: scaffold regression suite proves nested fences and table text no longer trigger false positives.
 Dependency: `p2-registry`.
-- [ ] <!-- id: p2-research-rules --> Package 2.3 migrates research placement and index hygiene with explicit research-owner metadata.
+- [x] <!-- id: p2-research-rules --> Package 2.3 migrates research placement and index hygiene with explicit research-owner metadata. | proof=Research placement and index hygiene moved into `src/scribe_mcp/doc_management/quality/rules/research.py`; `SCF_NONCANONICAL_LOCATION`, `SCF_INDEX_MISSING`, `SCF_DOC_UNINDEXED`, and `SCF_INDEX_STALE` stay stable; direct research warnings carry `source_owner: research`; project_health warning digest compatibility is covered in tests. Verification: project_health_quality passed, scaffold_quality passed, quality_registry passed, quality_check passed, git diff --check clean.
 Proof: research-doc checks still detect noncanonical placement and stale or missing index coverage.
 Dependency: `p2-registry`.
 
 ## Phase 3: Changelog And Release Gating
 <!-- phase: 3 -->
-- [ ] <!-- id: p3-changelog-structure --> Package 3.1 migrates changelog structure rules while preserving existing helper reuse.
+- [x] <!-- id: p3-changelog-structure --> Package 3.1 migrates changelog structure rules while preserving existing helper reuse. | proof=Moved structural changelog checks into `src/scribe_mcp/doc_management/quality/rules/changelog.py` while reusing `parse_changelog_entries`/`accepted_entries`; `scaffold_quality.py` remains compatibility facade; local_default no longer requires version/subprocess release inference for structure checks. Verification: test_changelog_quality 5 passed; manage_docs_scaffold_quality 22 passed; manage_docs_quality_check 11 passed; quality_registry 1 passed; git diff --check clean.
 Proof: changelog tests still catch missing IDs, missing evidence, raw progress dumps, and escaped-newline sludge.
 Dependency: `p2-registry`.
-- [ ] <!-- id: p3-release-gate --> Package 3.2 moves current-version coverage and research-context drift behind explicit or conservatively inferred `release_gate` semantics and finalizes suppressibility policy.
-Proof: ordinary `local_default` stays non-blocking for missing current-version changelog coverage, explicit and inferred `release_gate` paths surface the same release blockers with concrete trigger attribution, and ambiguous contexts stay advisory-only.
+- [x] <!-- id: p3-release-gate --> Package 3.2 moves current-version coverage and research-context drift behind explicit or conservatively inferred `release_gate` semantics and finalizes suppressibility policy. | proof=Current-version coverage evaluator runs only when resolved runtime mode is `release_gate`, emitted as unsuppressible `SCF_CHANGELOG_CURRENT_VERSION_MISSING` in `collect_managed_doc_quality_warnings` for CHANGELOG. Explicit and inferred release-gate both emit/block when coverage is missing, while `local_default` remains non-blocking. Tests: `pytest -q tests/doc_management/test_quality_release_modes.py` (8 passed), `pytest -q tests/doc_management/test_research_context_drift.py` (4 passed), `pytest -q tests/doc_management/test_changelog_quality.py` (5 passed), `pytest -q tests/test_manage_docs_quality_check.py` (12 passed), `pytest -q tests/test_manage_docs_scaffold_quality.py` (22 passed), `pytest -q tests/doc_management/test_quality_registry.py` (1 passed).
 Dependency: `p1-contract-mode`, `p2-registry`, `p3-changelog-structure`.
 
 ## Phase 4: Runtime Proof And Hardening
 <!-- phase: 4 -->
-- [ ] <!-- id: p4-runtime-proof --> Package 4.1 proves alias routing, explicit markdown-path resolution, additive output stability, and the final profiling decision on caching.
-Proof: alias-route tests, explicit-path tests, response-schema tests, and profiling evidence are attached to the implementation handoff.
+- [x] <!-- id: p4-runtime-proof --> Package 4.1 proves alias routing, explicit markdown-path resolution, additive output stability, and the final profiling decision on caching. | proof=Added alias-route equivalence + cross-route legacy-key stability assertions in tests/test_manage_docs_quality_check.py; explicit markdown-path behavior remains proven by repo-relative and absolute-path tests. Verification passed: `pytest -q tests/test_manage_docs_quality_check.py` (14 passed), `pytest -q tests/doc_management/test_quality_release_modes.py` (8 passed), `pytest -q tests/test_manage_docs_scaffold_quality.py` (22 passed), `pytest -q tests/doc_management/test_quality_registry.py` (1 passed), `git diff --check` clean. Runtime profile (uv run, 25 iterations each): `quality_check avg_ms=1.760 p95_ms=1.083`; `scaffold_quality_check avg_ms=0.925 p95_ms=1.001`; decision: no caching justified.
+Proof: Alias and scaffold routes return equivalent payloads, markdown-path resolution works within project-root constraints, legacy top-level response keys remain present, and profiling indicates local_default latency is already acceptably fast without cache complexity.
 Dependency: all prior phase packages.
 
 ## Final Verification
 <!-- phase: final -->
-- [ ] <!-- id: final-crucible-pass --> Each Forge package receives its own Crucible validation before any dependent package is routed.
+- [x] <!-- id: final-crucible-pass --> Each Forge package receives its own Crucible validation before any dependent package is routed. | proof=Final post-implementation Crucible PASS 98/100 for combined 2.3.1 hardening package and release hygiene. Evidence: dependency-backed markdown-it-py provider, repeated-identical-inline fix, explicit severity ordering, runtime release-trigger summary proof, accepted 2.3.1 changelog coverage, global changelog reconciliation, CHANGELOG release_gate zero blockers, project_health pass, focused tests 62 passed, git diff --check clean.
 Proof: package-specific Crucible PASS artifacts are linked in the progress log and handoff.
-- [ ] <!-- id: final-managed-docs --> Updated implementation docs and this planning bundle pass managed `quality_check` at closeout, and project-level health reflects the same release-context-sensitive changelog semantics.
+- [x] <!-- id: final-managed-docs --> Updated implementation docs and this planning bundle pass managed `quality_check` at closeout, and project-level health reflects the same release-context-sensitive changelog semantics. | proof=Managed docs closeout verified after 2.3.1 changelog repair. CHANGELOG release_gate quality_check reports 0 readiness blockers and no SCF_CHANGELOG_CURRENT_VERSION_MISSING, with only two non-blocking historical SCF_RESEARCH_CONTEXT_DRIFT warnings for previous accepted entries. project_health reports managed_doc_quality=pass and blocker_count=0.
 Proof: exact `quality_check` status and warning counts are recorded for the final closeout artifacts, along with `project_health` output showing ordinary mode remains non-blocking for missing current-version changelog coverage outside release context.
 - [ ] <!-- id: final-no-parallel-system --> The shipped implementation preserves the existing manage_docs entrypoint and compatibility facade without introducing replacement files or a second runtime route.
 Proof: changed-file review and source readback confirm no `*_v2` or parallel route surface was added.

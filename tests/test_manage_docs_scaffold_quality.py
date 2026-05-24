@@ -283,3 +283,38 @@ status: in_progress
 """
     warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
     assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_mixed_markdown_torture_ignores_code_scopes_but_keeps_real_prose_warnings():
+    text = """---
+status: complete
+---
+````md
+```md
+TODO: inside nested fence should be ignored
+[fill this section]
+```
+````
+
+- list wrapper:
+  ~~~md
+  [fill this section]
+  ~~~
+
+Inline literal: `[fill this section]` and `TODO: ignored`
+
+| item | sample |
+| --- | --- |
+| x | [abc-123] |
+
+    TODO: indented code ignored
+    [fill this section]
+
+TODO: real prose warning
+Status: blocked
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    codes = _codes(warnings)
+    assert "SCF_PLACEHOLDER_BRACKET" not in codes
+    assert "SCF_TODO_ONLY_SECTION" in codes
+    assert "SCF_LIFECYCLE_STATUS_MISMATCH" in codes

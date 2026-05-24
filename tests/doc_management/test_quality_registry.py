@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from scribe_mcp.doc_management.quality.results import normalize_warnings
 from scribe_mcp.doc_management.quality.registry import QualityRuleEntry, QualityRuleRegistry
 
 
@@ -51,3 +52,13 @@ def test_registry_evaluates_in_deterministic_order_with_activation_filters() -> 
     assert [entry.key for entry in registry.ordered_entries()] == ["first", "second", "skip", "third"]
     assert calls == ["first", "second", "third"]
     assert [warning["code"] for warning in warnings] == ["first", "second", "third"]
+
+
+def test_normalize_warnings_orders_by_explicit_severity_rank() -> None:
+    warnings = [
+        {"severity": "low", "code": "A_LOW"},
+        {"severity": "critical", "code": "Z_CRIT"},
+        {"severity": "high", "code": "M_HIGH"},
+    ]
+    normalized = normalize_warnings(warnings)
+    assert [w["code"] for w in normalized] == ["Z_CRIT", "M_HIGH", "A_LOW"]

@@ -4,6 +4,7 @@ from typing import Any, Dict, Mapping, Sequence
 
 SCHEMA_VERSION = "2026-05-24"
 DEFAULT_MODE = "local_default"
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
 
 def summarize_quality_warnings(warnings: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -41,7 +42,7 @@ def normalize_warnings(warnings: Sequence[Mapping[str, Any]]) -> list[Dict[str, 
     normalized = [normalize_warning_entry(warning) for warning in warnings]
     normalized.sort(
         key=lambda item: (
-            str(item.get("severity") or ""),
+            _SEVERITY_RANK.get(str(item.get("severity") or "").lower(), 4),
             str(item.get("code") or ""),
             int((item.get("location") or {}).get("line", 0)) if isinstance(item.get("location"), dict) else 0,
         )

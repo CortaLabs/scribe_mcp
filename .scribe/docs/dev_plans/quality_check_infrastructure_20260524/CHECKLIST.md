@@ -6,7 +6,7 @@ doc_name: checklist
 category: engineering
 status: ready
 version: v1.0
-last_updated: 2026-05-24 06:40:15 UTC
+last_updated: 2026-05-24 09:05:45 UTC
 maintained_by: agent-20260524-025636-a27de3e3
 created_by: agent-20260524-033158-52dee72d
 owners:
@@ -22,9 +22,9 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-05-24 03:48:34 UTC
   created_via: replace_range
-  last_edited_at: 2026-05-24 06:40:15 UTC
+  last_edited_at: 2026-05-24 09:05:45 UTC
   last_edited_by: agent-20260524-025636-a27de3e3
-  last_action: replace_range
+  last_action: status_update
 ---
 
 ## Architecture Closeout
@@ -75,9 +75,9 @@ Dependency: all prior phase packages.
 
 ## Final Verification
 <!-- phase: final -->
-- [ ] <!-- id: final-crucible-pass --> Each Forge package receives its own Crucible validation before any dependent package is routed.
+- [x] <!-- id: final-crucible-pass --> Each Forge package receives its own Crucible validation before any dependent package is routed. | proof=Final post-implementation Crucible PASS 98/100 for combined 2.3.1 hardening package and release hygiene. Evidence: dependency-backed markdown-it-py provider, repeated-identical-inline fix, explicit severity ordering, runtime release-trigger summary proof, accepted 2.3.1 changelog coverage, global changelog reconciliation, CHANGELOG release_gate zero blockers, project_health pass, focused tests 62 passed, git diff --check clean.
 Proof: package-specific Crucible PASS artifacts are linked in the progress log and handoff.
-- [ ] <!-- id: final-managed-docs --> Updated implementation docs and this planning bundle pass managed `quality_check` at closeout, and project-level health reflects the same release-context-sensitive changelog semantics.
+- [x] <!-- id: final-managed-docs --> Updated implementation docs and this planning bundle pass managed `quality_check` at closeout, and project-level health reflects the same release-context-sensitive changelog semantics. | proof=Managed docs closeout verified after 2.3.1 changelog repair. CHANGELOG release_gate quality_check reports 0 readiness blockers and no SCF_CHANGELOG_CURRENT_VERSION_MISSING, with only two non-blocking historical SCF_RESEARCH_CONTEXT_DRIFT warnings for previous accepted entries. project_health reports managed_doc_quality=pass and blocker_count=0.
 Proof: exact `quality_check` status and warning counts are recorded for the final closeout artifacts, along with `project_health` output showing ordinary mode remains non-blocking for missing current-version changelog coverage outside release context.
-- [ ] <!-- id: final-no-parallel-system --> The shipped implementation preserves the existing manage_docs entrypoint and compatibility facade without introducing replacement files or a second runtime route.
+- [x] <!-- id: final-no-parallel-system --> The shipped implementation preserves the existing manage_docs entrypoint and compatibility facade without introducing replacement files or a second runtime route. | proof=Final Crucible verified no replacement-file pattern or dead-attempt churn. Implementation preserves existing manage_docs quality_check/scaffold_quality_check routing and scaffold_quality compatibility facade while extending existing quality modules and tests in place.
 Proof: changed-file review and source readback confirm no `*_v2` or parallel route surface was added.

@@ -51,23 +51,25 @@ Use one section per curated project outcome.
   - .scribe/docs/dev_plans/quality_check_infrastructure_20260524/CHECKLIST.md
 
 <!-- ID: entries -->
-## 2026-05-24: quality-check-infrastructure-hardening-2-3-1
-- `entry_id`: 20260524:quality-check-infrastructure-hardening-2-3-1
-- `entry_status`: accepted
-- `title`: Quality check infrastructure hardening release
-- `summary`: Release 2.3.1 closes the post-2.3.0 quality_check hardening gaps by adding the declared `markdown-it-py` runtime dependency, making `MarkdownItScopeProvider` parser-backed for fenced, indented, and inline code scopes with deterministic fallback, enforcing explicit warning severity ordering, proving release-gate trigger metadata in the runtime payload, adding mixed-markdown torture coverage, and fixing repeated identical inline-code localization so duplicate literals map to distinct occurrences.
-- `observed_context`:
-  - `source`: pyproject
-  - `value`: 2.3.1
+## 2.3.1 - 2026-05-24
+
+- Added runtime dependency `markdown-it-py~=3.0` for token-backed markdown scope parsing in quality checks.
+- Hardened `MarkdownItScopeProvider` with token-backed fenced/indented/inline handling and safer fallback behavior.
+- Enforced explicit severity ordering (`critical > high > medium > low > info/unknown`) for normalized warning output.
+- Added runtime release-trigger summary payload coverage for `quality_check` release-gate mode.
+- Added mixed-markdown torture regression coverage to verify code/example suppression with lifecycle warning preservation.
+- Fixed repeated-identical-inline localization so duplicate inline literals map to distinct occurrences.
+
+### Release Context
+- `observed_context`: `{"pyproject_version":"2.3.1"}`
 - `evidence_refs`:
-  - pyproject.toml
-  - src/scribe_mcp/__main__.py
-  - src/scribe_mcp/doc_management/quality/scopes.py
-  - src/scribe_mcp/doc_management/quality/results.py
-  - tests/doc_management/test_quality_context.py
-  - tests/doc_management/test_quality_registry.py
-  - tests/doc_management/test_quality_release_modes.py
-  - tests/test_manage_docs_quality_check.py
-  - tests/test_manage_docs_scaffold_quality.py
-  - tests/test_manage_docs_project_health_quality.py
-  - .scribe/docs/dev_plans/quality_check_infrastructure_20260524/CHECKLIST.md
+  - `pyproject.toml`
+  - `src/scribe_mcp/__main__.py`
+  - `src/scribe_mcp/doc_management/quality/scopes.py`
+  - `src/scribe_mcp/doc_management/quality/results.py`
+  - `tests/doc_management/test_quality_context.py`
+  - `tests/doc_management/test_quality_registry.py`
+  - `tests/doc_management/test_quality_release_modes.py`
+  - `tests/test_manage_docs_quality_check.py`
+  - `tests/test_manage_docs_scaffold_quality.py`
+  - `tests/test_manage_docs_project_health_quality.py`

@@ -57,3 +57,18 @@ def test_context_parses_frontmatter_once_and_preserves_body() -> None:
     context = DocumentContextBuilder().build(text=text, doc_name="SPEC")
     assert context.frontmatter_data.get("status") == "draft"
     assert "Body line" in context.body_text
+
+
+def test_context_scopes_distinguish_repeated_identical_inline_code_literals() -> None:
+    text = """---
+status: in_progress
+---
+Use `[fill this section]` as literal one.
+Use `[fill this section]` as literal two.
+"""
+    context = DocumentContextBuilder().build(text=text, doc_name="CHECKLIST")
+    inline_scopes = [s for s in context.scopes if s.kind == "inline_code"]
+    matching_scopes = [s for s in inline_scopes if context.body_text[s.start_offset : s.end_offset] == "`[fill this section]`"]
+
+    assert len(matching_scopes) == 2
+    assert matching_scopes[0].start_offset < matching_scopes[1].start_offset
