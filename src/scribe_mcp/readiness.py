@@ -122,6 +122,32 @@ def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, A
     }
 
 
+def collect_managed_doc_quality_blockers(project: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return canonical managed-doc quality blockers using readiness semantics."""
+    quality_state = collect_managed_doc_quality_state(project)
+    blocker_docs: list[Dict[str, Any]] = []
+    for document in quality_state.get("documents", []):
+        if not isinstance(document, dict):
+            continue
+        blocker_codes = [str(code) for code in (document.get("readiness_blocker_codes") or []) if code]
+        if not blocker_codes:
+            continue
+        blocker_docs.append(
+            {
+                "doc_name": document.get("doc_name"),
+                "path": document.get("path"),
+                "blocker_codes": blocker_codes,
+            }
+        )
+
+    return {
+        "blocked": bool(blocker_docs),
+        "total_blocker_count": int(quality_state.get("readiness_blocker_count", 0)),
+        "blocker_docs": blocker_docs,
+        "quality_state": quality_state,
+    }
+
+
 def build_readiness_summary(*, current_phase: Optional[str], managed_doc_quality: Dict[str, Any], log_signals: Optional[Sequence[Mapping[str, Any]]] = None) -> ReadinessSummary:
     log_signals = list(log_signals or [])
     log_blockers = sum(1 for signal in log_signals if bool(signal.get("blocking")))

@@ -15,6 +15,7 @@ from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp import server as server_module
+from scribe_mcp.config.repo_config import RepoConfig, resolve_create_doc_type_config
 
 
 @contextmanager
@@ -775,3 +776,44 @@ async def test_manage_docs_create_template_legacy_fallback_config_source(tmp_pat
         )
         assert result["ok"] is True
         assert result["config_source"] == "repo_config:reminder_config.doc_types.create_templates"
+
+
+def test_create_doc_type_config_includes_canonical_semantic_aliases(tmp_path: Path) -> None:
+    repo_config = RepoConfig.defaults_for_repo(tmp_path)
+    resolved = resolve_create_doc_type_config(repo_config)
+    assert resolved.aliases["phase_plan"] == "custom"
+    assert resolved.aliases["security_review"] == "security"
+
+
+@pytest.mark.asyncio
+async def test_canonical_doc_type_persists_through_create_and_frontmatter_update(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        created = await manage_docs(
+            action="create",
+            doc="phase_plan",
+            metadata={
+                "doc_name": "PHASE_PLAN_CANONICAL_PERSIST_001",
+                "doc_type": "phase_plan",
+                "intended_doc_type": "phase_plan",
+            },
+            dry_run=False,
+        )
+        assert created["ok"] is True
+
+        updated = await manage_docs(
+            action="frontmatter_update",
+            doc="PHASE_PLAN_CANONICAL_PERSIST_001",
+            metadata={"frontmatter": {"intended_doc_type": "review"}},
+            dry_run=False,
+        )
+        assert updated["ok"] is True
+        doc_path = Path(updated["path"])
+        parsed = parse_frontmatter(doc_path.read_text(encoding="utf-8"))
+        frontmatter = parsed.frontmatter_data
+        assert frontmatter.get("doc_type") == "phase_plan"
+        assert frontmatter.get("canonical_doc_type") == "review"

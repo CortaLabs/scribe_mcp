@@ -47,6 +47,7 @@ DEFAULT_WARNING_POLICIES: Dict[str, Dict[str, Any]] = {
     "SCF_CHANGELOG_CURRENT_VERSION_MISSING": {"severity": "critical", "blocking": True},
     "SCF_RESEARCH_CONTEXT_DRIFT": {"severity": "medium", "blocking": False},
     "SCF_TRAILING_WHITESPACE": {"severity": "medium", "blocking": False},
+    "SCF_FAILED_WRITE_RESIDUE": {"severity": "critical", "blocking": True},
 }
 
 _TEMPLATE_PROSE_PATTERNS = [
@@ -199,6 +200,27 @@ def _is_table_row(line: str) -> bool:
     return stripped.startswith("|") and stripped.count("|") >= 2
 
 
+def _looks_like_placeholder_bracket(content: str) -> bool:
+    normalized = re.sub(r"\s+", " ", content.strip().lower())
+    if not normalized:
+        return False
+
+    explicit_tokens = {
+        "todo",
+        "tbd",
+        "placeholder",
+        "fill",
+        "fill in",
+        "insert",
+        "replace me",
+        "your text",
+    }
+    if normalized in explicit_tokens:
+        return True
+
+    return bool(re.search(r"\b(todo|tbd|placeholder|fill|insert|replace\s+me)\b", normalized))
+
+
 # Compatibility export; canonical implementation lives in quality.results.
 
 
@@ -261,6 +283,17 @@ def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]]
             document_context=context,
         )
     )
+    failed_write_residue = re.search(r"failed\s+write|write\s+failed|partial\s+write\s+residue", body, flags=re.IGNORECASE)
+    if failed_write_residue and not _in_code_fence(body, failed_write_residue.start(), context=context):
+        warnings.append(
+            _warning(
+                "SCF_FAILED_WRITE_RESIDUE",
+                "Detected failed-write residue marker text in managed document body.",
+                body or "\n",
+                failed_write_residue.start(),
+                "Remove failed-write residue text and re-run quality_check before ready/complete handoff.",
+            )
+        )
 
     for warning in warnings:
         loc = warning.get("location") if isinstance(warning.get("location"), dict) else {}
@@ -359,6 +392,9 @@ def _placeholder_residue_warnings(body: str, *, context: Optional["DocumentConte
         if line.startswith("<!--") and line.endswith("-->"):
             continue
         if line.startswith("#"):
+            continue
+        bracket_content = m.group(0)[1:-1]
+        if not _looks_like_placeholder_bracket(bracket_content):
             continue
         warnings.append(_warning("SCF_PLACEHOLDER_BRACKET", "Bracketed placeholder found in body text.", body, m.start(), "Replace bracketed drafting text with final artifact content."))
 

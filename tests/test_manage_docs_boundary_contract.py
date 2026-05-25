@@ -231,3 +231,8 @@ async def test_manage_docs_invalid_action_response_includes_supported_actions_ma
     manifest = result.get("supported_actions")
     assert isinstance(manifest, dict)
     assert manifest.get("cleanup_actions") == ["project_health", "rehome_doc"]
+    assert "ingestion_manifest_inspect" in manifest.get("advanced_actions", [])
+    assert "regenerate_intelligence_exports" in manifest.get("advanced_actions", [])
+    allowed = result.get("details", {}).get("allowed_actions", []) or result.get("allowed_actions", [])
+    assert "ingestion_manifest_inspect" in allowed
+    assert "regenerate_intelligence_exports" in allowed

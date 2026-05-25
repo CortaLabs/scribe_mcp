@@ -27,6 +27,17 @@ _RESERVED_CREATE_DOC_TYPES = {
     "review",
     "agent_card",
 }
+_CANONICAL_DOC_TYPE_ALIASES = {
+    "architecture": "custom",
+    "phase_plan": "custom",
+    "checklist": "custom",
+    "synthesis": "custom",
+    "progress_log": "custom",
+    "work_item": "custom",
+    "other": "custom",
+    "security_review": "security",
+    "bug_rca": "bug",
+}
 
 
 @dataclass(frozen=True)
@@ -228,7 +239,7 @@ def resolve_create_doc_type_config(repo_config: "RepoConfig") -> DocTypeCreateRe
     Primary path: `doc_types.*`
     Compatibility path: `reminder_config.doc_types.*`
     """
-    aliases: Dict[str, str] = {}
+    aliases: Dict[str, str] = dict(_CANONICAL_DOC_TYPE_ALIASES)
     templates: Dict[str, str] = {}
     warnings: list[str] = []
     template_doc_types: set[str] = set()

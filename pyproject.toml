@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.3.1"
+version = "2.4.0"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -84,6 +84,7 @@ include = ["scribe_mcp*"]
   "README.md",
   "docs/INSTALL_AND_BOOTSTRAP.md",
   "docs/TOUR.md",
+  "docs/DOCUMENT_TOPOLOGY.md",
   "docs/COMPATIBILITY_MATRIX.md",
   "docs/RELEASE_SURFACE.md",
   "docs/RELEASE_FILE_MAP.md",

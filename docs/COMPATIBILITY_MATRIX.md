@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
-Baseline date: **2026-05-17**
-Release framing: **v2.2.26 compatibility baseline**
+Baseline date: **2026-05-25**
+Release framing: **v2.4.0 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.2.26 documentation wave:
+This baseline keeps compatibility posture for the 2.4.0 document topology release:
 
-- **Core package version:** `scribe-mcp==2.2.26`
+- **Core package version:** `scribe-mcp==2.4.0`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,7 +19,7 @@ This baseline keeps compatibility posture for the 2.2.26 documentation wave:
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.2.26` | Supported | Public Scribe install for local/core usage. |
+| `2.4.0` | Supported | Public Scribe install for local/core usage with deterministic document topology. |
 
 ## Not supported by this baseline
 
@@ -32,13 +32,15 @@ This baseline keeps compatibility posture for the 2.2.26 documentation wave:
 
 ## What is shipped
 
-### `scribe-mcp 2.2.26`
+### `scribe-mcp 2.4.0`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`
 - Managed-doc hygiene includes scaffold-aware quality checks, project-local preflight archive routing, canonical research artifact naming, stale index-backup cleanup, and quality-check recovery for registered or discoverable package/research docs.
 - Managed-doc project memory includes project `CHANGELOG.md`, derived global changelog reconciliation, advisory version context, research-context drift warnings, lifecycle/body-status mismatch warnings, and malformed changelog escaped-newline blocking checks.
 - Managed-doc release governance also blocks missing accepted coverage for the active `pyproject.toml` version via `SCF_CHANGELOG_CURRENT_VERSION_MISSING` in `quality_check`, reminders, and `project_health`.
+- Managed-doc topology includes canonical metadata normalization, typed deterministic edges, topology/metadata scan actions, safe/assisted metadata repair, stale cleanup recommendations, hard quality handoff checks, and sanitized downstream ingestion manifest inspection.
+- Derived topology artifacts are local Scribe outputs under `.scribe/indexes/`; downstream consumers may ingest those sanitized records, but Scribe does not implement embeddings, semantic ranking, retrieval, or graph-RAG traversal.
 
 ## Versioning contract
 

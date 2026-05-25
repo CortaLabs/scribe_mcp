@@ -105,6 +105,48 @@ async def test_quality_check_clean_doc_passes(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_quality_handoff_check_blocks_when_scaffold_blockers_exist(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_handoff_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    arch = docs_dir / "ARCHITECTURE_GUIDE.md"
+    arch.write_text("---\nstatus: complete\n---\n[fill this section]\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-handoff-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-handoff-session"):
+        result = await manage_docs(action="quality_handoff_check", dry_run=True)
+
+    assert result["ok"] is False
+    assert result["blocked"] is True
+    assert result["action"] == "quality_handoff_check"
+    assert result["total_blocker_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_quality_check_detects_failed_write_residue_blocker(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_residue_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    phase = docs_dir / "PHASE_PLAN.md"
+    phase.write_text("---\nstatus: in_progress\n---\nThis has failed write residue from prior run.\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-residue-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-residue-session"):
+        result = await manage_docs(action="quality_check", doc="PHASE_PLAN", dry_run=True)
+
+    codes = {w.get("code") for w in result.get("warnings", [])}
+    assert "SCF_FAILED_WRITE_RESIDUE" in codes
+
+
+@pytest.mark.asyncio
 async def test_quality_check_respects_metadata_quality_overrides(tmp_path: Path) -> None:
     project_root = tmp_path / "quality_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"

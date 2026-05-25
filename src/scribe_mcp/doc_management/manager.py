@@ -28,8 +28,14 @@ from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
 from scribe_mcp.doc_management.utils import strip_trailing_whitespace_lines
+from scribe_mcp.doc_management.boundary_guidance import (
+    build_manage_docs_boundary_guidance,
+    is_manage_docs_boundary_error,
+)
 from scribe_mcp.utils.error_handler import sanitize_error_message
+from scribe_mcp.doc_management.lifecycle import derive_canonical_doc_type, normalize_canonical_status
 from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
+from scribe_mcp.doc_management.topology import normalize_topology_edges
 import re
 
 # Setup logging for doc management operations
@@ -139,33 +145,6 @@ class DocumentVerificationError(Exception):
 class DocumentValidationError(Exception):
     """Raised when document validation fails."""
     pass
-
-
-def is_manage_docs_boundary_error(message: str) -> bool:
-    """Return True when error text indicates a project-root boundary violation."""
-    normalized = str(message or "").lower()
-    return "outside project root" in normalized
-
-
-def build_manage_docs_boundary_guidance(
-    project: Dict[str, Any],
-    *,
-    rejected_target: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Build canonical boundary guidance payload for manage_docs write targets."""
-    project_root = str(project.get("root") or "")
-    docs_dir = str(project.get("docs_dir") or "")
-    guidance: Dict[str, Any] = {
-        "rule": "target_dir must resolve inside the active project root",
-        "project_root": project_root,
-        "supported_alternative": {
-            "target_dir": docs_dir,
-            "example": "Use an in-project target_dir (or omit it to use project docs_dir).",
-        },
-    }
-    if rejected_target:
-        guidance["rejected_target_dir"] = str(rejected_target)
-    return guidance
 
 
 def _derive_backup_family(
@@ -3080,7 +3059,7 @@ def _default_frontmatter(
         "doc_type": doc_name,
         "doc_name": doc_name,
         "category": category_str,
-        "status": "draft",
+        "status": "scaffolded",
         "version": "0.1",
         "last_updated": date_str,
         "maintained_by": actor_id,
@@ -3204,6 +3183,8 @@ def _apply_frontmatter_pipeline(
     if isinstance(metadata, dict):
         if metadata.get("doc_type"):
             updates["doc_type"] = metadata["doc_type"]
+        if metadata.get("intended_doc_type"):
+            updates["intended_doc_type"] = metadata["intended_doc_type"]
         if metadata.get("doc_name"):
             updates["doc_name"] = metadata["doc_name"]
 
@@ -3369,6 +3350,11 @@ def _apply_frontmatter_pipeline(
         frontmatter_updates_summary["defaulted_keys"].append("maintained_by")
     updates["created_by"] = created_by
     updates["maintained_by"] = maintained_by
+    updates["status"] = normalize_canonical_status(updates.get("status") or existing_frontmatter.get("status"))
+    updates["canonical_doc_type"] = derive_canonical_doc_type(
+        str(updates.get("doc_type") or existing_frontmatter.get("doc_type") or ""),
+        str(updates.get("intended_doc_type") or existing_frontmatter.get("intended_doc_type") or ""),
+    )
 
     edit_trace: Dict[str, Any] = {
         "tool": "manage_docs",
@@ -3611,30 +3597,38 @@ def _validate_crosslinks(
         if not isinstance(related_docs, list):
             related_docs = []
 
-    check_anchors = bool(metadata.get("check_anchors")) if isinstance(metadata, dict) else False
     docs_dir = project.get("docs_dir")
     project_root = Path(project.get("root", ""))
     base_dir = Path(docs_dir) if docs_dir else _resolve_doc_path(project, "architecture").parent
     diagnostics: list[Dict[str, Any]] = []
-
-    for entry in related_docs:
-        target = str(entry)
-        path_part, anchor_part = (target.split("#", 1) + [None])[:2]
-        candidate = Path(path_part)
-        if not candidate.is_absolute():
-            candidate = base_dir / candidate
-        resolved = candidate.resolve()
-        exists = resolved.exists()
+    check_anchors = bool(metadata.get("check_anchors")) if isinstance(metadata, dict) else False
+    docs_map = project.get("docs")
+    registered_docs: Dict[str, Path] = {}
+    if isinstance(docs_map, dict):
+        for key, value in docs_map.items():
+            if isinstance(key, str) and isinstance(value, str):
+                registered_docs[key] = Path(value)
+    edges = normalize_topology_edges(
+        source_doc_id="source",
+        source_doc_path=_resolve_doc_path(project, "source"),
+        edge_map={"related_docs": related_docs},
+        docs_dir=base_dir,
+        project_root=project_root,
+        registered_docs=registered_docs,
+    )
+    for edge in edges:
+        anchor = edge.get("target_anchor")
+        resolved_path = Path(edge["target_path"]) if isinstance(edge.get("target_path"), str) else None
         anchor_found = None
-        if exists and check_anchors and anchor_part:
-            anchors = _extract_header_anchors(resolved.read_text(encoding="utf-8"))
-            anchor_found = anchor_part in anchors
+        if check_anchors and resolved_path and resolved_path.exists() and isinstance(anchor, str) and anchor:
+            anchors = _extract_header_anchors(resolved_path.read_text(encoding="utf-8"))
+            anchor_found = anchor in anchors
         diagnostics.append(
             {
-                "target": target,
-                "path": str(resolved),
-                "exists": exists,
-                "anchor": anchor_part,
+                "target": edge.get("target_ref"),
+                "path": edge.get("target_path"),
+                "exists": bool(edge.get("target_resolved")),
+                "anchor": anchor,
                 "anchor_found": anchor_found,
             }
         )

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from scribe_mcp.doc_management import preflight as preflight_shared
+from scribe_mcp.doc_management import intelligence_exports as intelligence_exports_shared
 from scribe_mcp.doc_management.manager import DocumentOperationError
 
 
@@ -425,6 +426,9 @@ async def refresh_special_indexes_from_roots(
             repo_root=effective_repo_root,
         )
         refreshed["agent_card"] = str(project_docs_dir / "AGENT_CARDS_INDEX.md")
+
+    exports = intelligence_exports_shared.write_export_artifacts(active_project={"root": str(project_root), "docs_dir": str(project_docs_dir), "name": "", "docs": {}})
+    refreshed.update({f"derived_{k}": v for k, v in exports.items()})
 
     return refreshed
 

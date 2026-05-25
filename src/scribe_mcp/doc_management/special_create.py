@@ -16,10 +16,10 @@ from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
 from scribe_mcp.doc_management import utils as utils_shared
+from scribe_mcp.doc_management.boundary_guidance import build_manage_docs_boundary_guidance
 from scribe_mcp.doc_management.naming import normalize_research_doc_name
 from scribe_mcp.doc_management.manager import (
     DocumentOperationError,
-    build_manage_docs_boundary_guidance,
 )
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.tools.append_entry import append_entry

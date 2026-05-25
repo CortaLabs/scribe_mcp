@@ -1,7 +1,7 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.2.26`
-Updated: `2026-05-17`
+Release line: `2.4.0`
+Updated: `2026-05-25`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
 
@@ -14,15 +14,14 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.2.26` hardens the governed-doc and case workflow agents use during real repairs:
+Release `2.4.0` makes managed docs topology-aware:
 
-- `link_fix` validates execution/session/entry references before recording fix evidence.
-- Accepted reference forms are explicit: current execution lineage, the authoritative session key, or a mirrored in-scope Scribe entry.
-- Forged bare 32-hex values and transport/process session IDs fail closed instead of becoming accidental authority.
-- BUG/security case registry records are repo/project scoped before mutation.
-- Managed-doc frontmatter preserves existing custom fields by default and keeps runtime-owned attribution fields under tool control.
-- The agent guide documents the recovery path when provenance, case ownership, or frontmatter mutation validation fails.
-- Managed-doc release governance now raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` when the active package version lacks accepted changelog coverage, and that warning flows through `quality_check`, reminders, and `project_health`.
+- Managed-doc frontmatter now has canonical lifecycle state, stable IDs, summaries, display-name-first attribution, and canonical doc-type/status normalization.
+- Typed deterministic edges describe dependencies, supporting evidence, validations, supersession, blockers, and touched paths.
+- `quality_check` remains the single proof path and blocks scaffold residue, failed-write residue, topology gaps, and unsafe ready/complete handoffs.
+- Operators and agents can run topology scans, metadata scans, safe repairs, assisted repair plans, stale cleanup scans, handoff checks, and downstream manifest inspection through `manage_docs`.
+- Scribe exports sanitized derived topology and ingestion-manifest artifacts for downstream systems while leaving retrieval, embeddings, semantic ranking, and graph-RAG traversal outside Scribe.
+- Managed-doc release governance still raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` when the active package version lacks accepted changelog coverage, and that warning flows through `quality_check`, reminders, and `project_health`.
 
 If you only remember one thing, make it this:
 

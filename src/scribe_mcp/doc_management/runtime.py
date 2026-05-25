@@ -20,9 +20,15 @@ from scribe_mcp.doc_management.scaffold_quality import (
 )
 from scribe_mcp.doc_management.quality.results import DEFAULT_MODE, SCHEMA_VERSION, normalize_warnings
 from scribe_mcp.doc_management.quality.rules.release_gate import resolve_quality_mode
-from scribe_mcp.readiness import build_readiness_summary, collect_managed_doc_quality_state
+from scribe_mcp.readiness import (
+    build_readiness_summary,
+    collect_managed_doc_quality_blockers,
+    collect_managed_doc_quality_state,
+)
 from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
+from scribe_mcp.doc_management import intelligence_workflows as intelligence_workflows_shared
+from scribe_mcp.doc_management import intelligence_exports as intelligence_exports_shared
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
 from scribe_mcp.doc_management import utils as utils_shared
 from scribe_mcp.doc_management.actions import append as append_actions
@@ -66,10 +72,17 @@ HIDDEN_ACTIONS = {
     "apply_global_changelog",
     "project_health",
     "quality_check",
+    "quality_handoff_check",
     "scaffold_quality_check",
     "rehome_doc",
     "search",
     "batch",
+    "topology_scan",
+    "metadata_scan",
+    "metadata_repair",
+    "stale_cleanup_scan",
+    "ingestion_manifest_inspect",
+    "regenerate_intelligence_exports",
 }
 
 VALID_ACTIONS = PRIMARY_ACTIONS | HIDDEN_ACTIONS
@@ -78,6 +91,7 @@ _CLEANUP_ACTIONS = {"project_health", "rehome_doc"}
 _ADVANCED_ACTIONS = HIDDEN_ACTIONS - _CLEANUP_ACTIONS
 
 ACTION_ROUTER = {
+    "create": "edit",
     "create_doc": "edit",
     "replace_section": "edit",
     "apply_patch": "edit",
@@ -95,6 +109,12 @@ ACTION_ROUTER = {
     "apply_global_changelog": "query",
     "search": "search",
     "batch": "batch",
+    "topology_scan": "query",
+    "metadata_scan": "query",
+    "metadata_repair": "edit",
+    "stale_cleanup_scan": "query",
+    "ingestion_manifest_inspect": "query",
+    "regenerate_intelligence_exports": "edit",
 }
 
 
@@ -118,6 +138,7 @@ _MUTATION_ACTIONS = {
     "generate_toc",
     "replace_text",
     "validate_crosslinks",
+    "metadata_repair",
 }
 
 _CUSTOM_DOC_TYPES = {"research", "bugs", "reviews", "review", "agent_cards"}
@@ -1089,6 +1110,22 @@ async def _handle_quality_check(
     return helper.apply_context_payload(response, context)
 
 
+async def _handle_quality_handoff_check(*, active_project: Dict[str, Any], agent_id: str, helper: LoggingToolMixin, context: LoggingContext) -> Dict[str, Any]:
+    blocker_result = collect_managed_doc_quality_blockers(active_project)
+    blocked = bool(blocker_result.get("blocked"))
+    blocker_docs = list(blocker_result.get("blocker_docs") or [])
+    response = {
+        "ok": not blocked,
+        "action": "quality_handoff_check",
+        "agent": agent_id,
+        "project": active_project.get("name"),
+        "blocked": blocked,
+        "blocker_docs": blocker_docs,
+        "total_blocker_count": int(blocker_result.get("total_blocker_count", 0)),
+    }
+    return helper.apply_context_payload(response, context)
+
+
 async def _handle_rehome_doc(
     *,
     active_project: Dict[str, Any],
@@ -1829,31 +1866,12 @@ async def handle_manage_docs_request(
     deprecation_warning: Optional[str] = None
 
     if healed_params.get("invalid_action"):
+        routed_actions = sorted({candidate for candidate in valid_actions if candidate in action_router})
         return helper.error_response(
             f"Invalid manage_docs action '{action}'.",
             suggestion="Use action='apply_patch' for edits, 'replace_section' only for initial scaffolding.",
             extra={
-                "allowed_actions": sorted(
-                    {
-                        "create",
-                        "replace_section",
-                        "append",
-                        "status_update",
-                        "apply_patch",
-                        "replace_range",
-                        "replace_text",
-                        "normalize_headers",
-                        "generate_toc",
-                        "list_sections",
-                        "list_checklist_items",
-                        "preview_reconciliation",
-                        "project_health",
-                        "rehome_doc",
-                        "batch",
-                        "validate_crosslinks",
-                        "search",
-                    }
-                ),
+                "allowed_actions": routed_actions,
                 "healing_messages": healing_messages,
             },
         )
@@ -1993,6 +2011,38 @@ async def handle_manage_docs_request(
             context=context,
         )
         return _attach_manage_docs_project_context(response, context=context)
+    if action == "quality_handoff_check":
+        response = await _handle_quality_handoff_check(
+            active_project=active_project,
+            agent_id=str(agent_id),
+            helper=helper,
+            context=context,
+        )
+        return _attach_manage_docs_project_context(response, context=context)
+    if action == "topology_scan":
+        response = intelligence_workflows_shared.topology_scan(active_project=active_project)
+        return _attach_manage_docs_project_context(helper.apply_context_payload(response, context), context=context)
+    if action == "metadata_scan":
+        response = intelligence_workflows_shared.metadata_scan(active_project=active_project)
+        return _attach_manage_docs_project_context(helper.apply_context_payload(response, context), context=context)
+    if action == "metadata_repair":
+        response = intelligence_workflows_shared.metadata_repair(
+            active_project=active_project,
+            mode=str((metadata or {}).get("mode") or "report_only") if isinstance(metadata, dict) else "report_only",
+        )
+        return _attach_manage_docs_project_context(helper.apply_context_payload(response, context), context=context)
+    if action == "stale_cleanup_scan":
+        response = intelligence_workflows_shared.stale_cleanup_scan(active_project=active_project)
+        return _attach_manage_docs_project_context(helper.apply_context_payload(response, context), context=context)
+
+    if action == "ingestion_manifest_inspect":
+        payload = intelligence_exports_shared.build_export_payload(active_project=active_project)
+        response = {"ok": True, "action": "ingestion_manifest_inspect", "read_only": True, "preview": payload["downstream_ingestion_manifest"]}
+        return _attach_manage_docs_project_context(helper.apply_context_payload(response, context), context=context)
+    if action == "regenerate_intelligence_exports":
+        paths = intelligence_exports_shared.write_export_artifacts(active_project=active_project)
+        response = {"ok": True, "action": "regenerate_intelligence_exports", "artifact_paths": paths}
+        return _attach_manage_docs_project_context(helper.apply_context_payload(response, context), context=context)
 
     if action == "rehome_doc":
         rehome_metadata = dict(metadata) if isinstance(metadata, dict) else {}

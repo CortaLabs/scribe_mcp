@@ -285,6 +285,27 @@ status: in_progress
     assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
 
 
+def test_css_attribute_selector_brackets_do_not_trigger_placeholder_false_positive():
+    text = """---
+status: in_progress
+---
+Use the selector [data-theme] for theme scoping.
+Viewport baseline is 1440x900.
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" not in _codes(warnings)
+
+
+def test_obvious_placeholder_brackets_still_trigger_blocker_codes():
+    text = """---
+status: in_progress
+---
+Resolve [TODO], [TBD], [placeholder], and [insert implementation details] before handoff.
+"""
+    warnings = analyze_scaffold_quality(text=text, doc_name="CHECKLIST")
+    assert "SCF_PLACEHOLDER_BRACKET" in _codes(warnings)
+
+
 def test_mixed_markdown_torture_ignores_code_scopes_but_keeps_real_prose_warnings():
     text = """---
 status: complete

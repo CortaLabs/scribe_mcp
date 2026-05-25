@@ -1,7 +1,7 @@
 # Scribe MCP usage guide
 
-Release line: `2.2.26`
-Updated: `2026-05-17`
+Release line: `2.4.0`
+Updated: `2026-05-25`
 
 This guide is about day-to-day usage once Scribe is installed.
 
@@ -15,7 +15,7 @@ Install behavior reminder for day-to-day operators:
 - use `scribe install --commit --yes` for approved non-interactive commit flows
 - use `--project-codex` only when you explicitly want Codex projection after core install
 
-In `2.2.26`, Scribe ships git-clean managed-doc scaffold generation alongside the provenance-safe changelog/global reconciliation guard patch: accepted changelog entries now require a non-empty `observed_context.value` for all allowed safe sources (`pyproject`, `git_tag`, `release_manifest`) before preview/apply reconciliation can treat them as safe.
+In `2.4.0`, Scribe ships the document topology foundation: managed docs have canonical lifecycle metadata, typed deterministic edges, topology/metadata scans, safe repair modes, stale cleanup recommendations, quality handoff checks, and sanitized downstream ingestion manifests.
 Release governance in this line also blocks missing current-version changelog coverage: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is emitted by `quality_check`, echoed in reminders, and shown in `project_health` quality signals until fixed.
 
 ## The short mental model

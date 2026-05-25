@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from scribe_mcp.doc_management.manager import (
+from scribe_mcp.doc_management.boundary_guidance import (
     build_manage_docs_boundary_guidance,
     is_manage_docs_boundary_error,
 )

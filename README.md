@@ -44,14 +44,14 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.2.26` focuses on git-clean managed-doc scaffolds, agent-safe reference provenance, scoped case identity, preserve-first managed-doc metadata, and a provenance-safe changelog/global reconciliation guard:
+`2.4.0` turns Scribe's managed documents into a deterministic document topology layer for agents and downstream corpus builders:
 
-- `link_fix` now validates execution/session/entry references through a shared resolver before mutating case state.
-- Bare or forged 32-hex tokens are no longer silently trusted; accepted IDs must come from current execution lineage, an authoritative session key, or an in-scope Scribe entry.
-- BUG and security case registry ownership is scoped by repo/project identity, so the same case ID cannot mutate the wrong project.
-- Managed-doc frontmatter is preserve-first: empty or null incoming values do not erase existing custom metadata, and runtime-owned fields stay tool-owned.
-- Agent onboarding docs now describe accepted `link_fix` reference forms, rejection recovery, and the frontmatter mutation contract.
-- Release governance now treats missing current-version changelog coverage as blocking quality truth: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is raised through `quality_check`, reflected in reminders, and visible in managed-doc `project_health` digests until coverage is repaired and reconciliation proof is run.
+- Managed docs now receive canonical lifecycle metadata, display-name-first attribution, stable IDs, summaries, and canonical doc-type/status normalization.
+- Frontmatter supports typed topology edges for dependencies, support, validation, supersession, blockers, and code/path touchpoints.
+- `quality_check` remains the single quality path and now blocks scaffold residue, failed-write residue, invalid lifecycle state, malformed topology, dangling edges, and unsafe ready/complete handoffs.
+- New document-intelligence actions provide read-only topology and metadata scans, deterministic safe metadata repair, assisted repair plans, stale cleanup recommendations, handoff checks, and downstream ingestion manifest inspection.
+- Scribe emits derived, sanitized topology artifacts under `.scribe/indexes/` for downstream consumers without turning Scribe into a retrieval or semantic-ranking system.
+- Release governance still treats missing current-version changelog coverage as blocking quality truth: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is raised through `quality_check`, reminders, and `project_health` until coverage is repaired and reconciliation proof is run.
 
 ## What makes Scribe different
 
@@ -337,6 +337,8 @@ Start with these:
   The canonical install guide, including Postgres bootstrap, standalone mode, and Codex projection.
 - [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)  
   A short MCP-first walkthrough with verified live response shapes.
+- [Document Topology and Downstream Export](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/DOCUMENT_TOPOLOGY.md)
+  The managed-doc lifecycle, topology edge, scan/repair, handoff, and downstream export contract.
 - [Scribe Usage Guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/Scribe_Usage.md)  
   The day-to-day operating loop and the tool families you will actually use.
 - [MCP Server Guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/mcp_server_guide.md)  

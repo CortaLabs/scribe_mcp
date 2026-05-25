@@ -84,7 +84,7 @@ async def test_frontmatter_update_can_create_frontmatter(tmp_path: Path) -> None
     assert change.success
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert parsed.has_frontmatter
-    assert parsed.frontmatter_data.get("status") == "draft"
+    assert parsed.frontmatter_data.get("status") == "scaffolded"
 
 
 @pytest.mark.asyncio
@@ -185,7 +185,7 @@ async def test_frontmatter_explicit_updates(tmp_path: Path) -> None:
 
     assert change.success
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
-    assert parsed.frontmatter_data.get("status") == "authoritative"
+    assert parsed.frontmatter_data.get("status") == "ready"
 
 
 @pytest.mark.asyncio
@@ -255,7 +255,7 @@ async def test_frontmatter_delete_ignores_reserved_and_runtime_owned_fields(tmp_
     assert fm.get("project_name") == "sample"
 
 @pytest.mark.asyncio
-async def test_replace_range_content_frontmatter_updates_document_frontmatter(tmp_path: Path) -> None:
+async def test_replace_range_rejects_invalid_status_in_frontmatter_pipeline(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
 
@@ -281,12 +281,8 @@ async def test_replace_range_content_frontmatter_updates_document_frontmatter(tm
         dry_run=False,
     )
 
-    assert change.success
-    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
-    assert parsed.frontmatter_data.get("title") == "Retitled"
-    assert parsed.frontmatter_data.get("status") == "override"
-    assert parsed.body.startswith("# Retitled")
-    assert "Body updated from payload" in parsed.body
+    assert change.success is False
+    assert "Invalid canonical status" in (change.error_message or "")
 
 
 @pytest.mark.asyncio

@@ -247,6 +247,22 @@ class AgentContextManager:
         except Exception:
             pass
 
+        # Package 3.1 quality handoff preflight: block clean session close when managed-doc blockers remain.
+        try:
+            if project and project.get("docs"):
+                from scribe_mcp.readiness import collect_managed_doc_quality_blockers
+
+                blocker_result = collect_managed_doc_quality_blockers(project)
+                total_blockers = int(blocker_result.get("total_blocker_count", 0))
+                if total_blockers > 0:
+                    raise ValueError(
+                        f"SESSION_END_BLOCKED_BY_DOC_QUALITY: {total_blockers} blocking managed-doc warning(s) remain; resolve quality blockers before ending session."
+                    )
+        except ValueError:
+            raise
+        except Exception:
+            logger.debug("Session teardown quality preflight skipped due to non-fatal check error", exc_info=True)
+
         # Mark session as expired in database.
         await self.storage.end_session(session_id)
 

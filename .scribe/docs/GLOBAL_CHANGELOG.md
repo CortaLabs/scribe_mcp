@@ -39,3 +39,8 @@
 - `source_project`: quality_check_infrastructure_20260524
 - `source_entry_id`: 20260524:quality-check-infrastructure-hardening-2-3-1
 - `summary`: Release 2.3.1 closes the post-2.3.0 quality_check hardening gaps by adding the declared `markdown-it-py` runtime dependency, making `MarkdownItScopeProvider` parser-backed for fenced, indented, and inline code scopes with deterministic fallback, enforcing explicit warning severity ordering, proving release-gate trigger metadata in the runtime payload, adding mixed-markdown torture coverage, and fixing repeated identical inline-code localization so duplicate literals map to distinct occurrences.
+
+## Document topology foundation release
+- `source_project`: scribe_document_topology_foundation_20260524
+- `source_entry_id`: 20260525:document-topology-foundation-release
+- `summary`: Release 2.4.0 makes Scribe a deterministic document topology and lifecycle authority with canonical managed-doc metadata, typed topology edges, topology and metadata scan actions, safe and assisted repair modes, hard quality handoff gates, sanitized downstream ingestion manifests, and a generic downstream export boundary that keeps retrieval and semantic ranking outside Scribe.

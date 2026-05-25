@@ -98,3 +98,94 @@ async def test_end_session_revokes_persisted_bindings_and_runtime_caches(tmp_pat
     assert observed["called"] is None
 
     await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_end_session_blocked_by_canonical_managed_doc_quality_blocker(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "session_teardown_blocked.db"
+    state_path = tmp_path / "state.json"
+    repo_root = tmp_path.resolve()
+    doc_path = tmp_path / "PHASE_PLAN.md"
+    doc_path.write_text("# Phase Plan\n", encoding="utf-8")
+
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
+
+    await storage.upsert_project(
+        name="blocked-quality-project",
+        repo_root=str(repo_root),
+        progress_log_path=str(repo_root / "PROGRESS_LOG.md"),
+        docs_json=f'{{"phase_plan":"{doc_path}"}}',
+    )
+    session_id = await manager.start_session("CoderAgent", session_id="stable-session-blocked")
+    await manager.set_current_project("CoderAgent", "blocked-quality-project", session_id)
+    original_get_agent_project = storage.get_agent_project
+
+    async def _get_agent_project_with_docs(agent_id: str):
+        row = await original_get_agent_project(agent_id)
+        if isinstance(row, dict):
+            row = dict(row)
+            row["docs"] = {"phase_plan": str(doc_path)}
+        return row
+
+    monkeypatch.setattr(storage, "get_agent_project", _get_agent_project_with_docs)
+
+    from scribe_mcp import readiness
+
+    monkeypatch.setattr(
+        readiness,
+        "collect_managed_doc_quality_warnings",
+        lambda **_: [{"code": "SCF_FAILED_WRITE_RESIDUE", "blocking": True, "severity": "critical"}],
+    )
+
+    with pytest.raises(ValueError, match="SESSION_END_BLOCKED_BY_DOC_QUALITY"):
+        await manager.end_session("CoderAgent", session_id)
+
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_end_session_ignores_excluded_non_target_docs_for_quality_blockers(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "session_teardown_excluded.db"
+    state_path = tmp_path / "state.json"
+    repo_root = tmp_path.resolve()
+    progress_log = tmp_path / "PROGRESS_LOG.md"
+    progress_log.write_text("# Progress\n", encoding="utf-8")
+
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
+
+    await storage.upsert_project(
+        name="excluded-quality-project",
+        repo_root=str(repo_root),
+        progress_log_path=str(progress_log),
+        docs_json=f'{{"progress_log":"{progress_log}"}}',
+    )
+    session_id = await manager.start_session("CoderAgent", session_id="stable-session-excluded")
+    await manager.set_current_project("CoderAgent", "excluded-quality-project", session_id)
+    original_get_agent_project = storage.get_agent_project
+
+    async def _get_agent_project_with_progress_doc(agent_id: str):
+        row = await original_get_agent_project(agent_id)
+        if isinstance(row, dict):
+            row = dict(row)
+            row["docs"] = {"progress_log": str(progress_log)}
+            row["progress_log"] = str(progress_log)
+        return row
+
+    monkeypatch.setattr(storage, "get_agent_project", _get_agent_project_with_progress_doc)
+
+    from scribe_mcp import readiness
+
+    monkeypatch.setattr(
+        readiness,
+        "collect_managed_doc_quality_warnings",
+        lambda **_: [{"code": "SCF_FAILED_WRITE_RESIDUE", "blocking": True, "severity": "critical"}],
+    )
+
+    await manager.end_session("CoderAgent", session_id)
+    assert await storage.get_session_project(session_id) is None
+
+    await storage.close()

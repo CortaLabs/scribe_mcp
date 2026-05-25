@@ -1,13 +1,13 @@
 # Install and bootstrap
 
-Release line: `2.2.26`
-Updated: `2026-05-17`
+Release line: `2.4.0`
+Updated: `2026-05-25`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 
 If you want the short product tour first, read [TOUR.md](TOUR.md). If you want the MCP-host setup details, read [mcp_server_guide.md](mcp_server_guide.md).
 
-This release line includes the reference-provenance and managed-doc metadata hardening: `link_fix` validates trusted execution/session/entry references before mutation, case registry ownership is repo/project scoped, and managed-doc frontmatter preserves custom metadata by default.
+This release line includes the document topology foundation: managed docs carry canonical lifecycle metadata, typed deterministic edges, quality-gated ready/complete transitions, topology/metadata scan actions, safe repair modes, stale cleanup recommendations, handoff checks, and sanitized downstream export manifests.
 It also includes release-governance enforcement: missing accepted changelog coverage for the active `pyproject.toml` version raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` through `quality_check`, reminders, and managed-doc `project_health`.
 
 ## Which path should you use?
