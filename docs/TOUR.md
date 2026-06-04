@@ -1,7 +1,7 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.4.0`
-Updated: `2026-05-25`
+Release line: `2.4.1`
+Updated: `2026-06-04`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
 
@@ -14,12 +14,13 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.4.0` makes managed docs topology-aware:
+Release `2.4.1` makes managed docs topology-aware and case-report follow-up edits direct:
 
 - Managed-doc frontmatter now has canonical lifecycle state, stable IDs, summaries, display-name-first attribution, and canonical doc-type/status normalization.
 - Typed deterministic edges describe dependencies, supporting evidence, validations, supersession, blockers, and touched paths.
 - `quality_check` remains the single proof path and blocks scaffold residue, failed-write residue, topology gaps, and unsafe ready/complete handoffs.
 - Operators and agents can run topology scans, metadata scans, safe repairs, assisted repair plans, stale cleanup scans, handoff checks, and downstream manifest inspection through `manage_docs`.
+- Operators and agents can edit bug/security reports created by `open_bug` or `open_security` through `manage_docs` using the returned case id, governed path, or canonical category metadata.
 - Scribe exports sanitized derived topology and ingestion-manifest artifacts for downstream systems while leaving retrieval, embeddings, semantic ranking, and graph-RAG traversal outside Scribe.
 - Managed-doc release governance still raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` when the active package version lacks accepted changelog coverage, and that warning flows through `quality_check`, reminders, and `project_health`.
 

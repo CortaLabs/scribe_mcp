@@ -116,6 +116,10 @@ async def test_bug_and_security_register_with_shared_case_registry_model() -> No
     assert len(backend.upserts) == 2
     assert backend.upserts[0]["case_type"] == "bug"
     assert backend.upserts[1]["case_type"] == "security"
+    assert backend.upserts[0]["doc_name"] == "BUG-2026-04-17-0001"
+    assert backend.upserts[1]["doc_name"] == "SEC-2026-04-17-0001"
+    assert bug_result["case_registry"]["doc_path"] == backend.upserts[0]["doc_path"]
+    assert sec_result["case_registry"]["doc_path"] == backend.upserts[1]["doc_path"]
     assert backend.upserts[0]["project_name"] == "integrate_bug_management_system_20260417"
     assert backend.upserts[1]["project_name"] == "integrate_bug_management_system_20260417"
     assert backend.upserts[0]["metadata"]["ownership"]["repo_root_provenance"] == "verified"

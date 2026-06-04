@@ -223,6 +223,116 @@ def _classify_from_case_reference(case_reference: Optional[str]) -> Optional[tup
     return None
 
 
+def normalize_case_report_category(
+    value: Optional[str],
+    *,
+    case_reference: Optional[str] = None,
+) -> Optional[str]:
+    """Return the canonical manage_docs case category for BUG/SEC report aliases."""
+    normalized = (value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "bug": "bugs",
+        "bugs": "bugs",
+        "bug_report": "bugs",
+        "bug_reports": "bugs",
+        "security": "security",
+        "sec": "security",
+        "security_report": "security",
+        "security_reports": "security",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+
+    classification = _classify_from_case_reference(case_reference)
+    if classification is None:
+        return None
+    return "security" if classification[1] == "security_report" else "bugs"
+
+
+def case_report_doc_type_for_category(doc_category: Optional[str]) -> Optional[str]:
+    normalized = normalize_case_report_category(doc_category)
+    if normalized == "security":
+        return "security_report"
+    if normalized == "bugs":
+        return "bug_report"
+    return None
+
+
+def looks_like_case_report_reference(
+    value: Optional[str],
+    *,
+    doc_category: Optional[str] = None,
+) -> bool:
+    if normalize_case_report_category(doc_category, case_reference=value) is not None:
+        return True
+    if _classify_from_case_reference(value) is not None:
+        return True
+    normalized_path = str(value or "").strip().replace("\\", "/").lower()
+    return (
+        "/docs/bugs/" in normalized_path or "/docs/security/" in normalized_path
+    ) and normalized_path.endswith("/report.md")
+
+
+def case_registry_record_summary(record: Any) -> Optional[Dict[str, Any]]:
+    if record is None:
+        return None
+    summary: Dict[str, Any] = {}
+    for key in ("case_id", "case_type", "doc_name", "doc_path", "project_name"):
+        value = _normalize_metadata_value(_record_like_value(record, key))
+        if value is not None:
+            summary[key] = value
+    return summary if summary else None
+
+
+def resolve_governed_case_report_path(
+    project: Dict[str, Any],
+    case_reference: str,
+    *,
+    doc_category: Optional[str] = None,
+) -> Optional[Path]:
+    """Resolve a BUG/SEC case reference to a governed report path under project root."""
+    project_root_raw = str(project.get("root") or "").strip()
+    if not project_root_raw:
+        return None
+    project_root = Path(project_root_raw).expanduser().resolve()
+    canonical_category = normalize_case_report_category(
+        doc_category,
+        case_reference=case_reference,
+    )
+    desired_doc_type = case_report_doc_type_for_category(canonical_category)
+
+    candidate_path: Optional[Path] = None
+    raw_reference = str(case_reference or "").strip()
+    if raw_reference and ("/" in raw_reference or "\\" in raw_reference):
+        candidate = Path(raw_reference).expanduser()
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        candidate_path = candidate.resolve()
+    elif canonical_category is not None:
+        candidate_path = resolve_custom_doc_path(
+            project,
+            canonical_category,
+            raw_reference,
+        )
+
+    if candidate_path is None or not candidate_path.exists():
+        return None
+    try:
+        candidate_path.relative_to(project_root)
+    except ValueError:
+        return None
+
+    classification = classify_scribe_source_document(
+        candidate_path,
+        project_root=project_root,
+    )
+    if classification is None or classification.source_family != "case_report":
+        return None
+    if desired_doc_type is not None and classification.doc_type != desired_doc_type:
+        return None
+    return candidate_path
+
+
 def classify_scribe_source_document(
     path: Path,
     metadata: Optional[Dict[str, Any]] = None,

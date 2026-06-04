@@ -141,7 +141,17 @@ _MUTATION_ACTIONS = {
     "metadata_repair",
 }
 
-_CUSTOM_DOC_TYPES = {"research", "bugs", "reviews", "review", "agent_cards"}
+_CUSTOM_DOC_TYPES = {
+    "research",
+    "bugs",
+    "bug",
+    "bug_report",
+    "security",
+    "security_report",
+    "reviews",
+    "review",
+    "agent_cards",
+}
 _READ_ONLY_REGISTRATION_GATED_ACTIONS = {
     "list_sections",
     "list_checklist_items",
@@ -1787,6 +1797,129 @@ async def register_document_path(
     return None
 
 
+async def _resolve_case_report_registered_key(
+    *,
+    active_project: Dict[str, Any],
+    requested_name: str,
+    doc_category: str,
+    server_module: Any,
+    project_registry: Any,
+    append_entry: Callable[..., Awaitable[Any]],
+    logger: logging.Logger,
+    execution_context: Any,
+    agent_id: str,
+    dry_run: bool,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Resolve BUG/SEC case references to a registered manage_docs key."""
+    if not requested_name:
+        return None, None, None
+    if not utils_shared.looks_like_case_report_reference(
+        requested_name,
+        doc_category=doc_category,
+    ):
+        return None, None, None
+
+    project_root_raw = str(active_project.get("root") or "").strip()
+    if not project_root_raw:
+        return None, None, None
+    project_root = Path(project_root_raw).expanduser().resolve()
+    docs_mapping = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+
+    canonical_category = utils_shared.normalize_case_report_category(
+        doc_category,
+        case_reference=requested_name,
+    )
+    case_record = None
+    resolved_path: Optional[Path] = None
+    candidate_doc_name: Optional[str] = None
+    registry_summary: Optional[Dict[str, Any]] = None
+
+    backend = getattr(server_module, "storage_backend", None)
+    fetch_record = getattr(backend, "fetch_case_registry_record", None) if backend is not None else None
+    if callable(fetch_record) and requested_name.upper().startswith(("BUG-", "SEC-")):
+        try:
+            case_record = await fetch_record(
+                case_id=requested_name,
+                repo_root=str(project_root),
+                project_name=str(active_project.get("name") or ""),
+            )
+        except Exception as exc:
+            logger.warning("Case registry lookup failed for '%s': %s", requested_name, exc)
+            case_record = None
+
+    if case_record is not None:
+        registry_summary = utils_shared.case_registry_record_summary(case_record)
+        record_path_raw = str(getattr(case_record, "doc_path", "") or "").strip()
+        if record_path_raw:
+            record_path = Path(record_path_raw).expanduser()
+            if not record_path.is_absolute():
+                record_path = project_root / record_path
+            resolved_path = utils_shared.resolve_governed_case_report_path(
+                active_project,
+                str(record_path.resolve()),
+                doc_category=canonical_category,
+            )
+        candidate_doc_name = str(getattr(case_record, "doc_name", "") or "").strip() or requested_name
+
+    if resolved_path is None:
+        resolved_path = utils_shared.resolve_governed_case_report_path(
+            active_project,
+            requested_name,
+            doc_category=canonical_category,
+        )
+        candidate_doc_name = candidate_doc_name or requested_name
+
+    if resolved_path is None:
+        return None, canonical_category, None
+
+    try:
+        resolved_path.relative_to(project_root)
+    except ValueError:
+        return None, canonical_category, (
+            f"Refused case report path outside active project root: {resolved_path}"
+        )
+
+    path_bound_key = resolve_registered_doc_key(active_project, str(resolved_path))
+    if path_bound_key and path_bound_key in docs_mapping:
+        return path_bound_key, canonical_category, None
+
+    candidate_doc_key = str(candidate_doc_name or resolved_path.parent.name).strip()
+    if candidate_doc_key in docs_mapping:
+        return candidate_doc_key, canonical_category, None
+
+    if dry_run:
+        staged_docs = dict(docs_mapping)
+        staged_docs[candidate_doc_key] = str(resolved_path)
+        active_project["docs"] = staged_docs
+        return candidate_doc_key, canonical_category, (
+            f"dry_run: would register case report '{candidate_doc_key}' to '{resolved_path}' before mutation."
+        )
+
+    reload_warning = await register_document_path(
+        active_project,
+        candidate_doc_key,
+        resolved_path,
+        server_module=server_module,
+        project_registry=project_registry,
+        append_entry=append_entry,
+        logger=logger,
+        execution_context=execution_context,
+        agent_id=agent_id,
+    )
+    docs_mapping = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+    rebound_key = resolve_registered_doc_key(active_project, candidate_doc_key)
+    if rebound_key in docs_mapping:
+        return rebound_key, canonical_category, reload_warning
+    path_bound_key = resolve_registered_doc_key(active_project, str(resolved_path))
+    if path_bound_key in docs_mapping:
+        return path_bound_key, canonical_category, reload_warning
+
+    registry_hint = f" registry={registry_summary}" if registry_summary else ""
+    return None, canonical_category, (
+        f"Case report '{requested_name}' resolved to '{resolved_path}' but did not re-bind to a registered key.{registry_hint}"
+    )
+
+
 async def handle_manage_docs_request(
     *,
     action: str,
@@ -1966,6 +2099,37 @@ async def handle_manage_docs_request(
         execution_context=execution_context,
         server_module=server_module,
     )
+
+    if doc_name:
+        docs_mapping = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+        canonical_category = utils_shared.normalize_case_report_category(
+            doc_category,
+            case_reference=doc_name,
+        )
+        if canonical_category is not None and doc_category != canonical_category:
+            doc_category = canonical_category
+        if action in _MUTATION_ACTIONS and doc_name not in docs_mapping:
+            resolved_case_key, resolved_case_category, case_resolution_warning = (
+                await _resolve_case_report_registered_key(
+                    active_project=active_project,
+                    requested_name=str(doc_name),
+                    doc_category=doc_category,
+                    server_module=server_module,
+                    project_registry=project_registry,
+                    append_entry=append_entry,
+                    logger=logger,
+                    execution_context=execution_context,
+                    agent_id=str(agent_id),
+                    dry_run=dry_run,
+                )
+            )
+            if resolved_case_category is not None:
+                doc_category = resolved_case_category
+            if case_resolution_warning:
+                runtime_warnings.append(case_resolution_warning)
+            if resolved_case_key:
+                logger.info("Resolved case report reference '%s' -> '%s'", doc_name, resolved_case_key)
+                doc_name = resolved_case_key
 
     if (
         _is_manage_docs_write_intent(action)

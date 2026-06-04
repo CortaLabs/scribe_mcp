@@ -1,7 +1,7 @@
 # Scribe MCP usage guide
 
-Release line: `2.4.0`
-Updated: `2026-05-25`
+Release line: `2.4.1`
+Updated: `2026-06-04`
 
 This guide is about day-to-day usage once Scribe is installed.
 
@@ -15,7 +15,7 @@ Install behavior reminder for day-to-day operators:
 - use `scribe install --commit --yes` for approved non-interactive commit flows
 - use `--project-codex` only when you explicitly want Codex projection after core install
 
-In `2.4.0`, Scribe ships the document topology foundation: managed docs have canonical lifecycle metadata, typed deterministic edges, topology/metadata scans, safe repair modes, stale cleanup recommendations, quality handoff checks, and sanitized downstream ingestion manifests.
+In `2.4.1`, Scribe ships the document topology foundation plus first-class bug/security report follow-up editing: managed docs have canonical lifecycle metadata, typed deterministic edges, topology/metadata scans, safe repair modes, stale cleanup recommendations, quality handoff checks, sanitized downstream ingestion manifests, and governed case-report resolution through `manage_docs`.
 Release governance in this line also blocks missing current-version changelog coverage: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is emitted by `quality_check`, echoed in reminders, and shown in `project_health` quality signals until fixed.
 
 ## The short mental model

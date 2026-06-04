@@ -161,6 +161,13 @@ async def test_open_bug_happy_path_creates_entry_and_document() -> None:
     _assert_operator_envelope(result)
     assert result["mode"] == "project"
     assert result["case_id"] == "BUG-2026-03-15-0001"
+    assert result["doc_name"] == "BUG-2026-03-15-0001"
+    assert result["doc_path"] == result["bug_report"]
+    assert result["doc_category"] == "bugs"
+    assert result["case_registry"]["case_id"] == "BUG-2026-03-15-0001"
+    assert result["case_registry"]["case_type"] == "bug"
+    assert result["case_registry"]["doc_name"] == "BUG-2026-03-15-0001"
+    assert result["case_registry"]["doc_path"] == result["bug_report"]
     assert "entry_id" in result
     assert "bug_report" in result or "path" in result
     # Completeness score should be present
@@ -278,6 +285,13 @@ async def test_open_security_happy_path_uses_security_doc_type() -> None:
     _assert_operator_envelope(result)
     assert result["mode"] == "project"
     assert result["case_id"] == "SEC-2026-03-15-0001"
+    assert result["doc_name"] == "SEC-2026-03-15-0001"
+    assert result["doc_path"] == result["security_report"]
+    assert result["doc_category"] == "security"
+    assert result["case_registry"]["case_id"] == "SEC-2026-03-15-0001"
+    assert result["case_registry"]["case_type"] == "security"
+    assert result["case_registry"]["doc_name"] == "SEC-2026-03-15-0001"
+    assert result["case_registry"]["doc_path"] == result["security_report"]
     assert "security_report" in result or "path" in result
 
     # Verify doc_type is 'security', NOT 'bug'

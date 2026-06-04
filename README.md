@@ -44,10 +44,11 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.4.0` turns Scribe's managed documents into a deterministic document topology layer for agents and downstream corpus builders:
+`2.4.1` keeps Scribe's managed documents as a deterministic document topology layer for agents and downstream corpus builders, and smooths the bug/security report workflow:
 
 - Managed docs now receive canonical lifecycle metadata, display-name-first attribution, stable IDs, summaries, and canonical doc-type/status normalization.
 - Frontmatter supports typed topology edges for dependencies, support, validation, supersession, blockers, and code/path touchpoints.
+- `open_bug` and `open_security` return obvious follow-up handles, and `manage_docs` can edit the governed bug/security report by case id, governed path, or canonical category metadata.
 - `quality_check` remains the single quality path and now blocks scaffold residue, failed-write residue, invalid lifecycle state, malformed topology, dangling edges, and unsafe ready/complete handoffs.
 - New document-intelligence actions provide read-only topology and metadata scans, deterministic safe metadata repair, assisted repair plans, stale cleanup recommendations, handoff checks, and downstream ingestion manifest inspection.
 - Scribe emits derived, sanitized topology artifacts under `.scribe/indexes/` for downstream consumers without turning Scribe into a retrieval or semantic-ranking system.

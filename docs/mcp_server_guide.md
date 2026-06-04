@@ -1,7 +1,7 @@
 # MCP server guide
 
-Release line: `2.4.0`
-Updated: `2026-05-25`
+Release line: `2.4.1`
+Updated: `2026-06-04`
 
 This guide shows how to run Scribe as an MCP server for hosts such as Codex or Claude-compatible clients.
 

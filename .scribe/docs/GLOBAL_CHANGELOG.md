@@ -44,3 +44,8 @@
 - `source_project`: scribe_document_topology_foundation_20260524
 - `source_entry_id`: 20260525:document-topology-foundation-release
 - `summary`: Release 2.4.0 makes Scribe a deterministic document topology and lifecycle authority with canonical managed-doc metadata, typed topology edges, topology and metadata scan actions, safe and assisted repair modes, hard quality handoff gates, sanitized downstream ingestion manifests, and a generic downstream export boundary that keeps retrieval and semantic ranking outside Scribe.
+
+## Bug and security report follow-up editing
+- `source_project`: scribe_mcp_bug_log_tooling_20260604
+- `source_entry_id`: 20260604:case-report-manage-docs-followup-2-4-1
+- `summary`: Bumped the public release line to `2.4.1`, added obvious `open_bug` and `open_security` follow-up handles, and taught `manage_docs` to resolve governed bug/security reports by case id, governed path, or canonical category metadata before applying edits.

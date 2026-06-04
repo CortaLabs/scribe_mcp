@@ -500,18 +500,18 @@ async def _register_case_registry_ownership(
     status: str,
     severity: Optional[str],
     source_tool: str,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[dict[str, Any]]]:
     backend = getattr(server_module, "storage_backend", None)
     if backend is None or not hasattr(backend, "upsert_case_registry_record"):
-        return False, "shared case registry backend is unavailable"
+        return False, "shared case registry backend is unavailable", None
 
     repo_root, authority_project_name, ownership_meta = _active_repo_project_authority(
         context, fallback_project_name=project_name
     )
     if not repo_root:
-        return False, "unable to resolve authoritative repo_root for case registry ownership"
+        return False, "unable to resolve authoritative repo_root for case registry ownership", None
     if not authority_project_name:
-        return False, "unable to resolve authoritative project_name for case registry ownership"
+        return False, "unable to resolve authoritative project_name for case registry ownership", None
 
     execution_meta = {
         "execution_id": getattr(context, "execution_id", None),
@@ -553,9 +553,15 @@ async def _register_case_registry_ownership(
         },
     )
     if upsert_kwargs is None:
-        return False, "unable to build case registry payload for ownership registration"
+        return False, "unable to build case registry payload for ownership registration", None
     await backend.upsert_case_registry_record(**upsert_kwargs)
-    return True, None
+    return True, None, {
+        "case_id": upsert_kwargs["case_id"],
+        "case_type": upsert_kwargs["case_type"],
+        "doc_name": upsert_kwargs["doc_name"],
+        "doc_path": upsert_kwargs["doc_path"],
+        "project_name": upsert_kwargs["project_name"],
+    }
 
 
 async def _register_case_registry_fix_link(
@@ -950,7 +956,7 @@ async def open_bug(
                 project_name=str(result.get("project_name", "")),
             )
 
-        registry_ok, registry_error = await _register_case_registry_ownership(
+        registry_result = await _register_case_registry_ownership(
             context=context,
             case_id=case_id,
             case_type="bug",
@@ -963,6 +969,9 @@ async def open_bug(
             severity=bug_metadata.get("severity"),
             source_tool="open_bug",
         )
+        registry_ok = registry_result[0]
+        registry_error = registry_result[1]
+        case_registry_summary = registry_result[2] if len(registry_result) > 2 else None
         if not registry_ok:
             message = f"Case registry ownership registration failed: {registry_error}"
             return _operator_envelope(
@@ -998,13 +1007,24 @@ async def open_bug(
             case_id=str(case_id),
             artifacts=[{"type": "bug_report", "ref": str(doc_result.get("path", ""))}],
             next_step=(
-                f"Use manage_docs replace_section on {case_id} to complete remaining sections "
+                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining sections "
                 f"({', '.join(unfilled_sections[:3])}{'...' if len(unfilled_sections) > 3 else ''})."
             ),
             entry_id=str(result.get("id", "")),
             path=str(result.get("path", "")),
             project_name=str(result.get("project_name", "")),
             bug_report=str(doc_result.get("path", "")),
+            doc_name=str(case_id),
+            doc_path=str(doc_result.get("path", "")),
+            doc_category="bugs",
+            case_registry=case_registry_summary
+            or {
+                "case_id": str(case_id),
+                "case_type": "bug",
+                "doc_name": str(case_id),
+                "doc_path": str(doc_result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            },
             # NEW completeness metadata:
             completeness={
                 "score": f"{filled_count}/{total_fields}",
@@ -1017,6 +1037,7 @@ async def open_bug(
                 f"Bug report {percentage}% complete. "
                 f"Use manage_docs(agent='{agent}', action='replace_section', "
                 f"doc_name='{case_id}', section='<section_id>', content='...') "
+                f"(doc_path '{doc_result.get('path', '')}' is also a governed alias) "
                 f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
                 + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
             ),
@@ -1245,7 +1266,7 @@ async def open_security(
                 project_name=str(result.get("project_name", "")),
             )
 
-        registry_ok, registry_error = await _register_case_registry_ownership(
+        registry_result = await _register_case_registry_ownership(
             context=context,
             case_id=case_id,
             case_type="security",
@@ -1258,6 +1279,9 @@ async def open_security(
             severity=security_metadata.get("severity"),
             source_tool="open_security",
         )
+        registry_ok = registry_result[0]
+        registry_error = registry_result[1]
+        case_registry_summary = registry_result[2] if len(registry_result) > 2 else None
         if not registry_ok:
             message = f"Case registry ownership registration failed: {registry_error}"
             return _operator_envelope(
@@ -1293,13 +1317,24 @@ async def open_security(
             case_id=str(case_id),
             artifacts=[{"type": "security_report", "ref": str(doc_result.get("path", ""))}],
             next_step=(
-                f"Use manage_docs replace_section on {case_id} to complete remaining sections "
+                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining sections "
                 f"({', '.join(unfilled_sections[:3])}{'...' if len(unfilled_sections) > 3 else ''})."
             ),
             entry_id=str(result.get("id", "")),
             path=str(result.get("path", "")),
             project_name=str(result.get("project_name", "")),
             security_report=str(doc_result.get("path", "")),
+            doc_name=str(case_id),
+            doc_path=str(doc_result.get("path", "")),
+            doc_category="security",
+            case_registry=case_registry_summary
+            or {
+                "case_id": str(case_id),
+                "case_type": "security",
+                "doc_name": str(case_id),
+                "doc_path": str(doc_result.get("path", "")),
+                "project_name": str(result.get("project_name", "")),
+            },
             # NEW completeness metadata:
             completeness={
                 "score": f"{filled_count}/{total_fields}",
@@ -1312,6 +1347,7 @@ async def open_security(
                 f"Security report {percentage}% complete. "
                 f"Use manage_docs(agent='{agent}', action='replace_section', "
                 f"doc_name='{case_id}', section='<section_id>', content='...') "
+                f"(doc_path '{doc_result.get('path', '')}' is also a governed alias) "
                 f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
                 + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
             ),

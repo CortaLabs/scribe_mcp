@@ -13,8 +13,43 @@ from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
 
 
+class _CaseRegistryBackend:
+    def __init__(
+        self,
+        *,
+        case_id: str,
+        doc_path: Path,
+        project_name: str,
+        repo_root: Path,
+        case_type: str = "bug",
+    ) -> None:
+        self.case_id = case_id
+        self.doc_path = doc_path
+        self.project_name = project_name
+        self.repo_root = repo_root
+        self.case_type = case_type
+        self.docs_json: str | None = None
+
+    async def fetch_case_registry_record(self, case_id: str, **_kwargs):
+        if case_id != self.case_id:
+            return None
+        return SimpleNamespace(
+            case_id=self.case_id,
+            case_type=self.case_type,
+            project_name=self.project_name,
+            repo_root=str(self.repo_root),
+            doc_type=self.case_type,
+            doc_name=self.case_id,
+            doc_path=str(self.doc_path),
+            metadata={},
+        )
+
+    async def update_project_docs(self, _project_name: str, docs_json: str):
+        self.docs_json = docs_json
+
+
 @contextmanager
-def _isolated_server(state_manager: StateManager, *, project_root: Path):
+def _isolated_server(state_manager: StateManager, *, project_root: Path, storage_backend=None):
     originals = {
         "state_manager": server_module.state_manager,
         "storage_backend": server_module.storage_backend,
@@ -26,7 +61,7 @@ def _isolated_server(state_manager: StateManager, *, project_root: Path):
     orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
 
     server_module.state_manager = state_manager
-    server_module.storage_backend = None
+    server_module.storage_backend = storage_backend
     server_module.get_execution_context = lambda: SimpleNamespace(
         mode="project",
         session_id="target-resolution-test",
@@ -101,11 +136,27 @@ async def _setup_project(tmp_path: Path) -> dict:
     }
 
 
+async def _seed_runtime_session(
+    state_manager: StateManager,
+    *,
+    project_root: Path,
+    session_id: str = "target-resolution-test",
+) -> None:
+    backend = getattr(state_manager, "_storage_backend", None)
+    if backend and hasattr(backend, "upsert_session"):
+        await backend.upsert_session(
+            session_id=session_id,
+            repo_root=str(project_root),
+            mode="project",
+        )
+
+
 @pytest.mark.asyncio
 async def test_target_resolution_unifies_md_alias_and_path_variants(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     checklist_path = Path(project["docs"]["checklist"])
     state_manager = StateManager(path=tmp_path / "state.json")
+    await _seed_runtime_session(state_manager, project_root=Path(project["root"]))
     await state_manager.set_current_project(project["name"], project)
 
     variants = [
@@ -140,6 +191,7 @@ async def test_first_write_guidance_for_registered_existing_doc_uses_apply_patch
     existing_path.write_text("# Existing\n\nLine A\n", encoding="utf-8")
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    await _seed_runtime_session(state_manager, project_root=Path(project["root"]))
     await state_manager.set_current_project(project["name"], project)
 
     with _isolated_server(state_manager, project_root=Path(project["root"])):
@@ -178,3 +230,102 @@ async def test_first_write_guidance_for_registered_existing_doc_uses_apply_patch
 
         assert patch_result.get("ok") is True
         assert "Line B" in existing_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_bug_report_resolution_accepts_case_id_governed_path_and_canonical_alias(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    project_root = Path(project["root"])
+    case_id = "BUG-2026-06-04-0001"
+    report_path = project_root / "docs" / "bugs" / "runtime" / f"2026-06-04_{case_id}" / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        "# Bug Report\n\n## Investigation\n<!-- ID: investigation -->\n\nOriginal investigation.\n",
+        encoding="utf-8",
+    )
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await _seed_runtime_session(state_manager, project_root=project_root)
+    await state_manager.set_current_project(project["name"], project)
+    backend = _CaseRegistryBackend(
+        case_id=case_id,
+        doc_path=report_path,
+        project_name=project["name"],
+        repo_root=project_root,
+    )
+
+    with _isolated_server(state_manager, project_root=project_root, storage_backend=backend):
+        case_result = await manage_docs(
+            action="replace_section",
+            doc_name=case_id,
+            doc_category="bugs",
+            section="investigation",
+            content="Registry-backed investigation.",
+            dry_run=False,
+        )
+        assert case_result.get("ok") is True, case_result
+        assert "Registry-backed investigation." in report_path.read_text(encoding="utf-8")
+        assert backend.docs_json is not None
+        assert case_id in backend.docs_json
+        assert str(report_path) in backend.docs_json
+
+        path_result = await manage_docs(
+            action="replace_section",
+            doc_name=str(report_path),
+            section="investigation",
+            content="Path-backed investigation.",
+            dry_run=False,
+        )
+        assert path_result.get("ok") is True, path_result
+
+    assert "Path-backed investigation." in report_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_security_report_resolution_accepts_case_id_governed_path_and_canonical_alias(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    project_root = Path(project["root"])
+    case_id = "SEC-2026-06-04-0001"
+    report_path = project_root / "docs" / "security" / "runtime" / f"2026-06-04_{case_id}" / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        "# Security Report\n\n## Fix\n<!-- ID: fix -->\n\nOriginal fix.\n",
+        encoding="utf-8",
+    )
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await _seed_runtime_session(state_manager, project_root=project_root)
+    await state_manager.set_current_project(project["name"], project)
+    backend = _CaseRegistryBackend(
+        case_id=case_id,
+        doc_path=report_path,
+        project_name=project["name"],
+        repo_root=project_root,
+        case_type="security",
+    )
+
+    with _isolated_server(state_manager, project_root=project_root, storage_backend=backend):
+        case_result = await manage_docs(
+            action="replace_section",
+            doc_name=case_id,
+            doc_category="security",
+            section="fix",
+            content="Registry-backed security fix.",
+            dry_run=False,
+        )
+        assert case_result.get("ok") is True, case_result
+        assert "Registry-backed security fix." in report_path.read_text(encoding="utf-8")
+        assert backend.docs_json is not None
+        assert case_id in backend.docs_json
+        assert str(report_path) in backend.docs_json
+
+        path_result = await manage_docs(
+            action="replace_section",
+            doc_name=str(report_path),
+            section="fix",
+            content="Path-backed security fix.",
+            dry_run=False,
+        )
+        assert path_result.get("ok") is True, path_result
+
+    assert "Path-backed security fix." in report_path.read_text(encoding="utf-8")
