@@ -173,12 +173,18 @@ def resolve_authoritative_write_scope(
     """Resolve authoritative write-path session inputs from request-local scope."""
     resolved_scope: Optional[ResolvedScope] = getattr(context, "resolved_scope", None) if context else None
 
+    # Trust-ordered: server-derived scope keys first (verified provenance),
+    # then the request's own session_id, then raw stable_session_id LAST among
+    # context fields — a bare context.stable_session_id without resolved_scope
+    # is an unverified carried-over claim, and preferring it over the request's
+    # session_id is how stale-session write capture happens (BUG-2026-06-11-0004;
+    # contract pinned in 08d4d22, regressed by e320b3d).
     authoritative_candidates = (
         getattr(resolved_scope, "authoritative_session_key", None),
         getattr(context, "authoritative_session_key", None),
         getattr(resolved_scope, "stable_session_id", None),
-        getattr(context, "stable_session_id", None) if context else None,
         getattr(context, "session_id", None) if context else None,
+        getattr(context, "stable_session_id", None) if context else None,
         getattr(resolved_scope, "agent_session_id", None),
         agent_session_id,
     )

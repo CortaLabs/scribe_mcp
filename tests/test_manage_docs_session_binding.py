@@ -253,3 +253,34 @@ async def test_handle_edit_action_register_doc_uses_authoritative_context_sessio
     warnings = result.get("warnings") or []
     assert all("Registry update failed" not in warning for warning in warnings)
     assert captured["session_id"] == "authoritative-session"
+
+
+def test_resolve_authoritative_write_scope_prefers_context_session_id_over_stable() -> None:
+    """Contract test (BUG-2026-06-11-0004): without a resolved_scope, the
+    request's own session_id outranks a bare carried-over stable_session_id.
+    Originally pinned in 08d4d22; regressed by e320b3d; restored 2026-06-11."""
+    context = SimpleNamespace(session_id="authoritative-session", stable_session_id="stale-session")
+
+    scope = resolve_authoritative_write_scope(context=context, agent_session_id=None)
+
+    assert scope["authoritative_session_id"] == "authoritative-session"
+
+
+def test_resolve_authoritative_write_scope_verified_scope_still_wins() -> None:
+    """Server-derived resolved_scope keys keep absolute priority — the
+    trust-order fix only affects degraded contexts without a resolved scope."""
+    resolved = SimpleNamespace(
+        authoritative_session_key="scope-derived-key",
+        stable_session_id="scope-stable",
+        agent_session_id=None,
+        resolution_source="runtime_context",
+    )
+    context = SimpleNamespace(
+        resolved_scope=resolved,
+        session_id="request-session",
+        stable_session_id="raw-stable",
+    )
+
+    scope = resolve_authoritative_write_scope(context=context, agent_session_id=None)
+
+    assert scope["authoritative_session_id"] == "scope-derived-key"

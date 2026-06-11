@@ -10,6 +10,23 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Session authority contract + logging-never-blocked repairs (P1.6-P1.7, BUG-2026-06-11-0004)
+- `entry_id`: 20260611:session-authority-and-case-guidance-2-4-2
+- `entry_status`: accepted
+- `title`: Session authority contract + logging-never-blocked repairs
+- `summary`: Restored the pinned write-authority contract (request session_id outranks a bare carried-over stable_session_id in degraded contexts; verified resolved_scope keys keep absolute priority) regressed by e320b3d, re-adding the deleted contract test. append_entry now heals pipe characters to the broken bar instead of rejecting entries. open_bug/open_security guidance now maps completeness fields to their real template section anchors, validated against the live templates.
+- `evidence_refs`:
+  - src/scribe_mcp/tools/agent_project_utils.py
+  - src/scribe_mcp/tools/append_entry.py
+  - src/scribe_mcp/tools/sentinel_tools.py
+  - tests/test_manage_docs_session_binding.py
+  - tests/test_message_pipe_healing.py
+  - tests/test_case_field_section_anchors.py
+  - docs/bugs/logic/2026-06-11_BUG-2026-06-11-0004/report.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.4.2
+
 ## manage_docs defect-repair wave (P1.1-P1.5)
 - `entry_id`: 20260611:manage-docs-defect-wave-2-4-2
 - `entry_status`: accepted

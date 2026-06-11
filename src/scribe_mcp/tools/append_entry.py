@@ -92,6 +92,10 @@ def _sanitize_message(message: str) -> str:
     # Replace literal newlines with escaped newlines for MCP protocol
     # This allows multiline content to pass through validation
     sanitized = message.replace('\r\n', '\\n').replace('\r', '\\n').replace('\n', '\\n')
+    # Pipe is the rendered log line's message↔meta delimiter; heal to the
+    # visually equivalent broken bar instead of rejecting the entry
+    # (logging must never be blocked — P1.7, friction audit F-pipe).
+    sanitized = sanitized.replace('|', '¦')
     return sanitized
 
 
@@ -392,10 +396,14 @@ async def _process_single_entry(
         tags = final_config.tags
         confidence = final_config.confidence
 
-        # Validate message content - fail if invalid
+        # Validate message content — heal delimiter/newline collisions instead
+        # of rejecting (logging must never be blocked)
         validation_error = _validate_message(message)
         if validation_error:
-            return {"ok": False, "error": f"Message validation failed: {validation_error}"}
+            message = _sanitize_message(message)
+            validation_error = _validate_message(message)
+            if validation_error:
+                return {"ok": False, "error": f"Message validation failed: {validation_error}"}
 
         # Rate limiting removed; logging must never be blocked.
 
@@ -1775,13 +1783,13 @@ async def _process_single_item(
             }
         }
 
-    # Enhanced message validation with auto-sanitization
+    # Enhanced message validation with auto-sanitization (newlines and pipes)
     validation_error = _validate_message(item_message)
     if validation_error:
-        if "newline" in validation_error:
-            item_message = _sanitize_message(item_message)
-            item["message"] = item_message
-        else:
+        item_message = _sanitize_message(item_message)
+        item["message"] = item_message
+        validation_error = _validate_message(item_message)
+        if validation_error:
             return {
                 "success": False,
                 "failed_item": {
@@ -1981,15 +1989,13 @@ async def _append_bulk_entries(
                 })
                 continue
 
-            # Enhanced message validation with auto-sanitization
+            # Enhanced message validation with auto-sanitization (newlines and pipes)
             validation_error = _validate_message(item_message)
             if validation_error:
-                # Try to auto-fix common issues
-                if "newline" in validation_error:
-                    # Sanitize newlines for this item
-                    item_message = _sanitize_message(item_message)
-                    item["message"] = item_message  # Update for later processing
-                else:
+                item_message = _sanitize_message(item_message)
+                item["message"] = item_message  # Update for later processing
+                validation_error = _validate_message(item_message)
+                if validation_error:
                     failed_items.append({
                         "index": i,
                         "error": validation_error,

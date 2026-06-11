@@ -36,6 +36,55 @@ _BUG_TEMPLATE_FIELDS = [
     "immediate_actions",
 ]
 
+# Completeness fields are SEMANTIC fields, not section anchors. Guidance must
+# name the anchor that hosts each field, or replace_section fails with
+# SECTION_ANCHOR_MISSING (live-reproduced on BUG-2026-06-11-0004, P1.6).
+_BUG_FIELD_SECTION_ANCHORS = {
+    "summary_long": "description",
+    "symptoms": "description",
+    "expected_behavior": "description",
+    "actual_behavior": "description",
+    "reproduction_steps": "description",
+    "category": "bug_overview",
+    "severity": "bug_overview",
+    "status": "bug_overview",
+    "component": "bug_overview",
+    "environment": "bug_overview",
+    "customer_impact": "bug_overview",
+    "root_cause": "investigation",
+    "affected_areas": "investigation",
+    "immediate_actions": "resolution_plan",
+}
+
+_SECURITY_FIELD_SECTION_ANCHORS = {
+    **_BUG_FIELD_SECTION_ANCHORS,
+    "category": "security_overview",
+    "severity": "security_overview",
+    "status": "security_overview",
+    "component": "security_overview",
+    "environment": "security_overview",
+    "customer_impact": "security_overview",
+    "affected_areas": "affected_systems",
+}
+
+
+def _format_unfilled_guidance(
+    unfilled_fields: list[str],
+    anchor_map: dict[str, str],
+    limit: int,
+) -> str:
+    """Render unfilled fields with their hosting section anchors for guidance."""
+    rendered = [
+        f"{field} (section='{anchor_map.get(field, 'description')}')"
+        for field in unfilled_fields[:limit]
+    ]
+    suffix = (
+        f" and {len(unfilled_fields) - limit} more"
+        if len(unfilled_fields) > limit
+        else ""
+    )
+    return ", ".join(rendered) + suffix
+
 
 def _normalize_artifact_reference(artifact_ref: str) -> dict[str, Any]:
     raw = str(artifact_ref or "").strip()
@@ -1007,8 +1056,8 @@ async def open_bug(
             case_id=str(case_id),
             artifacts=[{"type": "bug_report", "ref": str(doc_result.get("path", ""))}],
             next_step=(
-                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining sections "
-                f"({', '.join(unfilled_sections[:3])}{'...' if len(unfilled_sections) > 3 else ''})."
+                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, _BUG_FIELD_SECTION_ANCHORS, 3)}."
             ),
             entry_id=str(result.get("id", "")),
             path=str(result.get("path", "")),
@@ -1031,15 +1080,19 @@ async def open_bug(
                 "percentage": percentage,
                 "filled_sections": filled_sections,
                 "unfilled_sections": unfilled_sections,
+                "field_section_anchors": {
+                    field: _BUG_FIELD_SECTION_ANCHORS.get(field, "description")
+                    for field in unfilled_sections
+                },
             },
             # UPDATED action_required with specific guidance:
             action_required=(
                 f"Bug report {percentage}% complete. "
                 f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_id>', content='...') "
+                f"doc_name='{case_id}', section='<section_anchor>', content='...') "
                 f"(doc_path '{doc_result.get('path', '')}' is also a governed alias) "
-                f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
-                + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
+                f"to fill remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, _BUG_FIELD_SECTION_ANCHORS, 5)}"
             ),
         )
 
@@ -1317,8 +1370,8 @@ async def open_security(
             case_id=str(case_id),
             artifacts=[{"type": "security_report", "ref": str(doc_result.get("path", ""))}],
             next_step=(
-                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining sections "
-                f"({', '.join(unfilled_sections[:3])}{'...' if len(unfilled_sections) > 3 else ''})."
+                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, _SECURITY_FIELD_SECTION_ANCHORS, 3)}."
             ),
             entry_id=str(result.get("id", "")),
             path=str(result.get("path", "")),
@@ -1341,15 +1394,19 @@ async def open_security(
                 "percentage": percentage,
                 "filled_sections": filled_sections,
                 "unfilled_sections": unfilled_sections,
+                "field_section_anchors": {
+                    field: _SECURITY_FIELD_SECTION_ANCHORS.get(field, "description")
+                    for field in unfilled_sections
+                },
             },
             # UPDATED action_required with specific guidance:
             action_required=(
                 f"Security report {percentage}% complete. "
                 f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_id>', content='...') "
+                f"doc_name='{case_id}', section='<section_anchor>', content='...') "
                 f"(doc_path '{doc_result.get('path', '')}' is also a governed alias) "
-                f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
-                + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
+                f"to fill remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, _SECURITY_FIELD_SECTION_ANCHORS, 5)}"
             ),
         )
 
