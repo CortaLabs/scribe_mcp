@@ -278,9 +278,11 @@ async def handle_edit_action(
                     try:
                         await append_entry(
                             message=f"Blocked readiness attempt for {doc_name}",
-                            status="warning",
+                            status="warn",
                             meta={
+                                "doc": doc_name,
                                 "doc_name": doc_name,
+                                "section": section or "",
                                 "action": action,
                                 "reason_code": "DOC_NOT_DONE_SCAFFOLD_QUALITY",
                                 "blocker_codes": [b.get("code") for b in blockers],
@@ -352,6 +354,9 @@ async def handle_edit_action(
         log_meta = healed_metadata
         log_meta.update(
             {
+                # "doc" satisfies the doc_updates metadata_requirements contract
+                # (log_config.json); "doc_name" retained for downstream consumers.
+                "doc": doc_name,
                 "doc_name": doc_name,
                 "doc_category": doc_category,
                 "section": section or "",

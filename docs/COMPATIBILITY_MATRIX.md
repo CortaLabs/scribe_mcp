@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
-Baseline date: **2026-06-04**
-Release framing: **v2.4.1 compatibility baseline**
+Baseline date: **2026-06-11**
+Release framing: **v2.4.2 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.4.1 document topology and case-report tooling release:
+This baseline keeps compatibility posture for the 2.4.2 document topology and case-report tooling release line, including the doc_updates auto-log audit repair:
 
-- **Core package version:** `scribe-mcp==2.4.1`
+- **Core package version:** `scribe-mcp==2.4.2`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,7 +19,7 @@ This baseline keeps compatibility posture for the 2.4.1 document topology and ca
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.4.1` | Supported | Public Scribe install for local/core usage with deterministic document topology and first-class bug/security report follow-up editing. |
+| `2.4.2` | Supported | Public Scribe install for local/core usage with deterministic document topology and first-class bug/security report follow-up editing. |
 
 ## Not supported by this baseline
 
@@ -32,7 +32,7 @@ This baseline keeps compatibility posture for the 2.4.1 document topology and ca
 
 ## What is shipped
 
-### `scribe-mcp 2.4.1`
+### `scribe-mcp 2.4.2`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`
