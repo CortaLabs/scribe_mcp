@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import difflib
 import hashlib
 import json
 import logging
@@ -383,12 +384,19 @@ async def apply_doc_change(
                 allow_append = False
                 if isinstance(metadata, dict):
                     allow_append = bool(metadata.get("allow_append") or metadata.get("scaffold"))
+                replace_section_info: Dict[str, Any] = {}
                 updated_body = _replace_section(
                     original_body,
                     section,
                     rendered_content,
                     allow_append=allow_append,
+                    info=replace_section_info,
                 )
+                replace_section_info["hint"] = (
+                    "Replacement content should not restate the section heading; "
+                    "the heading lives above the <!-- ID: ... --> anchor and is preserved."
+                )
+                extra["replace_section"] = replace_section_info
             elif action == "append":
                 assert rendered_content is not None
                 meta_payload = metadata if isinstance(metadata, dict) else {}
@@ -1359,7 +1367,37 @@ async def _load_fragment(name: str) -> str:
     return await asyncio.to_thread(fragment.read_text, encoding="utf-8")
 
 
-def _replace_section(text: str, section: Optional[str], content: str, *, allow_append: bool = False) -> str:
+def _pull_back_trailing_separator(
+    text: str, lower_bound: int, section_end: int
+) -> tuple[int, bool]:
+    """Exclude a trailing horizontal-rule separator from a section's body span.
+
+    The ``---`` between sections belongs to the document structure, not to the
+    section body being replaced; consuming it on replace_section corrupts the
+    section layout (live-reproduced defect, P1.4).
+    """
+    region = text[lower_bound:section_end]
+    lines = region.splitlines(keepends=True)
+    index = len(lines) - 1
+    while index >= 0 and not lines[index].strip():
+        index -= 1
+    if index < 0 or not re.match(r"^-{3,}\s*$", lines[index].strip()):
+        return section_end, False
+    cursor = index - 1
+    while cursor >= 0 and not lines[cursor].strip():
+        cursor -= 1
+    keep_from = sum(len(line) for line in lines[: cursor + 1])
+    return lower_bound + keep_from, True
+
+
+def _replace_section(
+    text: str,
+    section: Optional[str],
+    content: str,
+    *,
+    allow_append: bool = False,
+    info: Optional[Dict[str, Any]] = None,
+) -> str:
     marker = SECTION_MARKER.format(section=section)
 
     def _line_start_at(index: int) -> int:
@@ -1430,6 +1468,24 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
         if heading_start is not None:
             section_start = heading_start
 
+    # Strip a bare duplicate of the section's own heading from the content.
+    # Template headings live ABOVE the anchor, so callers restating the
+    # heading produce a duplicated heading inside the section body
+    # (live-reproduced defect, P1.4).
+    if replacement_heading_prefix is None:
+        content_lines = content.lstrip().splitlines()
+        if content_lines and _HEADER_LINE_PATTERN.match(content_lines[0].strip()):
+            heading_start = _associated_heading_start(idx)
+            if heading_start is not None:
+                heading_line_end = text.find("\n", heading_start)
+                if heading_line_end == -1:
+                    heading_line_end = len(text)
+                heading_line = text[heading_start:heading_line_end].strip()
+                if content_lines[0].strip() == heading_line:
+                    content = "\n".join(content_lines[1:]).lstrip("\n\r")
+                    if info is not None:
+                        info["stripped_duplicate_heading"] = heading_line
+
     start = idx + len(marker)
     # Skip newline right after marker
     if start < len(text) and text[start] == "\r":
@@ -1441,6 +1497,10 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
     if next_marker != -1:
         next_heading_start = _associated_heading_start(next_marker)
         section_end = next_heading_start if next_heading_start is not None else next_marker
+
+    section_end, preserved_separator = _pull_back_trailing_separator(text, start, section_end)
+    if preserved_separator and info is not None:
+        info["preserved_separator"] = True
 
     new_block_lines: list[str] = []
     if replacement_heading_prefix:
@@ -1632,9 +1692,31 @@ def _replace_text_with_scope(
         )
 
     if hits == 0 and not allow_no_match:
-        raise DocumentOperationError("REPLACE_TEXT_NO_MATCH: no matches found")
+        raise DocumentOperationError(_replace_text_no_match_error(target_text, find_text))
 
     return prefix + updated + suffix, hits
+
+
+def _replace_text_no_match_error(text: str, find_text: str) -> str:
+    """Build a REPLACE_TEXT_NO_MATCH error with a deterministic near-miss hint."""
+    find_lines = find_text.splitlines() or [find_text]
+    parts = ["REPLACE_TEXT_NO_MATCH: no matches found"]
+    if len(find_lines) > 1:
+        parts.append(
+            f"find spans {len(find_lines)} lines; multi-line finds must match exactly, "
+            "including blank lines and line endings"
+        )
+    probe = next((line for line in find_lines if line.strip()), find_lines[0])
+    doc_lines = text.splitlines()
+    candidates = difflib.get_close_matches(probe, doc_lines, n=1, cutoff=0.6)
+    if candidates:
+        candidate = candidates[0]
+        line_number = doc_lines.index(candidate) + 1
+        excerpt = candidate.strip()[:120]
+        parts.append(f"nearest line in document: line {line_number}: '{excerpt}'")
+    else:
+        parts.append("no similar line found in the document")
+    return " | ".join(parts)
 
 
 def _append_block(text: str, content: str, section: Optional[str] = None, position: str = "after") -> str:

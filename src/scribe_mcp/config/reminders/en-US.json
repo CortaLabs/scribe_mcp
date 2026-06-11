@@ -125,9 +125,9 @@
       "manage_docs_precision_preferred": {
         "level": "info",
         "emoji": "🧩",
-        "template": "For edits, prefer manage_docs apply_patch (unified diff format) or replace_range. replace_section is best reserved for scaffolding templates.",
-        "short_template": "Prefer apply_patch (unified diff) or replace_range; use replace_section only for scaffolding.",
-        "context": "apply_patch uses unified diff format by default, replace_range for explicit line edits.",
+        "template": "Populate fresh scaffold sections with replace_section (anchors are stable). For surgical edits to existing content, prefer apply_patch (unified diff format) or replace_range.",
+        "short_template": "Scaffold sections: replace_section. Surgical edits: apply_patch (unified diff) or replace_range.",
+        "context": "replace_section targets <!-- ID: ... --> anchors; apply_patch uses unified diff by default, replace_range for explicit line edits.",
         "category": "teaching"
       },
       "manage_docs_scaffold_mode": {

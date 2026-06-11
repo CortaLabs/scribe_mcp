@@ -1550,10 +1550,13 @@ def build_create_intent_payload(
         }
 
     if doc_type in _SPECIAL_DOC_TYPES or bool(result.get("document_type")):
-        first_write_action = "apply_patch"
+        # Special docs are contentful scaffolds with anchored placeholder
+        # sections: populate them with replace_section (same as governed
+        # scaffolds); apply_patch is for surgical edits to existing content.
         follow_up = (
-            "create produced a contentful special document. "
-            "Use manage_docs(action='apply_patch', ...) for follow-up edits."
+            "create produced a contentful special document. Populate its anchored "
+            f"sections with manage_docs(action='replace_section', doc='{target_for_guidance}', ...); "
+            "for surgical edits to existing content switch to action='apply_patch'."
         )
         return {
             "kind": "contentful_special_doc",
@@ -2468,6 +2471,7 @@ async def handle_manage_docs_request(
             dry_run=dry_run,
             helper=helper,
             context=context,
+            doc_name=doc_name,
         )
     else:
         return helper.apply_context_payload(

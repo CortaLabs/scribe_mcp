@@ -30,6 +30,20 @@ _CHECKLIST_ITEM_WITH_ID_PATTERN = re.compile(
     r"^- \[(?P<mark>[ xX])\]\s*<!--\s*id:\s*(?P<id>[a-zA-Z0-9_-]+)\s*-->\s*(?P<text>.*)$"
 )
 _CHECKLIST_ID_PHASE_PATTERN = re.compile(r"^p(?P<phase>\d+)-(?P<slug>[a-z0-9-]+)$")
+# Anchor at line start, with or without trailing text on the same line.
+# The edit path resolves anchors by substring (manager.SECTION_MARKER find),
+# so inline anchors like "<!-- ID: findings -->Detail..." are valid edit
+# targets and MUST be reported by inspection (P1.3 contract parity).
+_SECTION_ANCHOR_PATTERN = re.compile(r"^<!--\s*ID:\s*(?P<id>[^>]+?)\s*-->")
+
+
+def _match_section_anchor(stripped_line: str) -> Optional[str]:
+    """Return the section id when the line starts with an anchor marker."""
+    match = _SECTION_ANCHOR_PATTERN.match(stripped_line)
+    if not match:
+        return None
+    section_id = match.group("id").strip()
+    return section_id or None
 
 
 def _resolve_registered_doc_name(project: Dict[str, Any], doc_name: str) -> Optional[str]:
@@ -91,12 +105,12 @@ def inspect_document_sections_from_text(text: str) -> Dict[str, Any]:
             in_code_fence = not in_code_fence
             continue
 
-        if stripped.startswith("<!-- ID:") and stripped.endswith("-->"):
-            section_id = stripped[len("<!-- ID:"): -len("-->")].strip()
-            anchor_duplicates.setdefault(section_id, []).append(line_no)
+        anchor_id = _match_section_anchor(stripped)
+        if anchor_id is not None:
+            anchor_duplicates.setdefault(anchor_id, []).append(line_no)
             sections.append(
                 {
-                    "id": section_id,
+                    "id": anchor_id,
                     "line": line_no,
                     "file_line": line_no + body_line_offset,
                     "source": "anchor",
@@ -340,8 +354,9 @@ async def _handle_list_checklist_items(
 
     for line_no, line in enumerate(body_lines, start=1):
         stripped = line.strip()
-        if stripped.startswith("<!-- ID:") and stripped.endswith("-->"):
-            section_id = stripped[len("<!-- ID:"): -len("-->")].strip()
+        anchor_id = _match_section_anchor(stripped)
+        if anchor_id is not None:
+            section_id = anchor_id
             duplicates.setdefault(section_id, []).append(line_no)
             continue
 

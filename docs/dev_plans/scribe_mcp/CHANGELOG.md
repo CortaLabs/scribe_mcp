@@ -10,6 +10,28 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## manage_docs defect-repair wave (P1.1-P1.5)
+- `entry_id`: 20260611:manage-docs-defect-wave-2-4-2
+- `entry_status`: accepted
+- `title`: manage_docs defect-repair wave (P1.1-P1.5)
+- `summary`: Five live-reproduced manage_docs defects repaired on the unpublished `2.4.2` line: batch operations inherit top-level doc_name; exact-match edit payloads (metadata.find/.replace) preserved verbatim through parameter healing with a near-miss hint on no-match; section inspection reports inline anchors (editable_sections now complete); replace_section preserves inter-section separators and strips duplicate headings with a response hint; create-guidance reconciled to one story across reminder, create_intent, and rule template.
+- `evidence_refs`:
+  - src/scribe_mcp/doc_management/actions/batch.py
+  - src/scribe_mcp/doc_management/actions/query.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/utils/parameter_validator.py
+  - src/scribe_mcp/config/reminders/en-US.json
+  - .council/templates/claude/rules/_rule_manage_docs_create.j2
+  - tests/test_batch_doc_name_inheritance.py
+  - tests/test_replace_text_multiline.py
+  - tests/test_create_editable_sections_complete.py
+  - tests/test_replace_section_separator.py
+  - tests/test_create_guidance_consistent.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.4.2
+
 ## doc_updates auto-log contract repair
 - `entry_id`: 20260611:doc-updates-autolog-contract-2-4-2
 - `entry_status`: accepted
