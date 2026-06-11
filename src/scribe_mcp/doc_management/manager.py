@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 # Import with absolute paths from scribe_mcp root
+from scribe_mcp.doc_management import errors as doc_errors
 from scribe_mcp.utils.files import async_atomic_write, ensure_parent, preflight_backup
 from scribe_mcp.utils.slug import slugify_filename, slugify_project_name
 from scribe_mcp.config.repo_config import RepoDiscovery
@@ -1445,8 +1446,19 @@ def _replace_section(
     idx = text.find(marker)
     if idx == -1:
         if not allow_append:
+            available = doc_errors.document_anchor_ids(text)
+            near = doc_errors.find_near_misses(str(section or ""), available)
             raise DocumentOperationError(
-                f"SECTION_ANCHOR_MISSING: '{section}' not found (set metadata.allow_append=true to append)"
+                f"SECTION_ANCHOR_MISSING: '{section}' not found (set metadata.allow_append=true to append)",
+                extra=doc_errors.build_remediation_envelope(
+                    code="SECTION_ANCHOR_MISSING",
+                    remediation=(
+                        f"Target one of the document's existing section anchors: {', '.join(available) or '(none)'}. "
+                        + (f"Closest match: '{near[0]}'. " if near else "")
+                        + "Or set metadata.allow_append=true to append a new section."
+                    ),
+                    alternatives=near or available,
+                ),
             )
         doc_logger.warning(
             "Section anchor missing; auto-appending '%s' to document.",
@@ -1460,7 +1472,15 @@ def _replace_section(
     if text.find(marker, idx + 1) != -1:
         raise DocumentOperationError(
             f"SECTION_ANCHOR_AMBIGUOUS: '{section}' appears multiple times; resolve duplicates first "
-            "or use replace_range/apply_patch for explicit boundaries"
+            "or use replace_range/apply_patch for explicit boundaries",
+            extra=doc_errors.build_remediation_envelope(
+                code="SECTION_ANCHOR_AMBIGUOUS",
+                remediation=(
+                    "The anchor appears more than once; remove the duplicate marker first, "
+                    "or use action='replace_range' / action='apply_patch' with explicit boundaries."
+                ),
+                alternatives=["replace_range", "apply_patch"],
+            ),
         )
     section_start = idx
     if replacement_heading_prefix:
@@ -1692,13 +1712,28 @@ def _replace_text_with_scope(
         )
 
     if hits == 0 and not allow_no_match:
-        raise DocumentOperationError(_replace_text_no_match_error(target_text, find_text))
+        message, near_line = _replace_text_no_match_error(target_text, find_text)
+        raise DocumentOperationError(
+            message,
+            extra=doc_errors.build_remediation_envelope(
+                code="REPLACE_TEXT_NO_MATCH",
+                remediation=(
+                    "Verify the find text matches the document exactly (including blank lines). "
+                    "Read the current content first, or use action='replace_section' for anchored "
+                    "sections / action='apply_patch' with context lines."
+                ),
+                alternatives=[near_line] if near_line else [],
+            ),
+        )
 
     return prefix + updated + suffix, hits
 
 
-def _replace_text_no_match_error(text: str, find_text: str) -> str:
-    """Build a REPLACE_TEXT_NO_MATCH error with a deterministic near-miss hint."""
+def _replace_text_no_match_error(text: str, find_text: str) -> tuple[str, Optional[str]]:
+    """Build a REPLACE_TEXT_NO_MATCH error with a deterministic near-miss hint.
+
+    Returns (message, nearest_line_hint or None).
+    """
     find_lines = find_text.splitlines() or [find_text]
     parts = ["REPLACE_TEXT_NO_MATCH: no matches found"]
     if len(find_lines) > 1:
@@ -1709,14 +1744,16 @@ def _replace_text_no_match_error(text: str, find_text: str) -> str:
     probe = next((line for line in find_lines if line.strip()), find_lines[0])
     doc_lines = text.splitlines()
     candidates = difflib.get_close_matches(probe, doc_lines, n=1, cutoff=0.6)
+    near_line: Optional[str] = None
     if candidates:
         candidate = candidates[0]
         line_number = doc_lines.index(candidate) + 1
         excerpt = candidate.strip()[:120]
-        parts.append(f"nearest line in document: line {line_number}: '{excerpt}'")
+        near_line = f"line {line_number}: '{excerpt}'"
+        parts.append(f"nearest line in document: {near_line}")
     else:
         parts.append("no similar line found in the document")
-    return " | ".join(parts)
+    return " | ".join(parts), near_line
 
 
 def _append_block(text: str, content: str, section: Optional[str] = None, position: str = "after") -> str:
@@ -2284,17 +2321,29 @@ def _apply_unified_patch_smart(
         if actual_pos is None:
             # Context not found anywhere
             context_preview = context_lines[:3] if context_lines else ["<no context>"]
+            patch_remediation = doc_errors.build_remediation_envelope(
+                code="PATCH_CONTEXT_NOT_FOUND",
+                remediation=(
+                    "The document changed since the diff was generated. Re-read the current "
+                    "content and regenerate the patch, or use action='apply_patch' with "
+                    "patch_mode='structured' (replace_section/replace_range edits), which does "
+                    "not depend on stale context lines."
+                ),
+                alternatives=["apply_patch patch_mode='structured'", "replace_section", "replace_range"],
+            )
             delete_lines = [line[1:] for line in hunk_lines if line.startswith("-")]
             if delete_lines:
                 raise DocumentOperationError(
                     f"PATCH_DELETE_MISMATCH: hunk {hunks_applied + 1} delete lines not found in document "
                     f"context (PATCH_CONTEXT_NOT_FOUND). Expected at line {hunk_old_start}. "
-                    f"Delete starts with: {delete_lines[:3]}"
+                    f"Delete starts with: {delete_lines[:3]}",
+                    extra={**patch_remediation, "code": "PATCH_DELETE_MISMATCH"},
                 )
             raise DocumentOperationError(
                 f"PATCH_CONTEXT_NOT_FOUND: hunk {hunks_applied + 1} context not found in document. "
                 f"Expected at line {hunk_old_start}, searched entire file. "
-                f"Context starts with: {context_preview}"
+                f"Context starts with: {context_preview}",
+                extra=patch_remediation,
             )
 
         # Copy unchanged content up to the patch position
@@ -3631,6 +3680,14 @@ def _build_create_doc_body(
                     continue
                 if title:
                     sections.append(f"## {title}")
+                # Emit a stable anchor per section (template-macro shape) so
+                # created sections are durable replace_section targets and
+                # appear in editable_sections (P2, D1 unified create contract).
+                anchor = str(section.get("id") or "").strip()
+                if not anchor and title:
+                    anchor = slugify_project_name(title)
+                if anchor:
+                    sections.append(f"<!-- ID: {anchor} -->")
                 if text:
                     sections.append(text)
                 sections.append("")

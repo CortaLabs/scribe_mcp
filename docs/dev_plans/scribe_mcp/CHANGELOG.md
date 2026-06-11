@@ -10,6 +10,23 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Unified create contract + error remediation envelopes (P2-P3)
+- `entry_id`: 20260611:create-contract-error-envelopes-2-5-0
+- `entry_status`: accepted
+- `title`: Unified create contract + error remediation envelopes
+- `summary`: Bumped the unpublished release line to `2.5.0` (backward-compatible public capability). Create contract unified and pinned: empty create legal for generic doc types, and a metadata.sections payload now emits stable section anchors so created sections are durable replace_section targets. New structured error remediation envelopes {code, remediation, alternatives[]} on DOC_NOT_FOUND (did-you-mean + registered docs), SECTION_ANCHOR_MISSING (inline available anchors + closest match), SECTION_ANCHOR_AMBIGUOUS, REPLACE_TEXT_NO_MATCH (nearest-line), and PATCH_CONTEXT_NOT_FOUND (structured-mode fallback).
+- `evidence_refs`:
+  - pyproject.toml
+  - docs/COMPATIBILITY_MATRIX.md
+  - src/scribe_mcp/doc_management/errors.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/actions/edit.py
+  - tests/test_create_contract_unified.py
+  - tests/test_error_remediation.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.5.0
+
 ## Session authority contract + logging-never-blocked repairs (P1.6-P1.7, BUG-2026-06-11-0004)
 - `entry_id`: 20260611:session-authority-and-case-guidance-2-4-2
 - `entry_status`: accepted

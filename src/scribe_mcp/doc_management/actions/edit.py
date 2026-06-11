@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from scribe_mcp.doc_management import errors as doc_errors
 from scribe_mcp.doc_management.boundary_guidance import (
     build_manage_docs_boundary_guidance,
     is_manage_docs_boundary_error,
@@ -160,7 +161,20 @@ async def handle_edit_action(
                 return helper.apply_context_payload(mismatch, context)
         allowed_docs = set((project.get("docs") or {}).keys())
         if doc_name not in allowed_docs:
-            response = {"ok": False, "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered"}
+            near = doc_errors.find_near_misses(str(doc_name or ""), sorted(allowed_docs))
+            response = {
+                "ok": False,
+                "error": f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered",
+                "code": "DOC_NOT_FOUND",
+                "remediation": (
+                    (f"Did you mean '{near[0]}'? " if near else "")
+                    + "Registered docs for this project: "
+                    + (", ".join(sorted(allowed_docs)) or "(none)")
+                    + ". Use manage_docs(action='create', ...) to create a new doc, or "
+                    "metadata.register_existing=true to register an existing file."
+                ),
+                "alternatives": near or sorted(allowed_docs)[:5],
+            }
             return helper.apply_context_payload(response, context)
 
     if action == "create_doc" and isinstance(metadata, dict):
@@ -248,7 +262,10 @@ async def handle_edit_action(
                 dry_run=True,
             )
         except Exception as exc:
-            return helper.apply_context_payload({"ok": False, "error": str(exc)}, context)
+            return helper.apply_context_payload(
+                doc_errors.attach_remediation({"ok": False, "error": str(exc)}, exc),
+                context,
+            )
 
         preview_warnings = []
         if isinstance(preview_change.extra, dict):
@@ -314,7 +331,10 @@ async def handle_edit_action(
             dry_run=dry_run,
         )
     except Exception as exc:
-        return helper.apply_context_payload({"ok": False, "error": str(exc)}, context)
+        return helper.apply_context_payload(
+            doc_errors.attach_remediation({"ok": False, "error": str(exc)}, exc),
+            context,
+        )
 
     doc_change_metadata = _with_session_provenance(metadata, context)
 
