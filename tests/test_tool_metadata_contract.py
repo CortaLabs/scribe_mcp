@@ -4,6 +4,7 @@ from scribe_mcp import server
 
 
 EXPECTED_REGISTERED_TOOLS = {
+    "analyze_logs",
     "append_entry",
     "append_event",
     "authorize_repo_root",
@@ -25,6 +26,7 @@ EXPECTED_REGISTERED_TOOLS = {
     "reset_reminders",
     "rotate_log",
     "scribe_doctor",
+    "scribe_private_context_selector_readback",
     "search",
     "set_project",
 }
@@ -95,3 +97,14 @@ def test_describe_registered_tools_returns_json_friendly_metadata():
     assert read_file["annotations"]["readOnlyHint"] is True
     assert read_file["meta"]["scribe"]["trustTier"] == 0
     assert "inspection" in read_file["tags"]
+
+    selector_readback = details["scribe_private_context_selector_readback"]
+    assert selector_readback["title"] == "Scribe Private Context Selector Readback"
+    assert selector_readback["annotations"]["readOnlyHint"] is True
+    assert selector_readback["annotations"]["destructiveHint"] is False
+    assert selector_readback["annotations"]["openWorldHint"] is False
+    assert selector_readback["meta"]["scribe"]["trustTier"] == 0
+    assert selector_readback["meta"]["scribe"]["riskClass"] == "local_read_only"
+    assert selector_readback["meta"]["scribe"]["surface"] == "operator"
+    assert selector_readback["execution"]["taskSupport"] == "forbidden"
+    assert "readback" in selector_readback["tags"]

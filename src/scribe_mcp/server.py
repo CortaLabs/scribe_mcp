@@ -95,6 +95,8 @@ from scribe_mcp.state.agent_manager import init_agent_context_manager
 from scribe_mcp.state.agent_identity import init_agent_identity
 from scribe_mcp.storage import create_storage_backend
 from scribe_mcp.config.mode_detection import detect_operating_mode, OperatingMode
+from scribe_mcp.selector_readback import scribe_private_context_selector_readback as _selector_readback
+from scribe_mcp.tool_contracts import read_only_local_tool
 
 if TYPE_CHECKING:
     class ToolDecorator(Protocol):
@@ -673,6 +675,32 @@ if _MCP_AVAILABLE:
 from scribe_mcp import tools  # noqa: E402  # isort:skip
 
 
+@app.tool(
+    **read_only_local_tool(
+        title="Scribe Private Context Selector Readback",
+        tags=("context", "selector", "readback", "read-only"),
+        task_support="forbidden",
+    )
+)
+async def scribe_private_context_selector_readback(
+    selector_class_label: str,
+    target_fingerprint_binding_label: str,
+    runtime_role_label: str,
+    default_context_bypass_label: str,
+    active_runtime_exclusion_label: str,
+    source_authority_label: str,
+) -> dict[str, str | bool]:
+    """Emit public-safe Scribe selector/readback labels without runtime or target contact."""
+    return _selector_readback(
+        selector_class_label=selector_class_label,
+        target_fingerprint_binding_label=target_fingerprint_binding_label,
+        runtime_role_label=runtime_role_label,
+        default_context_bypass_label=default_context_bypass_label,
+        active_runtime_exclusion_label=active_runtime_exclusion_label,
+        source_authority_label=source_authority_label,
+    )
+
+
 _HAS_LIFECYCLE_HOOKS = hasattr(app, "on_startup") and hasattr(app, "on_shutdown")
 
 
@@ -1168,13 +1196,28 @@ def get_execution_context(*, recovery_mode: str | None = None, include_metadata:
 def list_registered_tools() -> list[str]:
     """Return sorted tool names currently registered on the MCP server."""
     tools.ensure_all_tools_loaded()
+    _ensure_registered_tool_metadata_complete()
     registry = getattr(Server, "_scribe_tool_registry", {})
     return sorted(str(name) for name in registry.keys())
+
+
+def _ensure_registered_tool_metadata_complete() -> None:
+    defs = getattr(Server, "_scribe_tool_defs", {})
+    registry = getattr(Server, "_scribe_tool_registry", {})
+    for tool_name, tool_def in defs.items():
+        description = getattr(tool_def, "description", "")
+        if description:
+            continue
+        func = registry.get(tool_name)
+        fallback_description = (inspect.getdoc(func) if func is not None else None) or getattr(tool_def, "title", "")
+        if fallback_description:
+            tool_def.description = fallback_description
 
 
 def describe_registered_tools() -> dict[str, dict[str, Any]]:
     """Return tool metadata keyed by tool name for CLI discovery."""
     tools.ensure_all_tools_loaded()
+    _ensure_registered_tool_metadata_complete()
     registry = getattr(Server, "_scribe_tool_registry", {})
     defs = getattr(Server, "_scribe_tool_defs", {})
     description_map: dict[str, dict[str, Any]] = {}
