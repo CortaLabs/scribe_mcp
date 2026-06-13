@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Protocol, Sequence
 
 from scribe_mcp.doc_management.scaffold_quality import (
     collect_managed_doc_quality_warnings,
@@ -11,6 +11,44 @@ from scribe_mcp.doc_management.scaffold_quality import (
 )
 
 FUTURE_PHASE_PREFIXES = ("phase 2", "phase 3", "phase 4", "phase 5", "phase 6", "phase 7", "phase 8", "phase 9")
+
+ReadinessRoundtripPayload = dict[str, str | bool]
+
+COMMAND_CLASS_LABEL = "scribe_owned_local_postgres_readiness_roundtrip_preflight"
+ACCEPTED_LOCAL_POSTGRES_TARGET_CLASS_LABEL = "approved_local_non_active_scribe_postgres_disposable_or_test_target"
+ACCEPTED_SELECTOR_READBACK_STATUS_LABEL = "scribe_owned_public_safe_readback_emitted_required_selector_status_labels"
+PASSED_CONNECTIVITY_LABEL = "passed_public_connectivity_label"
+STORAGE_SETUP_NOT_RUN_LABEL = "not_run_storage_setup_not_required"
+PASSED_ROUNDTRIP_LABEL = "passed_scribe_roundtrip_public_label"
+PASSED_IDEMPOTENCY_LABEL = "passed_scribe_idempotency_public_label"
+PASSED_CLEANUP_LABEL = "passed_cleanup_public_label"
+PUBLIC_REDACTION_POLICY_LABEL = "public_labels_references_statuses_only_no_raw_values"
+
+BLOCKED_PRIVATE_INPUT_UNSAFE = "blocked_private_input_unsafe"
+BLOCKED_TARGET_CLASS_UNSAFE = "blocked_target_class_unsafe"
+BLOCKED_SELECTOR_READBACK_UNSAFE = "blocked_selector_readback_unsafe"
+BLOCKED_STORAGE_SETUP_REQUIRED = "blocked_storage_setup_required"
+BLOCKED_CONNECTIVITY_FAILED_REDACTED = "blocked_connectivity_failed_redacted"
+BLOCKED_ROUNDTRIP_FAILED_REDACTED = "blocked_roundtrip_failed_redacted"
+BLOCKED_CLEANUP_FAILED_REDACTED = "blocked_cleanup_failed_redacted"
+
+_BLOCKED_STATUS_LABELS = {
+    BLOCKED_PRIVATE_INPUT_UNSAFE,
+    BLOCKED_TARGET_CLASS_UNSAFE,
+    BLOCKED_SELECTOR_READBACK_UNSAFE,
+    BLOCKED_STORAGE_SETUP_REQUIRED,
+    BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+    BLOCKED_ROUNDTRIP_FAILED_REDACTED,
+    BLOCKED_CLEANUP_FAILED_REDACTED,
+}
+
+
+class LocalPostgresRoundtripRunner(Protocol):
+    async def connect(self, private_target_handle_id: str) -> str: ...
+
+    async def roundtrip(self, proof_namespace_label: str) -> str: ...
+
+    async def cleanup(self, proof_namespace_label: str) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -31,6 +69,166 @@ class ReadinessSummary:
             "blocker_count": self.blocker_count,
             "next_actions": self.next_actions,
         }
+
+
+def _is_public_safe_identifier(value: str) -> bool:
+    if not value:
+        return False
+    if not (8 <= len(value) <= 128):
+        return False
+    return all(character.isalnum() or character in {"_", "-"} for character in value)
+
+
+def _blocked_roundtrip_payload(status_label: str) -> ReadinessRoundtripPayload:
+    return build_local_postgres_readiness_roundtrip_labels(
+        target_class_label=BLOCKED_TARGET_CLASS_UNSAFE,
+        selected_context_readback_status_label=(
+            BLOCKED_SELECTOR_READBACK_UNSAFE if status_label == BLOCKED_SELECTOR_READBACK_UNSAFE else ACCEPTED_SELECTOR_READBACK_STATUS_LABEL
+        ),
+        connectivity_status_label=status_label,
+        storage_setup_status_label=status_label,
+        scribe_roundtrip_label=status_label,
+        scribe_idempotency_label=status_label,
+        cleanup_status_label=status_label,
+    )
+
+
+def build_local_postgres_readiness_roundtrip_labels(
+    *,
+    target_class_label: str,
+    selected_context_readback_status_label: str,
+    connectivity_status_label: str,
+    storage_setup_status_label: str,
+    scribe_roundtrip_label: str,
+    scribe_idempotency_label: str,
+    cleanup_status_label: str,
+) -> ReadinessRoundtripPayload:
+    return {
+        "command_class_label": COMMAND_CLASS_LABEL,
+        "target_class_label": target_class_label,
+        "selected_context_readback_status_label": selected_context_readback_status_label,
+        "connectivity_status_label": connectivity_status_label,
+        "storage_setup_status_label": storage_setup_status_label,
+        "scribe_roundtrip_label": scribe_roundtrip_label,
+        "scribe_idempotency_label": scribe_idempotency_label,
+        "cleanup_status_label": cleanup_status_label,
+        "public_redaction_policy_label": PUBLIC_REDACTION_POLICY_LABEL,
+        "private_values_recorded": False,
+        "train_local_db_g_technical_pass_candidate_label": False,
+        "train_local_db_g_technical_pass_earned": False,
+        "train_02g2_b_routing_authorized": False,
+    }
+
+
+async def scribe_local_postgres_readiness_roundtrip_preflight(
+    *,
+    private_target_handle_id: str,
+    target_class_label: str,
+    selected_context_readback_status_label: str,
+    proof_namespace_label: str,
+    runner: LocalPostgresRoundtripRunner,
+    **alternate_private_target_fields: object,
+) -> ReadinessRoundtripPayload:
+    if alternate_private_target_fields:
+        return _blocked_roundtrip_payload(BLOCKED_PRIVATE_INPUT_UNSAFE)
+    if not _is_public_safe_identifier(private_target_handle_id):
+        return _blocked_roundtrip_payload(BLOCKED_PRIVATE_INPUT_UNSAFE)
+    if not _is_public_safe_identifier(proof_namespace_label):
+        return _blocked_roundtrip_payload(BLOCKED_PRIVATE_INPUT_UNSAFE)
+    if target_class_label != ACCEPTED_LOCAL_POSTGRES_TARGET_CLASS_LABEL:
+        return _blocked_roundtrip_payload(BLOCKED_TARGET_CLASS_UNSAFE)
+    if selected_context_readback_status_label != ACCEPTED_SELECTOR_READBACK_STATUS_LABEL:
+        return _blocked_roundtrip_payload(BLOCKED_SELECTOR_READBACK_UNSAFE)
+
+    try:
+        connectivity_status_label = await runner.connect(private_target_handle_id)
+    except Exception:
+        return build_local_postgres_readiness_roundtrip_labels(
+            target_class_label=target_class_label,
+            selected_context_readback_status_label=selected_context_readback_status_label,
+            connectivity_status_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+            storage_setup_status_label=STORAGE_SETUP_NOT_RUN_LABEL,
+            scribe_roundtrip_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+            scribe_idempotency_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+            cleanup_status_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+        )
+    if connectivity_status_label == BLOCKED_STORAGE_SETUP_REQUIRED:
+        return build_local_postgres_readiness_roundtrip_labels(
+            target_class_label=target_class_label,
+            selected_context_readback_status_label=selected_context_readback_status_label,
+            connectivity_status_label=BLOCKED_STORAGE_SETUP_REQUIRED,
+            storage_setup_status_label=BLOCKED_STORAGE_SETUP_REQUIRED,
+            scribe_roundtrip_label=BLOCKED_STORAGE_SETUP_REQUIRED,
+            scribe_idempotency_label=BLOCKED_STORAGE_SETUP_REQUIRED,
+            cleanup_status_label=BLOCKED_STORAGE_SETUP_REQUIRED,
+        )
+    if connectivity_status_label != PASSED_CONNECTIVITY_LABEL:
+        return build_local_postgres_readiness_roundtrip_labels(
+            target_class_label=target_class_label,
+            selected_context_readback_status_label=selected_context_readback_status_label,
+            connectivity_status_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+            storage_setup_status_label=STORAGE_SETUP_NOT_RUN_LABEL,
+            scribe_roundtrip_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+            scribe_idempotency_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+            cleanup_status_label=BLOCKED_CONNECTIVITY_FAILED_REDACTED,
+        )
+
+    scribe_roundtrip_label = BLOCKED_ROUNDTRIP_FAILED_REDACTED
+    scribe_idempotency_label = BLOCKED_ROUNDTRIP_FAILED_REDACTED
+    cleanup_status_label = BLOCKED_CLEANUP_FAILED_REDACTED
+    proof_touched = False
+    try:
+        proof_touched = True
+        first_roundtrip_label = await runner.roundtrip(proof_namespace_label)
+        if first_roundtrip_label != PASSED_ROUNDTRIP_LABEL:
+            scribe_roundtrip_label = (
+                first_roundtrip_label if first_roundtrip_label in _BLOCKED_STATUS_LABELS else BLOCKED_ROUNDTRIP_FAILED_REDACTED
+            )
+            return build_local_postgres_readiness_roundtrip_labels(
+                target_class_label=target_class_label,
+                selected_context_readback_status_label=selected_context_readback_status_label,
+                connectivity_status_label=PASSED_CONNECTIVITY_LABEL,
+                storage_setup_status_label=STORAGE_SETUP_NOT_RUN_LABEL,
+                scribe_roundtrip_label=scribe_roundtrip_label,
+                scribe_idempotency_label=BLOCKED_ROUNDTRIP_FAILED_REDACTED,
+                cleanup_status_label=cleanup_status_label,
+            )
+        scribe_roundtrip_label = PASSED_ROUNDTRIP_LABEL
+
+        second_roundtrip_label = await runner.roundtrip(proof_namespace_label)
+        if second_roundtrip_label != PASSED_ROUNDTRIP_LABEL:
+            scribe_idempotency_label = (
+                second_roundtrip_label
+                if second_roundtrip_label in _BLOCKED_STATUS_LABELS
+                else BLOCKED_ROUNDTRIP_FAILED_REDACTED
+            )
+        else:
+            scribe_idempotency_label = PASSED_IDEMPOTENCY_LABEL
+    except Exception:
+        if scribe_roundtrip_label == PASSED_ROUNDTRIP_LABEL:
+            scribe_idempotency_label = BLOCKED_ROUNDTRIP_FAILED_REDACTED
+        else:
+            scribe_roundtrip_label = BLOCKED_ROUNDTRIP_FAILED_REDACTED
+            scribe_idempotency_label = BLOCKED_ROUNDTRIP_FAILED_REDACTED
+    finally:
+        if proof_touched:
+            try:
+                cleanup_result = await runner.cleanup(proof_namespace_label)
+                cleanup_status_label = (
+                    PASSED_CLEANUP_LABEL if cleanup_result == PASSED_CLEANUP_LABEL else BLOCKED_CLEANUP_FAILED_REDACTED
+                )
+            except Exception:
+                cleanup_status_label = BLOCKED_CLEANUP_FAILED_REDACTED
+
+    return build_local_postgres_readiness_roundtrip_labels(
+        target_class_label=target_class_label,
+        selected_context_readback_status_label=selected_context_readback_status_label,
+        connectivity_status_label=PASSED_CONNECTIVITY_LABEL,
+        storage_setup_status_label=STORAGE_SETUP_NOT_RUN_LABEL,
+        scribe_roundtrip_label=scribe_roundtrip_label,
+        scribe_idempotency_label=scribe_idempotency_label,
+        cleanup_status_label=cleanup_status_label,
+    )
 
 
 def _is_future_phase_warning(current_phase: Optional[str], warning: Mapping[str, Any]) -> bool:

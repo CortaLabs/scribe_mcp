@@ -95,6 +95,8 @@ from scribe_mcp.state.agent_manager import init_agent_context_manager
 from scribe_mcp.state.agent_identity import init_agent_identity
 from scribe_mcp.storage import create_storage_backend
 from scribe_mcp.config.mode_detection import detect_operating_mode, OperatingMode
+from scribe_mcp.readiness import BLOCKED_STORAGE_SETUP_REQUIRED
+from scribe_mcp.readiness import scribe_local_postgres_readiness_roundtrip_preflight as _roundtrip_preflight
 from scribe_mcp.selector_readback import scribe_private_context_selector_readback as _selector_readback
 from scribe_mcp.tool_contracts import read_only_local_tool
 
@@ -675,6 +677,17 @@ if _MCP_AVAILABLE:
 from scribe_mcp import tools  # noqa: E402  # isort:skip
 
 
+class _NoTargetContactRoundtripRunner:
+    async def connect(self, private_target_handle_id: str) -> str:
+        return BLOCKED_STORAGE_SETUP_REQUIRED
+
+    async def roundtrip(self, proof_namespace_label: str) -> str:
+        return BLOCKED_STORAGE_SETUP_REQUIRED
+
+    async def cleanup(self, proof_namespace_label: str) -> str:
+        return BLOCKED_STORAGE_SETUP_REQUIRED
+
+
 @app.tool(
     **read_only_local_tool(
         title="Scribe Private Context Selector Readback",
@@ -698,6 +711,43 @@ async def scribe_private_context_selector_readback(
         default_context_bypass_label=default_context_bypass_label,
         active_runtime_exclusion_label=active_runtime_exclusion_label,
         source_authority_label=source_authority_label,
+    )
+
+
+@app.tool(
+    title="Scribe Local Postgres Readiness Roundtrip Preflight",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+    _meta={
+        "scribe": {
+            "trustTier": 1,
+            "trustLabel": "local_additive_write",
+            "riskClass": "bounded_mutation_preflight",
+            "surface": "operator",
+            "locality": "local",
+            "tags": ["readiness", "roundtrip", "bounded-preflight"],
+        }
+    },
+    execution={"taskSupport": "forbidden"},
+    tags=("readiness", "roundtrip", "bounded-preflight"),
+)
+async def scribe_local_postgres_readiness_roundtrip_preflight(
+    private_target_handle_id: str,
+    target_class_label: str,
+    selected_context_readback_status_label: str,
+    proof_namespace_label: str,
+) -> dict[str, str | bool]:
+    """Emit public-safe local Postgres readiness roundtrip labels without target contact."""
+    return await _roundtrip_preflight(
+        private_target_handle_id=private_target_handle_id,
+        target_class_label=target_class_label,
+        selected_context_readback_status_label=selected_context_readback_status_label,
+        proof_namespace_label=proof_namespace_label,
+        runner=_NoTargetContactRoundtripRunner(),
     )
 
 

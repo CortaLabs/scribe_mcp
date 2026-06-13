@@ -26,6 +26,7 @@ EXPECTED_REGISTERED_TOOLS = {
     "reset_reminders",
     "rotate_log",
     "scribe_doctor",
+    "scribe_local_postgres_readiness_roundtrip_preflight",
     "scribe_private_context_selector_readback",
     "search",
     "set_project",
@@ -108,3 +109,15 @@ def test_describe_registered_tools_returns_json_friendly_metadata():
     assert selector_readback["meta"]["scribe"]["surface"] == "operator"
     assert selector_readback["execution"]["taskSupport"] == "forbidden"
     assert "readback" in selector_readback["tags"]
+
+    roundtrip_preflight = details["scribe_local_postgres_readiness_roundtrip_preflight"]
+    assert roundtrip_preflight["title"] == "Scribe Local Postgres Readiness Roundtrip Preflight"
+    assert roundtrip_preflight["annotations"]["readOnlyHint"] is False
+    assert roundtrip_preflight["annotations"]["destructiveHint"] is False
+    assert roundtrip_preflight["annotations"]["openWorldHint"] is False
+    assert roundtrip_preflight["meta"]["scribe"]["trustTier"] == 1
+    assert roundtrip_preflight["meta"]["scribe"]["riskClass"] == "bounded_mutation_preflight"
+    assert roundtrip_preflight["meta"]["scribe"]["surface"] == "operator"
+    assert roundtrip_preflight["meta"]["scribe"]["locality"] == "local"
+    assert roundtrip_preflight["execution"]["taskSupport"] == "forbidden"
+    assert "bounded-preflight" in roundtrip_preflight["tags"]
