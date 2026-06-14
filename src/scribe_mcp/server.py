@@ -544,6 +544,17 @@ if _MCP_AVAILABLE:
                 schema["required"] = required
             return schema
 
+        def _with_runtime_agent_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+            normalized = dict(schema)
+            properties = dict(normalized.get("properties") or {})
+            properties.setdefault("agent", {"type": "string"})
+            required = list(normalized.get("required") or [])
+            if "agent" not in required:
+                required.append("agent")
+            normalized["properties"] = properties
+            normalized["required"] = required
+            return normalized
+
         def _tool_decorator(
             func: Callable[..., Awaitable[Any]] | None = None,
             *,
@@ -618,6 +629,7 @@ if _MCP_AVAILABLE:
                     schema = _build_schema_from_signature(target)
                 else:
                     schema = input_schema
+                schema = _with_runtime_agent_schema(schema)
                 tool_description = description or (inspect.getdoc(target) or "")
                 tool_annotations = _coerce_tool_annotations(annotations)
                 tool_icons = _coerce_icons(icons)

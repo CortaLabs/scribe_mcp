@@ -833,6 +833,8 @@ async def execute_tool_call(
             raise
 
     identity_hash, identity_parts = _derive_session_identity_preview(context_payload, call_arguments)
+    if not _accepts_keyword_argument(func, "agent"):
+        call_arguments.pop("agent", None)
     derived_scoped_reuse_key = _derive_scoped_reuse_key(
         identity_parts["repo_root"],
         None if identity_parts["scope_key"] == "__prebinding__" else identity_parts["scope_key"],

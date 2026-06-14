@@ -121,3 +121,33 @@ def test_describe_registered_tools_returns_json_friendly_metadata():
     assert roundtrip_preflight["meta"]["scribe"]["locality"] == "local"
     assert roundtrip_preflight["execution"]["taskSupport"] == "forbidden"
     assert "bounded-preflight" in roundtrip_preflight["tags"]
+
+
+def test_direct_selector_and_readiness_schemas_require_runtime_agent_identity():
+    details = server.describe_registered_tools()
+
+    expected_public_arguments = {
+        "scribe_private_context_selector_readback": {
+            "selector_class_label",
+            "target_fingerprint_binding_label",
+            "runtime_role_label",
+            "default_context_bypass_label",
+            "active_runtime_exclusion_label",
+            "source_authority_label",
+        },
+        "scribe_local_postgres_readiness_roundtrip_preflight": {
+            "private_target_handle_id",
+            "target_class_label",
+            "selected_context_readback_status_label",
+            "proof_namespace_label",
+        },
+    }
+
+    for tool_name, public_arguments in expected_public_arguments.items():
+        schema = details[tool_name]["input_schema"]
+        properties = schema["properties"]
+        required = set(schema["required"])
+
+        assert properties["agent"] == {"type": "string"}
+        assert {"agent", *public_arguments} <= required
+        assert public_arguments <= set(properties)
