@@ -67,6 +67,24 @@ def test_preflight_writes_redacted_public_summary_and_owner_only_manifest(
     assert manifest_mode & (stat.S_IRWXG | stat.S_IRWXO) == 0
 
 
+def test_existing_broad_readable_private_manifest_dir_fails_closed_without_repair(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    argv = _base_args(tmp_path)
+    manifest_dir = tmp_path / "private-manifest"
+    manifest_dir.mkdir(mode=0o777)
+    manifest_dir.chmod(0o777)
+
+    result = main(argv)
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "private manifest directory is not owner-only" in captured.err
+    assert not (manifest_dir / "restore_manifest.json").exists()
+    assert stat.S_IMODE(manifest_dir.stat().st_mode) == 0o777
+
+
 def test_preflight_blocks_missing_target_source_without_env_leak(
     monkeypatch,
     tmp_path: Path,

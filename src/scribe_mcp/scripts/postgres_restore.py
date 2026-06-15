@@ -94,7 +94,7 @@ def _schema_label(value: str | None) -> str:
 
 def _path_is_owner_only_dir(path: Path) -> bool:
     mode = stat.S_IMODE(path.stat().st_mode)
-    return path.is_dir() and mode & (stat.S_IRWXG | stat.S_IRWXO) == 0
+    return path.is_dir() and mode == 0o700
 
 
 def _ensure_owner_only_dir(path: Path) -> None:
@@ -102,7 +102,12 @@ def _ensure_owner_only_dir(path: Path) -> None:
     for idx, part in enumerate(parts[:-1]):
         if part == ".scribe" and parts[idx + 1] == "docs":
             raise ValueError("private manifest directory must not be under managed docs")
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path_existed = path.exists()
+    if path_existed:
+        if not _path_is_owner_only_dir(path):
+            raise ValueError("private manifest directory is not owner-only")
+        return
+    path.mkdir(mode=0o700, parents=True)
     os.chmod(path, 0o700)
     if not _path_is_owner_only_dir(path):
         raise ValueError("private manifest directory is not owner-only")
