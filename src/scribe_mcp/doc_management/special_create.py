@@ -131,6 +131,22 @@ def _build_special_metadata(
     return utils_shared.build_special_metadata(project, metadata, agent_id, extra=extra)
 
 
+def _doc_update_log_warning(result: Any) -> Optional[str]:
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is False:
+        issue_code = str(result.get("issue_code") or "append_failed")
+        issue_count = 0
+        issues = result.get("issues")
+        if isinstance(issues, list):
+            issue_count = len(issues)
+        return f"doc_update_log_rejected:{issue_code}; issue_count={issue_count}"
+    meta = result.get("meta")
+    if isinstance(meta, dict) and meta.get("non_exportable"):
+        return "doc_update_log_non_exportable"
+    return None
+
+
 async def _render_special_template(
     project: Dict[str, Any],
     agent_id: str,
@@ -682,7 +698,7 @@ async def handle_special_document_creation(
                     log_meta[key] = str(value)
 
         try:
-            await append_entry(
+            append_result = await append_entry(
                 message=f"Created {doc_label.replace('_', ' ')}: {target_path.name}",
                 status="success",
                 meta=log_meta,
@@ -690,6 +706,9 @@ async def handle_special_document_creation(
                 log_type="doc_updates",
                 format="structured",
             )
+            append_warning = _doc_update_log_warning(append_result)
+            if append_warning:
+                log_warning = append_warning
         except Exception as exc:
             log_warning = str(exc)
 

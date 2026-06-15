@@ -18,6 +18,7 @@ import asyncio
 
 from scribe_mcp import server as server_module
 from scribe_mcp.config.settings import settings
+from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import additive_local_tool
 from scribe_mcp.utils.bulk_processor import BulkProcessor, ParallelBulkProcessor
@@ -64,6 +65,13 @@ except ImportError:
 from . import manage_docs_validation as _manage_docs_validation  # noqa: F401
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
 from scribe_mcp.shared.project_registry import get_runtime_project_registry
+from scribe_mcp.shared.path_policy import (
+    PathPolicyResult,
+    PathPolicyViolation,
+    apply_path_policy,
+    load_path_policy,
+    looks_like_local_absolute_path,
+)
 
 _RATE_TRACKER: Dict[str, deque[float]] = defaultdict(deque)
 _RATE_LOCKS: Dict[str, asyncio.Lock] = {}
@@ -469,6 +477,13 @@ async def _process_single_entry(
 
         meta_payload.setdefault("log_type", entry_log_type)
         meta_payload.setdefault("content_type", "log")
+        policy_error = _apply_append_path_policy(meta_payload, project)
+        if policy_error is not None:
+            return _path_policy_rejection_response(
+                policy_error,
+                recent=recent,
+                project_name=project.get("name"),
+            )
 
         # Generate deterministic entry_id with error handling
         try:
@@ -1506,6 +1521,65 @@ def _normalise_meta(meta: Optional[Any]) -> tuple[tuple[str, str], ...]:
         return (("meta_error", f"Metadata normalization failed: {error_str[:50]}"),)
 
 
+def _apply_append_path_policy(
+    meta_payload: Dict[str, Any],
+    project: Dict[str, Any],
+) -> Optional[PathPolicyResult]:
+    repo_root = Path(project.get("root") or settings.project_root).resolve()
+    repo_config = RepoDiscovery.load_config(repo_root, seed_if_missing=False)
+    policy = load_path_policy(repo_config, project)
+    result = apply_path_policy(meta_payload, policy=policy, scope="append")
+    if not policy.enabled:
+        return None
+    if result.violations and policy.unresolved == "reject":
+        return result
+    meta_payload.clear()
+    meta_payload.update(result.mapped)
+    if result.violations and policy.unresolved == "non_exportable":
+        meta_payload["non_exportable"] = True
+        meta_payload["path_policy_unresolved"] = "non_exportable"
+    return None
+
+
+def _safe_metadata_key(key: str) -> str:
+    if looks_like_local_absolute_path(key) or "/" in key or "\\" in key:
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+        return f"unsafe_key:{digest}"
+    return key
+
+
+def _path_policy_issue_payload(violation: PathPolicyViolation) -> Dict[str, Any]:
+    return {
+        "issue_code": violation.reason,
+        "metadata_key": _safe_metadata_key(violation.key),
+        "scope": violation.scope,
+        "safe_descriptor": violation.safe_descriptor,
+        "value_sha256_prefix": violation.value_sha256_prefix,
+    }
+
+
+def _path_policy_rejection_response(
+    result: PathPolicyResult,
+    *,
+    recent: List[Any],
+    project_name: Optional[str],
+) -> Dict[str, Any]:
+    issues = [_path_policy_issue_payload(violation) for violation in result.violations]
+    return {
+        "ok": False,
+        "error": "Path policy rejected structured metadata before append.",
+        "issue_code": "path_policy_rejected",
+        "issues": issues,
+        "path_policy": {
+            "scope": "append",
+            "unresolved": "reject",
+            "issue_count": len(issues),
+        },
+        "project_name": project_name,
+        "recent_projects": list(recent),
+    }
+
+
 def _compose_line(
     *,
     emoji: str,
@@ -1601,6 +1675,9 @@ async def _tee_entry_to_log_type(
     log_path, log_definition = _resolve_log_target(project, log_type, log_cache)
     meta_copy = dict(meta_payload)
     meta_copy["log_type"] = log_type
+    policy_error = _apply_append_path_policy(meta_copy, project)
+    if policy_error is not None:
+        return None, ["path_policy_rejected"]
     missing = _missing_required_meta(log_definition, meta_copy)
     if missing:
         return None, missing
@@ -1816,6 +1893,17 @@ async def _process_single_item(
 
     entry_log_type = (item.get("log_type") or base_log_type).lower()
     log_path, log_definition = _resolve_log_target(project, entry_log_type, log_cache)
+    meta_payload.setdefault("log_type", entry_log_type)
+    policy_error = _apply_append_path_policy(meta_payload, project)
+    if policy_error is not None:
+        return {
+            "success": False,
+            "failed_item": {
+                "index": index,
+                "error": "path_policy_rejected",
+                "issues": [_path_policy_issue_payload(violation) for violation in policy_error.violations],
+            },
+        }
 
     # Rotate if needed (only once per path)
     if log_path not in rotated_paths:
@@ -1832,8 +1920,6 @@ async def _process_single_item(
                 "item": item
             }
         }
-
-    meta_payload.setdefault("log_type", entry_log_type)
 
     # Compose the log line
     repo_slug = _get_repo_slug(project["root"])
@@ -2020,6 +2106,16 @@ async def _append_bulk_entries(
 
             entry_log_type = (item.get("log_type") or base_log_type).lower()
             log_path, log_definition = _resolve_log_target(project, entry_log_type, log_cache)
+            meta_payload.setdefault("log_type", entry_log_type)
+            policy_error = _apply_append_path_policy(meta_payload, project)
+            if policy_error is not None:
+                failed_items.append({
+                    "index": i,
+                    "error": "path_policy_rejected",
+                    "issues": [_path_policy_issue_payload(violation) for violation in policy_error.violations],
+                })
+                continue
+
             if log_path not in rotated_paths:
                 await _rotate_if_needed(log_path, repo_root=Path(project.get("root") or settings.project_root).resolve())
                 rotated_paths.add(log_path)
@@ -2032,7 +2128,6 @@ async def _append_bulk_entries(
                     "item": item
                 })
                 continue
-            meta_payload.setdefault("log_type", entry_log_type)
 
             # Generate deterministic entry_id for bulk item
             repo_slug = _get_repo_slug(project["root"])
@@ -2053,7 +2148,7 @@ async def _append_bulk_entries(
                 agent=resolved_agent,
                 project_name=project["name"],
                 message=item_message,
-                meta_pairs=meta_pairs,
+                meta_pairs=tuple(meta_payload.items()),
                 entry_id=entry_id,
             )
 

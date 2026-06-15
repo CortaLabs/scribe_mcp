@@ -112,6 +112,22 @@ def _with_session_provenance(metadata: Optional[Dict[str, Any]], context: Any) -
     return enriched
 
 
+def _doc_update_log_warning(result: Any) -> Optional[str]:
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is False:
+        issue_code = str(result.get("issue_code") or "append_failed")
+        issue_count = 0
+        issues = result.get("issues")
+        if isinstance(issues, list):
+            issue_count = len(issues)
+        return f"doc_update_log_rejected:{issue_code}; issue_count={issue_count}"
+    meta = result.get("meta")
+    if isinstance(meta, dict) and meta.get("non_exportable"):
+        return "doc_update_log_non_exportable"
+    return None
+
+
 async def handle_edit_action(
     *,
     action: str,
@@ -384,8 +400,10 @@ async def handle_edit_action(
                 "sha_after": change.after_hash,
             }
         )
+        if change.path:
+            log_meta["path"] = str(change.path)
         try:
-            await asyncio.wait_for(
+            append_result = await asyncio.wait_for(
                 append_entry(
                     message=f"Doc update [{doc_name}] {section or 'full'} via {action}",
                     status="info",
@@ -396,6 +414,9 @@ async def handle_edit_action(
                 ),
                 timeout=_SIDE_EFFECT_TIMEOUT_SECONDS,
             )
+            append_warning = _doc_update_log_warning(append_result)
+            if append_warning:
+                log_error = append_warning
         except Exception as exc:
             log_error = str(exc)
 

@@ -329,6 +329,7 @@ class RepoConfig:
     storage_backend: str = "postgres"  # postgres by default; sqlite is explicit standalone
     db_path: Optional[Path] = None  # for sqlite
     doc_snapshots: bool = True
+    path_policy: Dict[str, Any] = field(default_factory=dict)
 
     # Output formatting settings
     use_ansi_colors: bool = True  # Enable ANSI colors in tool output (Phase 1.5 - Issue #9962 fix)
@@ -407,6 +408,7 @@ class RepoConfig:
             storage_backend=data.get("storage_backend", "postgres"),
             db_path=db_path,
             doc_snapshots=bool(data.get("doc_snapshots", True)),
+            path_policy=data.get("path_policy") if isinstance(data.get("path_policy"), dict) else {},
             use_ansi_colors=bool(data.get("use_ansi_colors", True)),  # Colors ON by default
         )
         setattr(config, "_raw_config", dict(data))
@@ -455,6 +457,8 @@ class RepoConfig:
             "doc_snapshots": self.doc_snapshots,
             "use_ansi_colors": self.use_ansi_colors,
         }
+        if self.path_policy:
+            result["path_policy"] = self.path_policy
 
         if self.custom_templates_dir:
             result["custom_templates_dir"] = str(self.custom_templates_dir.relative_to(self.repo_root))
@@ -601,6 +605,9 @@ class RepoDiscovery:
                         source_label=str(config_path),
                     )
                     data = _merge_dicts(global_data, sanitized_repo_data)
+                    canonical_policy_path = repo_root / ".scribe" / "config" / "scribe.yaml"
+                    if config_path != canonical_policy_path or "path_policy" not in sanitized_repo_data:
+                        data.pop("path_policy", None)
 
                     repo_config_logger.info(f"Successfully loaded config from {config_path}")
                     return RepoConfig.from_dict(data, repo_root)
@@ -613,6 +620,7 @@ class RepoDiscovery:
         global_config_path = config_home_dir() / "scribe.yaml"
         global_data = _load_structured_config(global_config_path)
         if global_data:
+            global_data.pop("path_policy", None)
             return RepoConfig.from_dict(global_data, repo_root)
         return RepoConfig.defaults_for_repo(repo_root)
 
