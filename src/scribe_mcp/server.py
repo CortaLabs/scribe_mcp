@@ -708,6 +708,7 @@ class _NoTargetContactRoundtripRunner:
     )
 )
 async def scribe_private_context_selector_readback(
+    agent: str,
     selector_class_label: str,
     target_fingerprint_binding_label: str,
     runtime_role_label: str,
@@ -716,6 +717,7 @@ async def scribe_private_context_selector_readback(
     source_authority_label: str,
 ) -> dict[str, str | bool]:
     """Emit public-safe Scribe selector/readback labels without runtime or target contact."""
+    _ = agent
     return _selector_readback(
         selector_class_label=selector_class_label,
         target_fingerprint_binding_label=target_fingerprint_binding_label,
@@ -748,12 +750,14 @@ async def scribe_private_context_selector_readback(
     tags=("readiness", "roundtrip", "bounded-preflight"),
 )
 async def scribe_local_postgres_readiness_roundtrip_preflight(
+    agent: str,
     private_target_handle_id: str,
     target_class_label: str,
     selected_context_readback_status_label: str,
     proof_namespace_label: str,
 ) -> dict[str, str | bool]:
     """Emit public-safe local Postgres readiness roundtrip labels without target contact."""
+    _ = agent
     return await _roundtrip_preflight(
         private_target_handle_id=private_target_handle_id,
         target_class_label=target_class_label,
