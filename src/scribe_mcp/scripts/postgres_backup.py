@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +24,12 @@ class BackupFile:
     timestamp_utc: datetime
 
 
+class PgDumpError(RuntimeError):
+    def __init__(self, returncode: int):
+        super().__init__("pg_dump failed")
+        self.returncode = returncode
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -28,6 +37,11 @@ def _utc_now() -> datetime:
 def _redact_dsn(dsn: str) -> str:
     parts = urlsplit(dsn)
     if not parts.netloc:
+        if "@" in dsn:
+            userinfo, target = dsn.rsplit("@", 1)
+            if ":" in userinfo:
+                username = userinfo.split(":", 1)[0]
+                return f"{username}:***@{target}"
         return dsn
     if "@" not in parts.netloc:
         return dsn
@@ -120,9 +134,79 @@ def _run_pg_dump(*, dsn: str, schema: str, destination: Path, dry_run: bool) -> 
 
     completed = subprocess.run(command, capture_output=True, text=True)
     if completed.returncode != 0:
-        stderr = (completed.stderr or "").strip()
-        raise RuntimeError(f"pg_dump failed ({completed.returncode}): {stderr}")
+        raise PgDumpError(completed.returncode)
     return command
+
+
+def _is_owner_only_dir(path: Path) -> bool:
+    mode = stat.S_IMODE(path.stat().st_mode)
+    return mode == 0o700
+
+
+def _is_under_managed_docs(path: Path) -> bool:
+    parts = path.resolve().parts
+    return any(
+        parts[index] == ".scribe" and index + 1 < len(parts) and parts[index + 1] == "docs"
+        for index in range(len(parts))
+    )
+
+
+def _prepare_output_dir(output_dir: Path) -> bool:
+    if _is_under_managed_docs(output_dir):
+        print("output_status=rejected_managed_docs", file=sys.stderr)
+        return False
+
+    if output_dir.exists():
+        if not output_dir.is_dir():
+            print("output_status=rejected_not_directory", file=sys.stderr)
+            return False
+        if not _is_owner_only_dir(output_dir):
+            print("output_status=rejected_permissions", file=sys.stderr)
+            return False
+        return True
+
+    output_dir.mkdir(parents=True, mode=0o700)
+    output_dir.chmod(0o700)
+    if not _is_owner_only_dir(output_dir):
+        print("output_status=rejected_permissions", file=sys.stderr)
+        return False
+    return True
+
+
+def _secure_existing_private_file(path: Path) -> bool:
+    if not path.is_file():
+        print("dump_status=missing", file=sys.stderr)
+        return False
+    path.chmod(0o600)
+    if stat.S_IMODE(path.stat().st_mode) != 0o600:
+        print("dump_status=permission_verification_failed", file=sys.stderr)
+        return False
+    return True
+
+
+def _write_private_text_atomic(path: Path, content: str) -> None:
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        text=True,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        path.chmod(0o600)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _write_manifest(
@@ -145,7 +229,7 @@ def _write_manifest(
         "dry_run": dry_run,
     }
     manifest_path = output_dir / "latest_backup_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    _write_private_text_atomic(manifest_path, json.dumps(manifest, indent=2) + "\n")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -191,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     dsn = args.postgres_dsn
     if not dsn:
-        print("error: --postgres-dsn is required when SCRIBE_DB_URL is not set", file=sys.stderr)
+        print("dsn_status=missing", file=sys.stderr)
         return 2
 
     schema = (args.schema or "scribe").strip() or "scribe"
@@ -200,13 +284,18 @@ def main(argv: list[str] | None = None) -> int:
     dry_run = bool(args.dry_run)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not _prepare_output_dir(output_dir):
+        return 1
 
     backup_path = output_dir / _backup_filename(schema=schema)
     try:
         command = _run_pg_dump(dsn=dsn, schema=schema, destination=backup_path, dry_run=dry_run)
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
+    except PgDumpError as exc:
+        print("pg_dump_status=failed", file=sys.stderr)
+        print(f"return_code={exc.returncode}", file=sys.stderr)
+        return 1
+
+    if not dry_run and not _secure_existing_private_file(backup_path):
         return 1
 
     backups = _discover_backups(output_dir, schema)
@@ -229,10 +318,11 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=dry_run,
     )
 
-    print(f"schema={schema}")
-    print(f"backup_file={backup_path}")
-    print(f"dry_run={dry_run}")
-    print(f"pruned={len(pruned_files)}")
+    print("backup_status=success")
+    print(f"dump_status={'skipped' if dry_run else 'created'}")
+    print("manifest_status=written")
+    print(f"dry_run={'true' if dry_run else 'false'}")
+    print(f"pruned_count={len(pruned_files)}")
     return 0
 
 
