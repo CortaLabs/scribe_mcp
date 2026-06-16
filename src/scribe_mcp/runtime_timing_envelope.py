@@ -123,6 +123,7 @@ def build_timing_envelope_from_entries(
     dispatch_path: Optional[str] = None
     startup_profile: Optional[str] = None
     set_project_phase_ms: Dict[str, float] = {}
+    tool_phase_ms: Dict[str, float | bool] = {}
 
     for entry in entries:
         if project and entry.project and entry.project != project:
@@ -135,11 +136,16 @@ def build_timing_envelope_from_entries(
             for key, value in entry.meta.items():
                 if key.endswith("_ms") and isinstance(value, (int, float)):
                     set_project_phase_ms[key] = float(value)
+        if isinstance(entry.meta.get("duration_ms"), (int, float)):
+            tool_phase_ms["latest_duration_ms"] = float(entry.meta["duration_ms"])
+        elif str(entry.meta.get("missing_generic_tool_duration", "")).lower() == "true":
+            tool_phase_ms["missing_generic_tool_duration"] = True
 
     return build_timing_envelope(
         dispatch_path=dispatch_path,
         startup_profile=startup_profile,
         set_project_phase_ms=set_project_phase_ms,
+        tool_phase_ms=tool_phase_ms,
         budget_thresholds=budget_thresholds,
         source=source,
     )

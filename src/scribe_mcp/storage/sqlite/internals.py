@@ -9,10 +9,23 @@ import re
 import sqlite3
 import threading
 import time
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, List, Optional, TypeVar
 
 from scribe_mcp.storage.pool import SQLiteConnectionPool
+
+
+def _normalise_sqlite_param(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _normalise_sqlite_params(params: tuple[Any, ...] | tuple) -> tuple[Any, ...]:
+    return tuple(_normalise_sqlite_param(value) for value in params)
 
 def _float_env(name: str, default: float, minimum: float) -> float:
     raw = os.environ.get(name)
@@ -168,7 +181,7 @@ class SQLiteInternals:
         query: str,
         params: tuple[Any, ...],
     ) -> None:
-        conn.execute(query, params)
+        conn.execute(query, _normalise_sqlite_params(params))
         conn.commit()
 
     def _execute_many_writes(self, conn: sqlite3.Connection, statements: List[str]) -> None:
@@ -182,7 +195,7 @@ class SQLiteInternals:
         query: str,
         params: tuple[Any, ...],
     ) -> Optional[sqlite3.Row]:
-        cursor = conn.execute(query, params)
+        cursor = conn.execute(query, _normalise_sqlite_params(params))
         return cursor.fetchone()
 
     def _fetchall_read(
@@ -191,7 +204,7 @@ class SQLiteInternals:
         query: str,
         params: tuple[Any, ...] | tuple,
     ) -> List[sqlite3.Row]:
-        cursor = conn.execute(query, params)
+        cursor = conn.execute(query, _normalise_sqlite_params(params))
         return cursor.fetchall()
 
     def _fetchone_write(
@@ -200,7 +213,7 @@ class SQLiteInternals:
         query: str,
         params: tuple[Any, ...],
     ) -> Optional[sqlite3.Row]:
-        cursor = conn.execute(query, params)
+        cursor = conn.execute(query, _normalise_sqlite_params(params))
         row = cursor.fetchone()
         if conn.in_transaction:
             conn.commit()
@@ -212,7 +225,7 @@ class SQLiteInternals:
         query: str,
         params: tuple[Any, ...] | tuple,
     ) -> List[sqlite3.Row]:
-        cursor = conn.execute(query, params)
+        cursor = conn.execute(query, _normalise_sqlite_params(params))
         rows = cursor.fetchall()
         if conn.in_transaction:
             conn.commit()

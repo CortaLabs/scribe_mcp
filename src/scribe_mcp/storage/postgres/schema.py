@@ -42,6 +42,16 @@ def _is_duplicate_index_race(statement: str, exc: asyncpg.PostgresError) -> bool
     return "pg_class_relname_nsp_index" in str(exc)
 
 
+def _is_additive_index_before_migration(statement: str, exc: asyncpg.PostgresError) -> bool:
+    """Allow additive indexes to be created by their migration after legacy tables upgrade."""
+    normalized = " ".join(statement.upper().split())
+    if "CREATE INDEX" not in normalized:
+        return False
+    if "IDX_TOOL_CALLS_CORRELATION" not in normalized:
+        return False
+    return "correlation_id" in str(exc)
+
+
 async def _ensure_migration_table(conn: asyncpg.Connection) -> None:
     await conn.execute(
         """
@@ -89,6 +99,51 @@ async def _apply_numbered_migrations(
         LOGGER.info("Applied Postgres schema migration: %s", migration_file.name)
 
 
+async def ensure_schema_on_connection(
+    *,
+    conn: asyncpg.Connection,
+    schema_name: str,
+    schema_path: Path = SCHEMA_PATH,
+    migrations_path: Path = MIGRATIONS_PATH,
+) -> None:
+    """Apply idempotent schema DDL using an already-open connection."""
+    schema_name = _validate_schema_name(schema_name)
+    quoted_schema = _quote_ident(schema_name)
+
+    await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema};")
+    await conn.execute(PG_TRGM_EXTENSION_SQL)
+    await conn.execute(f"SET search_path TO {quoted_schema}, public;")
+
+    if schema_path.exists():
+        sql_text = await asyncio.to_thread(schema_path.read_text, encoding="utf-8")
+        statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
+        for statement in statements:
+            try:
+                await conn.execute(statement)
+            except asyncpg.UniqueViolationError as exc:
+                if _is_duplicate_index_race(statement, exc):
+                    LOGGER.warning(
+                        "Ignoring duplicate index race during schema bootstrap: %s",
+                        statement[:160],
+                    )
+                    continue
+                raise
+            except asyncpg.UndefinedColumnError as exc:
+                if _is_additive_index_before_migration(statement, exc):
+                    LOGGER.warning(
+                        "Deferring additive index until Postgres migration runs: %s",
+                        statement[:160],
+                    )
+                    continue
+                raise
+
+    await _ensure_migration_table(conn)
+    await _apply_numbered_migrations(
+        conn=conn,
+        migrations_path=migrations_path,
+    )
+
+
 async def ensure_schema(
     *,
     pool_provider: Callable[[], Awaitable[asyncpg.Pool]],
@@ -103,39 +158,17 @@ async def ensure_schema(
         return True
 
     schema_name = _validate_schema_name(schema_name)
-    quoted_schema = _quote_ident(schema_name)
 
     async with schema_lock:
         if schema_ready:
             return True
 
         pool = await pool_provider()
-        if not schema_path.exists():
-            return True
-
-        sql_text = await asyncio.to_thread(schema_path.read_text, encoding="utf-8")
-        statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
-
         async with pool.acquire() as conn:
-            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema};")
-            await conn.execute(PG_TRGM_EXTENSION_SQL)
-            await conn.execute(f"SET search_path TO {quoted_schema}, public;")
-
-            for statement in statements:
-                try:
-                    await conn.execute(statement)
-                except asyncpg.UniqueViolationError as exc:
-                    if _is_duplicate_index_race(statement, exc):
-                        LOGGER.warning(
-                            "Ignoring duplicate index race during schema bootstrap: %s",
-                            statement[:160],
-                        )
-                        continue
-                    raise
-
-            await _ensure_migration_table(conn)
-            await _apply_numbered_migrations(
+            await ensure_schema_on_connection(
                 conn=conn,
+                schema_name=schema_name,
+                schema_path=schema_path,
                 migrations_path=migrations_path,
             )
 

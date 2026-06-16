@@ -1,0 +1,369 @@
+---
+id: integrate_system_scribe_latency_20260616t050042z-phase-plan
+title: "\u2699\uFE0F Phase Plan \u2014 integrate-system-scribe-latency-20260616T050042Z"
+doc_type: phase_plan
+doc_name: phase_plan
+category: engineering
+status: ready
+version: '0.1'
+last_updated: 2026-06-16 05:59:42 UTC
+maintained_by: agent-20260616-054818-eea1c709
+created_by: agent-20260616-052258-6aee159b
+owners:
+- ArchitectAgent
+related_docs: []
+tags:
+- phase-plan
+- latency
+- scribe
+- hooks
+- planning
+summary: Ordered packages P1-P7 for Scribe telemetry, hook attribution, diagnostics,
+  and optional optimization.
+canonical_doc_type: phase_plan
+edit_trace:
+  tool: manage_docs
+  created_at: 2026-06-16 05:30:15 UTC
+  created_via: frontmatter_update
+  last_edited_at: 2026-06-16 05:59:42 UTC
+  last_edited_by: agent-20260616-054818-eea1c709
+  last_action: replace_section
+  stage: architecture
+---
+
+# ⚙️ Phase Plan — integrate-system-scribe-latency-20260616T050042Z
+**Author:** ArchitectAgent
+**Version:** Draft v0.2
+**Status:** Ready
+**Last Updated:** 2026-06-16 05:29 UTC
+
+> Ordered implementation roadmap for telemetry truth first, optimization second.
+
+---
+## Phase Overview
+<!-- ID: phase_overview -->
+
+| Phase | Packages | Repo Owner | Depends On | Exit Gate | Confidence |
+|-------|----------|------------|------------|-----------|------------|
+| Phase 0 | Architecture complete; Witness + Arbiter review | `scribe_mcp` workstream docs | Verified Wave 1 research | Witness/Arbiter pass or explicit operator waiver | 0.95 |
+| Phase 1 | P1 Generic telemetry persistence and P3 hook source-authority gate | `scribe_mcp` + `council_mcp` | Phase 0 | Package-specific Crucible PASS for both packages before any dependents | 0.90 |
+| Phase 2 | P2 append_entry sub-phase timing and P4 hook timing/fail-open telemetry | `scribe_mcp` + `council_mcp` | P1 PASS; P3 PASS for P4 | Package-specific Crucible PASS | 0.86 |
+| Phase 3 | P5 controlled same-server root comparison and P6 fresh-DB reconciliation diagnostic | `scribe_mcp` | P1 PASS; P4 PASS for P5 labels | Package-specific Crucible PASS | 0.84 |
+| Phase 4 | P7 optional set_project write reduction | `scribe_mcp` | P2, P5, P6 PASS and measurement proof | Crucible PASS plus operator confirmation that optimization is worth routing | 0.72 |
+
+Parallelism rules:
+- P1 and P3 may run in parallel because they touch different repos and different files.
+- P2 may run after P1 while P3 is still under review.
+- P4 may not start until P3 has its own Crucible PASS.
+- P5 may not start until P4 can label hook-included versus hook-excluded measurements.
+- P7 is deferred unless earlier packages prove a measurable warm-path win is available.
+
+---
+## Phase 0 — Pre-Implementation Review Gate
+<!-- ID: phase_0 -->
+
+Recommendation: run both Witness and Arbiter before Forge.
+
+Witness checklist:
+- Confirm package ownership boundaries are explicit for `scribe_mcp` versus `council_mcp`.
+- Confirm no package depends on editing generated outputs directly.
+- Confirm every package has a probe or test command and a readback surface.
+- Confirm P6 is diagnostic-only and cannot mutate historical physical data.
+
+Arbiter checklist:
+- Confirm P1 and P3 are the first legal implementation packages.
+- Confirm P4 is blocked on P3 and P5 is blocked on P4.
+- Confirm P7 is optional and deferred pending measurement proof.
+- Confirm no package silently widens into migration, redesign, or cross-repo generated-output churn.
+
+---
+## Phase 1 — Ordered Task Packages
+<!-- ID: phase_1 -->
+
+### Task Package P1 — Generic durable tool telemetry persistence
+
+**Scope:** Persist real tool-call duration and correlation metadata at the existing generic Scribe tool boundary.
+
+**Repo Owner:** `scribe_mcp`
+
+**Files to Modify:**
+- `src/scribe_mcp/utils/response.py` — extend the formatter call contract only if needed to carry a measured timing context.
+- `src/scribe_mcp/utils/formatters/dispatcher.py` — replace `duration_ms=None` with real measured duration and correlation metadata for JSONL and SQL persistence.
+- `src/scribe_mcp/utils/tool_logger.py` — accept additive correlation fields if current JSONL schema needs them.
+- `src/scribe_mcp/log_intelligence.py` or existing diagnostics consumer — report persisted timing or explicit missing-data state.
+- `tests/test_doctor_telemetry.py`, `tests/test_log_intelligence.py`, `tests/test_tools.py` — verify durable readback and backward compatibility.
+
+**Files to Create:**
+- None by default. Reuse existing diagnostics surfaces unless implementation proves a small focused test file is cleaner.
+
+**Dependencies:**
+- Requires Phase 0 review gate complete.
+- Crucible validation is required before P2, P4, P5, P6, or P7 may route.
+
+**Specifications:**
+1. Capture one real monotonic duration per logical tool call at the narrowest existing boundary that already owns tool logging.
+2. Persist `duration_ms`, `correlation_id`, and `measurement_scope` to both TOOL_LOG and Postgres `tool_calls`.
+3. Preserve existing response formatting behavior; additive metadata is allowed, breaking output shape changes are not.
+4. Make `logs analyze` explicitly report `missing_generic_tool_duration` when the project lacks compatible persisted timing.
+
+**Patterns to Follow:**
+- `src/scribe_mcp/runtime_timing_envelope.py` for shared timing shape.
+- `src/scribe_mcp/utils/formatters/dispatcher.py:207-245` for the current logging hub.
+
+**Verification:**
+- `uv run pytest tests/test_doctor_telemetry.py tests/test_log_intelligence.py tests/test_tools.py`
+- Probe: run `set_project`, `append_entry`, `read_recent`, and `manage_docs quality_check` through `mcp__scribe__*` and verify durable `duration_ms` readback in TOOL_LOG and `tool_calls`.
+- Probe: verify missing-data status is explicit when compatible persisted timing is absent.
+
+**Out of Scope:**
+- Tool-specific phase timing beyond additive correlation fields.
+- Hook measurement.
+- Any optimization of tool behavior.
+
+### Task Package P2 — `append_entry` response and sub-phase timing
+
+**Scope:** Add additive `append_entry` timing that decomposes file, DB, reminder, state, and formatting cost while preserving the `db_mirror` contract.
+
+**Repo Owner:** `scribe_mcp`
+
+**Files to Modify:**
+- `src/scribe_mcp/tools/append_entry.py` — instrument single-entry and bulk paths.
+- `src/scribe_mcp/runtime_timing_envelope.py` — reuse or lightly extend the generic phase envelope shape.
+- `tests/test_tools.py` and a focused append-entry test file if needed — verify additive response fields and failure behavior.
+
+**Files to Create:**
+- None required.
+
+**Dependencies:**
+- Requires P1 Crucible PASS.
+- Crucible validation is required before P7 may route.
+
+**Specifications:**
+1. Time file WAL/fsync separately from DB fetch/upsert/insert work.
+2. Preserve file-first success semantics when DB mirror fails.
+3. Record reminder and response-formatting time explicitly.
+4. Persist additive phase metadata where later readback can inspect it.
+
+**Patterns to Follow:**
+- `src/scribe_mcp/tools/append_entry.py:639-715` single-entry flow.
+- `src/scribe_mcp/tools/append_entry.py:2250-2288` bulk-path result assembly.
+
+**Verification:**
+- `uv run pytest tests/test_tools.py`
+- Probe: `mcp__scribe__append_entry` success path shows non-empty timing phases and unchanged `db_mirror.status=ok`.
+- Probe: simulated mirror failure still returns file success and phase timing with `db_mirror.status=error`.
+
+**Out of Scope:**
+- Generic tool persistence plumbing already owned by P1.
+- Any change to durability order.
+
+### Task Package P3 — Council hook source-authority and install gate
+
+**Scope:** Define and implement the source-parity/readback gate for hook work so downstream generated hook copies are never treated as authoritative.
+
+**Repo Owner:** `council_mcp`
+
+**Files to Modify:**
+- `src/council_mcp/hook_specs.py` — parity/readback helpers if required.
+- `src/council_mcp/compiler/phases/hooks.py` — dry-run/readback reporting only if current output is insufficient.
+- `src/council_mcp/codex_toml.py` — preserve operator-authored hook entries if the readback report needs stronger guarantees.
+- `tests/test_hook_specs.py`, `tests/test_runtime_hook_generation.py` — prove parity and preservation rules.
+
+**Files to Create:**
+- None unless a focused hook readback helper is needed inside existing package boundaries.
+
+**Dependencies:**
+- Requires Phase 0 review gate complete.
+- Crucible validation is required before P4 may route.
+
+**Specifications:**
+1. Enumerate authoritative hook sources and generated destinations in machine-readable readback.
+2. Classify stale downstream generated hook files as non-authoritative until regenerated.
+3. Preserve operator-authored overrides and config entries unless an explicit force/replace path is chosen.
+4. Keep `council update --dry-run` as the rollout proof surface; do not hand-edit generated files.
+
+**Patterns to Follow:**
+- `src/council_mcp/hook_specs.py:146-195` for canonical source seeding.
+- `src/council_mcp/hook_specs.py:345-473` for runtime source resolution and Codex plan building.
+
+**Verification:**
+- `uv run pytest tests/test_hook_specs.py tests/test_runtime_hook_generation.py`
+- `council update --dry-run`
+- Readback: stale generated copies under downstream repos are flagged, not trusted.
+
+**Out of Scope:**
+- Measuring hook latency itself.
+- Actual generated-output rollout without operator approval.
+
+### Task Package P4 — Hook timing, fail-open telemetry, and timeout hardening
+
+**Scope:** Instrument hook-side timing separately from Scribe MCP timing and harden timeout/fail-open behavior where measured hook waits dominate perceived latency.
+
+**Repo Owner:** `council_mcp`
+
+**Files to Modify:**
+- `src/council_mcp/templates/claude/runtime_hooks/post_tool.py` — add phase timing and stop persisting fake durations.
+- `src/council_mcp/templates/claude/runtime_hooks/session_start.py` — time startup/session lanes.
+- `src/council_mcp/hooks/client.py` — measured logging, timeout control, and no misleading `duration_ms=0.0` behavior.
+- `tests/test_runtime_hooks_binding.py`, `tests/test_hooks/test_hook_client.py` — prove fail-open and timeout cases.
+
+**Files to Create:**
+- None required.
+
+**Dependencies:**
+- Requires P1 PASS and P3 Crucible PASS.
+- Crucible validation is required before P5 may route.
+
+**Specifications:**
+1. Measure local self-heal writes separately from HTTP bind/get/log calls.
+2. Distinguish `hook_only` duration from `tool_only` duration.
+3. Preserve local binding truth on daemon failure, 401, timeout, missing `httpx`, or malformed responses.
+4. Evaluate short fixed timeouts for hook lanes that currently inherit the default request timeout.
+
+**Patterns to Follow:**
+- `src/council_mcp/templates/claude/runtime_hooks/post_tool.py:273-423`
+- `src/council_mcp/hooks/client.py:82-221`
+
+**Verification:**
+- `uv run pytest tests/test_runtime_hooks_binding.py tests/test_hooks/test_hook_client.py`
+- Probe: `mcp__scribe__set_project` followed by hook readback shows separate hook phase timing and no fake `0.0` duration.
+- Probe: daemon-down and 401 scenarios remain fail-open with local cache self-heal intact.
+
+**Out of Scope:**
+- Council runtime redesign.
+- Changes to Scribe MCP semantics.
+
+### Task Package P5 — Controlled same-server root comparison
+
+**Scope:** Produce a sanctioned same-server probe that compares `scribe_mcp` root versus `council_mcp` root and labels whether hooks are included.
+
+**Repo Owner:** `scribe_mcp`
+
+**Files to Modify:**
+- Existing diagnostics/probe surface in `src/scribe_mcp/tools` or `src/scribe_mcp/cli` chosen during implementation.
+- Tests for the chosen readback/reporting surface.
+
+**Files to Create:**
+- At most one focused probe/report helper inside an existing diagnostics module if no current home is suitable.
+
+**Dependencies:**
+- Requires P1 PASS.
+- Requires P4 Crucible PASS so hook inclusion can be labeled accurately.
+- Crucible validation is required before P7 may use P5 results as optimization evidence.
+
+**Specifications:**
+1. Hold the same Scribe server constant and vary only the requested root.
+2. Capture structured Scribe timing, host wall time, and hook inclusion label for each case.
+3. Emit a structured report that identifies whether the latency delta is inside Scribe phases or outside them.
+
+**Patterns to Follow:**
+- Existing `set_project` structured response timing surface.
+- Existing diagnostics conventions rather than one-off shell notes.
+
+**Verification:**
+- Probe: structured `set_project` against `scribe_mcp` root and `council_mcp` root from the same server instance.
+- Readback: report rows include `hook_excluded`, `hook_included`, or `hook_state_unknown`.
+- Crucible review: confirm the report is attribution-only and does not smuggle in config changes.
+
+**Out of Scope:**
+- Any direct hook implementation.
+- Any generated config change.
+
+### Task Package P6 — Fresh Postgres / physical docs reconciliation diagnostic
+
+**Scope:** Add a read-only report that compares physical Scribe artifacts to logical Postgres rows without auto-ingesting history.
+
+**Repo Owner:** `scribe_mcp`
+
+**Files to Modify:**
+- Existing diagnostics/readback surface in `src/scribe_mcp/tools` or another existing diagnostics module.
+- Tests covering read-only classification behavior.
+
+**Files to Create:**
+- None unless one focused diagnostics helper is required.
+
+**Dependencies:**
+- Requires P1 PASS.
+- Crucible validation is required before P7 may claim fresh-DB drift explains optimization candidates.
+
+**Specifications:**
+1. Compare project configs to `scribe_projects`.
+2. Compare core plan docs to `dev_plans` rows.
+3. Compare physical progress logs to `scribe_entries` counts.
+4. Compare tool-log artifacts to `tool_calls` counts.
+5. Classify mismatches without mutating anything.
+
+**Patterns to Follow:**
+- Existing Scribe diagnostics style and read-only probe behavior.
+- Storage read APIs rather than raw destructive repair logic.
+
+**Verification:**
+- `uv run pytest` for the targeted diagnostics test file(s).
+- Probe: report surfaces `consistent`, `physical_only`, `logical_only`, or `missing_logical_rows`.
+- Probe: repeated runs show no side effects on files or DB counts.
+
+**Out of Scope:**
+- Recovery or ingestion.
+- Automatic repair during `set_project`.
+
+### Task Package P7 — Optional `set_project` write reduction
+
+**Scope:** Reduce warm-path duplicate `set_project` writes only if measured evidence proves they matter.
+
+**Repo Owner:** `scribe_mcp`
+
+**Files to Modify:**
+- `src/scribe_mcp/tools/set_project.py`
+- `src/scribe_mcp/state/manager.py` and/or `src/scribe_mcp/state/agent_manager.py` only if call-count proof shows duplicate writes at those seams.
+- Relevant `set_project` tests.
+
+**Files to Create:**
+- None required.
+
+**Dependencies:**
+- Requires P2, P5, and P6 Crucible PASS.
+- Requires operator confirmation that measured data justifies optimization work.
+
+**Specifications:**
+1. Use durable telemetry to select one concrete duplicate-write target.
+2. Preserve session binding, recent project updates, dev-plan registration, and readable sitrep correctness.
+3. Prove the optimization improves the targeted warm-path phase without regressing behavior.
+
+**Patterns to Follow:**
+- Existing `set_project` response timing contract.
+- Fake-backend call-count testing for state/storage write reductions.
+
+**Verification:**
+- `uv run pytest tests/test_set_project.py`
+- Before/after probe: warm `set_project(format="structured")` shows reduced targeted phase time.
+- Crucible review: confirm the optimization matches measured evidence, not speculation.
+
+**Out of Scope:**
+- Cold-start schema/bootstrap work.
+- Hook optimization.
+- Historical data ingestion.
+
+---
+## Milestone Tracking
+<!-- ID: milestone_tracking -->
+| Milestone | Status | Evidence / Gate |
+|-----------|--------|-----------------|
+| Architecture contract written | Complete | `ARCHITECTURE_GUIDE.md`, `PHASE_PLAN.md`, `CHECKLIST.md` updated in this project |
+| Research-to-Blueprint gate | Complete | Verified Wave 1 research plus hook addendum and direct source spot checks |
+| Pre-implementation review | Complete | `REVIEW_REPORT_phase_0_review_2026-06-16_0545.md` passed Witness + Arbiter at 96/100; P1 and P3 legal first-wave packages |
+| P1 telemetry foundation | Implemented; awaiting package-specific Crucible PASS | CoderAgent-P1 changed existing generic dispatcher/tool_logger/storage/log-intelligence paths only. Proof: `uv run pytest tests/test_tool_calls_schema.py tests/test_dispatcher.py tests/test_log_intelligence.py tests/test_tool_logger.py` -> 63 passed; `uv run pytest tests/test_doctor_telemetry.py tests/test_log_intelligence.py tests/test_tools.py` -> 29 passed. Readback probe: 3 new TOOL_LOG rows, 3 SQLite `tool_calls` rows, 3 matching `correlation_id` values, non-null `duration_ms`, `measurement_scope=tool_only`. |
+| P3 hook authority gate | Implemented; awaiting/using its own Crucible gate before dependents | Existing checklist evidence marks P3 implemented separately in `council_mcp`; no P1 code changes were made there |
+| P2/P4 latency decomposition | Not started | Blocked on P1 and P3 package-specific Crucible gates |
+| P5/P6 attribution diagnostics | Not started | Blocked on durable timing and hook labels |
+| P7 optional optimization | Deferred | Route only if P1-P6 prove value |
+
+---
+## Retro Notes & Adjustments
+<!-- ID: retro_notes -->
+
+Rollback / defer contract:
+- If P1 fails to make generic tool duration durable and queryable, stop the rest of the performance lane and fix measurement first.
+- If P3 exposes generated-output drift that cannot be resolved without wider rollout work, freeze hook packages and keep the Scribe-only packages separate.
+- If P5 shows the majority of user-visible wait is hook-added wall time, do not spend P7 budget inside `set_project` until hook timeouts are addressed.
+- If P6 shows large fresh-DB drift, treat that as a separate operator decision; do not auto-repair as part of the latency lane.
+- Any package that needs a broader redesign than described here must route back through Blueprint instead of quietly expanding scope.

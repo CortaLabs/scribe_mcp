@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from scribe_mcp.storage.models import ProjectRecord
@@ -153,6 +153,29 @@ async def insert_entry(
                 utcnow().isoformat(),
             ),
         )
+
+
+async def update_entry_meta(
+    *,
+    initialise_fn: AsyncInitialise,
+    write_lock: Any,
+    execute_fn: AsyncExecute,
+    entry_id: str,
+    project: ProjectRecord,
+    meta: Dict[str, Any],
+) -> bool:
+    await initialise_fn()
+    meta_json = json.dumps(meta or {}, sort_keys=True)
+    async with write_lock:
+        cursor = await execute_fn(
+            """
+            UPDATE scribe_entries
+            SET meta = ?
+            WHERE id = ? AND project_id = ?;
+            """,
+            (meta_json, entry_id, project.id),
+        )
+    return bool(getattr(cursor, "rowcount", 0))
 
 
 async def fetch_recent_entries(
@@ -449,7 +472,7 @@ async def cleanup_old_entries(
     archive: bool = True,
 ) -> int:
     await initialise_fn()
-    cutoff_date = (datetime.utcnow() - timedelta(days=retention_days)).isoformat()
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
 
     if project_id is not None:
         where_clause = "WHERE ts_iso < ? AND project_id = ?"

@@ -428,6 +428,8 @@ class SQLiteDomainFacadeMixin:
         error_message: Optional[str] = None,
         response_size_bytes: Optional[int] = None,
         repo_root: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        measurement_scope: Optional[str] = None,
     ) -> None:
         await telemetry_ops.record_tool_call(
             initialise_fn=self._initialise,
@@ -444,6 +446,8 @@ class SQLiteDomainFacadeMixin:
             error_message=error_message,
             response_size_bytes=response_size_bytes,
             repo_root=repo_root,
+            correlation_id=correlation_id,
+            measurement_scope=measurement_scope,
         )
 
     def record_tool_call_sync(
@@ -458,6 +462,8 @@ class SQLiteDomainFacadeMixin:
         error_message: Optional[str] = None,
         response_size_bytes: Optional[int] = None,
         repo_root: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        measurement_scope: Optional[str] = None,
     ) -> None:
         telemetry_ops.record_tool_call_sync(
             db_path=self._path,
@@ -472,6 +478,8 @@ class SQLiteDomainFacadeMixin:
             error_message=error_message,
             response_size_bytes=response_size_bytes,
             repo_root=repo_root,
+            correlation_id=correlation_id,
+            measurement_scope=measurement_scope,
         )
 
     async def get_session_tool_calls(
@@ -481,6 +489,7 @@ class SQLiteDomainFacadeMixin:
     ) -> List[Dict[str, Any]]:
         return await telemetry_ops.get_session_tool_calls(
             initialise_fn=self._initialise,
+            execute_fn=self._execute,
             fetchall_fn=self._fetchall,
             session_id=session_id,
             limit=limit,

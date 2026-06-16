@@ -32,7 +32,7 @@ from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.time import format_utc, utcnow
 from . import documents as document_ops
 from .internals import COMMAND_TIMEOUT_SECONDS, PostgresInternals, PostgresPoolConfig
-from .schema import SCHEMA_PATH, ensure_schema
+from .schema import SCHEMA_PATH, ensure_schema, ensure_schema_on_connection
 from . import migrations as pg_migrations
 
 SLOW_QUERY_THRESHOLD_MS = 25.0
@@ -87,6 +87,13 @@ def _coerce_json(value: Any) -> Dict[str, Any]:
     return {}
 
 
+def _is_legacy_project_name_unique_violation(exc: asyncpg.UniqueViolationError) -> bool:
+    constraint_name = getattr(exc, "constraint_name", None)
+    if constraint_name == "scribe_projects_name_key":
+        return True
+    return "scribe_projects_name_key" in str(exc)
+
+
 def _coerce_json_list(value: Any) -> List[str]:
     if value is None:
         return []
@@ -118,6 +125,18 @@ def _command_count(tag: str) -> int:
         return int(parts[-1])
     except (ValueError, TypeError):
         return 0
+
+
+def _is_asyncpg_shutdown_future(context: Dict[str, Any]) -> bool:
+    message = str(context.get("message") or "")
+    exception = context.get("exception")
+    return (
+        "Future exception was never retrieved" in message
+        and exception is not None
+        and exception.__class__.__module__.startswith("asyncpg.")
+        and exception.__class__.__name__ == "ConnectionDoesNotExistError"
+        and "closed in the middle of operation" in str(exception)
+    )
 
 
 class PostgresStorage(StorageBackend):
@@ -159,6 +178,7 @@ class PostgresStorage(StorageBackend):
 
     async def setup(self) -> None:
         await self._ensure_schema()
+        await self._ensure_repo_scoped_project_identity()
 
     async def close(self) -> None:
         await self._internals.close()
@@ -179,32 +199,42 @@ class PostgresStorage(StorageBackend):
         normalized_root = normalize_repo_root(repo_root)
         repo_id = compute_repo_id(normalized_root)
         project_key = compute_project_key(repo_root=normalized_root, project_name=name)
-        row = await self._fetchrow(
-            """
-            INSERT INTO scribe_projects
-                (name, repo_root, repo_id, project_key, progress_log_path, docs_json, bridge_id, bridge_managed, updated_at)
-            VALUES
-                ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-            ON CONFLICT(project_key) DO UPDATE SET
-                name = EXCLUDED.name,
-                repo_root = EXCLUDED.repo_root,
-                repo_id = EXCLUDED.repo_id,
-                progress_log_path = EXCLUDED.progress_log_path,
-                docs_json = EXCLUDED.docs_json,
-                bridge_id = EXCLUDED.bridge_id,
-                bridge_managed = EXCLUDED.bridge_managed,
-                updated_at = NOW()
-            RETURNING id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed;
-            """,
-            name,
-            normalized_root,
-            repo_id,
-            project_key,
-            progress_log_path,
-            docs_json,
-            bridge_id,
-            bridge_managed,
-        )
+        try:
+            row = await self._fetchrow(
+                """
+                INSERT INTO scribe_projects
+                    (name, repo_root, repo_id, project_key, progress_log_path, docs_json, bridge_id, bridge_managed, updated_at)
+                VALUES
+                    ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                ON CONFLICT(project_key) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    repo_root = EXCLUDED.repo_root,
+                    repo_id = EXCLUDED.repo_id,
+                    progress_log_path = EXCLUDED.progress_log_path,
+                    docs_json = COALESCE(EXCLUDED.docs_json, scribe_projects.docs_json),
+                    bridge_id = EXCLUDED.bridge_id,
+                    bridge_managed = EXCLUDED.bridge_managed,
+                    updated_at = NOW()
+                RETURNING id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed;
+                """,
+                name,
+                normalized_root,
+                repo_id,
+                project_key,
+                progress_log_path,
+                docs_json,
+                bridge_id,
+                bridge_managed,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            if not _is_legacy_project_name_unique_violation(exc):
+                raise
+            await self._ensure_repo_scoped_project_identity()
+            raise RuntimeError(
+                "Postgres project identity setup did not remove the legacy "
+                "global project-name uniqueness constraint; refusing to "
+                "change an existing project's repo_root during upsert."
+            ) from exc
         assert row is not None
         return self._project_from_row(row)
 
@@ -269,12 +299,26 @@ class PostgresStorage(StorageBackend):
         tag = await self._execute("DELETE FROM scribe_projects WHERE name = $1;", project.name)
         return _command_count(tag) > 0
 
-    async def update_project_docs(self, name: str, docs_json: str) -> bool:
-        tag = await self._execute(
-            "UPDATE scribe_projects SET docs_json = $1, updated_at = NOW() WHERE name = $2;",
-            docs_json,
-            name,
-        )
+    async def update_project_docs(
+        self,
+        name: str,
+        docs_json: str,
+        *,
+        repo_root: Optional[str] = None,
+    ) -> bool:
+        if repo_root:
+            project_key = compute_project_key(repo_root=normalize_repo_root(repo_root), project_name=name)
+            tag = await self._execute(
+                "UPDATE scribe_projects SET docs_json = $1, updated_at = NOW() WHERE project_key = $2;",
+                docs_json,
+                project_key,
+            )
+        else:
+            tag = await self._execute(
+                "UPDATE scribe_projects SET docs_json = $1, updated_at = NOW() WHERE name = $2;",
+                docs_json,
+                name,
+            )
         return _command_count(tag) > 0
 
     async def create_repo_scope_grant(
@@ -540,6 +584,25 @@ class PostgresStorage(StorageBackend):
             1 if emoji == "⚠️" else 0,
             1 if emoji == "❌" else 0,
         )
+
+    async def update_entry_meta(
+        self,
+        *,
+        entry_id: str,
+        project: ProjectRecord,
+        meta: Dict[str, Any],
+    ) -> bool:
+        result = await self._execute(
+            """
+            UPDATE scribe_entries
+            SET meta = $1::jsonb
+            WHERE id = $2 AND project_id = $3;
+            """,
+            json.dumps(meta or {}, sort_keys=True),
+            entry_id,
+            project.id,
+        )
+        return str(result).upper().endswith(" 1")
 
     async def record_doc_change(
         self,
@@ -1856,15 +1919,18 @@ class PostgresStorage(StorageBackend):
         error_message: Optional[str] = None,
         response_size_bytes: Optional[int] = None,
         repo_root: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        measurement_scope: Optional[str] = None,
     ) -> None:
         try:
             await self._execute(
                 """
                 INSERT INTO tool_calls (
                     session_id, tool_name, timestamp, duration_ms, status,
-                    format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
+                    format_requested, project_name, agent_id, error_message, response_size_bytes,
+                    repo_root, correlation_id, measurement_scope
                 )
-                VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, $10);
+                VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
                 """,
                 session_id,
                 tool_name,
@@ -1876,6 +1942,8 @@ class PostgresStorage(StorageBackend):
                 error_message,
                 response_size_bytes,
                 normalize_repo_root(repo_root) if repo_root else None,
+                correlation_id,
+                measurement_scope,
             )
         except Exception as exc:
             LOGGER.error("Failed to record tool call: %s", exc)
@@ -1893,21 +1961,45 @@ class PostgresStorage(StorageBackend):
         error_message: Optional[str] = None,
         response_size_bytes: Optional[int] = None,
         repo_root: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        measurement_scope: Optional[str] = None,
     ) -> None:
         async def _write() -> None:
+            loop = asyncio.get_running_loop()
+            previous_handler = loop.get_exception_handler()
+
+            def _handle_asyncpg_shutdown_future(
+                active_loop: asyncio.AbstractEventLoop,
+                context: Dict[str, Any],
+            ) -> None:
+                if _is_asyncpg_shutdown_future(context):
+                    return
+                if previous_handler is not None:
+                    previous_handler(active_loop, context)
+                else:
+                    active_loop.default_exception_handler(context)
+
+            loop.set_exception_handler(_handle_asyncpg_shutdown_future)
             conn = await asyncpg.connect(
                 self._dsn,
                 timeout=COMMAND_TIMEOUT_SECONDS,
                 command_timeout=COMMAND_TIMEOUT_SECONDS,
+                server_settings={"search_path": f"{self._schema_name},public"},
             )
             try:
+                await ensure_schema_on_connection(
+                    conn=conn,
+                    schema_name=self._schema_name,
+                    schema_path=SCHEMA_PATH,
+                )
                 await conn.execute(
                     """
                     INSERT INTO tool_calls (
                         session_id, tool_name, timestamp, duration_ms, status,
-                        format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
+                        format_requested, project_name, agent_id, error_message, response_size_bytes,
+                        repo_root, correlation_id, measurement_scope
                     )
-                    VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, $10);
+                    VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
                     """,
                     session_id,
                     tool_name,
@@ -1919,6 +2011,8 @@ class PostgresStorage(StorageBackend):
                     error_message,
                     response_size_bytes,
                     normalize_repo_root(repo_root) if repo_root else None,
+                    correlation_id,
+                    measurement_scope,
                 )
             finally:
                 await conn.close()
@@ -1936,7 +2030,8 @@ class PostgresStorage(StorageBackend):
         params: List[Any] = [session_id]
         query = """
             SELECT id, tool_name, timestamp, duration_ms, status,
-                   format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
+                   format_requested, project_name, agent_id, error_message, response_size_bytes,
+                   repo_root, correlation_id, measurement_scope
             FROM tool_calls
             WHERE session_id = $1
             ORDER BY timestamp DESC
@@ -1958,6 +2053,8 @@ class PostgresStorage(StorageBackend):
                 "error_message": row["error_message"],
                 "response_size_bytes": row["response_size_bytes"],
                 "repo_root": row["repo_root"],
+                "correlation_id": row["correlation_id"],
+                "measurement_scope": row["measurement_scope"],
             }
             for row in rows
         ]
@@ -2286,11 +2383,41 @@ class PostgresStorage(StorageBackend):
         await self._ensure_column("scribe_projects", "repo_id", "TEXT")
         await self._ensure_column("scribe_projects", "project_key", "TEXT")
         await self._execute(
+            "ALTER TABLE agent_projects DROP CONSTRAINT IF EXISTS agent_projects_project_name_fkey;"
+        )
+        await self._execute(
+            "ALTER TABLE session_projects DROP CONSTRAINT IF EXISTS session_projects_project_name_fkey;"
+        )
+        await self._execute(
+            "ALTER TABLE agent_recent_projects DROP CONSTRAINT IF EXISTS agent_recent_projects_project_name_fkey;"
+        )
+        await self._execute(
+            "ALTER TABLE scribe_projects DROP CONSTRAINT IF EXISTS scribe_projects_name_key;"
+        )
+        await self._execute("DROP INDEX IF EXISTS scribe_projects_name_key;")
+        await self._backfill_missing_repo_scoped_project_identity()
+        await self._execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_projects_project_key_unique ON scribe_projects(project_key);"
         )
         await self._execute(
             "CREATE INDEX IF NOT EXISTS idx_scribe_projects_name_repo_id ON scribe_projects(name, repo_id);"
         )
+
+    async def _backfill_missing_repo_scoped_project_identity(self) -> None:
+        rows = await self._fetch(
+            """
+            SELECT id, name, repo_root
+            FROM scribe_projects
+            WHERE (repo_id IS NULL OR project_key IS NULL)
+              AND repo_root IS NOT NULL;
+            """
+        )
+        for row in rows:
+            await self._backfill_repo_scoped_project_identity_for_row(
+                row_id=int(row["id"]),
+                name=str(row["name"]),
+                repo_root=str(row["repo_root"]),
+            )
 
     async def _backfill_repo_scoped_project_identity_for_row(
         self,

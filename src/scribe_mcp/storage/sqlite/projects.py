@@ -357,7 +357,7 @@ async def upsert_project(
             DO UPDATE SET repo_root = excluded.repo_root,
                           repo_id = excluded.repo_id,
                           progress_log_path = excluded.progress_log_path,
-                          docs_json = excluded.docs_json,
+                          docs_json = COALESCE(excluded.docs_json, scribe_projects.docs_json),
                           bridge_id = excluded.bridge_id,
                           bridge_managed = excluded.bridge_managed;
             """,
@@ -535,13 +535,24 @@ async def update_project_docs(
     execute_fn: AsyncExecute,
     name: str,
     docs_json: str,
+    repo_root: Optional[str] = None,
 ) -> bool:
     await initialise_fn()
     async with write_lock:
-        await execute_fn(
-            "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
-            (docs_json, name),
-        )
+        if repo_root:
+            project_key = compute_project_key(
+                repo_root=normalize_repo_root(repo_root),
+                project_name=name,
+            )
+            await execute_fn(
+                "UPDATE scribe_projects SET docs_json = ? WHERE project_key = ?",
+                (docs_json, project_key),
+            )
+        else:
+            await execute_fn(
+                "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
+                (docs_json, name),
+            )
     return True
 
 

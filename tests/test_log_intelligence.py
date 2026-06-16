@@ -23,9 +23,15 @@ def test_report_contract_counts_signals_and_next_actions() -> None:
         "missing_priority": 1,
         "missing_category": 1,
         "missing_tags": 1,
+        "generic_tool_duration_entries": 0,
     }
     signal_codes = {signal["code"] for signal in report["signals"]}
-    assert signal_codes == {"LOG_MISSING_PRIORITY", "LOG_MISSING_CATEGORY", "LOG_MISSING_TAGS"}
+    assert signal_codes == {
+        "LOG_MISSING_PRIORITY",
+        "LOG_MISSING_CATEGORY",
+        "LOG_MISSING_TAGS",
+        "missing_generic_tool_duration",
+    }
     assert any("priority" in action for action in report["next_actions"])
 
 
@@ -48,6 +54,7 @@ def test_build_report_from_path_uses_parser_schema_stably(tmp_path) -> None:
     assert report["counts"]["entries_total"] == 2
     assert report["counts"]["missing_category"] == 1
     assert report["counts"]["missing_tags"] == 1
+    assert report["counts"]["generic_tool_duration_entries"] == 0
     assert report["signals"][0]["severity"] in {"low", "medium", "high", "critical"}
 
 
@@ -80,6 +87,7 @@ def test_timing_envelope_graceful_when_missing_timing_data() -> None:
     assert envelope["path"]["dispatch"] == "unknown"
     assert envelope["startup"]["phases_ms"] == {}
     assert envelope["tools"]["set_project"]["phases_ms"] == {}
+    assert envelope["tools"]["generic"]["phases_ms"]["missing_generic_tool_duration"] is True
     budget_status = envelope["budget_status"]
     assert budget_status["schema_version"] == "runtime-efficiency-budget.v1"
     assert budget_status["metrics"]["cold_start_ms"]["status"] == "unknown"
@@ -98,3 +106,17 @@ def test_timing_envelope_budget_status_for_set_project_thresholds() -> None:
     assert budget_status["warn_ms"] is not None
     assert budget_status["fail_ms"] is not None
     assert budget_status["status"] in {"near_budget", "over_budget"}
+
+
+def test_timing_envelope_reports_persisted_generic_duration() -> None:
+    entries = parse_lines(
+        [
+            "[ℹ️] [2026-05-01 01:00:00 UTC] [Agent: Forge] [Project: Alpha] Generic tool call | duration_ms=12.5; correlation_id=call-123; measurement_scope=tool_only",
+        ]
+    )
+
+    report = build_log_intelligence_report(entries, scope={"source": "x.md", "project": "Alpha"})
+
+    assert report["counts"]["generic_tool_duration_entries"] == 1
+    assert report["timing_envelope"]["tools"]["generic"]["phases_ms"]["latest_duration_ms"] == 12.5
+    assert "missing_generic_tool_duration" not in {signal["code"] for signal in report["signals"]}

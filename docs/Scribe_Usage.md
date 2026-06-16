@@ -1,6 +1,6 @@
 # Scribe MCP usage guide
 
-Release line: `2.6.0`
+Release line: `2.7.0`
 Updated: `2026-06-16`
 
 This guide is about day-to-day usage once Scribe is installed.
@@ -15,7 +15,7 @@ Install behavior reminder for day-to-day operators:
 - use `scribe install --commit --yes` for approved non-interactive commit flows
 - use `--project-codex` only when you explicitly want Codex projection after core install
 
-In `2.6.0`, Scribe ships the document topology foundation plus first-class bug/security report follow-up editing and agent-ready quality governance: managed docs have canonical lifecycle metadata, typed deterministic edges, topology/metadata scans, safe repair modes, stale cleanup recommendations, quality handoff checks, bulk `quality_check` mode for Atlas-style project or wave validation, sanitized downstream ingestion manifests, and governed case-report resolution through `manage_docs`.
+In `2.7.0`, Scribe ships faster repeated project binding, queryable runtime telemetry, append-entry phase timing, physical/logical reconciliation diagnostics, JSON probe output, same-server root comparison tooling, and background telemetry cleanup for local probes. It also includes the document topology foundation plus first-class bug/security report follow-up editing and agent-ready quality governance: managed docs have canonical lifecycle metadata, typed deterministic edges, topology/metadata scans, safe repair modes, stale cleanup recommendations, quality handoff checks, bulk `quality_check` mode for Atlas-style project or wave validation, sanitized downstream ingestion manifests, and governed case-report resolution through `manage_docs`.
 Release governance in this line also blocks missing current-version changelog coverage: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is emitted by `quality_check`, echoed in reminders, and shown in `project_health` quality signals until fixed. Quality responses include grouped warning families, ranked agent actions, file/section repair hints, and handoff follow-up actions so agents can move directly from finding to fix.
 
 ## The short mental model
@@ -89,6 +89,8 @@ On a fresh project, `set_project` can do more than bind context. It can scaffold
 That is why `set_project` is such an important starting point. It creates the workspace where later `manage_docs`, `append_entry`, and query tools can operate coherently.
 
 It also sets up the basis for the project-registry view later. Scribe is not just creating files; it is creating a project the runtime can inspect for lifecycle, activity, and doc-health signals.
+
+If the same agent is already bound to the same project and repo root in the same live session, structured and compact `set_project` calls take the reuse path. That response includes `side_effects.binding_reused=true`, skips persistent project/session/doc writes, skips mutation-time reminder refresh, and leaves performance timing in structured telemetry instead of warning output.
 
 ## The tool families you will actually use
 

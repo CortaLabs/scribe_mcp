@@ -125,13 +125,20 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
             name=name,
         )
 
-    async def update_project_docs(self, name: str, docs_json: str) -> bool:
+    async def update_project_docs(
+        self,
+        name: str,
+        docs_json: str,
+        *,
+        repo_root: Optional[str] = None,
+    ) -> bool:
         return await project_ops.update_project_docs(
             initialise_fn=self._initialise,
             write_lock=self._write_lock,
             execute_fn=self._execute,
             name=name,
             docs_json=docs_json,
+            repo_root=repo_root,
         )
 
     async def create_repo_scope_grant(
@@ -269,6 +276,22 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
             tags=tags,
             confidence=confidence,
             log_type=log_type,
+        )
+
+    async def update_entry_meta(
+        self,
+        *,
+        entry_id: str,
+        project: ProjectRecord,
+        meta: Dict[str, Any],
+    ) -> bool:
+        return await entry_ops.update_entry_meta(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            execute_fn=self._execute,
+            entry_id=entry_id,
+            project=project,
+            meta=meta,
         )
 
     async def record_doc_change(

@@ -10,7 +10,7 @@ import re
 logger = logging.getLogger(__name__)
 import uuid
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
@@ -1919,7 +1919,7 @@ async def _rotate_single_log(
         })
         return result
 
-    rotation_start_time = datetime.utcnow()
+    rotation_start_time = datetime.now(timezone.utc)
 
     archive_suffix = _build_archive_suffix(suffix, log_type, rotation_id)
 
@@ -1997,7 +1997,7 @@ async def _rotate_single_log(
     state_success = update_project_state(project["name"], rotation_metadata)
 
     rotation_duration = max(
-        0.0, (datetime.utcnow() - rotation_start_time).total_seconds()
+        0.0, (datetime.now(timezone.utc) - rotation_start_time).total_seconds()
     )
 
     if rendered_template:

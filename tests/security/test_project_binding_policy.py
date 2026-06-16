@@ -12,6 +12,7 @@ from scribe_mcp.doc_management.runtime import (
     handle_manage_docs_request,
     register_document_path,
 )
+from scribe_mcp.doc_management import runtime as doc_runtime_module
 from scribe_mcp.shared import logging_utils as logging_utils_module
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, resolve_logging_context
@@ -142,7 +143,7 @@ class _ExplicitOverrideBackend:
     async def get_session_project(self, _session_id: str):
         return "trusted-project"
 
-    async def fetch_project(self, name: str):
+    async def fetch_project(self, name: str, *, repo_root: str | None = None):
         if name == "trusted-project":
             return SimpleNamespace(
                 name="trusted-project",
@@ -167,7 +168,7 @@ class _ExplicitOverrideNoBindingBackend:
     async def get_session_project(self, _session_id: str):
         return None
 
-    async def fetch_project(self, name: str):
+    async def fetch_project(self, name: str, *, repo_root: str | None = None):
         if name == "other-project":
             return SimpleNamespace(
                 name="other-project",
@@ -179,6 +180,115 @@ class _ExplicitOverrideNoBindingBackend:
 
     async def list_projects(self):
         return []
+
+
+class _DuplicateProjectNameBackend:
+    def __init__(self, *, trusted_root: str) -> None:
+        self.trusted_root = trusted_root
+        self.other_root = "/tmp/other-shared"
+        self.fetch_calls: list[tuple[str, str | None]] = []
+
+    async def get_session_project(self, _session_id: str):
+        return "shared-project"
+
+    async def fetch_project(self, name: str, *, repo_root: str | None = None):
+        self.fetch_calls.append((name, repo_root))
+        if name != "shared-project":
+            return None
+        if repo_root == self.trusted_root:
+            return SimpleNamespace(
+                name="shared-project",
+                repo_root=self.trusted_root,
+                progress_log_path=f"{self.trusted_root}/PROGRESS_LOG.md",
+                docs_json=None,
+            )
+        if repo_root == self.other_root:
+            return SimpleNamespace(
+                name="shared-project",
+                repo_root=self.other_root,
+                progress_log_path=f"{self.other_root}/PROGRESS_LOG.md",
+                docs_json=None,
+            )
+        return None
+
+    async def list_projects(self):
+        return [
+            SimpleNamespace(
+                name="shared-project",
+                repo_root=self.trusted_root,
+                progress_log_path=f"{self.trusted_root}/PROGRESS_LOG.md",
+                docs_json=None,
+            ),
+            SimpleNamespace(
+                name="shared-project",
+                repo_root=self.other_root,
+                progress_log_path=f"{self.other_root}/PROGRESS_LOG.md",
+                docs_json=None,
+            ),
+        ]
+
+
+def _verified_execution_context(repo_root: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        mode="project",
+        stable_session_id="session-security",
+        session_id="session-security",
+        resolved_scope=SimpleNamespace(
+            repo_root=repo_root,
+            provenance=SimpleNamespace(repo_root="verified"),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_logging_context_resolves_duplicate_project_name_with_verified_repo_root(monkeypatch) -> None:
+    monkeypatch.delenv("SCRIBE_RELEASE_PROFILE", raising=False)
+    trusted_root = "/tmp/trusted-shared"
+    backend = _DuplicateProjectNameBackend(trusted_root=trusted_root)
+
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return _BindingState()
+
+    server_module = SimpleNamespace(
+        state_manager=SimpleNamespace(record_tool=_record_tool, load=_load_state),
+        storage_backend=backend,
+        get_execution_context=lambda: _verified_execution_context(trusted_root),
+        get_agent_identity=lambda: None,
+    )
+
+    context = await resolve_logging_context(
+        tool_name="append_entry",
+        server_module=server_module,
+        require_project=True,
+        recovery_mode="none",
+    )
+
+    assert context.project is not None
+    assert context.project["root"] == trusted_root
+    assert backend.fetch_calls == [("shared-project", trusted_root)]
+
+
+@pytest.mark.asyncio
+async def test_doc_runtime_load_project_record_uses_verified_repo_root() -> None:
+    trusted_root = "/tmp/trusted-shared"
+    backend = _DuplicateProjectNameBackend(trusted_root=trusted_root)
+    server_module = SimpleNamespace(
+        storage_backend=backend,
+        get_execution_context=lambda: _verified_execution_context(trusted_root),
+        state_manager=None,
+    )
+
+    project = await doc_runtime_module._load_project_record(
+        project_name="shared-project",
+        server_module=server_module,
+    )
+
+    assert project is not None
+    assert project["root"] == trusted_root
+    assert backend.fetch_calls == [("shared-project", trusted_root)]
 
 
 class _PolicyHelper(LoggingToolMixin):
@@ -573,7 +683,7 @@ async def test_register_document_path_uses_canonical_stable_session_binding(tmp_
     captured: dict[str, object] = {}
 
     class _Backend:
-        async def update_project_docs(self, _project_name: str, _docs_json: str) -> None:
+        async def update_project_docs(self, _project_name: str, _docs_json: str, **_kwargs) -> None:
             return None
 
     class _StateManager:
@@ -631,7 +741,7 @@ async def test_auto_register_document_uses_canonical_stable_session_binding(tmp_
     captured: dict[str, object] = {}
 
     class _Backend:
-        async def update_project_docs(self, _project_name: str, _docs_json: str) -> None:
+        async def update_project_docs(self, _project_name: str, _docs_json: str, **_kwargs) -> None:
             return None
 
     class _StateManager:

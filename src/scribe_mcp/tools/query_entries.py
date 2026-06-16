@@ -637,7 +637,10 @@ async def _execute_search_with_fallbacks(
             if backend and resolved_project and project_context.project:
                 try:
                     # Fetch project record from database
-                    project_record = await backend.fetch_project(project_context.project["name"])
+                    project_record = await backend.fetch_project(
+                        project_context.project["name"],
+                        repo_root=project_context.project.get("root"),
+                    )
                     
                     if project_record and hasattr(backend, 'query_entries_paginated'):
                         # Map search_params to backend method signature

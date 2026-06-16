@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Mapping
 
 import pytest
 
@@ -221,6 +222,83 @@ def test_readiness_includes_lifecycle_status_mismatch_as_blocker(tmp_path: Path)
     doc = quality["documents"][0]
     assert "SCF_LIFECYCLE_STATUS_MISMATCH" in doc["warning_codes"]
     assert "SCF_LIFECYCLE_STATUS_MISMATCH" in doc["readiness_blocker_codes"]
+
+
+def test_collect_managed_doc_quality_state_caches_unchanged_doc_signatures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    architecture = tmp_path / "ARCHITECTURE_GUIDE.md"
+    architecture.write_text("initial", encoding="utf-8")
+    project = {
+        "docs": {"architecture": str(architecture)},
+        "name": "demo",
+        "root": str(tmp_path),
+    }
+    calls: list[str] = []
+
+    def _warnings(**kwargs: Any) -> list[dict[str, Any]]:
+        calls.append(str(kwargs.get("text") or ""))
+        return []
+
+    readiness.clear_managed_doc_quality_state_cache()
+    monkeypatch.setattr(readiness, "collect_managed_doc_quality_warnings", _warnings)
+
+    first = collect_managed_doc_quality_state(project)
+    first["documents"].append({"doc_name": "mutated-by-caller"})
+    second = collect_managed_doc_quality_state(project)
+
+    assert calls == ["initial"]
+    assert second["documents"] == [
+        {
+            "doc_name": "architecture",
+            "path": str(architecture),
+            "warning_codes": [],
+            "readiness_blocker_codes": [],
+            "blocking_warning_codes": [],
+        }
+    ]
+
+
+def test_collect_managed_doc_quality_state_invalidates_after_doc_signature_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checklist = tmp_path / "CHECKLIST.md"
+    checklist.write_text("clean", encoding="utf-8")
+    project: Mapping[str, Any] = {
+        "docs": {"checklist": str(checklist)},
+        "name": "demo",
+        "root": str(tmp_path),
+    }
+    calls: list[str] = []
+
+    def _warnings(**kwargs: Any) -> list[dict[str, Any]]:
+        text = str(kwargs.get("text") or "")
+        calls.append(text)
+        if "blocked" not in text:
+            return []
+        return [
+            {
+                "code": "SCF_FRONTMATTER_MISMATCH",
+                "severity": "critical",
+                "blocking": True,
+                "suggested_repair": "repair",
+            }
+        ]
+
+    readiness.clear_managed_doc_quality_state_cache()
+    monkeypatch.setattr(readiness, "collect_managed_doc_quality_warnings", _warnings)
+
+    first = collect_managed_doc_quality_state(project)
+    checklist.write_text("blocked and changed", encoding="utf-8")
+    second = collect_managed_doc_quality_state(project)
+
+    assert calls == ["clean", "blocked and changed"]
+    assert first["status"] == "pass"
+    assert second["status"] == "blocked"
+    assert second["readiness_blocker_count"] == 1
+    assert second["warning_counts_by_code"]["SCF_FRONTMATTER_MISMATCH"] == 1
 
 
 def test_local_postgres_roundtrip_label_builder_emits_public_labels_only() -> None:

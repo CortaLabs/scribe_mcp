@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -261,6 +262,7 @@ async def read_recent(
     Returns:
         Paginated response with recent entries and metadata
     """
+    _tool_started_perf_counter = time.perf_counter()
     state_snapshot = await server_module.state_manager.record_tool("read_recent")
 
     # Apply Phase 1 exception healing to all parameters
@@ -383,7 +385,10 @@ async def read_recent(
 
     backend = server_module.storage_backend
     if backend:
-        record = await backend.fetch_project(project["name"])
+        record = await backend.fetch_project(
+            project["name"],
+            repo_root=project.get("root"),
+        )
         if record:
             # Use pagination if available
             if hasattr(backend, 'fetch_recent_entries_paginated'):
@@ -445,7 +450,10 @@ async def read_recent(
                 if context.reminders:
                     response["reminders"] = list(context.reminders)
                 return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-                    response, format, "read_recent"
+                    response,
+                    format,
+                    "read_recent",
+                    telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
                 )
 
             # Apply EntryLimitManager for structured/compact formats
@@ -489,7 +497,10 @@ async def read_recent(
             if context.reminders:
                 response["reminders"] = list(context.reminders)
             return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-                response, format, "read_recent"
+                response,
+                format,
+                "read_recent",
+                telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
             )
 
     # File-based fallback with pagination
@@ -545,7 +556,10 @@ async def read_recent(
         if context.reminders:
             response["reminders"] = list(context.reminders)
         return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-            response, format, "read_recent"
+            response,
+            format,
+            "read_recent",
+            telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
         )
 
     # Apply EntryLimitManager for file-based fallback (structured/compact formats)
@@ -589,7 +603,10 @@ async def read_recent(
     if context.reminders:
         response["reminders"] = list(context.reminders)
     return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-        response, format, "read_recent"
+        response,
+        format,
+        "read_recent",
+        telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
     )
 
 

@@ -54,3 +54,8 @@
 - `source_project`: scribe_mcp
 - `source_entry_id`: 20260616:quality-check-agent-actions-bulk-write-barrier-2-6-0
 - `summary`: Release 2.6.0 makes `manage_docs quality_check` agent-actionable with grouped warning families, ranked `agent_actions`, file/section context, repair hints, and provenance; adds Atlas bulk quality checks for project or bounded doc-list validation; adds concrete quality handoff actions; protects mutation surfaces with write barriers and Postgres backup/restore custody; blocks local operator-only tools over exported remote transport; and supplements sparse Postgres `read_recent` responses from canonical progress logs.
+
+## Runtime latency, telemetry, and binding reuse release
+- `source_project`: integrate_system_scribe_latency_20260616t050042z
+- `source_entry_id`: 20260616:runtime-latency-telemetry-binding-reuse-2-7-0
+- `summary`: Bumped the public release line to `2.7.0`. Scribe now records queryable tool runtimes with durations, correlation IDs, measurement scope, and repo root; `append_entry` returns phase timing; `set_project` has a strict same-agent/session/project/root no-write reuse path that skips redundant writes and mutation-time reminder refresh; successful timing logs stay out of warning output; local probes support JSON output, same-server root comparison, and background telemetry draining; diagnostics expose physical/logical reconciliation for fresh Postgres installs with existing file-backed Scribe artifacts.

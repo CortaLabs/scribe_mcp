@@ -1,0 +1,115 @@
+# Review Report: P3 Crucible Stage
+
+**Review Date:** 2026-06-16 06:01:15 UTC
+**Reviewer:** seshat
+**Project:** integrate-system-scribe-latency-20260616T050042Z
+**Stage:** p3_crucible
+**Review Type:** Post-Implementation
+
+---
+
+<!-- ID: executive_summary -->
+## Executive Summary
+
+Decision: PASS. Score: 96/100.
+
+This is a coordinator-repaired managed review artifact for P3 because the package-specific reviewer, Galileo (`019ecf02-421e-7902-b157-fa3445206c78`), completed direct validation but did not have `mcp__scribe__*` tools exposed in that session after `tool_search`. The substantive validation result is preserved here without changing the gate decision.
+
+P3 implemented the Council hook source-authority and install/readback gate in `council_mcp` source authority only. The validated change set is limited to source and focused tests under `/home/austin/projects/MCP_SPINE/council_mcp`; no generated hook/config outputs were hand-edited, and no P4 hook timing implementation was included.
+
+Gate impact: P3 has package-specific Crucible PASS. P4 remains blocked until P1 also receives package-specific Crucible PASS. No dependent package is routed by this artifact.
+
+---
+
+<!-- ID: phase_review_results -->
+## Phase Review Results
+
+- Package: P3, Council hook source-authority and install/readback gate.
+- Validator: Galileo, `scribe-review-agent`, agent id `019ecf02-421e-7902-b157-fa3445206c78`.
+- Decision: PASS.
+- Score: 96/100.
+- Instant-fail conditions: none found.
+- Scribe artifact note: original reviewer could not call Scribe tools in that session; coordinator repaired this managed artifact from the completed validation output and recorded the tool-surface failure in Scribe.
+
+Validated claims:
+- Source/test-only P3 diff was limited to `src/council_mcp/hook_specs.py`, `src/council_mcp/compiler/phases/hooks.py`, `src/council_mcp/compiler/update_executor.py`, `src/council_mcp/compiler/update_phases.py`, and `tests/test_hook_specs.py`, `tests/test_runtime_hook_generation.py`, `tests/test_update_executor.py`.
+- No P4 timing edits were found in `runtime_hooks/post_tool.py`, `runtime_hooks/session_start.py`, or `hooks/client.py`.
+- `build_hook_source_authority_readback()` exists and reports Council source/templates/compiler authority, generated-copy non-authority, stale-copy labels, and operator-override surfaces.
+- Dry-run JSON exposed command-visible `hook_source_authority` rows with `contract=hook_source_authority_readback.v1`, `source_authority=council_mcp_source_templates_compiler`, `generated_copy_authority=non_authoritative_until_regenerated`, `stale_generated_copies=0`, and `operator_overrides=1`.
+
+---
+
+<!-- ID: detailed_analysis -->
+## Detailed Analysis
+
+Command evidence from Galileo's package-specific validation:
+
+- `pytest tests/test_hook_specs.py tests/test_runtime_hook_generation.py tests/test_update_executor.py -q` passed: 40 tests in 6.89s.
+- `uv run pytest tests/test_hook_specs.py tests/test_runtime_hook_generation.py tests/test_update_executor.py -q` was environment-blocked by unsatisfied `agentkit>=0.2.0,<0.6.0`; ambient pytest was accepted as adequate package proof because the focused suite ran in the active environment and covered the P3 surfaces.
+- `python -m compileall -q ...` passed on touched source files.
+- `git diff --check -- ...` passed.
+- `council update --dry-run --from-yaml --json` emitted the expected hook source-authority readback.
+- `ruff check ...` failed only on pre-existing `F811` duplicate facade definitions in `src/council_mcp/compiler/update_phases.py`, outside the P3 hook-authority edits. The validator treated this as residual repo debt, not a P3 blocker.
+
+Source authority assessment:
+
+P3 correctly keeps Council hook authority in `council_mcp` source/templates/compiler. The generated-copy authority label explicitly marks generated copies as non-authoritative until regenerated. The readback reports stale generated-copy counts and operator override counts, which satisfies the source-authority and broad-rollout safety requirement without hand-editing downstream generated files.
+
+Scope assessment:
+
+The validator did not find P4 timing implementation in runtime hook files and did not find generated-output hand edits. This preserves the architecture boundary: P3 proves source authority and install/readback safety; P4 later owns hook-only timing and fail-open telemetry.
+
+---
+
+<!-- ID: recommendations -->
+## Recommendations
+
+1. Treat P3 as package-specific Crucible PASS once this managed artifact quality-checks cleanly.
+2. Do not route P4 until P1 also has package-specific Crucible PASS, because P4 depends on both P3 and P1 gates.
+3. Preserve the new hook source-authority readback as the required proof lane for broad hook rollout.
+4. Treat the delegated-review Scribe tool discovery failure as an orchestration defect: future delegated prompts must require `tool_search` for `mcp__scribe set_project read_recent append_entry manage_docs` before any agent claims Scribe tools are unavailable.
+5. Track the pre-existing `F811` duplicate facade definitions in `council_mcp/src/council_mcp/compiler/update_phases.py` as separate repo debt, not a P3 blocker.
+
+---
+
+<!-- ID: agent_performance_assessment -->
+## Agent Performance Assessment
+
+Galileo's substantive validation was useful and source-backed, but the Scribe audit behavior failed the workstream standard. The validator should have kept searching for Scribe tools through `tool_search` and should not have framed missing direct exposure as a final tool-surface blocker without exhausting the discovery path.
+
+Coordinator corrective action:
+- This artifact records the validation evidence and the Scribe-tool failure separately.
+- Future delegated prompts in this workstream must explicitly require `tool_search` for Scribe tools before claiming they are unavailable.
+- A delegated agent that cannot access Scribe after discovery must report the exact search query and result, not a generic unavailable claim.
+
+---
+
+<!-- ID: compliance_verification -->
+## Compliance Verification
+
+- Scribe project binding: repaired by coordinator in the active project `integrate-system-scribe-latency-20260616T050042Z`.
+- Managed artifact: created and populated through `manage_docs` by coordinator after validator tool-discovery failure.
+- P3 scope: passed. Source-authority/readback changes are bounded to `council_mcp` source and tests.
+- Generated-output policy: passed. No generated hook/config outputs were hand-edited.
+- P4 boundary: passed. No hook timing/fail-open telemetry implementation was included in P3.
+- Test proof: passed. Focused ambient pytest passed 40/40; compileall and diff-check passed; dry-run JSON readback was present.
+- Known non-blocker: `uv run pytest` blocked on the environment's `agentkit` availability, and full ruff is blocked by pre-existing F811 duplicate facade definitions outside P3.
+
+---
+
+<!-- ID: final_decision -->
+## Final Decision
+
+**REQUIRES_REVISION**
+
+**Rationale:** Decision rationale should reference concrete evidence from findings and verification.
+
+**Conditions for Proceeding:**
+- [ ] Complete required remediation tasks and capture verification evidence.
+- [ ] Re-run applicable validation and document outcome in the managed report.
+
+**Expected Timeline:** To be confirmed by owner after remediation scope review.
+
+---
+
+*This review report is part of the quality assurance process for integrate-system-scribe-latency-20260616T050042Z.*

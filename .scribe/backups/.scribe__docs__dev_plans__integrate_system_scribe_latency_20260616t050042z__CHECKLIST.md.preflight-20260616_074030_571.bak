@@ -1,0 +1,76 @@
+---
+id: integrate_system_scribe_latency_20260616t050042z-checklist
+title: "\u2705 Acceptance Checklist \u2014 integrate-system-scribe-latency-20260616T050042Z"
+doc_type: checklist
+doc_name: checklist
+category: engineering
+status: ready
+version: '0.1'
+last_updated: 2026-06-16 07:40:30 UTC
+maintained_by: Scribe
+created_by: agent-20260616-052258-6aee159b
+owners:
+- ArchitectAgent
+related_docs: []
+tags:
+- checklist
+- latency
+- scribe
+- hooks
+- planning
+summary: Checklist covering architecture docs, pre-implementation review gates, package
+  acceptance criteria, and final validation rules.
+canonical_doc_type: checklist
+edit_trace:
+  tool: manage_docs
+  created_at: 2026-06-16 05:30:25 UTC
+  created_via: frontmatter_update
+  last_edited_at: 2026-06-16 07:40:30 UTC
+  last_edited_by: Scribe
+  last_action: status_update
+  stage: architecture
+---
+
+# ✅ Acceptance Checklist — integrate-system-scribe-latency-20260616T050042Z
+**Author:** ArchitectAgent
+**Version:** v0.2
+**Status:** Ready
+**Last Updated:** 2026-06-16 05:30 UTC
+
+> Acceptance checklist for the latency telemetry and hook-attribution implementation lane.
+
+---
+## Documentation Hygiene
+<!-- ID: documentation_hygiene -->
+- [x] <!-- id: docs-architecture-guide --> Architecture guide documents telemetry persistence, append-entry timing, hook source authority, fresh-DB diagnostics, and optional P7 defer rules. Proof: `ARCHITECTURE_GUIDE.md` section IDs and file references align with the verified research set. | proof=ARCHITECTURE_GUIDE.md updated with P1-P7 architecture, repo ownership, pre-implementation review recommendation, and rollback/defer rules; manage_docs quality_check dry_run passed on 2026-06-16.
+- [x] <!-- id: docs-phase-plan --> Phase plan defines P1-P7 packages, repo ownership, dependencies, Crucible gates, rollback rules, and review gates. Proof: `PHASE_PLAN.md` package headers and milestone table. | proof=PHASE_PLAN.md updated with ordered phases, package dependencies, package-specific Crucible gates, repo ownership, and rollback/defer rules; manage_docs quality_check dry_run passed on 2026-06-16.
+- [x] <!-- id: docs-checklist --> Checklist items map cleanly to the architecture contract and phase packages. Proof: item IDs correspond to package IDs or review gates. | proof=CHECKLIST.md updated with package-mapped item IDs, review gates, and final verification criteria for P1-P7; the checklist now matches the architecture contract and phase plan.
+- [x] <!-- id: docs-quality-check --> Managed planning docs pass `manage_docs quality_check dry_run` with zero blocking warnings. Proof: quality_check result for `ARCHITECTURE_GUIDE`, `PHASE_PLAN`, and `CHECKLIST`. | proof=manage_docs quality_check dry_run returned pass with zero warnings and zero readiness blockers for ARCHITECTURE_GUIDE, PHASE_PLAN, and CHECKLIST on 2026-06-16.
+
+---
+## Phase 0
+<!-- ID: phase_0 -->
+- [x] <!-- id: p0-witness-review --> Witness confirms repo ownership boundaries, no generated-output edits, additive-only response changes, and read-only reconciliation design. Proof: Witness review artifact or operator waiver. | proof=REVIEW_PHASE0_PRE_IMPLEMENTATION_20260616 PASS 96/100. Witness confirmed explicit scribe_mcp versus council_mcp ownership, no generated-output hand-edit dependence, additive-only response changes, and read-only fresh-DB reconciliation. Review artifact: REVIEW_REPORT_phase_0_review_2026-06-16_0545.md; manage_docs quality_check dry_run passed with zero warnings on 2026-06-16.
+- [x] <!-- id: p0-arbiter-review --> Arbiter confirms P1/P3 first-routing order, P4/P5/P7 dependency gates, and no silent redesign or migration scope. Proof: Arbiter review artifact or operator waiver. | proof=REVIEW_PHASE0_PRE_IMPLEMENTATION_20260616 PASS 96/100. Arbiter confirmed P1 and P3 as the only legal first-wave packages, P4/P5/P7 dependency gates, package-specific Crucible ordering, and no silent redesign, migration, duplicate subsystem, or scope creep. Review artifact: REVIEW_REPORT_phase_0_review_2026-06-16_0545.md; legal next routing remains P1 and P3 only.
+
+---
+## Phase 1
+<!-- ID: phase_1 -->
+- [x] <!-- id: p1-telemetry-persistence --> P1 persists non-null generic tool `duration_ms` plus correlation metadata to TOOL_LOG and Postgres `tool_calls`. Proof: tests plus readback from both sinks after an MCP tool call. | proof=P1 package-specific Crucible revalidation PASS 97/100 in REVIEW_P1_CRUCIBLE_REVALIDATION_20260616; required pytest lanes passed (64/64 and 29/29); fresh SQLite/TOOL_LOG readback probe passed for set_project, append_entry, and read_recent with matching correlation_id, positive duration_ms, and measurement_scope=tool_only; report quality_check passed with zero warnings.
+- [x] <!-- id: p1-append-entry-timing --> P2 adds additive `append_entry` phase timing while preserving file-first success and the `db_mirror` contract. Proof: tests and a probe showing timing fields with `db_mirror.status=ok` and `db_mirror.status=error` scenarios. | proof=P2 revalidation PASS 96/100 in REVIEW_P2_CRUCIBLE_REVALIDATION_20260616; append_entry now persists final timing via project-scoped update_entry_meta after later phases/total_ms are known; required tests passed (focused 1/1, P2 suite 3/3, tests/test_tools.py 23/23) and report quality_check passed with zero warnings.
+- [x] <!-- id: p1-hook-authority-gate --> P3 proves Council source/template/compiler authority for hooks and preserves operator-authored overrides through dry-run readback. Proof: `council update --dry-run` plus hook generation tests. | proof=P3 implemented in council_mcp source authority. Changed hook_specs.py, compiler/phases/hooks.py, compiler/update_executor.py, compiler/update_phases.py, tests/test_hook_specs.py, tests/test_runtime_hook_generation.py, and tests/test_update_executor.py. Proof: `pytest tests/test_hook_specs.py tests/test_runtime_hook_generation.py tests/test_update_executor.py -q` passed 40/40; `python -m compileall -q src/council_mcp/hook_specs.py src/council_mcp/compiler/phases/hooks.py src/council_mcp/compil...
+
+---
+## Phase 2
+<!-- ID: phase_2 -->
+- [x] <!-- id: p2-hook-timing --> P4 records hook-only timing, avoids fake `duration_ms=0.0`, and preserves fail-open behavior on daemon/auth/http failures. Proof: hook tests and readback from a `set_project` hook run. | proof=P4 package-specific Crucible PASS 95/100 in REVIEW_P4_CRUCIBLE_20260616; hook-only timing labels and phase buckets verified, fake duration_ms=0.0 removed, fail-open behavior preserved, bounded 1.5s hook lane timeout validated; UV_NO_SYNC=1 hook suites passed 91/91 and endpoint/auth suites passed 51/51. Report quality_check passed with zero warnings. Generated hook propagation/readback remains a rollout caveat, not a P4 source-behavior blocker.
+- [x] <!-- id: p2-root-comparison --> P5 reports same-server `scribe_mcp` versus `council_mcp` root timings with explicit hook inclusion labels and Scribe-phase evidence. Proof: structured comparison report. | proof=REVIEW_P5_CRUCIBLE_REVALIDATION_POST_IDENTITY_FIX_20260616 PASS 100/100; same-server probe hook_excluded returned scribe root 428.524/427.864 ms, council root 248.895/248.318 ms, config_mutation=false, classification=inside_scribe_phases; live Postgres preserves separate repo-scoped project rows.
+- [x] <!-- id: p2-db-reconciliation --> P6 emits a read-only physical-versus-logical reconciliation report for projects, docs, entries, and tool calls. Proof: diagnostic output and repeat-run no-side-effect evidence. | proof=P6 revalidation PASS 96/100 in REVIEW_P6_CRUCIBLE_REVALIDATION_20260616; non-zero count drift now classifies honestly (2/1 and 5/3 -\> missing_logical_rows; 1/2 -\> logical_only), read-only/repeat-run behavior remains covered, required tests passed 6/6 and py_compile passed; report quality_check passed with zero warnings.
+- [x] <!-- id: p2-set-project-optimization --> P7 only lands if earlier measurement proves warm `set_project` duplicate writes are material; otherwise it is explicitly deferred. Proof: before/after phase timing plus call-count tests, or defer note linked from milestone tracking. | proof=Explicitly deferred in MEASUREMENT_TABLE_SCRIBE_LATENCY_20260616: Council-root set_project was faster than Scribe-root in same-server probe and outside-Scribe delta was -0.083 ms; no material duplicate-write optimization proven for P7.
+
+---
+## Final Verification
+<!-- ID: final_verification -->
+- [x] <!-- id: final-crucible-ordering --> Every dependent package routed only after the exact prerequisite package received its own Crucible PASS. Proof: package-by-package validation record. | proof=Package gates observed: P1 PASS 97 before P2/P5/P6 acceptance; P2 PASS 96; P3 PASS before P4; P4 PASS 95 before P5 hook/root attribution; P5 post-identity-fix PASS 100; P6 PASS 96; P7 explicitly deferred from measurement artifact rather than routed.
+- [x] <!-- id: final-measurement-table --> A before/after measurement table exists for `set_project`, `append_entry`, `read_recent`, and `manage_docs quality_check`, with host wall time and hook inclusion notes. Proof: structured measurement artifact. | proof=MEASUREMENT_TABLE_SCRIBE_LATENCY_20260616 records host wall time and hook inclusion notes for set_project, append_entry, read_recent, and manage_docs quality_check.
+- [ ] <!-- id: final-no-migration --> No destructive migration, implicit historical ingestion, or generated-output hand edits shipped in this lane. Proof: changed-file review plus validation notes.

@@ -53,6 +53,7 @@ async def test_schema_creation():
     conn.close()
 
     expected_indexes = [
+        'idx_tool_calls_correlation',
         'idx_tool_calls_project',
         'idx_tool_calls_session',
         'idx_tool_calls_timestamp',
@@ -112,7 +113,10 @@ async def test_record_tool_call():
         format_requested="readable",
         project_name="test_project",
         agent_id="test-agent",
-        response_size_bytes=1024
+        response_size_bytes=1024,
+        repo_root="/tmp/test",
+        correlation_id="call-123",
+        measurement_scope="tool_only",
     )
 
     # Verify it was inserted
@@ -134,10 +138,70 @@ async def test_record_tool_call():
         print(f"   Project: {row['project_name']}")
         print(f"   Agent: {row['agent_id']}")
         print(f"   Size: {row['response_size_bytes']} bytes")
+        assert row["duration_ms"] == 45.2
+        assert row["repo_root"] == "/tmp/test"
+        assert row["correlation_id"] == "call-123"
+        assert row["measurement_scope"] == "tool_only"
         return
     else:
         print("❌ Tool call was NOT recorded")
         pytest.fail("tool_calls schema behavior validation failed")
+
+
+async def test_legacy_tool_calls_schema_is_upgraded(tmp_path: Path):
+    """Fresh setup upgrades early tool_calls tables before telemetry inserts."""
+    test_db = tmp_path / "legacy_tool_calls.db"
+    conn = sqlite3.connect(test_db)
+    conn.execute(
+        """
+        CREATE TABLE tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    storage = SQLiteStorage(test_db)
+    await storage.setup()
+    await storage.upsert_session(
+        session_id="legacy-session",
+        transport_session_id="transport-legacy",
+        agent_id="test-agent",
+        repo_root="/tmp/test",
+        mode="sentinel",
+    )
+
+    await storage.record_tool_call(
+        session_id="legacy-session",
+        tool_name="read_recent",
+        duration_ms=12.5,
+        status="success",
+        format_requested="structured",
+        project_name="test_project",
+        agent_id="test-agent",
+        response_size_bytes=100,
+        repo_root="/tmp/test",
+        correlation_id="legacy-call-1",
+        measurement_scope="tool_only",
+    )
+
+    conn = sqlite3.connect(test_db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT status, duration_ms, correlation_id, measurement_scope FROM tool_calls WHERE session_id = ?",
+        ("legacy-session",),
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row["status"] == "success"
+    assert row["duration_ms"] == 12.5
+    assert row["correlation_id"] == "legacy-call-1"
+    assert row["measurement_scope"] == "tool_only"
 
 
 async def test_get_session_tool_calls():
@@ -158,7 +222,9 @@ async def test_get_session_tool_calls():
             tool_name=tool,
             duration_ms=10.0 + i * 5,
             status="success",
-            format_requested="readable"
+            format_requested="readable",
+            correlation_id=f"call-{i}",
+            measurement_scope="tool_only",
         )
 
     # Retrieve them
@@ -169,6 +235,8 @@ async def test_get_session_tool_calls():
         print(f"\nLast 5 calls (newest first):")
         for call in results[:5]:
             print(f"   - {call['tool_name']} ({call['duration_ms']}ms)")
+        assert any(call["correlation_id"] == "call-0" for call in results)
+        assert {call["measurement_scope"] for call in results if call["measurement_scope"]} == {"tool_only"}
         return
     else:
         print(f"❌ Expected at least 4 calls, got {len(results) if results else 0}")

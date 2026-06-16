@@ -25,7 +25,7 @@ import time
 from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from scribe_mcp.config.paths import default_db_path
 from scribe_mcp.storage.sqlite import SQLiteStorage
@@ -59,7 +59,7 @@ async def validate_db_performance() -> Dict[str, Any]:
         "ok": True,
         "operations": {},
         "sla_compliance": {"passed": True, "failed_operations": []},
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
     }
 
     try:
@@ -190,7 +190,7 @@ async def validate_session_isolation() -> Dict[str, Any]:
         "hash_uniqueness": {},
         "cooldown_isolation": False,
         "details": {},
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
     }
 
     try:
@@ -341,7 +341,7 @@ async def get_reminder_statistics() -> Dict[str, Any]:
         "oldest_record": None,
         "newest_record": None,
         "active_sessions": 0,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
     }
 
     try:
@@ -489,7 +489,7 @@ async def run_all_validations() -> Dict[str, Any]:
         "session_isolation": isolation,
         "statistics": stats,
         "overall_status": overall,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
     }
 
 

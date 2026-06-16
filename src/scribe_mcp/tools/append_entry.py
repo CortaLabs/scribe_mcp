@@ -93,6 +93,46 @@ _EXCEPTION_HEALER = ExceptionHealer()
 _PROJECT_REGISTRY = get_runtime_project_registry()
 
 
+class _AppendEntryPhaseTimer:
+    """Small additive timer for append_entry phase visibility."""
+
+    def __init__(self) -> None:
+        self._started = time.perf_counter()
+        self._phases_ms: Dict[str, float] = {}
+
+    def elapsed(self, phase_name: str, started: float) -> None:
+        self._phases_ms[phase_name] = round((time.perf_counter() - started) * 1000.0, 3)
+
+    def snapshot(self) -> Dict[str, float]:
+        return dict(self._phases_ms)
+
+    def mark_total(self) -> Dict[str, float]:
+        self._phases_ms["total_ms"] = round((time.perf_counter() - self._started) * 1000.0, 3)
+        return dict(self._phases_ms)
+
+
+def _append_entry_timing_payload(phases_ms: Dict[str, float]) -> Dict[str, Any]:
+    return {
+        "schema_version": "append-entry-timing.v1",
+        "phases_ms": phases_ms,
+    }
+
+
+def _summarize_bulk_timing(results: List[Dict[str, Any]], total_ms: float) -> Dict[str, Any]:
+    phases_ms: Dict[str, float] = {}
+    for result in results:
+        timing = result.get("timing")
+        phase_map = timing.get("phases_ms") if isinstance(timing, dict) else None
+        if not isinstance(phase_map, dict):
+            continue
+        for phase_name, value in phase_map.items():
+            if phase_name == "total_ms" or not isinstance(value, (int, float)):
+                continue
+            phases_ms[phase_name] = round(phases_ms.get(phase_name, 0.0) + float(value), 3)
+    phases_ms["total_ms"] = round(total_ms, 3)
+    return _append_entry_timing_payload(phases_ms)
+
+
 def _sanitize_message(message: str) -> str:
     """Sanitize message for MCP protocol compatibility."""
     if not message:
@@ -391,6 +431,7 @@ async def _process_single_entry(
     append_entry function and adds bulletproof error handling.
     """
     try:
+        phase_timer = _AppendEntryPhaseTimer()
         message = final_config.message
         status = final_config.status
         emoji = final_config.emoji
@@ -507,6 +548,7 @@ async def _process_single_entry(
         line = None  # Initialize to prevent UnboundLocalError
         repo_root = Path(project.get("root") or settings.project_root).resolve()
         log_context = {"component": "logs", "project_name": project.get("name")}
+        file_append_started = time.perf_counter()
         try:
             # Convert meta dict to meta_pairs tuple for _compose_line
             meta_pairs = tuple(meta_payload.items()) if meta_payload else ()
@@ -570,6 +612,8 @@ async def _process_single_entry(
             else:
                 # Ultimate fallback
                 raise write_error
+        finally:
+            phase_timer.elapsed("file_append_wal_ms", file_append_started)
 
         tee_paths: List[str] = []
         tee_reminders: List[Dict[str, Any]] = []
@@ -639,6 +683,8 @@ async def _process_single_entry(
         # Mirror entry into database-backed storage when available, without
         # impacting the primary file append path.
         backend = server_module.storage_backend
+        db_meta_payload: Optional[Dict[str, Any]] = None
+        db_project_record = None
         db_mirror: Dict[str, Any] = {
             "enabled": bool(backend),
             "backend": type(backend).__name__ if backend else None,
@@ -650,32 +696,50 @@ async def _process_single_entry(
             try:
                 timeout = settings.storage_timeout_seconds
                 # Ensure project row exists
-                async with asyncio.timeout(timeout):
-                    record = await backend.fetch_project(project["name"])
-                if not record:
+                db_fetch_started = time.perf_counter()
+                try:
                     async with asyncio.timeout(timeout):
-                        record = await backend.upsert_project(
-                            name=project["name"],
-                            repo_root=project.get("root", str(Path("."))),
-                            progress_log_path=str(log_path),
+                        record = await backend.fetch_project(
+                            project["name"],
+                            repo_root=project.get("root"),
                         )
+                finally:
+                    phase_timer.elapsed("db_fetch_project_ms", db_fetch_started)
+                if not record:
+                    db_upsert_started = time.perf_counter()
+                    try:
+                        async with asyncio.timeout(timeout):
+                            record = await backend.upsert_project(
+                                name=project["name"],
+                                repo_root=project.get("root", str(Path("."))),
+                                progress_log_path=project.get("progress_log", str(log_path)),
+                            )
+                    finally:
+                        phase_timer.elapsed("db_upsert_project_ms", db_upsert_started)
 
                 # Prepare and insert mirrored entry
+                db_project_record = record
                 sha_value = hashlib.sha256((line or "").encode("utf-8")).hexdigest()
                 ts_dt = timestamp_dt or utcnow()
-                async with asyncio.timeout(timeout):
-                    await backend.insert_entry(
-                        entry_id=entry_id,
-                        project=record,
-                        ts=ts_dt,
-                        emoji=resolved_emoji,
-                        agent=resolved_agent,
-                        message=message,
-                        meta=meta_payload,
-                        raw_line=line or "",
-                        sha256=sha_value,
-                        log_type=entry_log_type,
-                    )
+                db_meta_payload = dict(meta_payload)
+                db_meta_payload["append_entry_timing"] = _append_entry_timing_payload(phase_timer.snapshot())
+                db_insert_started = time.perf_counter()
+                try:
+                    async with asyncio.timeout(timeout):
+                        await backend.insert_entry(
+                            entry_id=entry_id,
+                            project=record,
+                            ts=ts_dt,
+                            emoji=resolved_emoji,
+                            agent=resolved_agent,
+                            message=message,
+                            meta=db_meta_payload,
+                            raw_line=line or "",
+                            sha256=sha_value,
+                            log_type=entry_log_type,
+                        )
+                finally:
+                    phase_timer.elapsed("db_insert_entry_ms", db_insert_started)
                 db_mirror["status"] = "ok"
             except Exception as db_exc:
                 # Database mirror failures should never block logging.
@@ -685,12 +749,20 @@ async def _process_single_entry(
 
         # Update project state with exception handling
         try:
-            await server_module.state_manager.update_project_activity(
-                project["name"], entry_id, message, len(line)
-            )
+            state_update_started = time.perf_counter()
+            try:
+                await server_module.state_manager.update_project_activity(
+                    project["name"], entry_id, message, len(line)
+                )
+            finally:
+                phase_timer.elapsed("state_update_ms", state_update_started)
             # Touch Project Registry entry for this project (best-effort).
             try:
-                _PROJECT_REGISTRY.touch_entry(project["name"], log_type=final_config.log_type)
+                registry_touch_started = time.perf_counter()
+                try:
+                    _PROJECT_REGISTRY.touch_entry(project["name"], log_type=final_config.log_type)
+                finally:
+                    phase_timer.elapsed("registry_touch_ms", registry_touch_started)
             except Exception:
                 pass
         except Exception as state_error:
@@ -698,6 +770,10 @@ async def _process_single_entry(
             pass
 
         # Prepare response
+        format_response_started = time.perf_counter()
+        reminders_started = time.perf_counter()
+        response_reminders = list(getattr(context, "reminders", []) or []) + tee_reminders
+        phase_timer.elapsed("reminders_ms", reminders_started)
         response = {
             "ok": True,
             "id": entry_id,
@@ -710,12 +786,36 @@ async def _process_single_entry(
             "line_id": line_id,
             "project_name": project["name"],  # For concurrent session clarity
             "recent_projects": list(recent),
-            "reminders": list(getattr(context, "reminders", []) or []) + tee_reminders,
+            "reminders": response_reminders,
             "db_mirror": db_mirror,
         }
 
         if timestamp_warning:
             response["warning"] = timestamp_warning
+
+        phase_timer.elapsed("format_response_ms", format_response_started)
+        final_timing = _append_entry_timing_payload(phase_timer.mark_total())
+        response["timing"] = final_timing
+
+        if (
+            backend
+            and db_mirror.get("status") == "ok"
+            and db_project_record is not None
+            and db_meta_payload is not None
+            and hasattr(backend, "update_entry_meta")
+        ):
+            try:
+                timeout = settings.storage_timeout_seconds
+                final_db_meta_payload = dict(db_meta_payload)
+                final_db_meta_payload["append_entry_timing"] = final_timing
+                async with asyncio.timeout(timeout):
+                    await backend.update_entry_meta(
+                        entry_id=entry_id,
+                        project=db_project_record,
+                        meta=final_db_meta_payload,
+                    )
+            except Exception as db_exc:
+                logger.warning("append_entry timing metadata update failed: %s", db_exc)
 
         return response
 
@@ -743,6 +843,7 @@ async def _process_bulk_entries(
     function and adds bulletproof error handling with intelligent recovery.
     """
     try:
+        bulk_started = time.perf_counter()
         items = final_config.items
         items_list = final_config.items_list
         auto_split = final_config.auto_split
@@ -952,6 +1053,10 @@ async def _process_bulk_entries(
                 }
 
         # Prepare bulk response
+        timing = _summarize_bulk_timing(results, (time.perf_counter() - bulk_started) * 1000.0)
+        for result in results:
+            result.pop("timing", None)
+
         successful_results = [r for r in results if r.get("ok", False)]
         failed_results = [r for r in results if not r.get("ok", False)]
 
@@ -963,6 +1068,7 @@ async def _process_bulk_entries(
             "failed": len(failed_results),
             "results": results,
             "recent_projects": list(recent),
+            "timing": timing,
         }
 
         # Backwards-compatible bulk response fields.
@@ -1151,6 +1257,7 @@ async def append_entry(
     # Phase 3 Task 3.5: Enhanced Function Decomposition
     # This function now uses decomposed sub-functions with bulletproof error handling
 
+    _tool_started_perf_counter = time.perf_counter()
     state_snapshot: Dict[str, Any] = {}
     explicit_agent_id = agent_id is not None
 
@@ -1473,10 +1580,17 @@ async def append_entry(
             )
 
         # Route through formatter for readable/structured/compact output
+        timing = result.get("timing") if isinstance(result.get("timing"), dict) else {}
+        phases_ms = timing.get("phases_ms") if isinstance(timing, dict) else None
         return await default_formatter.finalize_tool_response(
             data=result,
             format=format,
-            tool_name="append_entry"
+            tool_name="append_entry",
+            telemetry={
+                "started_perf_counter": _tool_started_perf_counter,
+                "measurement_scope": "tool_only",
+                "tool_phase_ms": phases_ms if isinstance(phases_ms, dict) else None,
+            },
         )
 
     except Exception as e:
@@ -2002,7 +2116,10 @@ async def _append_bulk_entries(
         try:
             timeout = settings.storage_timeout_seconds
             async with asyncio.timeout(timeout):
-                record = await backend.fetch_project(project["name"])
+                record = await backend.fetch_project(
+                    project["name"],
+                    repo_root=project.get("root"),
+                )
             if not record:
                 async with asyncio.timeout(timeout):
                     record = await backend.upsert_project(

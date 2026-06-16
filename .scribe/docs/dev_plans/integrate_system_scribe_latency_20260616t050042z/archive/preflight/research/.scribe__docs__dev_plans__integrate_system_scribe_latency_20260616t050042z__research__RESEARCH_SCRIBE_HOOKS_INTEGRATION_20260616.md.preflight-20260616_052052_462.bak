@@ -1,0 +1,101 @@
+
+# 🔬 Research Scribe Hooks Integration 20260616 — integrate-system-scribe-latency-20260616T050042Z
+**Author:** Scribe
+**Version:** v0.1
+**Status:** in_progress
+**Last Updated:** 2026-06-16 05:17:17 UTC
+
+> Summarise why this document exists and what decisions it captures.
+
+---
+## Executive Summary
+<!-- ID: executive_summary -->
+Council MCP is the durable source authority for hooks soon to be distributed. The authoritative chain is package hook defaults/registry plus runtime hook templates in `council_mcp`, rendered by `council update` compiler phases into downstream `.claude/hooks/*`, `.codex/hooks/*`, `.claude/settings.json`, and `.codex/config.toml`. Generated hook copies already present under `scribe_mcp/.codex/hooks` or repo-local generated outputs are stale/non-authoritative for this planning pass.
+
+The main Scribe-adjacent latency risk is not inside Scribe MCP timing payloads. It is hook-side work after or around tool calls: `PostToolUse` observes `mcp__scribe__set_project`, writes local binding/session/active-state files, may call Council Web HTTP bind/get/log endpoints, and falls back to file logging. `SessionStart` may perform two HTTP calls with different timeout behavior: one short 1.5s session-context read and one regular hook-client `session_start` call using the configured default hook timeout. `PreToolUse` can do a 2s PID lookup only for targeted urgent-message blocks when persona cannot be inferred from tool input.
+
+Blueprint should treat hook timing/telemetry as its own package, separate from Scribe MCP tool timing, and require install gating that proves generated hook surfaces came from Council MCP source/templates and that stale generated copies were pruned or regenerated.
+
+
+---
+## Research Scope
+<!-- ID: research_scope -->
+This addendum maps Council MCP hook source authority and Scribe-interacting hook behavior for the Scribe latency workflow. It explicitly treats generated hook copies under `scribe_mcp/.codex/hooks` and other repo-local generated outputs as non-authoritative comparison points only.
+
+Primary source authority to inspect: `/home/austin/projects/MCP_SPINE/council_mcp`, especially hook templates, compiler/install/export/update paths, and tests that prove generated downstream output shape.
+
+Boundaries: read-only research; no code edits; no generated-output edits; no `council update`; no hook installation or timing runs; no delegated agents.
+
+
+---
+## Findings
+<!-- ID: findings -->
+### Finding 1: Council MCP source authority for hooks
+
+Durable source authority:
+- Registry/default hook behavior: `src/council_mcp/templates/defaults/hooks/registry.yaml:1-200`.
+- Registration model and destinations: `src/council_mcp/hook_specs.py:11-76`, `:218-342`, `:345-473`.
+- Runtime hook script source: `src/council_mcp/templates/claude/runtime_hooks/*.py`; repo overrides resolve first from `.council/templates/claude/runtime_hooks/<file>`, then package templates (`hook_specs.py:345-369`).
+- Compiler/install pipeline: `sync_canonical_hook_source()` seeds `.council/hooks/*` while preserving local overrides unless forced (`hook_specs.py:146-195`); generation writes `.claude/hooks/*` (`compiler/phases/hooks.py:117-159`); reconciliation writes `.claude/settings.json`, prunes duplicate generated `.claude/settings.local.json` handlers, and materializes `.codex/hooks/*` (`compiler/phases/hooks.py:209-298`, `:301-444`).
+- Codex config merge preserves operator-authored hook entries, prunes compiler-owned `.codex/hooks/` entries, and re-renders generated entries (`codex_toml.py:472-561`).
+- `council update` is the expected operator path for source sync and materialization: `update_cmd.py:1871-1885`, `compiler/update_pipeline.py:118-164`, and `compiler/phases/generation.py:120-132`.
+
+Generated/stale outputs:
+- Existing generated hook copies in `scribe_mcp/.codex/hooks`, `scribe_mcp/.claude/hooks`, or any local generated outputs are non-authoritative for this addendum.
+- Generated surfaces are acceptable proof only after source-to-output parity is checked against the Council MCP template/compiler chain.
+
+### Finding 2: Hook paths that interact with Scribe or observe Scribe tools
+
+| Hook/source file | Generated destination | Scribe interaction | Blocking behavior | Fallback behavior | Latency risk | Rollout risk |
+|---|---|---|---|---|---|---|
+| `templates/claude/runtime_hooks/post_tool.py:273-315`, `:318-423` | `.claude/hooks/post_tool.py`; `.codex/hooks/post_tool.py` | Observes `mcp__scribe__set_project`; writes binding cache/session record/active binding; resolves project/workspace; logs every tool with project context | Synchronous local file writes plus possible HTTP `bind_project`, `get_binding`, `tool_log`; default HookClient timeout comes from config, default 5.0s (`hooks/client.py:104-111`) | Self-heals local cache before HTTP; catches failures; falls back to local `.claude/logs/tool_calls.jsonl` style file logging | Highest: Scribe call may finish, then hook still waits on bind/get/log HTTP calls outside Scribe timing | Broad install can make Scribe feel slow even when Scribe payload is fast; must instrument hook phases separately |
+| `templates/claude/runtime_hooks/post_tool.py:201-270` | `.claude/hooks/post_tool.py`; `.codex/hooks/post_tool.py` | Observes `mcp__council-v2__open_session`; stores Council/Scribe binding data for later Scribe project context | Parses response, writes cache/state, may call HTTP `bind_session` | Self-heal writes local cache before HTTP; no-op when no Council session id | Medium: can add first-turn wait after open_session | Binding integrity risk if workspace/persona mismatch or daemon unavailable; tests cover fail-open/self-heal |
+| `templates/claude/runtime_hooks/session_start.py:167-195`, `:245-375` | `.claude/hooks/session_start.py`; `.codex/hooks/session_start.py` | Injects active Scribe project, workspace, and optional recent Scribe digest; calls session/context and session/start HTTP endpoints | One short 1.5s session-context HTTP lane; then regular HookClient `session_start` call using default timeout | On session-context failure returns `None`; on session-start failure writes `.claude/logs/hook_sessions.jsonl` | Medium/high on startup: two HTTP paths can run before prompt context appears; only one has fixed 1.5s timeout | Startup context can show stale/unbound hints if binding state is wrong; privacy risk if recent digest includes sensitive progress summaries |
+| `templates/claude/runtime_hooks/user_prompt_submit.py:75-193` | `.claude/hooks/user_prompt_submit.py`; `.codex/hooks/user_prompt_submit.py` | Reads binding cache/active binding and session state; injects Scribe project status into prompt context | Synchronous local file reads/writes; optional extension hook invocation | No HTTP; missing binding emits explicit unbound hint | Low/medium: repeated every prompt, but local only unless extension does work | Context correctness risk if cache/active record drift; extensions can widen behavior |
+| `templates/claude/runtime_hooks/pre_tool.py:177-328` | `.claude/hooks/pre_tool.py`; `.codex/hooks/pre_tool.py` | Does not call Scribe MCP, but can govern Scribe/Council tool use via governance state and urgent blocks | Reads `.council/api_key`; targeted urgent blocks may call Council web `/api/sessions/by-pid/<pid>` with timeout=2 | Catches failures and allows when lookup fails; governance state missing means allow | Medium only when urgent targeted lookup path is active | False blocks or slow approvals can be mistaken for Scribe slowness; API key/local web availability matters |
+| `templates/claude/runtime_hooks/base.py:225-360`, `:391-520`, `:850-920` | shared helper in `.claude/hooks/base.py`; `.codex/hooks/base.py` | Stores binding cache, session state, active/recent project records used by Scribe context hooks; loads HookClient and optional extensions | Local filesystem work; extension import/call can run arbitrary downstream code | Most writes fail-open with debug log; extension exceptions swallowed | Medium cumulative overhead due to per-call local writes and optional extensions | Source-authority and privacy risk if downstream `.council/hooks/extensions.py` does network/secrets work |
+| `hooks/client.py:82-174`, `:176-221`, `:334-452` | imported by runtime hooks | Sends hook HTTP calls for tool log, session start/end, bind project/session, get binding, session context | Default request timeout from config (`council.hooks.request_timeout`, default 5.0s); session-context lane fixed 1.5s | Some callers catch exceptions; `get_binding` returns error dict; session-context returns `None` | High for PostToolUse because bind/get/log can each use default timeout if daemon hangs | Install gate must verify timeout config and fail-open behavior before broad rollout |
+| `web/routes/hooks.py:154-202`, `:265-374`, `:433-603`, `:605-731` | Council web hook endpoints | Writes tool/session JSONL logs; binds sessions/projects; reads Scribe PROGRESS_LOG directly for recent digest | Server-side DB/session lookup for bind_session; direct file reads for recent digest | Endpoints generally return JSON errors; session/context tolerates missing digest | Medium: endpoint server work adds latency to hook HTTP calls | Privacy/secrets: hook auth uses `X-Hook-Secret`; recent digest can expose progress messages; must keep local-only/trusted assumptions explicit |
+
+### Finding 3: Existing tests support source authority and current fallback claims
+
+- `tests/test_hook_specs.py:15-38` proves canonical hook source seeding and local override preservation.
+- `tests/test_hook_specs.py:81-124` proves packaged Codex behaviors render to command hooks under `.codex/hooks/` with documented degradations.
+- `tests/test_runtime_hook_generation.py:156-214` proves Codex hooks materialize from the same package source, are idempotent, and dry-run writes nothing.
+- `tests/test_runtime_hook_generation.py:258-335` proves operator Codex hook content is preserved and generated hooks are fixed-point merged into config.
+- `tests/test_runtime_hooks_binding.py:134-272` proves `set_project` and `open_session` self-heal local cache on daemon failure/401/no-httpx and canonical HTTP success overwrites local cache.
+- `tests/test_runtime_hooks_binding.py:1273-1322` and `:1434-1496` prove session-context HTTP lane fails open and uses the fixed 1.5s timeout.
+- `tests/test_hooks/test_hook_client.py:76-144` proves hook secret resolution priority and config fallback; `:190-228` proves `log_tool` payload includes duration/project/repo fields, but PostToolUse currently calls it without a real measured duration (`post_tool.py:361-368`).
+
+
+---
+## Technical Analysis
+<!-- ID: technical_analysis -->
+**Code Patterns Identified:**
+- List relevant code paths, abstractions, or anti-patterns uncovered.
+
+**System Interactions:**
+- Summarise dependencies across services, databases, or external APIs.
+
+**Risk Assessment:**
+- [ ] Document technical or product risks discovered and mitigation ideas.
+
+
+---
+## Recommendations
+<!-- ID: recommendations -->Translate research into recommended actions.
+### Immediate Next Steps
+- [ ] List concrete follow-up tasks for the team.
+
+### Long-Term Opportunities
+- Highlight strategic improvements informed by the research.
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **References:** [Link to diagrams, ADRs, whitepapers, or related documents]
+- **Attachments:** [List supporting artifacts or datasets]
+
+
+---

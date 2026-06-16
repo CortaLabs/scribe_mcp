@@ -1,0 +1,56 @@
+---
+id: integrate_system_scribe_latency_20260616t050042z-measurement-table-scribe-latency-20260616
+title: Measurement Table
+doc_type: custom
+doc_name: MEASUREMENT_TABLE_SCRIBE_LATENCY_20260616
+category: engineering
+status: scaffolded
+version: '0.1'
+last_updated: 2026-06-16 07:35:31 UTC
+maintained_by: Scribe
+created_by: Scribe
+owners:
+- Seshat
+related_docs: []
+tags:
+- latency
+- telemetry
+- p5
+summary: Final measurement table for set_project, append_entry, read_recent, and manage_docs
+  quality_check.
+canonical_doc_type: custom
+edit_trace:
+  tool: manage_docs
+  created_at: 2026-06-16 07:26:35 UTC
+  created_via: create_doc
+  last_edited_at: 2026-06-16 07:35:31 UTC
+  last_edited_by: Scribe
+  last_action: replace_section
+---
+<!-- ID: measurement_table -->
+## Measurement Table
+
+| Tool / Scenario | Host Wall Time | Scribe / Tool Timing | Hook Label | Repo Binding | Notes |
+|---|---:|---:|---|---|---|
+| `set_project` local verified runtime | `387.614 ms` | `385.992 ms` total | `hook_excluded` | `/home/austin/projects/MCP_SPINE/scribe_mcp` | Dominant phases: `targeted_refresh_after=200.661 ms`, `resolve_paths=59.289 ms`, `record_tool=45.868 ms`. |
+| `append_entry` local verified runtime | `276.436 ms` | `88.776 ms` append timing | `hook_excluded` | `/home/austin/projects/MCP_SPINE/scribe_mcp` | Phase timing: file WAL append `30.059 ms`, DB project fetch `30.517 ms`, DB upsert `17.196 ms`, DB insert `7.343 ms`; response wall includes wrapper/state overhead. |
+| `read_recent` local verified runtime | `174.198 ms` | `173.905 ms` generic tool-call duration | `hook_excluded` | `/home/austin/projects/MCP_SPINE/scribe_mcp` | Returned structured entries and persisted queryable `tool_calls` duration/correlation metadata. |
+| `manage_docs quality_check CHECKLIST` | `321.917 ms` | host-wall measured | `hook_excluded` | `/home/austin/projects/MCP_SPINE/scribe_mcp` | Quality status `pass`, zero warnings, zero readiness blockers, correct Scribe project path. |
+| Same-server `set_project`, Scribe root | `428.524 ms` | `427.864 ms` total | `hook_excluded` | `/home/austin/projects/MCP_SPINE/scribe_mcp` | Probe row 1; `config_mutation=false`. |
+| Same-server `set_project`, Council root | `248.895 ms` | `248.318 ms` total | `hook_excluded` | `/home/austin/projects/MCP_SPINE/council_mcp` | Probe row 2; same server/process, varied only root. |
+
+Attribution result: `classification=inside_scribe_phases`; host delta `-179.629 ms`, Scribe delta `-179.546 ms`, outside-Scribe delta `-0.083 ms`.
+
+<!-- ID: p7_defer_decision -->
+## P7 Defer Decision
+
+P7 is explicitly deferred. The data does not show Council-root `set_project` being slower in the same-server probe, and the outside-Scribe delta is effectively zero. Current evidence points to Scribe-internal phase cost, especially `targeted_refresh_after` and generic telemetry recording on some calls, but not to a proven duplicate-write optimization opportunity that should ship in this lane.
+
+A later P7 package should require fresh before/after phase timing and call-count tests before changing write behavior.
+
+<!-- ID: telemetry_readback -->
+## Telemetry Readback
+
+Live `tool_calls` readback after the repair showed recent rows for `set_project`, `append_entry`, and `read_recent` with non-null correlation IDs, `measurement_scope=tool_only`, normalized `repo_root=/home/austin/projects/MCP_SPINE/scribe_mcp`, and positive `duration_ms` values including `428.147 ms`, `387.298 ms`, `276.077 ms`, and `173.905 ms`.
+
+Live project identity readback showed two rows for `integrate-system-scribe-latency-20260616T050042Z`: one for `/home/austin/projects/MCP_SPINE/scribe_mcp` and one for `/home/austin/projects/MCP_SPINE/council_mcp`, with distinct repo IDs and project keys.

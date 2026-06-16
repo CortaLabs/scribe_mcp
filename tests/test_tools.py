@@ -168,6 +168,34 @@ def test_set_project_handles_legacy_sqlite_project_schema(monkeypatch, tmp_path)
     run(storage.close())
 
 
+def test_server_lazy_agent_helpers_reinitialize_after_storage_swap(monkeypatch, tmp_path):
+    first_storage = SQLiteStorage(tmp_path / "first.db")
+    second_storage = SQLiteStorage(tmp_path / "second.db")
+    run(first_storage.setup())
+    run(second_storage.setup())
+    first_manager = StateManager(path=tmp_path / "first_state.json", storage_backend=first_storage)
+    second_manager = StateManager(path=tmp_path / "second_state.json", storage_backend=second_storage)
+
+    monkeypatch.setattr(server, "storage_backend", first_storage, raising=False)
+    monkeypatch.setattr(server, "state_manager", first_manager, raising=False)
+    first_context_manager = server.get_agent_context_manager()
+    first_identity = server.get_agent_identity()
+
+    monkeypatch.setattr(server, "storage_backend", second_storage, raising=False)
+    monkeypatch.setattr(server, "state_manager", second_manager, raising=False)
+    second_context_manager = server.get_agent_context_manager()
+    second_identity = server.get_agent_identity()
+
+    assert second_context_manager is not first_context_manager
+    assert second_context_manager.storage is second_storage
+    assert second_context_manager.state_manager is second_manager
+    assert second_identity is not first_identity
+    assert second_identity.state_manager is second_manager
+
+    run(first_storage.close())
+    run(second_storage.close())
+
+
 def test_append_and_read_recent(isolated_state, project_root):
     root = project_root
     run(set_project.set_project(agent="test_agent", name="log-test", root=str(root), format="structured"))
@@ -282,6 +310,54 @@ def test_append_entry_accepts_sequence_metadata(isolated_state, project_root):
     assert "sequence_meta" in log_content
 
 
+def test_append_entry_returns_and_persists_phase_timing(isolated_state, project_root):
+    root = project_root
+    project_name = "timing-success-test"
+    run(set_project.set_project(agent="test_agent", name=project_name, root=str(root), format="structured"))
+
+    result = run(
+        append_entry.append_entry(
+            agent="test_agent",
+            message="Timing success visibility test",
+            status="info",
+            format="structured",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["db_mirror"]["status"] == "ok"
+    phases = result["timing"]["phases_ms"]
+    assert phases["total_ms"] > 0
+    for phase_name in [
+        "file_append_wal_ms",
+        "db_fetch_project_ms",
+        "db_insert_entry_ms",
+        "state_update_ms",
+        "reminders_ms",
+        "format_response_ms",
+    ]:
+        assert phase_name in phases
+        assert phases[phase_name] >= 0
+
+    storage = server.storage_backend
+    project_record = run(storage.fetch_project(project_name))
+    entries = run(storage.fetch_recent_entries(project=project_record, limit=1))
+    persisted_timing = entries[0]["meta"]["append_entry_timing"]
+    assert persisted_timing["schema_version"] == "append-entry-timing.v1"
+    persisted_phases = persisted_timing["phases_ms"]
+    for phase_name in [
+        "file_append_wal_ms",
+        "db_fetch_project_ms",
+        "db_insert_entry_ms",
+        "state_update_ms",
+        "reminders_ms",
+        "format_response_ms",
+        "total_ms",
+    ]:
+        assert phase_name in persisted_phases
+        assert persisted_phases[phase_name] >= 0
+
+
 def test_append_entry_surfaces_db_mirror_failures(monkeypatch, isolated_state, project_root):
     root = project_root
     run(set_project.set_project(agent="test_agent", name="db-mirror-status-test", root=str(root), format="structured"))
@@ -306,6 +382,32 @@ def test_append_entry_surfaces_db_mirror_failures(monkeypatch, isolated_state, p
     assert result["db_mirror"]["enabled"] is True
     assert result["db_mirror"]["status"] == "error"
     assert "forced mirror failure" in str(result["db_mirror"]["error"])
+    phases = result["timing"]["phases_ms"]
+    assert phases["total_ms"] > 0
+    assert phases["file_append_wal_ms"] >= 0
+    assert phases["db_insert_entry_ms"] >= 0
+
+
+def test_append_entry_bulk_returns_summary_timing(isolated_state, project_root):
+    root = project_root
+    run(set_project.set_project(agent="test_agent", name="bulk-timing-test", root=str(root), format="structured"))
+
+    result = run(
+        append_entry.append_entry(
+            agent="test_agent",
+            message="",
+            status="info",
+            items_list=[{"message": "Bulk timing one"}, {"message": "Bulk timing two"}],
+            format="structured",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["bulk_mode"] is True
+    phases = result["timing"]["phases_ms"]
+    assert phases["total_ms"] > 0
+    assert phases["file_append_wal_ms"] >= 0
+    assert all("timing" not in item for item in result["results"])
 
 
 def test_append_entry_items_list_string_meta(isolated_state, project_root):

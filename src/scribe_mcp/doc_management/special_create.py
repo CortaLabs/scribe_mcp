@@ -111,7 +111,10 @@ def _normalize_research_doc_name(doc_name: str) -> str:
 async def _get_or_create_storage_project(backend: Any, project: Dict[str, Any]) -> Any:
     timeout = server_module.settings.storage_timeout_seconds
     async with asyncio.timeout(timeout):
-        storage_record = await backend.fetch_project(project["name"])
+        storage_record = await backend.fetch_project(
+            project["name"],
+            repo_root=project.get("root"),
+        )
     if not storage_record:
         async with asyncio.timeout(timeout):
             storage_record = await backend.upsert_project(
@@ -746,7 +749,11 @@ async def handle_special_document_creation(
                     authoritative_session_id = authoritative_scope.get("authoritative_session_id")
                     if storage_backend:
                         docs_json = json.dumps(current_docs)
-                        await storage_backend.update_project_docs(project_name, docs_json)
+                        await storage_backend.update_project_docs(
+                            project_name,
+                            docs_json,
+                            repo_root=project.get("root"),
+                        )
                     else:
                         registration_warning = "Doc registration used state-only fallback: storage backend unavailable."
                     if state_manager and hasattr(state_manager, "set_current_project"):
@@ -790,7 +797,10 @@ async def handle_special_document_creation(
                 project_name = project.get("name")
                 if project_name:
                     index_key = f"{doc_label}_index"
-                    current_project = await storage_backend.fetch_project(project_name)
+                    current_project = await storage_backend.fetch_project(
+                        project_name,
+                        repo_root=project.get("root"),
+                    )
                     if current_project and current_project.docs_json:
                         current_docs = json.loads(current_project.docs_json)
                     else:
@@ -798,7 +808,11 @@ async def handle_special_document_creation(
 
                     current_docs[index_key] = str(index_path)
                     docs_json = json.dumps(current_docs)
-                    await storage_backend.update_project_docs(project_name, docs_json)
+                    await storage_backend.update_project_docs(
+                        project_name,
+                        docs_json,
+                        repo_root=project.get("root"),
+                    )
             except Exception as exc:
                 if registration_warning:
                     registration_warning += f"; Index registration failed: {exc}"

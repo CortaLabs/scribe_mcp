@@ -12,7 +12,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import threading
 
 from scribe_mcp.config.paths import runtime_state_dir
@@ -69,7 +69,7 @@ class AuditTrailManager:
 
                 # Add timestamp if not present
                 if "stored_timestamp" not in metadata:
-                    metadata["stored_timestamp"] = datetime.utcnow().isoformat() + " UTC"
+                    metadata["stored_timestamp"] = datetime.now(timezone.utc).isoformat() + " UTC"
 
                 # Add to audit trail
                 audit_trail["rotations"].append(metadata)
@@ -114,7 +114,7 @@ class AuditTrailManager:
             # Create new audit trail structure
             return {
                 "project_name": project_name,
-                "created_timestamp": datetime.utcnow().isoformat() + " UTC",
+                "created_timestamp": datetime.now(timezone.utc).isoformat() + " UTC",
                 "rotations": [],
                 "total_rotations": 0,
                 "last_updated": None,
@@ -142,12 +142,12 @@ class AuditTrailManager:
             # Return fresh structure if file is corrupted
             return {
                 "project_name": project_name,
-                "created_timestamp": datetime.utcnow().isoformat() + " UTC",
+                "created_timestamp": datetime.now(timezone.utc).isoformat() + " UTC",
                 "rotations": [],
                 "total_rotations": 0,
                 "last_updated": None,
                 "version": "1.0",
-                "corruption_note": f"File corrupted at {datetime.utcnow().isoformat() + ' UTC'}"
+                "corruption_note": f"File corrupted at {datetime.now(timezone.utc).isoformat() + ' UTC'}"
             }
 
     def get_rotation_history(self, project_name: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -321,7 +321,7 @@ class AuditTrailManager:
                 # Update audit trail
                 audit_trail["rotations"] = kept_rotations
                 audit_trail["total_rotations"] = len(kept_rotations)
-                audit_trail["last_updated"] = datetime.utcnow().isoformat() + " UTC"
+                audit_trail["last_updated"] = datetime.now(timezone.utc).isoformat() + " UTC"
                 audit_trail["cleanup_note"] = f"Removed {removed_count} old rotation records"
 
                 # Save updated audit trail

@@ -1280,7 +1280,8 @@ class ResponseFormatter:
         self,
         data: Dict[str, Any],
         format: str = "readable",  # NOTE: readable is DEFAULT
-        tool_name: str = ""
+        tool_name: str = "",
+        telemetry: Optional[Dict[str, Any]] = None,
     ) -> Union[Dict[str, Any], "CallToolResult"]:
         """
         CRITICAL ROUTER: Logs tool call to JSONL and SQL, then formats response.
@@ -1301,6 +1302,7 @@ class ResponseFormatter:
             data: Tool response data (always a dict)
             format: Output format - "readable", "structured", "compact", or "both"
             tool_name: Name of the tool being called
+            telemetry: Optional additive timing/correlation context
 
         Returns:
             - format="readable": CallToolResult with TextContent only (clean display)
@@ -1308,7 +1310,7 @@ class ResponseFormatter:
             - format="structured"/"compact": Original data dict
             - Fallback to dict if MCP types unavailable
         """
-        return await self._dispatcher.finalize_tool_response(data, format, tool_name)
+        return await self._dispatcher.finalize_tool_response(data, format, tool_name, telemetry)
 
     def format_projects_response(self, projects: List[Dict[str, Any]],
                                compact: bool = False,

@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
 Baseline date: **2026-06-16**
-Release framing: **v2.6.0 compatibility baseline**
+Release framing: **v2.7.0 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.6.0 agent-friction and quality-governance release line: manage_docs defect repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
+This baseline keeps compatibility posture for the 2.7.0 latency, telemetry, and quality-governance release line: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc defect repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.6.0`
+- **Core package version:** `scribe-mcp==2.7.0`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,7 +19,7 @@ This baseline keeps compatibility posture for the 2.6.0 agent-friction and quali
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.6.0` | Supported | Public Scribe install for local/core usage with deterministic document topology, agent-ready quality checks, write-barrier safety, and first-class bug/security report follow-up editing. |
+| `2.7.0` | Supported | Public Scribe install for local/core usage with faster repeated project binding, queryable runtime telemetry, deterministic document topology, agent-ready quality checks, write-barrier safety, and first-class bug/security report follow-up editing. |
 
 ## Not supported by this baseline
 
@@ -32,10 +32,15 @@ This baseline keeps compatibility posture for the 2.6.0 agent-friction and quali
 
 ## What is shipped
 
-### `scribe-mcp 2.6.0`
+### `scribe-mcp 2.7.0`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`
+- Repeated same-session `set_project` calls for the same agent/project/root use a strict reuse path and expose `side_effects.binding_reused` instead of rewriting project/session/doc state; structured/compact reuse responses skip post-bind reminder refresh because no binding mutation occurred.
+- Runtime telemetry persists durations, correlation IDs, measurement scope, and repo root across file and SQL tool-call sinks.
+- `append_entry` returns phase timing for file WAL append, DB mirror work, state/reminder work, formatting, and total latency.
+- Probe tooling supports JSON output, same-server root comparisons, and background telemetry draining so local proof does not leave asyncpg shutdown warnings.
+- Diagnostics include physical/logical reconciliation for fresh DB installs with existing file-backed Scribe artifacts.
 - Managed-doc hygiene includes scaffold-aware quality checks, project-local preflight archive routing, canonical research artifact naming, stale index-backup cleanup, and quality-check recovery for registered or discoverable package/research docs.
 - Managed-doc project memory includes project `CHANGELOG.md`, derived global changelog reconciliation, advisory version context, research-context drift warnings, lifecycle/body-status mismatch warnings, and malformed changelog escaped-newline blocking checks.
 - Managed-doc release governance also blocks missing accepted coverage for the active `pyproject.toml` version via `SCF_CHANGELOG_CURRENT_VERSION_MISSING` in `quality_check`, reminders, and `project_health`.

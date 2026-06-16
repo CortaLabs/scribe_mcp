@@ -1,0 +1,86 @@
+
+# 🐞 P1 telemetry persistence under-reports tool runtime and fails validation proof — integrate-system-scribe-latency-20260616T050042Z
+**Author:** Scribe
+**Version:** v0.1
+**Status:** INVESTIGATING
+**Last Updated:** 2026-06-16 06:09:29 UTC
+
+> Summarise why this document exists and what decisions it captures.
+
+---
+## Bug Overview
+<!-- ID: bug_overview -->
+Customer impact: Scribe telemetry would appear durable but materially under-report real tool runtime for key calls such as `set_project`, `append_entry`, and `read_recent`. That would make latency audits misleading, hide slow tool phases, and allow downstream optimization decisions to be based on formatter-time rather than actual tool execution time. The validation failure also blocks this workstream's dependent packages until fixed and revalidated.
+
+
+---
+## Description
+<!-- ID: description -->
+### Summary
+P1 Crucible validation blocked at 68/100. Persisted duration_ms is measured from formatter/finalization boundary instead of full tool execution start for key tools. Plan-named test command fails, and fresh SQLite readback probe fails with sqlite3.OperationalError no such column: status.
+
+### Expected Behaviour
+Generic tool telemetry should persist real full tool execution duration and correlation metadata, focused and plan-named tests should reproduce passing, and fresh readback probe should verify TOOL_LOG and tool_calls rows with matching correlation IDs.
+
+### Actual Behaviour
+P1 Crucible validation blocked at 68/100. Persisted duration_ms is measured from formatter/finalization boundary instead of full tool execution start for key tools. Plan-named test command fails, and fresh SQLite readback probe fails with sqlite3.OperationalError no such column: status.
+
+### Steps to Reproduce
+- [ ] Run uv run pytest tests/test_doctor_telemetry.py tests/test_log_intelligence.py tests/test_tools.py and observe tests/test_tools.py::test_set_and_get_project_roundtrip failure.
+- [ ] Inspect dispatcher duration source and key tool call sites; set_project, append_entry, and read_recent do not pass execution-start telemetry into finalize_tool_response.
+- [ ] Run a fresh SQLite-backed set_project/append_entry/read_recent probe and observe sqlite3.OperationalError no such column: status during storage setup.
+
+
+
+---
+## Investigation
+<!-- ID: investigation -->
+**Root Cause Analysis:**
+P1 implementation measured formatter/finalization elapsed time rather than threading actual tool execution start or full duration from call sites; validation also exposed stale or incomplete local SQLite schema setup and set_project doc-generation failure.
+
+**Affected Areas:**
+- src/scribe_mcp/utils/formatters/dispatcher.py
+- src/scribe_mcp/tools/set_project.py
+- src/scribe_mcp/tools/append_entry.py
+- src/scribe_mcp/tools/read_recent.py
+- tests/test_tools.py
+
+
+**Related Issues:**
+- Link to related bugs, tickets, or documentation.
+
+
+---
+## Resolution Plan
+<!-- ID: resolution_plan -->
+### Immediate Actions
+- [ ] Route surgical P1 repair to thread execution-start telemetry through existing formatter/logging boundary, fix set_project doc generation failure, repair SQLite status schema/readback probe, rerun focused tests and package-specific Crucible validation.
+
+
+### Long-Term Fixes
+- [ ] Outline long-term remedial work or refactors.
+
+### Testing Strategy
+- [ ] Define validation steps for the fix (unit, integration, regression).
+
+
+---
+## Timeline & Ownership
+<!-- ID: timeline -->
+| Phase | Owner | Target Date | Notes |
+| --- | --- | --- | --- |
+| Investigation | [Name] | [Date] | [Details] |
+| Fix Development | [Name] | [Date] | [Details] |
+| Testing | [Name] | [Date] | [Details] |
+| Deployment | [Name] | [Date] | [Details] |
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **Logs & Evidence:** [Link to relevant logs, traces, screenshots]
+- **Fix References:** [Git commits, PRs, or documentation]
+- **Open Questions:** [List unresolved unknowns or next investigations]
+
+
+---

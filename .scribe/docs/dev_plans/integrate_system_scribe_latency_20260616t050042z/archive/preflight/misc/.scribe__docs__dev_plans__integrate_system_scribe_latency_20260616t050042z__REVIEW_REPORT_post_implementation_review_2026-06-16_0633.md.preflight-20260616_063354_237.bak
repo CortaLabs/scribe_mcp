@@ -1,0 +1,122 @@
+# Review Report: Post Implementation Review Stage
+
+**Review Date:** 2026-06-16 06:33:29 UTC
+**Reviewer:** seshat
+**Project:** integrate-system-scribe-latency-20260616T050042Z
+**Stage:** post_implementation_review
+**Review Type:** Post-Implementation
+
+---
+
+<!-- ID: executive_summary -->
+## Executive Summary
+
+Verdict: PASS
+Score: 95/100
+Package: P4 hook timing, fail-open telemetry, and timeout hardening in council_mcp
+Gate impact: P5 may route from a code/behavior gate perspective.
+
+Nietzsche found no blocking issues. Hook timing is now labeled separately from Scribe tool timing, fake `duration_ms=0.0` is removed from the hook lane, fail-open behavior remains intact, and hook timeout hardening is bounded.
+
+Residual caveat: generated downstream hook copies were not refreshed during implementation or review. P4 is accepted for source/template behavior, but rollout claims that include generated surfaces still require `council update`-style propagation and readback.
+
+---
+
+<!-- ID: phase_review_results -->
+## Phase Review Results
+
+Verified behavior:
+- Hook-only timing is separated from tool timing in post-tool hooks with explicit `hook_measurement_scope="hook_only"`, `tool_measurement_scope="tool_only"`, and `hook_phases_ms` buckets.
+- Fake measured `duration_ms=0.0` is removed from hook telemetry; unmeasured duration is now `None` in HTTP and fallback paths.
+- Session-start telemetry carries hook-only timing metadata without coupling it to Scribe daemon timing.
+- Fail-open behavior remains intact for daemon down, missing `httpx`, HTTP errors including 401, malformed/exceptional responses, and fallback-file logging.
+- Timeout hardening is bounded to short hook transport lanes rather than a Council runtime/auth redesign.
+
+Test evidence:
+- `uv run pytest tests/test_runtime_hooks_binding.py tests/test_hooks/test_hook_client.py` failed at dependency resolution because only `agentkit<=0.0.4` was available while the repo requires `agentkit>=0.2.0,<0.6.0`.
+- `UV_NO_SYNC=1 uv run pytest tests/test_runtime_hooks_binding.py tests/test_hooks/test_hook_client.py` -> 91 passed.
+- `UV_NO_SYNC=1 uv run pytest tests/test_hooks/test_hook_endpoints.py tests/test_hooks/test_hook_auth.py` -> 51 passed.
+
+---
+
+<!-- ID: detailed_analysis -->
+## Detailed Analysis
+
+### Technical Validation
+- [ ] Architecture decisions are sound and implementable
+- [ ] Implementation approach follows established patterns
+- [ ] Dependencies and constraints are properly addressed
+- [ ] Performance and scalability considerations
+
+### Quality Assurance
+- [ ] Documentation completeness and accuracy
+- [ ] Testing strategy adequacy
+- [ ] Error handling and edge cases
+- [ ] Code quality and maintainability
+
+### Risk Assessment
+- [ ] Technical risks identified and mitigated
+- [ ] Implementation timeline feasibility
+- [ ] Resource requirements validation
+- [ ] Rollback and contingency planning
+
+---
+
+<!-- ID: recommendations -->
+## Recommendations
+
+### Immediate Actions
+- [ ] Capture reviewer-approved remediation tasks.
+- [ ] Assign owners and due dates for each remediation task.
+
+### Implementation Requirements
+- [ ] Define verification commands and expected results.
+- [ ] Confirm bounded scope and dependency ownership.
+
+### Next Steps
+- [ ] Proceed to implementation (if approved)
+- [ ] Address identified issues (if rejected)
+- [ ] Additional validation (if conditional)
+
+---
+
+<!-- ID: agent_performance_assessment -->
+## Agent Performance Assessment
+
+| Agent | Role | Grade | Comments |
+|-------|------|-------|----------|
+| Research Analyst | Research | Not graded | No research-specific grading recorded in this report. |
+| Architect | Architecture | Not graded | No architecture-specific grading recorded in this report. |
+| Coder | Implementation | Not graded | Implementation grading deferred or not applicable. |
+| Reviewer | Review | Not graded | Reviewer self-assessment not provided. |
+
+---
+
+<!-- ID: compliance_verification -->
+## Compliance Verification
+
+**Scribe Protocol Compliance:** PARTIALLY_COMPLIANT
+
+- [ ] Minimum logging requirements met
+- [ ] Documentation standards followed
+- [ ] Quality gate procedures completed
+- [ ] Cross-project validation performed
+
+---
+
+<!-- ID: final_decision -->
+## Final Decision
+
+**REQUIRES_REVISION**
+
+**Rationale:** Decision rationale should reference concrete evidence from findings and verification.
+
+**Conditions for Proceeding:**
+- [ ] Complete required remediation tasks and capture verification evidence.
+- [ ] Re-run applicable validation and document outcome in the managed report.
+
+**Expected Timeline:** To be confirmed by owner after remediation scope review.
+
+---
+
+*This review report is part of the quality assurance process for integrate-system-scribe-latency-20260616T050042Z.*

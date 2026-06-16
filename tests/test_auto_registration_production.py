@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -27,10 +28,10 @@ class _FakeBackend:
         self.docs_by_project: dict[str, dict[str, str]] = {}
         self.project_records: dict[str, _StorageProjectRecord] = {}
 
-    async def update_project_docs(self, project_name: str, docs_json: str) -> None:
+    async def update_project_docs(self, project_name: str, docs_json: str, **_kwargs) -> None:
         self.docs_by_project[project_name] = json.loads(docs_json or "{}")
 
-    async def fetch_project(self, name: str):
+    async def fetch_project(self, name: str, **_kwargs):
         record = self.project_records.get(name)
         if record is not None:
             record.docs_json = json.dumps(self.docs_by_project.get(name, {}))
@@ -75,7 +76,15 @@ def _isolated_server(state_manager: StateManager, backend: _FakeBackend, project
 
     server_module.state_manager = state_manager
     server_module.storage_backend = backend
-    server_module.get_execution_context = lambda: None
+    server_module.get_execution_context = lambda: SimpleNamespace(
+        session_id="test-session",
+        stable_session_id="test-session",
+        resolved_scope=SimpleNamespace(
+            authoritative_session_key="test-session",
+            stable_session_id="test-session",
+            resolution_source="test",
+        ),
+    )
     server_module.get_agent_identity = lambda: None
 
     fake_root = Path(project_root).resolve()
@@ -136,6 +145,7 @@ async def test_read_only_actions_do_not_auto_register_missing_docs(tmp_path: Pat
     backend = _FakeBackend()
     _seed_backend_project(backend, project)
     await state_manager.set_current_project(project["name"], project)
+    await state_manager.set_session_mode("test-session", "project")
 
     docs_dir = Path(project["docs_dir"])
     missing_name = "UNREGISTERED_READONLY"
@@ -181,6 +191,7 @@ async def test_mutation_fails_explicitly_when_file_cannot_be_resolved_or_missing
     backend = _FakeBackend()
     _seed_backend_project(backend, project)
     await state_manager.set_current_project(project["name"], project)
+    await state_manager.set_session_mode("test-session", "project")
 
     with _isolated_server(state_manager, backend, project_root=project["root"]):
         unresolved = await manage_docs(

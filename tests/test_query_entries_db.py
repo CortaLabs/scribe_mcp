@@ -103,7 +103,7 @@ async def test_query_entries_uses_database():
     result_dict = extract_result(result)
 
     # Verify database method was called
-    mock_backend.fetch_project.assert_called_once_with("test_project")
+    mock_backend.fetch_project.assert_called_once_with("test_project", repo_root="/test/root")
     mock_backend.query_entries_paginated.assert_called_once()
 
     # Verify call parameters
@@ -254,7 +254,7 @@ async def test_query_entries_fallback_to_files():
                     )
 
     # Verify database was attempted
-    mock_backend.fetch_project.assert_called_once_with("test_project")
+    mock_backend.fetch_project.assert_called_once_with("test_project", repo_root="/test/root")
     mock_backend.query_entries_paginated.assert_called_once()
 
     # Verify fallback to flat-file reading

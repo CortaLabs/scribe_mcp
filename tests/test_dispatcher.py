@@ -600,6 +600,78 @@ class TestToolLogging:
         from mcp.types import CallToolResult
         assert isinstance(result, CallToolResult)
 
+    @pytest.mark.asyncio
+    async def test_dispatcher_persists_duration_and_correlation_metadata(
+        self, formatter, read_file_data, monkeypatch
+    ):
+        """Tool logging receives measured duration plus shared correlation metadata."""
+        logged_calls = []
+        scheduled_calls = []
+
+        def fake_log_tool_call(**kwargs):
+            logged_calls.append(kwargs)
+
+        def fake_to_thread(func, *args, **kwargs):
+            scheduled_calls.append((func, args, kwargs))
+            return "scheduled"
+
+        class FakeStorage:
+            def record_tool_call_sync(
+                self,
+                *,
+                session_id,
+                tool_name,
+                duration_ms=None,
+                status="success",
+                format_requested=None,
+                project_name=None,
+                agent_id=None,
+                error_message=None,
+                response_size_bytes=None,
+                repo_root=None,
+                correlation_id=None,
+                measurement_scope=None,
+            ):
+                return None
+
+        class FakeServer:
+            storage_backend = FakeStorage()
+
+            @staticmethod
+            def schedule_background_task(awaitable):
+                scheduled_calls.append(("background", awaitable))
+
+            @staticmethod
+            def get_execution_context():
+                return None
+
+        import asyncio
+        import scribe_mcp
+
+        monkeypatch.setattr("scribe_mcp.utils.formatters.dispatcher._log_tool_call", fake_log_tool_call)
+        monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(scribe_mcp, "server", FakeServer)
+
+        result = await formatter.finalize_tool_response(
+            read_file_data,
+            format="structured",
+            tool_name="read_file",
+            telemetry={
+                "duration_ms": 42.25,
+                "correlation_id": "call-123",
+                "measurement_scope": "tool_only",
+            },
+        )
+
+        assert result is read_file_data
+        assert logged_calls[0]["duration_ms"] == 42.25
+        assert logged_calls[0]["correlation_id"] == "call-123"
+        assert logged_calls[0]["measurement_scope"] == "tool_only"
+        sql_kwargs = scheduled_calls[0][2]
+        assert sql_kwargs["duration_ms"] == 42.25
+        assert sql_kwargs["correlation_id"] == "call-123"
+        assert sql_kwargs["measurement_scope"] == "tool_only"
+
 
 # =============================================================================
 # Test Backward Compatibility

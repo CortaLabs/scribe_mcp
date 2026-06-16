@@ -1,0 +1,162 @@
+
+# 🔬 Research Storage Postgres Latency 20260616 — integrate-system-scribe-latency-20260616T050042Z
+**Author:** Scribe
+**Version:** v0.1
+**Status:** draft
+**Last Updated:** 2026-06-16 05:06:05 UTC
+
+> Wave 1 Track B research on Scribe storage/PostgreSQL latency, fresh-DB behavior, project/session/log writes, and file-backed doc interactions.
+
+---
+## Executive Summary
+<!-- ID: executive_summary -->
+Track B found three storage-backed latency suspects with direct source evidence.
+
+1. `set_project` performs many awaited storage-adjacent operations in one request: tool activity recording, context preparation, document scaffold checks, project upsert, dev-plan upserts, agent context/session writes, state-manager session writes, recent-project writes, and post-bind reminder refresh. The observed local baseline in the SPEC was `436.403 ms`, with largest measured phases `prepare_context=131.633 ms` and `ensure_documents=120.831 ms` (SPEC lines 90-93).
+2. `append_entry` is file-first but still response-blocking on the DB mirror. The primary progress/doc log line is written with WAL, file locking, flush, and fsync, then the code awaits `fetch_project`/conditional `upsert_project` and `insert_entry` before returning `db_mirror.status`.
+3. Fresh Postgres changes the logical DB truth without deleting physical docs. Existing `.scribe/docs` files can make `ensure_documents` skip generation, but DB-backed project/session/activity rows and entry history are absent until explicit tool paths recreate them. This creates cold-start write amplification and missing-history risk, not physical document loss.
+
+No code edits, schema changes, or destructive DB operations were performed.
+
+
+---
+## Research Scope
+<!-- ID: research_scope -->
+Track B owns the storage/PostgreSQL latency slice defined by SPEC_SCRIBE_TOOL_LATENCY_OPTIMIZATION_20260616.md lines 37-99, especially the storage-layer participation at lines 61-64 and the `sia` artifact assignment at lines 80-88.
+
+In scope:
+- `set_project` and `append_entry` storage calls: project upserts, dev-plan/doc registration, recent activity, session/context state, DB mirror writes, and progress/doc log persistence.
+- Fresh local PostgreSQL behavior when logical rows are missing but file-backed `.scribe/docs` content already exists.
+- Connection pooling, transaction boundaries, schema/index usage, and per-call schema/introspection/refresh work that can dominate latency.
+- Serialization or duplication between file I/O and Postgres writes.
+- Minimal storage-layer remediation candidates and verification hooks.
+
+Out of scope:
+- Code edits, schema changes, destructive DB operations, and implementation.
+- Tool-layer response formatting or general MCP wrapper latency unless it directly exposes storage-specific behavior.
+
+
+---
+## Findings
+<!-- ID: findings -->
+### Finding 1: `set_project` is a chained write/read operation, not a single project bind
+
+Evidence:
+- The tool starts timing and records tool activity through `state_manager.record_tool("set_project")` before doing context work (`src/scribe_mcp/tools/set_project.py:527-542`).
+- It updates agent activity (`set_project.py:568-574`) and prepares logging context (`set_project.py:576-594`).
+- It resolves root authority and aliases, including backend alias lookup when storage exists (`set_project.py:612-645`).
+- It validates paths by gathering known projects from state and JSON configs (`set_project.py:1448-1517`).
+- It checks or creates eight doc/log files in `_ensure_documents`; existing physical docs skip generation only when all are non-empty (`set_project.py:1361-1404`). Missing docs call `generate_doc_templates` (`set_project.py:1423-1435`).
+- It upserts the project row (`set_project.py:756-808`, `storage/postgres/__init__.py:168-209`).
+- It registers core docs as dev plans, up to four awaited writes when batch execution is unavailable (`set_project.py:833-875`, `storage/postgres/__init__.py:981-1020`).
+- It then writes agent context/session state and recent-project state (`set_project.py:895-1019`, `state/agent_manager.py:109-184`, `state/manager.py:231-295`).
+- For readable output, it may count entries and build inventory/activity (`set_project.py:1022-1149`, `storage/postgres/__init__.py:884-903`). Structured/compact output still runs targeted reminders (`set_project.py:1182-1195`).
+
+Interpretation: the SPEC's observed `set_project` cost is consistent with this stacked path. Storage is not the only cost, but Postgres contributes multiple sequential awaits.
+
+### Finding 2: `append_entry` serializes durable file write before awaited DB mirror
+
+Evidence:
+- The tool resolves context before processing and separately calls `state_manager.record_tool("append_entry")` (`append_entry.py:1360-1394`).
+- Single-entry processing resolves log target, rotates if needed, then calls `append_line` (`append_entry.py:461-532`).
+- `append_line` uses safe-path checks, parent creation, then `asyncio.to_thread(_write_line_with_wal)` by default (`utils/files.py:624-650`). `_write_line_with_wal` journals, locks the file, writes, flushes, and `os.fsync`s before committing WAL (`utils/files.py:653-688`).
+- Only after the file append does DB mirroring fetch the project, conditionally upsert it, and insert the entry (`append_entry.py:639-679`).
+- Postgres `insert_entry` performs two SQL writes: one to `scribe_entries`, one to `scribe_metrics` (`storage/postgres/__init__.py:476-542`).
+
+Interpretation: this is intentionally safe file-first behavior, but the DB mirror is still awaited in-band. A slow Postgres fetch/upsert/insert path increases user-visible wait even though the file write already succeeded.
+
+### Finding 3: Fresh Postgres creates missing logical history while file-backed docs remain discoverable
+
+Evidence:
+- StateManager loads projects from the storage backend via `list_projects_by_repo` when a repo context exists (`state/manager.py:404-443`). If the fresh DB has no rows, that list is empty until a tool upserts rows.
+- File-backed config discovery still exists through `list_project_configs` and `load_project_config` (`tools/project_utils.py:18-117`), and `set_project` path validation also reads those configs (`set_project.py:1500-1517`).
+- Physical docs are checked directly by path and size (`set_project.py:1375-1404`), so they can prevent scaffold regeneration even when DB rows are new or absent.
+- `manage_docs` registration can recreate/update DB metadata by hashing a physical doc, updating `docs_json`, updating state, and appending an auto-registration log (`doc_management/runtime.py:1854-1931`, `runtime.py:2018-2058`).
+
+Interpretation: after a fresh DB, the project may have real files but no `scribe_projects`, `dev_plans`, `session_projects`, `agent_recent_projects`, `scribe_entries`, or `tool_calls` history. The first few calls pay reconstruction/upsert costs and historical queries undercount until entries are mirrored again.
+
+
+---
+## Technical Analysis
+<!-- ID: technical_analysis -->
+### Latency Path Table
+
+| Operation | Sync/async boundary | Storage backend method | Expected cost | Evidence |
+|---|---|---|---|---|
+| `set_project`: record activity | awaited async state call | `update_session_activity` when session exists | Low to medium; includes backend readiness and activity lookup | `set_project.py:541-542`; `state/manager.py:188-229` |
+| `set_project`: context resolution | awaited async helper | `get_session_project`, `fetch_project`, `state_manager.load` | Medium; can be multiple DB reads plus state load | `logging_utils.py:173-299` |
+| `set_project`: alias/project lookup | awaited async backend path | `fetch_project` via alias resolver | Medium; Postgres fetch path may ensure repo-scoped schema/indexes first | `set_project.py:637-645`; `storage/postgres/__init__.py:211-222`, `2420-2505` |
+| `set_project`: physical docs check | sync filesystem stats inside async tool | None unless missing docs trigger template generation | Low when all docs exist; medium when missing because templates are generated | `set_project.py:1361-1404`, `1423-1435`; `generate_doc_templates.py:360-410` |
+| `set_project`: project upsert | awaited async DB write | `upsert_project` | Medium; also calls `_ensure_repo_scoped_project_identity` first | `set_project.py:756-808`; `storage/postgres/__init__.py:168-209`, `2276-2293` |
+| `set_project`: core dev-plan registration | awaited sequential writes unless backend has batch | `upsert_dev_plan` | Medium to high on cold/fresh DB; up to four writes | `set_project.py:833-875`; `storage/postgres/__init__.py:981-1020` |
+| `set_project`: agent project switch | awaited async DB writes plus JSON-state mirror | `get_agent_project`, `set_agent_project`, agent event logging | Medium; source shows prior-project lookup then project write then event/mirror | `set_project.py:895-925`; `state/agent_manager.py:109-184` |
+| `set_project`: state session binding | awaited under StateManager lock | `set_session_project`, `upsert_agent_recent_project`, maybe `set_agent_project` | Medium; overlaps with explicit recent/session writes | `set_project.py:977-1019`; `state/manager.py:231-295` |
+| `set_project`: readable inventory/activity | awaited async reads | `count_entries`, inventory helpers | Medium; count is a DB aggregate query | `set_project.py:1022-1149`; `storage/postgres/__init__.py:884-903` |
+| `append_entry`: context resolution | awaited before write | `get_session_project`, `fetch_project`, state load | Medium; same logging context resolver as other tools | `append_entry.py:1360-1386`; `logging_utils.py:173-299` |
+| `append_entry`: physical log append | async wrapper around threadpool sync I/O | None | Medium; WAL write, file lock, flush, fsync are intentional durability costs | `append_entry.py:506-532`; `utils/files.py:624-688` |
+| `append_entry`: DB mirror project fetch/upsert | awaited async DB read/write | `fetch_project`, conditional `upsert_project` | Medium on warm project; higher on fresh DB if project row missing | `append_entry.py:639-661`; `storage/postgres/__init__.py:168-222`, `2420-2505` |
+| `append_entry`: DB mirror entry insert | awaited async DB writes | `insert_entry` | Medium; two SQL writes per entry | `append_entry.py:663-679`; `storage/postgres/__init__.py:476-542` |
+| `manage_docs`: doc registration | sync file read/hash plus awaited DB/state/log writes | `update_project_docs`, `set_current_project`, append-entry mirror | Medium to high when auto-registering physical docs into fresh DB | `doc_management/runtime.py:1854-1931`, `2018-2058`; `storage/postgres/__init__.py:272-278` |
+
+### Connection Pooling, Schema, and Transaction Boundaries
+
+- Postgres pool defaults are `min_size=2`, `max_size=20`, with retries/backoff around initial pool creation (`storage/postgres/__init__.py:126-154`; `storage/postgres/internals.py:84-118`). First use can pay pool creation and schema bootstrap.
+- `setup()` only calls `_ensure_schema` (`storage/postgres/__init__.py:160-161`), and every low-level `_execute`/`_fetchrow`/`_fetch`/`_fetchval` calls `_ensure_schema` before acquiring a connection (`storage/postgres/__init__.py:2390-2412`). `_schema_ready` should short-circuit warm calls, but cold calls serialize behind `_schema_lock` and run init SQL/migrations (`storage/postgres/schema.py:92-142`).
+- The schema bootstrap reads init SQL from disk, creates schema, ensures `pg_trgm`, executes all split statements, ensures migration table, and applies numbered migrations (`storage/postgres/schema.py:112-140`). This is a cold-start suspect, not a warm-call suspect unless `_schema_ready` is reset or multiple backend instances are created.
+- There is no explicit transaction wrapping the multi-step tool paths. `append_entry` file append and Postgres mirror are separate durability domains; `insert_entry` itself is two separate SQL statements (`storage/postgres/__init__.py:504-542`).
+
+### Fresh-DB Risk Notes
+
+- Missing `scribe_projects` rows: `set_project` and `append_entry` can recreate rows, but the first call pays fetch/upsert and repo-scoped identity/index checks.
+- Missing `dev_plans` rows: physical core docs can exist while DB dev-plan rows are absent; `set_project` repopulates core docs only for existing paths and does so sequentially.
+- Missing `scribe_entries` rows: progress logs still contain historical lines, but Postgres-backed `count_entries`, `fetch_recent_entries`, and queries undercount until historical file lines are ingested or new appends are mirrored.
+- Missing `session_projects` and `agent_recent_projects`: session-bound context may fail over to caches/configs or require `set_project` rebinding, adding extra DB reads/writes.
+- Missing `tool_calls`: response timing may exist in tool responses while historical telemetry is not queryable if the fresh DB lacks prior `tool_calls` rows.
+
+### Serialization and Duplication Observations
+
+- `append_entry` serializes file durability before DB mirror: file WAL/fsync completes first, then DB fetch/upsert/insert runs in-band.
+- `set_project` appears to duplicate recent-project/session intent: agent manager sets current project and logs events, StateManager then sets session project/recent project, and the tool explicitly calls `upsert_agent_recent_project` again (`set_project.py:920-1019`; `state/manager.py:260-265`). This should be validated by Track A/runtime telemetry before changing behavior.
+- `manage_docs` auto-registration can stack file hashing, `update_project_docs`, `state_manager.set_current_project`, registry update, and `append_entry` logging. On fresh DB, this is useful reconstruction but can feel slow.
+
+
+---
+## Recommendations
+<!-- ID: recommendations -->
+### Minimal Storage-Layer Remediation Candidates
+
+1. Instrument storage sub-phases without changing behavior.
+   - Add or expose timing around `backend.fetch_project`, `upsert_project`, `upsert_dev_plan`, `insert_entry`, `count_entries`, state-manager writes, and file append/WAL duration.
+   - Verification hook: a structured timing payload or persisted `tool_calls` metadata that can distinguish file I/O, DB project lookup, DB entry insert, metrics insert, reminder refresh, and formatter/inventory work.
+
+2. Reduce duplicate `set_project` writes after source-backed validation.
+   - Candidate: collapse or guard repeated `upsert_agent_recent_project` and session-binding writes when agent manager/state manager already wrote identical values in the same request.
+   - Verification hook: unit test with fake storage call counters plus an integration probe proving one bind still updates `session_projects`, `agent_recent_projects`, active project, and response side effects.
+
+3. Batch or combine `append_entry` DB mirror writes.
+   - Candidate: combine entry insert and metrics update in one transaction or stored statement boundary, or make mirror latency explicitly visible if it remains response-blocking.
+   - Verification hook: compare `append_entry` response timing before/after with DB mirror enabled and prove file append still succeeds independently when mirror fails.
+
+4. Batch core `dev_plans` upserts for local Postgres.
+   - Candidate: provide a real local batch method or a storage-level `upsert_core_dev_plans` method so warm `set_project` does not await four separate writes.
+   - Verification hook: fake backend call-count test plus live `set_project` phase timing for `upsert_dev_plans`.
+
+5. Add fresh-DB reconciliation diagnostics, not destructive migration.
+   - Candidate: a read-only health/report hook that compares physical `.scribe/docs` and project JSON/config files against Postgres `scribe_projects`, `dev_plans`, and `scribe_entries` counts.
+   - Verification hook: non-destructive probe reports missing logical rows without modifying them unless an explicit recovery command is run.
+
+### Non-Recommendations
+
+- Do not skip WAL/fsync blindly; that is the durable file-backed audit trail.
+- Do not auto-ingest historical logs into fresh Postgres inside ordinary `set_project` without an explicit plan; that could turn a context bind into a large migration.
+- Do not treat generated docs or physical files as proof that DB-backed telemetry/history exists.
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **References:** [Link to diagrams, ADRs, whitepapers, or related documents]
+- **Attachments:** [List supporting artifacts or datasets]
+
+
+---

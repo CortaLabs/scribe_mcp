@@ -628,7 +628,7 @@ async def execute_tool_call(
         fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
         kwargs={},
         allow_untrusted_sources=False,
-        allow_process_fallback=public_release,
+        allow_process_fallback=False,
     )
     has_runtime_transport_identity = bool(runtime_transport_session_id) and not str(
         runtime_transport_session_id
@@ -694,7 +694,15 @@ async def execute_tool_call(
     ):
         _set_scope_provenance(context_payload, field="transport_session_id", label="claimed")
 
-    if public_release and not str(context_payload.get("transport_session_id") or "").strip():
+    transport_session_provenance = (
+        (context_payload.get("scope_provenance") or {}).get("transport_session_id")
+        if isinstance(context_payload.get("scope_provenance"), dict)
+        else None
+    )
+    if public_release and (
+        not str(context_payload.get("transport_session_id") or "").strip()
+        or transport_session_provenance != "verified"
+    ):
         raise ValueError(
             "Public release requires trusted runtime-derived transport_session_id "
             "for session isolation"
@@ -711,6 +719,16 @@ async def execute_tool_call(
                 context_payload["_server_derived_session_id"] = True
                 _set_scope_provenance(context_payload, field="stable_session_id", label="verified")
                 context_payload["trust_level"] = "verified"
+                existing_repo_root = _normalize_repo_root(
+                    existing.get("repo_root"),
+                    settings.project_root,
+                )
+                if existing_repo_root and (
+                    has_runtime_transport_identity
+                    or str(context_payload.get("transport_session_id") or "").startswith("process:")
+                ):
+                    context_payload["repo_root"] = existing_repo_root
+                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
         if not context_payload.get("session_id"):
             session_id = await router_context_manager.get_or_create_session_id(
                 context_payload["transport_session_id"]
@@ -720,14 +738,33 @@ async def execute_tool_call(
             context_payload["_server_derived_session_id"] = True
             _set_scope_provenance(context_payload, field="stable_session_id", label="inferred")
 
-    if not context_payload.get("repo_root") and storage_backend and hasattr(storage_backend, "fetch_project"):
+    if storage_backend and hasattr(storage_backend, "fetch_project"):
         explicit_project = call_arguments.get("project") or call_arguments.get("name")
         explicit_root = call_arguments.get("root") or call_arguments.get("repo_root")
+        current_repo_root_provenance = (
+            (context_payload.get("scope_provenance") or {}).get("repo_root")
+            if isinstance(context_payload.get("scope_provenance"), dict)
+            else None
+        )
         process_fallback_transport = str(context_payload.get("transport_session_id") or "").startswith("process:")
-        if name != "set_project" and explicit_project:
+        if (
+            name != "set_project"
+            and explicit_project
+            and (
+                not context_payload.get("repo_root")
+                or current_repo_root_provenance != "verified"
+            )
+        ):
             context_payload["project_name"] = str(explicit_project)
             _set_scope_provenance(context_payload, field="project_name", label="claimed")
-            project_record = await storage_backend.fetch_project(str(explicit_project))
+            lookup_root = explicit_root or context_payload.get("repo_root")
+            if lookup_root:
+                project_record = await storage_backend.fetch_project(
+                    str(explicit_project),
+                    repo_root=str(lookup_root),
+                )
+            else:
+                project_record = await storage_backend.fetch_project(str(explicit_project))
             if project_record:
                 context_payload["repo_root"] = _normalize_repo_root(
                     project_record.repo_root,
@@ -746,7 +783,14 @@ async def execute_tool_call(
             if project_name:
                 context_payload["project_name"] = str(project_name)
                 _set_scope_provenance(context_payload, field="project_name", label="verified")
-                project_record = await storage_backend.fetch_project(str(project_name))
+                lookup_root = context_payload.get("repo_root")
+                if lookup_root:
+                    project_record = await storage_backend.fetch_project(
+                        str(project_name),
+                        repo_root=str(lookup_root),
+                    )
+                else:
+                    project_record = await storage_backend.fetch_project(str(project_name))
                 if project_record:
                     context_payload["repo_root"] = _normalize_repo_root(
                         project_record.repo_root,

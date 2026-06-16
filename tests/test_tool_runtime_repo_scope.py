@@ -33,10 +33,24 @@ class _UnboundStorage:
         return None
 
 
+class _RepoScopedProjectStorage(_UnboundStorage):
+    def __init__(self, *, repo_root: Path, project_name: str) -> None:
+        self.repo_root = str(repo_root)
+        self.project_name = project_name
+        self.fetch_calls: list[tuple[str, str | None]] = []
+
+    async def fetch_project(self, project_name: str, *, repo_root: str | None = None):
+        self.fetch_calls.append((project_name, repo_root))
+        if project_name == self.project_name and repo_root == self.repo_root:
+            return SimpleNamespace(repo_root=self.repo_root)
+        return None
+
+
 class _BoundStorage:
     def __init__(self, *, repo_root: Path, project_name: str) -> None:
         self._repo_root = str(repo_root)
         self._project_name = project_name
+        self.fetch_calls: list[tuple[str, str | None]] = []
 
     async def get_session_by_transport(self, _transport_session_id: str):
         return {
@@ -47,7 +61,8 @@ class _BoundStorage:
     async def get_session_project(self, _session_id: str):
         return self._project_name
 
-    async def fetch_project(self, _project_name: str):
+    async def fetch_project(self, _project_name: str, *, repo_root: str | None = None):
+        self.fetch_calls.append((_project_name, repo_root))
         return SimpleNamespace(repo_root=self._repo_root)
 
     async def upsert_session(self, **_kwargs):
@@ -71,7 +86,7 @@ class _StaleTransportStorage:
     async def get_session_project(self, _session_id: str):
         return self._project_name
 
-    async def fetch_project(self, _project_name: str):
+    async def fetch_project(self, _project_name: str, *, repo_root: str | None = None):
         return SimpleNamespace(repo_root=self._repo_root)
 
     async def upsert_session(self, **_kwargs):
@@ -155,6 +170,48 @@ async def test_execute_tool_call_fails_closed_when_repo_scope_unresolved(tmp_pat
         )
 
     assert observed["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_resolves_explicit_project_with_repo_root(
+    tmp_path: Path,
+) -> None:
+    repo_root = (tmp_path / "scoped-repo").resolve()
+    repo_root.mkdir(parents=True)
+    observed = {"called": False}
+
+    def capture_tool(agent: str, **_kwargs) -> str:
+        observed["called"] = True
+        return agent
+
+    storage = _RepoScopedProjectStorage(
+        repo_root=repo_root,
+        project_name="shared-project",
+    )
+    router = RouterContextManager(storage_backend=storage)
+
+    result = await execute_tool_call(
+        name="capture_tool",
+        arguments={
+            "agent": "CoderAgent",
+            "project": "shared-project",
+            "root": str(repo_root),
+        },
+        kwargs={"context": {"mode": "project", "transport_session_id": "transport-scoped"}},
+        registry={"capture_tool": capture_tool},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=storage,
+        settings=SimpleNamespace(project_root=tmp_path / "server-default"),
+        state_manager=_NoopStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"capture_tool"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == "CoderAgent"
+    assert observed["called"] is True
+    assert storage.fetch_calls == [("shared-project", str(repo_root))]
 
 
 @pytest.mark.asyncio
@@ -296,6 +353,7 @@ async def test_execute_tool_call_restores_repo_scope_from_verified_runtime_trans
 
     assert result == "CoderAgent"
     assert observed["called"] is True
+    assert storage.fetch_calls == []
 
 
 @pytest.mark.asyncio

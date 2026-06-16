@@ -44,8 +44,14 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.6.0` makes Scribe's governed-doc and operator-safety surfaces more useful for real agent teams:
+`2.7.0` makes Scribe's runtime faster and more observable while keeping the governed-doc and operator-safety improvements from the 2.6 line:
 
+- Repeated same-session `set_project` calls for the same agent, project, and repo root now use a strict no-write reuse path with explicit `binding_reused` metadata instead of repeating project/doc/bootstrap writes; the already-bound structured/compact path also skips mutation-time reminder refresh and keeps success-path timing logs out of warning output.
+- Tool runtime telemetry records positive durations, correlation IDs, measurement scope, and repo root in both file and SQL sinks so after-the-fact audits can query real runtimes.
+- `append_entry` exposes phase timing for file WAL append, DB mirror fetch/insert, state update, reminders, response formatting, and total time.
+- Local probe/runtime scripts drain background telemetry tasks before exit, prefer async telemetry writes when available, and avoid asyncpg shutdown warnings from unobserved background futures.
+- `scribe_probe` can emit machine-readable `--json-output` and same-server root comparisons that separate Scribe MCP time from hook/wrapper time.
+- `scribe_doctor` reports physical/logical reconciliation for fresh Postgres installs against existing file-backed Scribe artifacts.
 - `quality_check` now returns agent-ready summaries, grouped warning families, ranked `agent_actions`, body/file location mapping, nearest-section context, repair kind, edit-action hints, and deterministic provenance.
 - Atlas and orchestration agents can run project or wave-level bulk checks with `metadata={"quality": {"bulk": true}}` or explicit `doc_names`, producing aggregate counts plus per-document results.
 - `quality_handoff_check` now includes quality summaries and direct follow-up actions so agents know which managed docs block handoff.

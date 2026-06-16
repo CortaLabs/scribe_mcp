@@ -1,0 +1,88 @@
+
+# 🐞 Probe exits with unobserved asyncpg telemetry task exceptions — integrate-system-scribe-latency-20260616T050042Z
+**Author:** Scribe
+**Version:** v0.1
+**Status:** INVESTIGATING
+**Last Updated:** 2026-06-16 08:04:57 UTC
+
+> Summarise why this document exists and what decisions it captures.
+
+---
+## Bug Overview
+<!-- ID: bug_overview -->
+Local direct/probe runs return successful tool results but emit shutdown telemetry warnings on stderr. This makes the latency/probe proof surface noisy and untrustworthy: operators cannot distinguish a clean probe from a run that leaked background SQL telemetry work or lost asyncpg connection-close errors.
+
+Customer impact: local operators and CI-style probes see successful JSON output alongside asyncio/asyncpg errors, blocking reliable validation and release closeout for the latency workstream.
+
+
+---
+## Description
+<!-- ID: description -->
+### Summary
+Local scribe_probe direct runs complete with ok=true JSON but emit asyncio Future exception was never retrieved and asyncpg.exceptions.ConnectionDoesNotExistError during shutdown after SQL telemetry background tasks are scheduled.
+
+### Expected Behaviour
+Background telemetry tasks are drained or observed before local/probe process exit, so stderr contains no unhandled asyncio future/asyncpg shutdown warnings and JSON output remains valid.
+
+### Actual Behaviour
+Local scribe_probe direct runs complete with ok=true JSON but emit asyncio Future exception was never retrieved and asyncpg.exceptions.ConnectionDoesNotExistError during shutdown after SQL telemetry background tasks are scheduled.
+
+### Steps to Reproduce
+- [ ] Run uv run python -m scribe_mcp.scripts.scribe_probe --tools set_project,append_entry,read_recent --project integrate-system-scribe-latency-20260616T050042Z --agent GaussProbe --root /home/austin/projects/MCP_SPINE/scribe_mcp --message probe-before-background-drain --status info --json-output
+- [ ] Observe ok=true JSON on stdout plus asyncio Future exception was never retrieved / asyncpg ConnectionDoesNotExistError on stderr.
+
+
+
+---
+## Investigation
+<!-- ID: investigation -->
+**Root Cause Analysis:**
+Anonymous background telemetry tasks scheduled through server.schedule_background_task are removed without consuming task.exception(), and the probe path resets context/exits without draining pending background_tasks.
+
+**Affected Areas:**
+- src/scribe_mcp/server.py
+- src/scribe_mcp/scripts/scribe_probe.py
+- src/scribe_mcp/utils/formatters/dispatcher.py
+- src/scribe_mcp/storage/postgres/__init__.py
+- tests/test_execution_context.py
+- tests/test_scribe_probe.py
+
+
+**Related Issues:**
+- Link to related bugs, tickets, or documentation.
+
+
+---
+## Resolution Plan
+<!-- ID: resolution_plan -->
+### Immediate Actions
+- [ ] Add task exception observation for all background tasks and a probe shutdown drain that gathers pending telemetry tasks before emitting final JSON/output.
+
+
+### Long-Term Fixes
+- [ ] Outline long-term remedial work or refactors.
+
+### Testing Strategy
+- [ ] Define validation steps for the fix (unit, integration, regression).
+
+
+---
+## Timeline & Ownership
+<!-- ID: timeline -->
+| Phase | Owner | Target Date | Notes |
+| --- | --- | --- | --- |
+| Investigation | [Name] | [Date] | [Details] |
+| Fix Development | [Name] | [Date] | [Details] |
+| Testing | [Name] | [Date] | [Details] |
+| Deployment | [Name] | [Date] | [Details] |
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **Logs & Evidence:** [Link to relevant logs, traces, screenshots]
+- **Fix References:** [Git commits, PRs, or documentation]
+- **Open Questions:** [List unresolved unknowns or next investigations]
+
+
+---

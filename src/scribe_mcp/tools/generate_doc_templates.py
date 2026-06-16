@@ -359,6 +359,7 @@ def _render_template(template: str, context: Dict[str, str]) -> str:
 
 def _write_template(path: Path, content: str, overwrite: bool, repo_root: Path | None = None) -> None:
     _effective_root = repo_root or settings.project_root
+    path.parent.mkdir(parents=True, exist_ok=True)
     if overwrite and path.exists():
         # Create centralized backup directory
         from datetime import datetime, timezone

@@ -14,6 +14,9 @@ Design:
 
 import json
 import logging
+import inspect
+import time
+import uuid
 from typing import Dict, List, Any, Optional, Union
 
 logger = logging.getLogger(__name__)
@@ -105,7 +108,8 @@ class FormatterDispatcher:
         self,
         data: Dict[str, Any],
         format: str = "readable",  # NOTE: readable is DEFAULT
-        tool_name: str = ""
+        tool_name: str = "",
+        telemetry: Optional[Dict[str, Any]] = None,
     ) -> Union[Dict[str, Any], "CallToolResult"]:
         """
         CRITICAL ROUTER: Logs tool call to JSONL and SQL, then formats response.
@@ -124,6 +128,7 @@ class FormatterDispatcher:
             data: Tool response data (always a dict)
             format: Output format - "readable", "structured", "compact", or "both"
             tool_name: Name of the tool being called
+            telemetry: Optional additive timing/correlation context
 
         Returns:
             - format="readable": CallToolResult with TextContent only (clean display)
@@ -131,6 +136,9 @@ class FormatterDispatcher:
             - format="structured"/"compact": Original data dict
             - Fallback to dict if MCP types unavailable
         """
+        boundary_started = time.perf_counter()
+        telemetry_context = telemetry if isinstance(telemetry, dict) else {}
+
         # STEP 1: Log tool call directly to JSONL and SQL (no recursion)
         # JSONL: via tool_logger.py (synchronous file write)
         # SQL: via storage.record_tool_call() (async DB insert for analytics)
@@ -203,11 +211,22 @@ class FormatterDispatcher:
 
             # Calculate response size for metrics
             response_size = len(self._safe_json_dumps(data)) if isinstance(data, dict) else 0
+            duration_ms = telemetry_context.get("duration_ms")
+            started_at = telemetry_context.get("started_perf_counter")
+            if not isinstance(duration_ms, (int, float)):
+                if isinstance(started_at, (int, float)):
+                    duration_ms = (time.perf_counter() - float(started_at)) * 1000.0
+                else:
+                    duration_ms = (time.perf_counter() - boundary_started) * 1000.0
+            duration_ms = max(round(float(duration_ms), 3), 0.0)
+            correlation_id = str(telemetry_context.get("correlation_id") or data.get("correlation_id") or uuid.uuid4())
+            measurement_scope = str(telemetry_context.get("measurement_scope") or "tool_only")
 
             # Log synchronously (tool_logger is sync function)
             _log_tool_call(
                 tool_name=tool_name,
                 session_id=session_id,
+                duration_ms=duration_ms,
                 status="success" if data.get('ok', True) else "error",
                 format_requested=format,
                 project_name=project_name,
@@ -215,7 +234,9 @@ class FormatterDispatcher:
                 error_message=data.get('error') if not data.get('ok', True) else None,
                 response_size_bytes=response_size,
                 repo_root=repo_root,
-                progress_log_path=progress_log_path
+                progress_log_path=progress_log_path,
+                correlation_id=correlation_id,
+                measurement_scope=measurement_scope,
             )
 
             # STEP 1.5: Write to SQL for cross-project analytics
@@ -225,24 +246,38 @@ class FormatterDispatcher:
                 except ImportError:
                     import server as server_module
                 storage = getattr(server_module, 'storage_backend', None)
-                if storage and hasattr(storage, 'record_tool_call_sync'):
+                if storage:
                     import asyncio
-                    # Fire-and-forget background task with proper GC protection
-                    # Uses module-level background_tasks set to prevent garbage collection
-                    # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-                    server_module.schedule_background_task(asyncio.to_thread(
-                        storage.record_tool_call_sync,
-                        session_id=session_id,
-                        tool_name=tool_name,
-                        duration_ms=None,  # Will add timing in future enhancement
-                        status="success" if data.get('ok', True) else "error",
-                        format_requested=format,
-                        project_name=project_name,
-                        agent_id=agent_id,
-                        error_message=data.get('error') if not data.get('ok', True) else None,
-                        response_size_bytes=response_size,
-                        repo_root=repo_root
-                    ))
+                    call_kwargs = {
+                        "session_id": session_id,
+                        "tool_name": tool_name,
+                        "duration_ms": duration_ms,
+                        "status": "success" if data.get('ok', True) else "error",
+                        "format_requested": format,
+                        "project_name": project_name,
+                        "agent_id": agent_id,
+                        "error_message": data.get('error') if not data.get('ok', True) else None,
+                        "response_size_bytes": response_size,
+                        "repo_root": repo_root,
+                    }
+                    try:
+                        parameters = inspect.signature(storage.record_tool_call_sync).parameters
+                        if "correlation_id" in parameters:
+                            call_kwargs["correlation_id"] = correlation_id
+                        if "measurement_scope" in parameters:
+                            call_kwargs["measurement_scope"] = measurement_scope
+                    except (TypeError, ValueError):
+                        pass
+                    if hasattr(storage, 'record_tool_call_sync'):
+                        # Fire-and-forget background task with proper GC protection.
+                        server_module.schedule_background_task(asyncio.to_thread(
+                            storage.record_tool_call_sync,
+                            **call_kwargs,
+                        ))
+                    else:
+                        async_recorder = getattr(storage, "record_tool_call", None)
+                        if callable(async_recorder):
+                            server_module.schedule_background_task(async_recorder(**call_kwargs))
             except Exception as e:
                 # SQL logging is optional, never block tools
                 logger.warning("SQL tool logging failed: %s", e)

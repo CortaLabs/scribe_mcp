@@ -355,6 +355,9 @@ TELEMETRY_TABLE_STATEMENTS = [
         agent_id TEXT,
         error_message TEXT,
         response_size_bytes INTEGER,
+        repo_root TEXT,
+        correlation_id TEXT,
+        measurement_scope TEXT,
         FOREIGN KEY (session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
     );
     """,
@@ -480,6 +483,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);",
     "CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);",
     "CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);",
+    "CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);",
     "CREATE INDEX IF NOT EXISTS idx_document_sections_project ON document_sections(project_id);",
     "CREATE INDEX IF NOT EXISTS idx_document_sections_updated ON document_sections(updated_at);",
     "CREATE INDEX IF NOT EXISTS idx_document_changes_project ON document_changes(project_id);",
@@ -503,6 +507,25 @@ async def create_planning_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(PLANNING_TABLE_STATEMENTS)
 async def create_telemetry_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(TELEMETRY_TABLE_STATEMENTS)
+async def ensure_telemetry_index_columns(execute_fn: ExecuteFn) -> None:
+    """Ensure optional telemetry columns exist before index creation."""
+    for column_name, column_definition in (
+        ("duration_ms", "REAL"),
+        ("status", "TEXT NOT NULL DEFAULT 'success'"),
+        ("format_requested", "TEXT"),
+        ("project_name", "TEXT"),
+        ("agent_id", "TEXT"),
+        ("error_message", "TEXT"),
+        ("response_size_bytes", "INTEGER"),
+        ("repo_root", "TEXT"),
+        ("correlation_id", "TEXT"),
+        ("measurement_scope", "TEXT"),
+    ):
+        try:
+            await execute_fn(f"ALTER TABLE tool_calls ADD COLUMN {column_name} {column_definition};", ())
+        except Exception as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
 async def create_bridge_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(BRIDGE_TABLE_STATEMENTS)
 async def create_archive_tables(execute_many_fn: ExecuteManyFn) -> None:
@@ -527,4 +550,5 @@ async def create_schema(
     await create_bridge_tables(execute_many_fn)
     await create_archive_tables(execute_many_fn)
     await create_fts_tables(execute_many_fn)
+    await ensure_telemetry_index_columns(execute_fn)
     await create_all_indexes(execute_many_fn)

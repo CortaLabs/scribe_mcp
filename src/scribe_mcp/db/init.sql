@@ -10,8 +10,10 @@ CREATE TABLE IF NOT EXISTS scribe_migrations (
 
 CREATE TABLE IF NOT EXISTS scribe_projects (
     id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
     repo_root TEXT NOT NULL,
+    repo_id TEXT,
+    project_key TEXT,
     progress_log_path TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -111,7 +113,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 
 CREATE TABLE IF NOT EXISTS agent_projects (
     agent_id TEXT PRIMARY KEY,
-    project_name TEXT REFERENCES scribe_projects(name) ON DELETE SET NULL,
+    project_name TEXT,
     version INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_by TEXT,
@@ -147,13 +149,13 @@ CREATE TABLE IF NOT EXISTS scribe_sessions (
 
 CREATE TABLE IF NOT EXISTS session_projects (
     session_id TEXT PRIMARY KEY REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
-    project_name TEXT REFERENCES scribe_projects(name) ON DELETE SET NULL,
+    project_name TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS agent_recent_projects (
     agent_id TEXT NOT NULL,
-    project_name TEXT NOT NULL REFERENCES scribe_projects(name) ON DELETE CASCADE,
+    project_name TEXT NOT NULL,
     last_access_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (agent_id, project_name)
 );
@@ -356,7 +358,9 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     agent_id TEXT,
     error_message TEXT,
     response_size_bytes INTEGER,
-    repo_root TEXT
+    repo_root TEXT,
+    correlation_id TEXT,
+    measurement_scope TEXT
 );
 
 CREATE TABLE IF NOT EXISTS scribe_bridges (
@@ -475,6 +479,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);
 
 CREATE INDEX IF NOT EXISTS idx_bridges_state ON scribe_bridges(state);
 CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at DESC);

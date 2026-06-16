@@ -1,0 +1,87 @@
+
+# 🔬 Research Tool Latency Surface 20260616 — integrate-system-scribe-latency-20260616T050042Z
+**Author:** Scribe
+**Version:** v0.1
+**Status:** in_progress
+**Last Updated:** 2026-06-16 05:06:30 UTC
+
+> Summarise why this document exists and what decisions it captures.
+
+---
+## Executive Summary
+<!-- ID: executive_summary -->
+This report is the Wave 1 Track A research artifact for the integrate-system Scribe latency audit. It will inventory the timing instrumentation exposed by Scribe MCP tool responses, trace the `set_project` and `append_entry` call paths into the implementation, and separate measured evidence from hypotheses about slow coordinator-visible phases.
+
+Current starting evidence from the SPEC and project startup log indicates that `set_project` already emits phase timing in the tool response, with local calls completing in the hundreds of milliseconds. The remaining work is to map where those timings are produced, what response fields exist, and which tests/docs assert the current behavior.
+
+This document will remain evidence-driven and will not propose implementation changes.
+
+
+---
+## Research Scope
+<!-- ID: research_scope -->
+This wave mapped the Scribe MCP latency surface from the tool entrypoints down to shared timing/budget helpers, with emphasis on `set_project`, `append_entry`, and the diagnostics surfaces that consume the same timing envelope machinery.
+
+Reviewed source paths:
+- `src/scribe_mcp/server.py` for startup timing capture and runtime snapshot wiring.
+- `src/scribe_mcp/tools/set_project.py` for the tool-level phase timer, structured response shape, and runtime-efficiency budget emission.
+- `src/scribe_mcp/tools/append_entry.py` for the write path, db mirror behavior, and bulk-performance fields.
+- `src/scribe_mcp/runtime_timing_envelope.py` for the shared schema and budget/status computation.
+- `src/scribe_mcp/tools/doctor.py` and `src/scribe_mcp/log_intelligence.py` for consumers that surface timing envelopes.
+- `src/scribe_mcp/tools/read_recent.py` and `src/scribe_mcp/tools/manage_docs.py` for startup/wait-time participation and whether they emit timing envelopes directly.
+- Tests in `tests/test_set_project.py`, `tests/test_log_intelligence.py`, `tests/test_doctor_telemetry.py`, `tests/test_entry_formatter.py`, `tests/test_response_formatter_readable.py`, and `tests/test_tools.py` for contract coverage.
+
+Method notes:
+- Used scan-first reads before line-range reads on each source file.
+- Kept storage internals at the handoff boundary; no deep Postgres/storage implementation dive.
+- Treated measured timing fields separately from latency hypotheses.
+
+
+---
+## Findings
+<!-- ID: findings -->Detail each major finding with evidence and confidence levels.
+### Finding 1
+- **Summary:** [Describe the finding]
+- **Evidence:** [Link to logs, code references, or experiments]
+- **Confidence:** Medium
+
+### Finding 2
+- **Summary:** [Describe the finding]
+- **Evidence:** [Link to supporting material]
+- **Confidence:** Medium
+
+### Additional Notes
+- Capture supporting observations or open follow-ups.
+
+
+---
+## Technical Analysis
+<!-- ID: technical_analysis -->
+**Code Patterns Identified:**
+- List relevant code paths, abstractions, or anti-patterns uncovered.
+
+**System Interactions:**
+- Summarise dependencies across services, databases, or external APIs.
+
+**Risk Assessment:**
+- [ ] Document technical or product risks discovered and mitigation ideas.
+
+
+---
+## Recommendations
+<!-- ID: recommendations -->Translate research into recommended actions.
+### Immediate Next Steps
+- [ ] List concrete follow-up tasks for the team.
+
+### Long-Term Opportunities
+- Highlight strategic improvements informed by the research.
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **References:** [Link to diagrams, ADRs, whitepapers, or related documents]
+- **Attachments:** [List supporting artifacts or datasets]
+
+
+---

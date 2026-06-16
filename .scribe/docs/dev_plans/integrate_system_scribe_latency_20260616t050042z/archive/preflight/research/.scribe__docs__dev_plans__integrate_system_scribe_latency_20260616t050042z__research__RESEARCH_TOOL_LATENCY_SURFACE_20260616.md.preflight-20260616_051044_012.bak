@@ -1,0 +1,101 @@
+
+# 🔬 Research Tool Latency Surface 20260616 — integrate-system-scribe-latency-20260616T050042Z
+**Author:** Scribe
+**Version:** v0.1
+**Status:** in_progress
+**Last Updated:** 2026-06-16 05:06:30 UTC
+
+> Summarise why this document exists and what decisions it captures.
+
+---
+## Executive Summary
+<!-- ID: executive_summary -->
+This report is the Wave 1 Track A research artifact for the integrate-system Scribe latency audit. It will inventory the timing instrumentation exposed by Scribe MCP tool responses, trace the `set_project` and `append_entry` call paths into the implementation, and separate measured evidence from hypotheses about slow coordinator-visible phases.
+
+Current starting evidence from the SPEC and project startup log indicates that `set_project` already emits phase timing in the tool response, with local calls completing in the hundreds of milliseconds. The remaining work is to map where those timings are produced, what response fields exist, and which tests/docs assert the current behavior.
+
+This document will remain evidence-driven and will not propose implementation changes.
+
+
+---
+## Research Scope
+<!-- ID: research_scope -->
+This wave mapped the Scribe MCP latency surface from the tool entrypoints down to shared timing/budget helpers, with emphasis on `set_project`, `append_entry`, and the diagnostics surfaces that consume the same timing envelope machinery.
+
+Reviewed source paths:
+- `src/scribe_mcp/server.py` for startup timing capture and runtime snapshot wiring.
+- `src/scribe_mcp/tools/set_project.py` for the tool-level phase timer, structured response shape, and runtime-efficiency budget emission.
+- `src/scribe_mcp/tools/append_entry.py` for the write path, db mirror behavior, and bulk-performance fields.
+- `src/scribe_mcp/runtime_timing_envelope.py` for the shared schema and budget/status computation.
+- `src/scribe_mcp/tools/doctor.py` and `src/scribe_mcp/log_intelligence.py` for consumers that surface timing envelopes.
+- `src/scribe_mcp/tools/read_recent.py` and `src/scribe_mcp/tools/manage_docs.py` for startup/wait-time participation and whether they emit timing envelopes directly.
+- Tests in `tests/test_set_project.py`, `tests/test_log_intelligence.py`, `tests/test_doctor_telemetry.py`, `tests/test_entry_formatter.py`, `tests/test_response_formatter_readable.py`, and `tests/test_tools.py` for contract coverage.
+
+Method notes:
+- Used scan-first reads before line-range reads on each source file.
+- Kept storage internals at the handoff boundary; no deep Postgres/storage implementation dive.
+- Treated measured timing fields separately from latency hypotheses.
+
+
+---
+## Findings
+<!-- ID: findings -->
+| Concern | Source of truth | Consumer | Evidence | Risk |
+|---|---|---|---|---|
+| `set_project` has explicit phase timing and budget status in its structured response | `src/scribe_mcp/tools/set_project.py:527-539`, `src/scribe_mcp/tools/set_project.py:1153-1203` | Callers of `set_project`, `doctor`, `log_intelligence` | Tool-local timer starts at `_t0`, records named milestones, builds `set_project_phase_ms`, and attaches `budget_status` via `build_runtime_efficiency_budget_status(...)` | High confidence. This is the clearest measured latency surface in the repo.
+| Shared runtime budget schema is centralized and reusable | `src/scribe_mcp/runtime_timing_envelope.py:7-66`, `src/scribe_mcp/runtime_timing_envelope.py:69-145` | `doctor`, `log_intelligence`, any consumer of the shared builder | Default budgets are defined for `cold_start_ms`, `warm_bound_call_ms`, and `set_project_total_ms`; the envelope exposes `startup.phases_ms`, `tools.set_project.phases_ms`, `tools.generic.phases_ms`, `provenance`, and `budget_status` | High confidence. This is the canonical timing contract for diagnostics.
+| `append_entry` exposes db mirror state and optional bulk performance, but not a timing envelope | `src/scribe_mcp/tools/append_entry.py:639-715`, `src/scribe_mcp/tools/append_entry.py:2250-2288` | `append_entry` callers and readable/structured formatters | The write path mirrors to storage with `storage_timeout_seconds`, records `db_mirror`, and only adds `performance` for `len(items) > 10` with `items_per_second` and batch size data | High confidence. Latency is observable indirectly, not through a shared timing schema.
+| Startup/runtime timing snapshot exists at the server boundary | `src/scribe_mcp/server.py:1035-1164`, `src/scribe_mcp/server.py:1370-1389` | `doctor`, any code reading `_last_runtime_timing` | Startup records `storage.setup` and `document_store.setup` phase durations, total startup, and stores `_last_runtime_timing` with `startup_profile`, `startup_phases_ms`, `startup_total_ms`, `dispatch_path`, and `last_tool` | High confidence. This is a strong candidate for coordinator-visible slow phases.
+| `read_recent` and `manage_docs` participate in tool accounting, but this scan found no dedicated timing envelope emission in those entrypoints | `src/scribe_mcp/tools/read_recent.py:264-493`, `src/scribe_mcp/tools/manage_docs.py:117-184` | `read_recent`, `manage_docs` callers | Both tools call `state_manager.record_tool(...)` and then hand off to shared helpers/formatters, but the scanned code did not include `timing`, `budget_status`, or `timing_envelope` fields | Medium confidence. Absence is based on current scan coverage, not a proof that timing can never appear elsewhere in their helpers.
+
+### Likely slow phases
+
+Measured or directly emitted:
+- `set_project` phases listed in `_timings` and surfaced as `set_project_phase_ms` in the response (`src/scribe_mcp/tools/set_project.py:527-539`, `src/scribe_mcp/tools/set_project.py:1153-1199`).
+- Server startup phases `storage.setup` and `document_store.setup` (`src/scribe_mcp/server.py:1060-1066`, `src/scribe_mcp/server.py:1131-1139`).
+
+Hypotheses that are plausible slow phases but not directly timed in the current response shape:
+- `ensure_documents` and `upsert_project` inside `set_project` (`src/scribe_mcp/tools/set_project.py:684-808`).
+- `project_registry` and `upsert_dev_plans` work inside `set_project` (`src/scribe_mcp/tools/set_project.py:820-875`).
+- `state_set_current_project`, `state_set_session_mode`, and `backend_session_ops` in `set_project` (`src/scribe_mcp/tools/set_project.py:976-1019`).
+- Readable-mode rebind refresh and existing-project inventory/activity collection, including `count_entries` and `_gather_project_inventory` (`src/scribe_mcp/tools/set_project.py:1022-1149`).
+- `append_entry` storage mirror work, especially `fetch_project`, `upsert_project`, `insert_entry`, and post-append hooks (`src/scribe_mcp/tools/append_entry.py:639-684`, `src/scribe_mcp/tools/append_entry.py:2206-2238`).
+- `append_entry` reminder fetches (`src/scribe_mcp/tools/append_entry.py:1071-1073`, `src/scribe_mcp/tools/append_entry.py:2250-2255`).
+
+### Evidence quality
+- High confidence: direct response fields and direct timer code.
+- Medium confidence: inferred slow phases based on sequential operations, timeouts, and helper boundaries.
+- Low confidence: any cross-repo or coordinator-visible slowness not backed by this repo's direct source and test evidence.
+
+
+---
+## Technical Analysis
+<!-- ID: technical_analysis -->
+**Code Patterns Identified:**
+- List relevant code paths, abstractions, or anti-patterns uncovered.
+
+**System Interactions:**
+- Summarise dependencies across services, databases, or external APIs.
+
+**Risk Assessment:**
+- [ ] Document technical or product risks discovered and mitigation ideas.
+
+
+---
+## Recommendations
+<!-- ID: recommendations -->Translate research into recommended actions.
+### Immediate Next Steps
+- [ ] List concrete follow-up tasks for the team.
+
+### Long-Term Opportunities
+- Highlight strategic improvements informed by the research.
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **References:** [Link to diagrams, ADRs, whitepapers, or related documents]
+- **Attachments:** [List supporting artifacts or datasets]
+
+
+---

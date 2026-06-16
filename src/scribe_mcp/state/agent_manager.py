@@ -212,6 +212,58 @@ class AgentContextManager:
         """
         return await self.storage.get_agent_project(agent_id)
 
+    async def describe_current_project_binding(
+        self,
+        agent_id: str,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return current agent-project binding proof without rewriting state."""
+        if session_id is None:
+            async with self._lease_lock:
+                lease = self._session_leases.get(agent_id)
+            if lease is None:
+                return {
+                    "valid": False,
+                    "reason": "missing_agent_session_lease",
+                }
+            session_id = lease[0]
+
+        try:
+            await self._validate_session_lease(agent_id, session_id)
+        except SessionLeaseExpired as exc:
+            return {
+                "valid": False,
+                "reason": "session_expired",
+                "error": str(exc),
+            }
+        except Exception as exc:
+            return {
+                "valid": False,
+                "reason": "session_validation_failed",
+                "error": str(exc),
+            }
+
+        try:
+            binding = await self.storage.get_agent_project(agent_id)
+        except Exception as exc:
+            return {
+                "valid": False,
+                "reason": "agent_project_lookup_failed",
+                "error": str(exc),
+            }
+
+        if not binding:
+            return {
+                "valid": False,
+                "reason": "missing_agent_project_binding",
+            }
+
+        return {
+            "valid": True,
+            "reason": "binding_verified",
+            "binding": dict(binding),
+        }
+
     async def heartbeat_session(self, session_id: str) -> None:
         """
         Update session activity timestamp.

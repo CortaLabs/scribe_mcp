@@ -41,6 +41,7 @@ from scribe_mcp.shared.repo_authority import (
 )
 from scribe_mcp.shared.write_barrier import assert_writes_allowed
 from scribe_mcp.runtime_timing_envelope import build_runtime_efficiency_budget_status
+from scribe_mcp.utils.response import default_formatter
 
 
 logger = logging.getLogger(__name__)
@@ -442,6 +443,180 @@ def _project_names_share_canonical_alias(left: str, right: str) -> bool:
     return bool(left_slug and right_slug and left_slug == right_slug)
 
 
+def _project_record_root(project_record: Any) -> Optional[str]:
+    root_value = getattr(project_record, "repo_root", None)
+    if root_value is None and isinstance(project_record, dict):
+        root_value = project_record.get("repo_root") or project_record.get("root")
+    if not root_value:
+        return None
+    try:
+        return str(Path(str(root_value)).expanduser().resolve())
+    except Exception:
+        return str(root_value)
+
+
+def _project_record_docs(project_record: Any, fallback_docs: Dict[str, str]) -> Dict[str, Any]:
+    docs = dict(fallback_docs)
+    docs_json = getattr(project_record, "docs_json", None)
+    if docs_json is None and isinstance(project_record, dict):
+        docs_json = project_record.get("docs_json") or project_record.get("docs")
+    if isinstance(docs_json, dict):
+        docs.update(docs_json)
+        return docs
+    if isinstance(docs_json, str) and docs_json.strip():
+        try:
+            import json
+
+            parsed = json.loads(docs_json)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            docs.update(parsed)
+    return docs
+
+
+async def _describe_same_binding_reuse(
+    *,
+    agent_manager: Any,
+    backend: Any,
+    agent_id: str,
+    name: str,
+    resolved_root: Path,
+    authoritative_session_id: Optional[str],
+) -> Dict[str, Any]:
+    if not backend:
+        return {"reused": False, "reason": "missing_storage_backend"}
+
+    if authoritative_session_id:
+        try:
+            cached_project = await server_module.router_context_manager.get_cached_project(
+                authoritative_session_id
+            )
+        except Exception as exc:
+            return {
+                "reused": False,
+                "reason": "router_cache_lookup_failed",
+                "error": str(exc),
+            }
+        if cached_project != name:
+            return {
+                "reused": False,
+                "reason": "router_cache_mismatch",
+                "cached_project": cached_project,
+            }
+
+    async def _fetch_project_record() -> Any:
+        try:
+            return await backend.fetch_project(
+                name,
+                repo_root=str(resolved_root.resolve()),
+            )
+        except TypeError:
+            return await backend.fetch_project(name)
+
+    if not agent_manager:
+        if not authoritative_session_id:
+            return {"reused": False, "reason": "missing_authoritative_session"}
+        try:
+            project_record = await _fetch_project_record()
+        except Exception as exc:
+            return {
+                "reused": False,
+                "reason": "project_lookup_failed",
+                "error": str(exc),
+            }
+        if not project_record:
+            return {"reused": False, "reason": "missing_project_record"}
+        project_root = _project_record_root(project_record)
+        if project_root != str(resolved_root.resolve()):
+            return {
+                "reused": False,
+                "reason": "project_root_mismatch",
+                "bound_root": project_root,
+            }
+        return {
+            "reused": True,
+            "reason": "same_agent_session_project_root",
+            "binding": {
+                "agent_id": agent_id,
+                "project_name": name,
+                "session_id": authoritative_session_id,
+                "version": 1,
+                "updated_by": agent_id,
+            },
+            "project_record": project_record,
+            "binding_source": "router_session_project_cache",
+        }
+
+    if hasattr(agent_manager, "describe_current_project_binding"):
+        describe_kwargs: Dict[str, Any] = {"agent_id": agent_id}
+        if authoritative_session_id:
+            describe_kwargs["session_id"] = authoritative_session_id
+        binding_proof = await agent_manager.describe_current_project_binding(**describe_kwargs)
+    else:
+        try:
+            binding = await agent_manager.get_current_project(agent_id)
+            binding_proof = {
+                "valid": bool(binding),
+                "reason": "binding_verified" if binding else "missing_agent_project_binding",
+                "binding": binding,
+            }
+        except Exception as exc:
+            binding_proof = {
+                "valid": False,
+                "reason": "agent_project_lookup_failed",
+                "error": str(exc),
+            }
+    if not binding_proof.get("valid"):
+        return {
+            "reused": False,
+            "reason": binding_proof.get("reason") or "invalid_agent_project_binding",
+            "binding_proof": binding_proof,
+        }
+
+    binding = dict(binding_proof.get("binding") or {})
+    if binding.get("project_name") != name:
+        return {
+            "reused": False,
+            "reason": "agent_project_mismatch",
+            "bound_project": binding.get("project_name"),
+        }
+    binding_session_id = binding.get("session_id")
+    if authoritative_session_id and binding_session_id != authoritative_session_id:
+        return {
+            "reused": False,
+            "reason": "agent_session_mismatch",
+            "bound_session_id": binding_session_id,
+        }
+
+    try:
+        project_record = await _fetch_project_record()
+    except Exception as exc:
+        return {
+            "reused": False,
+            "reason": "project_lookup_failed",
+            "error": str(exc),
+        }
+    if not project_record:
+        return {"reused": False, "reason": "missing_project_record"}
+
+    project_root = _project_record_root(project_record)
+    if project_root != str(resolved_root.resolve()):
+        return {
+            "reused": False,
+            "reason": "project_root_mismatch",
+            "bound_root": project_root,
+        }
+
+    return {
+        "reused": True,
+        "reason": "same_agent_session_project_root",
+        "authoritative_session_id": authoritative_session_id or binding_session_id,
+        "binding": binding,
+        "project_record": project_record,
+    }
+
+
 async def _targeted_post_bind_refresh(
     *,
     project: Dict[str, Any],
@@ -526,6 +701,8 @@ async def set_project(
 
     _t0 = _pc()
     _timings: list[tuple[str, float]] = []
+    server_module.install_asyncpg_shutdown_exception_handler()
+
     def _mark(label: str) -> None:
         _timings.append((label, (_pc() - _t0) * 1000))
     def _log_timings() -> None:
@@ -536,7 +713,16 @@ async def set_project(
             delta = cum - prev
             parts.append(f"{lbl}={delta:.0f}ms")
             prev = cum
-        logger.warning("PERF set_project total=%.0fms | %s", total, " | ".join(parts))
+        logger.debug("PERF set_project total=%.0fms | %s", total, " | ".join(parts))
+
+    def _build_timing_breakdown_ms() -> Dict[str, float]:
+        timing_breakdown_ms: Dict[str, float] = {}
+        prev = 0.0
+        for lbl, cum in _timings:
+            timing_breakdown_ms[lbl] = round(cum - prev, 3)
+            prev = cum
+        timing_breakdown_ms["total_ms"] = round((_pc() - _t0) * 1000, 3)
+        return timing_breakdown_ms
 
     state_snapshot = await server_module.state_manager.record_tool("set_project")
     _mark("record_tool")
@@ -573,12 +759,25 @@ async def set_project(
         )
     _mark("update_agent_activity")
 
-    base_context: LoggingContext = await _SET_PROJECT_HELPER.prepare_context(
-        tool_name="set_project",
-        agent_id=agent_id,
-        require_project=False,
-        state_snapshot=state_snapshot,
-    )
+    base_context: Optional[LoggingContext] = None
+
+    async def _prepare_base_context() -> LoggingContext:
+        nonlocal base_context
+        if base_context is None:
+            base_context = await _SET_PROJECT_HELPER.prepare_context(
+                tool_name="set_project",
+                agent_id=agent_id,
+                require_project=False,
+                state_snapshot=state_snapshot,
+            )
+            _mark("prepare_context")
+        return base_context
+
+    async def _apply_context_payload(response: Dict[str, Any]) -> Dict[str, Any]:
+        return _SET_PROJECT_HELPER.apply_context_payload(
+            response,
+            await _prepare_base_context(),
+        )
 
     # Normalize tags parameter if provided
     if isinstance(tags, str):
@@ -591,7 +790,6 @@ async def set_project(
         except ValueError:
             tags = [tags]  # Fallback: treat as single item
 
-    _mark("prepare_context")
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
     try:
         current_context = server_module.get_execution_context()
@@ -619,12 +817,11 @@ async def set_project(
             scribe_user=trusted_workspace_user,
         )
     except ProjectRootAuthorizationError as exc:
-        return _SET_PROJECT_HELPER.apply_context_payload(
+        return await _apply_context_payload(
             _SET_PROJECT_HELPER.error_response(
                 str(exc),
                 extra=exc.payload,
-            ),
-            base_context,
+            )
         )
 
     # Detect if a path mapping occurred (for metadata).
@@ -646,10 +843,7 @@ async def set_project(
     try:
         resolved_log = _resolve_log(progress_log, resolved_root, docs_dir)
     except ValueError as exc:
-        return _SET_PROJECT_HELPER.apply_context_payload(
-            _SET_PROJECT_HELPER.error_response(str(exc)),
-            base_context,
-        )
+        return await _apply_context_payload(_SET_PROJECT_HELPER.error_response(str(exc)))
 
     validation = await _validate_project_paths(
         name=name,
@@ -658,23 +852,185 @@ async def set_project(
         progress_log=resolved_log,
     )
     if not validation.get("ok", False):
-        return _SET_PROJECT_HELPER.apply_context_payload(validation, base_context)
+        return await _apply_context_payload(validation)
 
     _mark("resolve_paths")
     if resolved_root.exists() and not resolved_root.is_dir():
-        return _SET_PROJECT_HELPER.apply_context_payload(
-            _SET_PROJECT_HELPER.error_response("Project root must be a directory."),
-            base_context,
+        return await _apply_context_payload(
+            _SET_PROJECT_HELPER.error_response("Project root must be a directory.")
         )
     if not resolved_root.exists():
         if not auto_create_dirs:
-            return _SET_PROJECT_HELPER.apply_context_payload(
+            return await _apply_context_payload(
                 _SET_PROJECT_HELPER.error_response(
                     "Project root does not exist and auto_create_dirs is disabled."
                 ),
-                base_context,
             )
         resolved_root.mkdir(parents=True, exist_ok=True)
+
+    docs = {
+        "architecture": str(docs_dir / "ARCHITECTURE_GUIDE.md"),
+        "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
+        "checklist": str(docs_dir / "CHECKLIST.md"),
+        "changelog": str(docs_dir / "CHANGELOG.md"),
+        "progress_log": str(resolved_log),
+    }
+
+    agent_manager = server_module.get_agent_context_manager()
+    reuse_context = None
+    reuse_context_meta: Dict[str, Any] = {}
+    try:
+        reuse_context, reuse_context_meta = server_module.get_execution_context(
+            recovery_mode="none",
+            include_metadata=True,
+        )
+    except Exception:
+        reuse_context = None
+        reuse_context_meta = {}
+    reuse_scope = resolve_authoritative_write_scope(
+        context=reuse_context or current_context,
+        agent_session_id=None,
+    )
+    reuse_authoritative_session_id = reuse_scope.get("authoritative_session_id")
+    reuse_blockers: List[str] = []
+    if os.environ.get("SCRIBE_ALLOW_SET_PROJECT_GLOBAL_COMPAT", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        reuse_blockers.append("global_compat_enabled")
+    if format == "readable":
+        reuse_blockers.append("readable_sitrep_requested")
+    if any(
+        value is not None
+        for value in (
+            progress_log,
+            description,
+            bridge_id,
+            expected_version,
+            reminder_settings,
+            notification_config,
+            template,
+        )
+    ) or any(
+        bool(value)
+        for value in (
+            overwrite_docs,
+            reset_reminders,
+            bridge_managed,
+            tags,
+        )
+    ):
+        reuse_blockers.append("mutation_parameters_present")
+    if reuse_context_meta.get("fallback_used") or reuse_context_meta.get("sentinel_fallback"):
+        reuse_blockers.append("context_fallback")
+
+    reuse_probe = {"reused": False, "reason": "not_attempted"}
+    if not reuse_blockers:
+        reuse_probe = await _describe_same_binding_reuse(
+            agent_manager=agent_manager,
+            backend=backend,
+            agent_id=agent_id,
+            name=name,
+            resolved_root=resolved_root,
+            authoritative_session_id=reuse_authoritative_session_id,
+        )
+        _mark("same_binding_reuse_probe")
+
+    if reuse_probe.get("reused"):
+        project_record = reuse_probe["project_record"]
+        reused_session_id = reuse_probe.get("authoritative_session_id") or reuse_authoritative_session_id
+        docs = _project_record_docs(project_record, docs)
+        project_data = {
+            "name": name,
+            "root": str(resolved_root),
+            "progress_log": str(resolved_log),
+            "docs_dir": str(docs_dir),
+            "docs": docs,
+            "defaults": defaults,
+            "author": author or defaults.get("agent") or "Scribe",
+            "description": description,
+            "tags": tags or [],
+            "version": (reuse_probe.get("binding") or {}).get("version", 1),
+            "updated_by": (reuse_probe.get("binding") or {}).get("updated_by", agent_id),
+            "session_id": reused_session_id,
+        }
+        if client_root_original:
+            project_data.setdefault("meta", {})
+            project_data["meta"]["client_root"] = client_root_original
+        if alias_resolution:
+            project_data.setdefault("meta", {})
+            project_data["meta"]["alias_resolution"] = alias_resolution
+
+        write_side_effects: Dict[str, Any] = {
+            "authoritative_session_id": reused_session_id,
+            "scope_resolution_source": reuse_scope.get("scope_resolution_source"),
+            "binding_reused": True,
+            "binding_reuse_reason": reuse_probe.get("reason"),
+            "skipped_persistent_writes": [
+                "ensure_downstream_seed_assets",
+                "ensure_documents",
+                "upsert_project",
+                "project_registry",
+                "upsert_dev_plans",
+                "agent_context_manager",
+                "state_set_current_project",
+                "state_set_session_mode",
+                "backend_session_ops",
+                "upsert_agent_recent",
+            ],
+            "global_mirror": {"enabled": False, "reason": None, "performed": False},
+            "compatibility_writes": [],
+        }
+        response: Dict[str, Any] = {
+            "ok": True,
+            "project": project_data,
+            "recent_projects": list(getattr(state_snapshot, "recent_projects", []) or [name]),
+            "generated": [],
+            "skipped": [
+                "architecture",
+                "phase_plan",
+                "checklist",
+                "changelog",
+                "progress_log",
+                "doc_log",
+                "security_log",
+                "bug_log",
+            ],
+            "side_effects": write_side_effects,
+            "root_authorization": root_authorization,
+            "timing": {"set_project_phase_ms": {}},
+            "reminders": [],
+            "scope_resolution": {
+                "source": write_side_effects.get("scope_resolution_source"),
+                "authoritative_session_id": write_side_effects.get("authoritative_session_id"),
+                "compatibility_writes": [],
+                "global_mirror_performed": False,
+                "binding_reused": True,
+                "binding_reuse_reason": reuse_probe.get("reason"),
+            },
+            **({"warnings": validation.get("warnings", [])} if validation.get("warnings") else {}),
+        }
+        set_project_phase_ms = _build_timing_breakdown_ms()
+        response["timing"]["set_project_phase_ms"] = set_project_phase_ms
+        response["timing"]["budget_status"] = build_runtime_efficiency_budget_status(
+            startup_phases_ms=None,
+            set_project_phase_ms=set_project_phase_ms,
+            dispatch_path=None,
+            startup_profile=None,
+            budget_thresholds=getattr(settings, "runtime_efficiency_budgets", None),
+        )
+        _mark("format_structured")
+        _log_timings()
+        return await default_formatter.finalize_tool_response(
+            response,
+            format=format,
+            tool_name="set_project",
+            telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
+        )
+
+    base_context = await _prepare_base_context()
 
     try:
         ensure_downstream_seed_assets(resolved_root)
@@ -686,14 +1042,6 @@ async def set_project(
     _mark("ensure_documents")
     if not doc_result.get("ok", False):
         return _SET_PROJECT_HELPER.apply_context_payload(doc_result, base_context)
-
-    docs = {
-        "architecture": str(docs_dir / "ARCHITECTURE_GUIDE.md"),
-        "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
-        "checklist": str(docs_dir / "CHECKLIST.md"),
-        "changelog": str(docs_dir / "CHANGELOG.md"),
-        "progress_log": str(resolved_log),
-    }
 
     # Compute baseline_hashes for newly generated docs (fixes EXISTING_LEGACY state detection)
     # This allows get_project to distinguish NEW from EXISTING_LEGACY projects
@@ -874,7 +1222,6 @@ async def set_project(
 
     _mark("upsert_dev_plans")
     # Use AgentContextManager for agent-scoped project context
-    agent_manager = server_module.get_agent_context_manager()
     session_id: Optional[str] = None
     mirror_global = False
     context_session_id: Optional[str] = None
@@ -904,15 +1251,21 @@ async def set_project(
         _ = context_meta
     except Exception:
         context_session_id = None
+    authoritative_scope = resolve_authoritative_write_scope(
+        context=context,
+        agent_session_id=None,
+    )
+    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
     if agent_manager:
         try:
             # Ensure agent has an active session, passing stable session if available
-            session_id = await ensure_agent_session(agent_id, stable_session_id=stable_session_id)
+            preferred_session_id = authoritative_session_id or stable_session_id
+            session_id = await ensure_agent_session(agent_id, stable_session_id=preferred_session_id)
             if not session_id:
                 # Fallback: create simple session with stable session if available
                 session_id = await agent_manager.start_session(
                     agent_id,
-                    session_id=stable_session_id,  # Use stable session in fallback too
+                    session_id=preferred_session_id,  # Use authoritative/stable session in fallback too
                     metadata={"tool": "set_project"}
                 )
 
@@ -949,6 +1302,7 @@ async def set_project(
         project_data["session_id"] = authoritative_session_id
     write_side_effects["authoritative_session_id"] = authoritative_session_id
     write_side_effects["scope_resolution_source"] = authoritative_scope.get("scope_resolution_source")
+    state_write_session_id = authoritative_session_id if context is not None else None
 
     if not authoritative_session_id and os.environ.get("SCRIBE_ALLOW_SET_PROJECT_GLOBAL_COMPAT", "").lower() in {
         "1",
@@ -963,7 +1317,7 @@ async def set_project(
             "reason": compatibility_path,
             "performed": False,
         }
-    elif not authoritative_session_id and context is None:
+    elif context is None:
         mirror_global = True
         compatibility_path = compatibility_path or "no_runtime_context_global_compat"
         write_side_effects["global_mirror"] = {
@@ -978,7 +1332,7 @@ async def set_project(
         name,
         project_data,
         agent_id=agent_id,
-        session_id=authoritative_session_id,
+        session_id=state_write_session_id,
         resolved_scope=authoritative_scope.get("resolved_scope"),
         mirror_global=mirror_global,
         skip_upsert=True,  # Already upserted at line 417
@@ -987,15 +1341,15 @@ async def set_project(
         logger.warning("StateManager.set_current_project returned None; reloading state snapshot.")
         state = await server_module.state_manager.load()
     _mark("state_set_current_project")
-    if authoritative_session_id:
+    if state_write_session_id:
         await server_module.state_manager.set_session_mode(
-            authoritative_session_id,
+            state_write_session_id,
             "project",
         )
     _mark("state_set_session_mode")
     backend = server_module.storage_backend
     if backend:
-        session_key = authoritative_session_id
+        session_key = state_write_session_id
         if session_key:
             await server_module.router_context_manager.cache_project_binding(
                 session_key,
@@ -1039,8 +1393,6 @@ async def set_project(
                 "Timed out during set_project post-bind context refresh; using base context"
             )
         _mark("prepare_context_after")
-        from scribe_mcp.utils.response import default_formatter
-
         # Compute docs_were_generated BEFORE count_entries so we can skip the call for new projects.
         # doc_result is set earlier (from _ensure_documents) and does not depend on count_entries.
         # Note: _ensure_documents returns "generated" key (list of generated doc types)
@@ -1103,7 +1455,8 @@ async def set_project(
             return await default_formatter.finalize_tool_response(
                 response,
                 format="readable",
-                tool_name="set_project"
+                tool_name="set_project",
+                telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
             )
 
         else:
@@ -1145,7 +1498,8 @@ async def set_project(
             return await default_formatter.finalize_tool_response(
                 response,
                 format="readable",
-                tool_name="set_project"
+                tool_name="set_project",
+                telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
             )
 
 
@@ -1200,7 +1554,12 @@ async def set_project(
 
     _mark("format_structured")
     _log_timings()
-    return _SET_PROJECT_HELPER.apply_context_payload(response, base_context)
+    return await default_formatter.finalize_tool_response(
+        _SET_PROJECT_HELPER.apply_context_payload(response, base_context),
+        format=format,
+        tool_name="set_project",
+        telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
+    )
 
 
 def _get_context_repo_root_details() -> Dict[str, Any]:

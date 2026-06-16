@@ -21,6 +21,7 @@ from scribe_mcp.shared.tool_runtime import (
     resolve_context_authoritative_session_key,
 )
 from scribe_mcp.runtime_timing_envelope import build_timing_envelope
+from scribe_mcp.physical_logical_reconciliation import build_physical_logical_reconciliation
 
 
 def _list_loaded_plugins() -> list[str]:
@@ -284,6 +285,10 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
         storage_backend=runtime_storage_backend,
         runtime_exec_context=runtime_exec_context,
     )
+    physical_logical_reconciliation = await build_physical_logical_reconciliation(
+        repo_root=Path(repo_root) if repo_root else Path.cwd(),
+        storage_backend=runtime_storage_backend,
+    )
     planning_registry = get_runtime_project_registry()
     planning_registry_context: Dict[str, Any] = {}
     try:
@@ -364,6 +369,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
                 **authority_snapshot,
             },
             "case_telemetry": case_snapshot,
+            "physical_logical_reconciliation": physical_logical_reconciliation,
             "storage_diagnostics": storage_diagnostics,
             "timing_envelope": build_timing_envelope(
                 dispatch_path=runtime_timing.get("dispatch_path"),

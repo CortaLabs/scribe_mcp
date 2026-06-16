@@ -46,6 +46,23 @@ def _session_debug_trace(title: str, lines: Sequence[str]) -> None:
         logger.debug("Session debug trace write failed for '%s'", title)
 
 
+def _verified_execution_repo_root(exec_context: Any) -> Optional[str]:
+    """Return the verified repo root from the active execution context, if any."""
+    if exec_context is None:
+        return None
+    resolved_scope = getattr(exec_context, "resolved_scope", None)
+    repo_root = getattr(resolved_scope, "repo_root", None) or getattr(exec_context, "repo_root", None)
+    if not repo_root:
+        return None
+    provenance = getattr(getattr(resolved_scope, "provenance", None), "repo_root", None)
+    if resolved_scope is not None and provenance != "verified":
+        return None
+    try:
+        return str(Path(str(repo_root)).expanduser().resolve())
+    except Exception:
+        return str(repo_root)
+
+
 @dataclass(slots=True)
 class LoggingContext:
     """Resolved context information required by most logging tools."""
@@ -169,6 +186,7 @@ async def resolve_logging_context(
             exec_context = server_module.get_execution_context()
         except Exception:
             exec_context = None
+    execution_repo_root = _verified_execution_repo_root(exec_context)
 
     # Primary path: session-scoped project resolution (project mode only).
     if exec_context and getattr(exec_context, "mode", None) == "project":
@@ -223,7 +241,13 @@ async def resolve_logging_context(
                     try:
                         record = None
                         if hasattr(backend, "fetch_project"):
-                            record = await backend.fetch_project(project_name)
+                            if execution_repo_root:
+                                record = await backend.fetch_project(
+                                    project_name,
+                                    repo_root=execution_repo_root,
+                                )
+                            else:
+                                record = await backend.fetch_project(project_name)
                         if record:
                             session_project = {
                                 "name": record.name,
@@ -343,7 +367,13 @@ async def resolve_logging_context(
         if backend and hasattr(backend, "fetch_project"):
             for candidate in explicit_candidates:
                 try:
-                    record = await backend.fetch_project(candidate)
+                    if execution_repo_root:
+                        record = await backend.fetch_project(
+                            candidate,
+                            repo_root=execution_repo_root,
+                        )
+                    else:
+                        record = await backend.fetch_project(candidate)
                 except Exception:
                     record = None
                 if record:
@@ -357,11 +387,21 @@ async def resolve_logging_context(
             ):
                 try:
                     records = await backend.list_projects()
+                    alias_matches = []
                     for candidate_record in records:
                         candidate_name = getattr(candidate_record, "name", "")
                         if normalize_project_input(candidate_name) == explicit_alias:
-                            record = candidate_record
-                            break
+                            if execution_repo_root:
+                                candidate_root = str(getattr(candidate_record, "repo_root", "") or "")
+                                try:
+                                    candidate_root = str(Path(candidate_root).expanduser().resolve())
+                                except Exception:
+                                    pass
+                                if candidate_root != execution_repo_root:
+                                    continue
+                            alias_matches.append(candidate_record)
+                    if len(alias_matches) == 1:
+                        record = alias_matches[0]
                 except Exception:
                     record = None
 

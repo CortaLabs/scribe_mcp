@@ -62,6 +62,9 @@ class _InMemoryProjectBackend:
     def __init__(self) -> None:
         self._projects: dict[tuple[str, str], SimpleNamespace] = {}
         self._next_id = 1
+        self.upsert_project_calls = 0
+        self.upsert_agent_recent_project_calls = 0
+        self.upsert_dev_plan_calls = 0
 
     async def fetch_project(self, name: str, *, repo_root: str | None = None):
         if repo_root is not None:
@@ -75,6 +78,7 @@ class _InMemoryProjectBackend:
         return list(self._projects.values())
 
     async def upsert_project(self, *, name: str, repo_root: str, progress_log_path: str, docs_json: str, bridge_id=None, bridge_managed=None):
+        self.upsert_project_calls += 1
         key = (name, repo_root)
         record = self._projects.get(key)
         if record is None:
@@ -97,6 +101,11 @@ class _InMemoryProjectBackend:
         return record
 
     async def upsert_agent_recent_project(self, *args, **kwargs):
+        self.upsert_agent_recent_project_calls += 1
+        return None
+
+    async def upsert_dev_plan(self, *args, **kwargs):
+        self.upsert_dev_plan_calls += 1
         return None
 
     async def count_entries(self, project, filters=None):
@@ -104,6 +113,88 @@ class _InMemoryProjectBackend:
 
     async def fetch_recent_entries(self, project, limit=10, filters=None):
         return []
+
+
+class _FakeAgentContextManager:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        self.set_current_project_calls = 0
+        self.describe_current_project_binding_calls = 0
+        self.binding: dict | None = None
+        self.expired = False
+
+    async def start_session(self, agent_id: str, session_id: str | None = None, metadata=None):
+        return session_id or self.session_id
+
+    async def set_current_project(
+        self,
+        *,
+        agent_id: str,
+        project_name: str | None,
+        session_id: str,
+        expected_version=None,
+    ):
+        self.set_current_project_calls += 1
+        version = ((self.binding or {}).get("version") or 0) + 1
+        self.binding = {
+            "agent_id": agent_id,
+            "project_name": project_name,
+            "session_id": session_id,
+            "version": version,
+            "updated_by": agent_id,
+        }
+        return dict(self.binding)
+
+    async def describe_current_project_binding(self, *, agent_id: str, session_id: str | None = None):
+        self.describe_current_project_binding_calls += 1
+        session_id = session_id or self.session_id
+        if self.expired:
+            return {"valid": False, "reason": "session_expired"}
+        if not self.binding:
+            return {"valid": False, "reason": "missing_agent_project_binding"}
+        if self.binding.get("agent_id") != agent_id:
+            return {"valid": False, "reason": "agent_mismatch"}
+        if self.binding.get("session_id") != session_id:
+            return {
+                "valid": False,
+                "reason": "agent_session_mismatch",
+                "binding": dict(self.binding),
+            }
+        return {
+            "valid": True,
+            "reason": "binding_verified",
+            "binding": dict(self.binding),
+        }
+
+
+def _install_project_context(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    agent_manager: _FakeAgentContextManager,
+    repo_root: Path,
+) -> str:
+    session_id = agent_manager.session_id
+
+    def _get_execution_context(*_args, **kwargs):
+        context = SimpleNamespace(
+            repo_root=str(repo_root),
+            mode="project",
+            session_id=session_id,
+            stable_session_id=session_id,
+            resolved_scope=None,
+            authoritative_session_key=session_id,
+        )
+        if kwargs.get("include_metadata"):
+            return context, {"fallback_used": False}
+        return context
+
+    async def _ensure_agent_session(_agent_id: str, stable_session_id: str | None = None):
+        return stable_session_id or session_id
+
+    monkeypatch.setattr(set_project_module.server_module, "get_execution_context", _get_execution_context)
+    monkeypatch.setattr(set_project_module.server_module, "get_agent_context_manager", lambda: agent_manager)
+    monkeypatch.setattr(set_project_module, "ensure_agent_session", _ensure_agent_session)
+    return session_id
 
 
 class TestBug001EmptyLogDetection:
@@ -614,6 +705,228 @@ async def test_set_project_structured_timing_includes_budget_status_shape(monkey
         set_project_metric = metrics["set_project_total_ms"]
         assert isinstance(set_project_metric.get("value_ms"), (int, float))
         assert set_project_metric.get("status") in {"within_budget", "near_budget", "over_budget", "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_set_project_structured_reuses_same_binding_without_duplicate_writes(monkeypatch: pytest.MonkeyPatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _disable_live_storage_backend(monkeypatch)
+        fake_backend = _InMemoryProjectBackend()
+        monkeypatch.setattr(set_project_module.server_module, "storage_backend", fake_backend)
+        agent_manager = _FakeAgentContextManager(session_id=f"session-{uuid.uuid4()}")
+        project_root = Path(tmpdir)
+        (project_root / ".git").mkdir()
+        _install_project_context(monkeypatch, agent_manager=agent_manager, repo_root=project_root)
+
+        state_manager = set_project_module.server_module.state_manager
+        state_counts = {"set_current_project": 0, "set_session_mode": 0}
+        original_set_current_project = state_manager.set_current_project
+        original_set_session_mode = state_manager.set_session_mode
+
+        async def _count_state_set_current_project(*args, **kwargs):
+            state_counts["set_current_project"] += 1
+            return await original_set_current_project(*args, **kwargs)
+
+        async def _count_state_set_session_mode(*args, **kwargs):
+            state_counts["set_session_mode"] += 1
+            return await original_set_session_mode(*args, **kwargs)
+
+        monkeypatch.setattr(state_manager, "set_current_project", _count_state_set_current_project)
+        monkeypatch.setattr(state_manager, "set_session_mode", _count_state_set_session_mode)
+
+        unique_id = str(uuid.uuid4())[:8]
+        agent_name = f"TestAgent-Reuse-{unique_id}"
+        project_name = f"reuse_project_{unique_id}"
+
+        first = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert first.get("ok", False), f"first set_project failed: {first}"
+        first_version = first["project"]["version"]
+        write_counts_after_first = {
+            "upsert_project": fake_backend.upsert_project_calls,
+            "upsert_recent": fake_backend.upsert_agent_recent_project_calls,
+            "upsert_dev_plan": fake_backend.upsert_dev_plan_calls,
+            "agent_set_current_project": agent_manager.set_current_project_calls,
+            "state_set_current_project": state_counts["set_current_project"],
+            "state_set_session_mode": state_counts["set_session_mode"],
+        }
+
+        second = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert second.get("ok", False), f"second set_project failed: {second}"
+        assert second["project"]["version"] == first_version
+        assert second["side_effects"]["binding_reused"] is True
+        assert second["scope_resolution"]["binding_reused"] is True
+        assert second["side_effects"]["binding_reuse_reason"] == "same_agent_session_project_root"
+        assert "upsert_project" in second["side_effects"]["skipped_persistent_writes"]
+        assert "state_set_current_project" in second["side_effects"]["skipped_persistent_writes"]
+        assert fake_backend.upsert_project_calls == write_counts_after_first["upsert_project"]
+        assert fake_backend.upsert_agent_recent_project_calls == write_counts_after_first["upsert_recent"]
+        assert fake_backend.upsert_dev_plan_calls == write_counts_after_first["upsert_dev_plan"]
+        assert agent_manager.set_current_project_calls == write_counts_after_first["agent_set_current_project"]
+        assert state_counts["set_current_project"] == write_counts_after_first["state_set_current_project"]
+        assert state_counts["set_session_mode"] == write_counts_after_first["state_set_session_mode"]
+        assert agent_manager.describe_current_project_binding_calls == 1
+
+        phases = ((second.get("timing") or {}).get("set_project_phase_ms") or {})
+        assert "same_binding_reuse_probe" in phases
+        assert "prepare_context" not in phases
+        assert "targeted_refresh_after" not in phases
+        assert "ensure_documents" not in phases
+        assert "upsert_project" not in phases
+        assert "agent_context_manager" not in phases
+        assert second.get("reminders") == []
+
+
+@pytest.mark.asyncio
+async def test_set_project_structured_reuses_same_binding_without_execution_context(monkeypatch: pytest.MonkeyPatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _disable_live_storage_backend(monkeypatch)
+        fake_backend = _InMemoryProjectBackend()
+        monkeypatch.setattr(set_project_module.server_module, "storage_backend", fake_backend)
+        agent_manager = _FakeAgentContextManager(session_id=f"session-{uuid.uuid4()}")
+        monkeypatch.setattr(set_project_module.server_module, "get_agent_context_manager", lambda: agent_manager)
+
+        def _missing_execution_context(*_args, **_kwargs):
+            if _kwargs.get("include_metadata"):
+                return None, {}
+            return None
+
+        async def _ensure_agent_session(_agent_id: str, stable_session_id: str | None = None):
+            return stable_session_id or agent_manager.session_id
+
+        monkeypatch.setattr(set_project_module.server_module, "get_execution_context", _missing_execution_context)
+        monkeypatch.setattr(set_project_module, "ensure_agent_session", _ensure_agent_session)
+
+        project_root = Path(tmpdir)
+        (project_root / ".git").mkdir()
+        unique_id = str(uuid.uuid4())[:8]
+        agent_name = f"TestAgent-DirectReuse-{unique_id}"
+        project_name = f"direct_reuse_project_{unique_id}"
+
+        first = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert first.get("ok", False), f"first set_project failed: {first}"
+        write_counts_after_first = {
+            "upsert_project": fake_backend.upsert_project_calls,
+            "upsert_recent": fake_backend.upsert_agent_recent_project_calls,
+            "upsert_dev_plan": fake_backend.upsert_dev_plan_calls,
+            "agent_set_current_project": agent_manager.set_current_project_calls,
+        }
+
+        second = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert second.get("ok", False), f"second set_project failed: {second}"
+        assert second["side_effects"]["binding_reused"] is True
+        assert second["side_effects"]["binding_reuse_reason"] == "same_agent_session_project_root"
+        assert "upsert_project" in second["side_effects"]["skipped_persistent_writes"]
+        assert fake_backend.upsert_project_calls == write_counts_after_first["upsert_project"]
+        assert fake_backend.upsert_agent_recent_project_calls == write_counts_after_first["upsert_recent"]
+        assert fake_backend.upsert_dev_plan_calls == write_counts_after_first["upsert_dev_plan"]
+        assert agent_manager.set_current_project_calls == write_counts_after_first["agent_set_current_project"]
+
+        phases = ((second.get("timing") or {}).get("set_project_phase_ms") or {})
+        assert "same_binding_reuse_probe" in phases
+        assert "prepare_context" not in phases
+        assert "targeted_refresh_after" not in phases
+        assert "ensure_documents" not in phases
+        assert "upsert_project" not in phases
+        assert "agent_context_manager" not in phases
+        assert second.get("reminders") == []
+
+
+@pytest.mark.asyncio
+async def test_set_project_structured_different_root_falls_back_to_full_bind(monkeypatch: pytest.MonkeyPatch):
+    with tempfile.TemporaryDirectory() as first_tmpdir, tempfile.TemporaryDirectory() as second_tmpdir:
+        _disable_live_storage_backend(monkeypatch)
+        fake_backend = _InMemoryProjectBackend()
+        monkeypatch.setattr(set_project_module.server_module, "storage_backend", fake_backend)
+        agent_manager = _FakeAgentContextManager(session_id=f"session-{uuid.uuid4()}")
+        first_root = Path(first_tmpdir)
+        second_root = Path(second_tmpdir)
+        (first_root / ".git").mkdir()
+        (second_root / ".git").mkdir()
+        _install_project_context(monkeypatch, agent_manager=agent_manager, repo_root=first_root)
+
+        unique_id = str(uuid.uuid4())[:8]
+        agent_name = f"TestAgent-ReuseRoot-{unique_id}"
+        project_name = f"reuse_root_project_{unique_id}"
+
+        first = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(first_root),
+            format="structured",
+        ))
+        assert first.get("ok", False), f"first set_project failed: {first}"
+        first_write_count = fake_backend.upsert_project_calls
+        first_agent_write_count = agent_manager.set_current_project_calls
+
+        second = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(second_root),
+            format="structured",
+        ))
+        assert second.get("ok", False), f"second set_project failed: {second}"
+        assert second["side_effects"].get("binding_reused") is not True
+        assert fake_backend.upsert_project_calls == first_write_count + 1
+        assert agent_manager.set_current_project_calls == first_agent_write_count + 1
+
+
+@pytest.mark.asyncio
+async def test_set_project_structured_expired_session_falls_back_to_full_bind(monkeypatch: pytest.MonkeyPatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _disable_live_storage_backend(monkeypatch)
+        fake_backend = _InMemoryProjectBackend()
+        monkeypatch.setattr(set_project_module.server_module, "storage_backend", fake_backend)
+        agent_manager = _FakeAgentContextManager(session_id=f"session-{uuid.uuid4()}")
+        project_root = Path(tmpdir)
+        (project_root / ".git").mkdir()
+        _install_project_context(monkeypatch, agent_manager=agent_manager, repo_root=project_root)
+
+        unique_id = str(uuid.uuid4())[:8]
+        agent_name = f"TestAgent-ReuseExpired-{unique_id}"
+        project_name = f"reuse_expired_project_{unique_id}"
+
+        first = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert first.get("ok", False), f"first set_project failed: {first}"
+        first_write_count = fake_backend.upsert_project_calls
+        first_agent_write_count = agent_manager.set_current_project_calls
+
+        agent_manager.expired = True
+        second = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert second.get("ok", False), f"second set_project failed: {second}"
+        assert second["side_effects"].get("binding_reused") is not True
+        assert fake_backend.upsert_project_calls == first_write_count + 1
+        assert agent_manager.set_current_project_calls == first_agent_write_count + 1
+        assert second["project"]["version"] == first["project"]["version"] + 1
 
 
 @pytest.mark.asyncio

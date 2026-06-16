@@ -62,6 +62,26 @@ PRIMARY_ACTIONS = {
     "frontmatter_update",
 }
 
+
+def _verified_execution_repo_root(server_module: Any) -> Optional[str]:
+    if not hasattr(server_module, "get_execution_context"):
+        return None
+    try:
+        exec_context = server_module.get_execution_context()
+    except Exception:
+        return None
+    resolved_scope = getattr(exec_context, "resolved_scope", None)
+    repo_root = getattr(resolved_scope, "repo_root", None) or getattr(exec_context, "repo_root", None)
+    if not repo_root:
+        return None
+    provenance = getattr(getattr(resolved_scope, "provenance", None), "repo_root", None)
+    if resolved_scope is not None and provenance != "verified":
+        return None
+    try:
+        return str(Path(str(repo_root)).expanduser().resolve())
+    except Exception:
+        return str(repo_root)
+
 # Deprecated action aliases intentionally removed in fail-hard mode.
 DEPRECATED_ALIASES: Dict[str, tuple[str, Dict[str, Any]]] = {}
 
@@ -504,7 +524,11 @@ async def _load_project_record(
     backend = getattr(server_module, "storage_backend", None)
     if backend and hasattr(backend, "fetch_project"):
         try:
-            record = await backend.fetch_project(project_name)
+            repo_root = _verified_execution_repo_root(server_module)
+            if repo_root:
+                record = await backend.fetch_project(project_name, repo_root=repo_root)
+            else:
+                record = await backend.fetch_project(project_name)
         except Exception:
             record = None
         if record:
@@ -1633,8 +1657,16 @@ async def _handle_rehome_doc(
 
         backend = getattr(server_module, "storage_backend", None)
         if backend and hasattr(backend, "update_project_docs"):
-            await backend.update_project_docs(active_project.get("name"), json.dumps(source_docs))
-            await backend.update_project_docs(target_project_name, json.dumps(target_docs))
+            await backend.update_project_docs(
+                active_project.get("name"),
+                json.dumps(source_docs),
+                repo_root=active_project.get("root"),
+            )
+            await backend.update_project_docs(
+                target_project_name,
+                json.dumps(target_docs),
+                repo_root=target_project.get("root"),
+            )
 
         state_refresh_warnings: list[str] = []
         state_manager = getattr(server_module, "state_manager", None)
@@ -1855,7 +1887,10 @@ async def get_or_create_storage_project(backend: Any, project: Dict[str, Any], s
     """Fetch or create the backing storage record for a project."""
     timeout = server_module.settings.storage_timeout_seconds
     async with asyncio.timeout(timeout):
-        storage_record = await backend.fetch_project(project["name"])
+        storage_record = await backend.fetch_project(
+            project["name"],
+            repo_root=project.get("root"),
+        )
     if not storage_record:
         async with asyncio.timeout(timeout):
             storage_record = await backend.upsert_project(
@@ -1927,7 +1962,7 @@ async def auto_register_document(
         current_docs[doc_name] = str(doc_path)
         project["docs"] = current_docs
         docs_json = json.dumps(current_docs)
-        await backend.update_project_docs(project_name, docs_json)
+        await backend.update_project_docs(project_name, docs_json, repo_root=project.get("root"))
         state_manager = getattr(server_module, "state_manager", None)
         if state_manager and hasattr(state_manager, "set_current_project"):
             try:
@@ -2037,7 +2072,7 @@ async def register_document_path(
                 f"Cannot bind project for authoritative session during registration: {exc}"
             ) from exc
 
-    await backend.update_project_docs(project_name, docs_json)
+    await backend.update_project_docs(project_name, docs_json, repo_root=project.get("root"))
 
     try:
         registry_call = project_registry.record_doc_update(

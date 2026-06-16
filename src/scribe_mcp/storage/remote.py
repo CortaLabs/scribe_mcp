@@ -332,8 +332,8 @@ class RemoteStorageBackend(StorageBackend):
             "agent_id": agent_id,
             "repo_root": repo_root,
             "mode": mode,
-            "created_at": datetime.utcnow().isoformat(),
-            "last_active_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_active_at": datetime.now(timezone.utc).isoformat(),
         }
         if transport_session_id:
             self._transport_sessions[transport_session_id] = session_id
@@ -457,14 +457,14 @@ class RemoteStorageBackend(StorageBackend):
             "session_id": session_id,
             "agent_id": agent_id,
             "metadata": metadata or {},
-            "created_at": datetime.utcnow().isoformat(),
-            "last_active_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_active_at": datetime.now(timezone.utc).isoformat(),
             "state": "active",
         }
 
     async def heartbeat_session(self, session_id: str) -> None:
         if session_id in self._sessions:
-            self._sessions[session_id]["last_active_at"] = datetime.utcnow().isoformat()
+            self._sessions[session_id]["last_active_at"] = datetime.now(timezone.utc).isoformat()
 
     async def end_session(self, session_id: str) -> None:
         if session_id in self._sessions:
@@ -516,7 +516,7 @@ class RemoteStorageBackend(StorageBackend):
             "version": new_version,
             "updated_by": updated_by,
             "session_id": session_id,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         self._agent_projects[agent_id] = record
         return record
@@ -587,8 +587,8 @@ class RemoteStorageBackend(StorageBackend):
             "scope_key": normalized_scope_key,
             "scoped_reuse_key": scoped_reuse_key,
             "session_reuse_status": "allocated",
-            "created_at": datetime.utcnow().isoformat(),
-            "last_active_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_active_at": datetime.now(timezone.utc).isoformat(),
             "state": "active",
         }
         return session_id
@@ -673,8 +673,19 @@ class RemoteStorageBackend(StorageBackend):
         result = await self._call("delete_project", name=name)
         return bool(result)
 
-    async def update_project_docs(self, name: str, docs_json: str) -> bool:
-        result = await self._call("update_project_docs", name=name, docs_json=docs_json)
+    async def update_project_docs(
+        self,
+        name: str,
+        docs_json: str,
+        *,
+        repo_root: Optional[str] = None,
+    ) -> bool:
+        result = await self._call(
+            "update_project_docs",
+            name=name,
+            docs_json=docs_json,
+            repo_root=repo_root,
+        )
         return bool(result)
 
     # --- Entry operations ---

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import asyncpg
 import pytest
 
 from scribe_mcp.scripts import bootstrap_postgres as bootstrap_module
@@ -17,7 +18,7 @@ from scribe_mcp.scripts.bootstrap_postgres import (
     _redact_dsn,
     _write_env_file,
 )
-from scribe_mcp.storage.postgres.schema import ensure_schema
+from scribe_mcp.storage.postgres.schema import SCHEMA_PATH, ensure_schema
 
 
 def _sample_cfg(tmp_path: Path, *, persist_superuser_env: bool = False) -> BootstrapConfig:
@@ -53,6 +54,10 @@ class _FakeSchemaConn:
     async def execute(self, query: str, *args: object) -> None:
         self.queries.append((query, args))
 
+    async def fetchval(self, query: str, *args: object) -> object:
+        self.queries.append((query, args))
+        return None
+
     async def close(self) -> None:
         self.closed = True
 
@@ -74,6 +79,17 @@ class _FakePool:
 
     def acquire(self) -> _FakeAcquire:
         return _FakeAcquire(self._conn)
+
+
+def test_init_sql_creates_repo_scoped_project_identity() -> None:
+    sql_text = SCHEMA_PATH.read_text(encoding="utf-8")
+    projects_table = sql_text.split("CREATE TABLE IF NOT EXISTS scribe_projects", 1)[1]
+    projects_table = projects_table.split(");", 1)[0]
+
+    assert "name TEXT NOT NULL UNIQUE" not in projects_table
+    assert "repo_id TEXT" in projects_table
+    assert "project_key TEXT" in projects_table
+    assert "REFERENCES scribe_projects(name)" not in sql_text
 
 
 def test_build_dsn_escapes_credentials() -> None:
@@ -248,6 +264,62 @@ def test_ensure_schema_applies_pg_trgm_without_vector(tmp_path: Path) -> None:
     assert any(query == 'SET search_path TO "scribe", public;' for query in queries)
     assert any("CREATE TABLE IF NOT EXISTS example (id INTEGER)" in query for query in queries)
     assert all("vector" not in query.lower() for query in queries)
+
+
+def test_ensure_schema_defers_additive_tool_call_index_until_migration(tmp_path: Path) -> None:
+    schema_path = tmp_path / "init.sql"
+    schema_path.write_text(
+        """
+        CREATE TABLE IF NOT EXISTS tool_calls (id SERIAL PRIMARY KEY, repo_root TEXT);
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);
+        """,
+        encoding="utf-8",
+    )
+    migrations_path = tmp_path / "postgres_migrations"
+    migrations_path.mkdir()
+    migrations_path.joinpath("004_tool_call_correlation_metadata.sql").write_text(
+        """
+        ALTER TABLE tool_calls
+            ADD COLUMN IF NOT EXISTS correlation_id TEXT,
+            ADD COLUMN IF NOT EXISTS measurement_scope TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation
+            ON tool_calls (correlation_id);
+        """,
+        encoding="utf-8",
+    )
+
+    class LegacyToolCallsConn(_FakeSchemaConn):
+        async def execute(self, query: str, *args: object) -> None:
+            self.queries.append((query, args))
+            if "idx_tool_calls_correlation" in query and "ALTER TABLE" not in query:
+                raise asyncpg.UndefinedColumnError('column "correlation_id" does not exist')
+
+    conn = LegacyToolCallsConn()
+    pool = _FakePool(conn)
+
+    async def _pool_provider() -> _FakePool:
+        return pool
+
+    result = asyncio.run(
+        ensure_schema(
+            pool_provider=_pool_provider,
+            schema_lock=asyncio.Lock(),
+            schema_ready=False,
+            schema_name="scribe",
+            schema_path=schema_path,
+            migrations_path=migrations_path,
+        )
+    )
+
+    queries = [query for query, _args in conn.queries]
+    assert result is True
+    assert any("ADD COLUMN IF NOT EXISTS correlation_id" in query for query in queries)
+    assert any(
+        "INSERT INTO scribe_migrations" in query
+        and args == ("sql:004_tool_call_correlation_metadata.sql",)
+        for query, args in conn.queries
+    )
 
 
 def test_quote_literal_escapes_single_quotes() -> None:

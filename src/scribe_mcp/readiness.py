@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence
@@ -13,6 +14,16 @@ from scribe_mcp.doc_management.scaffold_quality import (
 FUTURE_PHASE_PREFIXES = ("phase 2", "phase 3", "phase 4", "phase 5", "phase 6", "phase 7", "phase 8", "phase 9")
 
 ReadinessRoundtripPayload = dict[str, str | bool]
+_FileSignature = tuple[str, int | None, int | None]
+_QualityCacheKey = tuple[
+    str,
+    str | None,
+    tuple[tuple[str, str, int | None, int | None], ...],
+    tuple[str, ...],
+    tuple[_FileSignature, ...],
+]
+_MANAGED_DOC_QUALITY_STATE_CACHE: dict[_QualityCacheKey, Dict[str, Any]] = {}
+_MANAGED_DOC_QUALITY_STATE_CACHE_MAX_SIZE = 32
 
 COMMAND_CLASS_LABEL = "scribe_owned_local_postgres_readiness_roundtrip_preflight"
 ACCEPTED_LOCAL_POSTGRES_TARGET_CLASS_LABEL = "approved_local_non_active_scribe_postgres_disposable_or_test_target"
@@ -243,7 +254,74 @@ def _is_future_phase_warning(current_phase: Optional[str], warning: Mapping[str,
     return any(prefix in excerpt and prefix not in current_phase.lower() for prefix in FUTURE_PHASE_PREFIXES)
 
 
-def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, Any]:
+def clear_managed_doc_quality_state_cache() -> None:
+    """Clear cached managed-doc quality state for tests and long-lived runtime resets."""
+    _MANAGED_DOC_QUALITY_STATE_CACHE.clear()
+
+
+def _path_signature(path: Path) -> _FileSignature:
+    try:
+        stat = path.stat()
+    except OSError:
+        return str(path), None, None
+    return str(path), int(stat.st_mtime_ns), int(stat.st_size)
+
+
+def _research_dir_signatures(docs_dir: object, doc_paths: Sequence[Path]) -> tuple[_FileSignature, ...]:
+    research_dirs: set[Path] = set()
+    if isinstance(docs_dir, str) and docs_dir.strip():
+        research_dirs.add((Path(docs_dir) / "research").expanduser().resolve())
+    for path in doc_paths:
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            resolved = path
+        if "research" in {part.lower() for part in resolved.parts}:
+            research_dirs.add(resolved.parent)
+
+    signatures: list[_FileSignature] = []
+    for directory in sorted(research_dirs, key=str):
+        if not directory.exists():
+            signatures.append((str(directory), None, None))
+            continue
+        try:
+            markdown_files = sorted(directory.glob("*.md"), key=str)
+        except OSError:
+            signatures.append((str(directory), None, None))
+            continue
+        signatures.extend(_path_signature(path) for path in markdown_files)
+    return tuple(signatures)
+
+
+def _managed_doc_quality_cache_key(project: Mapping[str, Any]) -> _QualityCacheKey:
+    docs = project.get("docs", {}) if isinstance(project.get("docs"), dict) else {}
+    configured_log_paths = configured_log_quality_exclusion_paths(project)
+    current_phase = str(project.get("current_phase") or "").strip() or None
+    targets: list[tuple[str, str, int | None, int | None]] = []
+    doc_paths: list[Path] = []
+
+    for key, doc_path in docs.items():
+        if not isinstance(doc_path, str) or not doc_path.endswith(".md"):
+            continue
+        if not is_managed_doc_quality_target(str(key), doc_path, configured_log_paths=configured_log_paths):
+            continue
+        path = Path(doc_path)
+        signature = _path_signature(path)
+        targets.append((str(key), signature[0], signature[1], signature[2]))
+        doc_paths.append(path)
+
+    repo_root = Path(str(project.get("root") or ".")).expanduser().resolve()
+    pyproject_signature = _path_signature(repo_root / "pyproject.toml")
+    return (
+        str(repo_root),
+        current_phase,
+        tuple(sorted(targets)),
+        tuple(sorted(str(path) for path in configured_log_paths)),
+        (pyproject_signature, *_research_dir_signatures(project.get("docs_dir"), doc_paths)),
+    )
+
+
+def _collect_managed_doc_quality_state_uncached(project: Mapping[str, Any]) -> Dict[str, Any]:
     docs = project.get("docs", {}) if isinstance(project.get("docs"), dict) else {}
     configured_log_paths = configured_log_quality_exclusion_paths(project)
     current_phase = str(project.get("current_phase") or "").strip() or None
@@ -318,6 +396,19 @@ def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, A
         "readiness_blocker_counts_by_code": readiness_blocker_counts_by_code,
         "documents": documents,
     }
+
+
+def collect_managed_doc_quality_state(project: Mapping[str, Any]) -> Dict[str, Any]:
+    cache_key = _managed_doc_quality_cache_key(project)
+    cached = _MANAGED_DOC_QUALITY_STATE_CACHE.get(cache_key)
+    if cached is not None:
+        return copy.deepcopy(cached)
+
+    quality_state = _collect_managed_doc_quality_state_uncached(project)
+    if len(_MANAGED_DOC_QUALITY_STATE_CACHE) >= _MANAGED_DOC_QUALITY_STATE_CACHE_MAX_SIZE:
+        _MANAGED_DOC_QUALITY_STATE_CACHE.pop(next(iter(_MANAGED_DOC_QUALITY_STATE_CACHE)))
+    _MANAGED_DOC_QUALITY_STATE_CACHE[cache_key] = copy.deepcopy(quality_state)
+    return copy.deepcopy(quality_state)
 
 
 def collect_managed_doc_quality_blockers(project: Mapping[str, Any]) -> Dict[str, Any]:

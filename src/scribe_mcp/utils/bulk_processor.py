@@ -8,7 +8,7 @@ duplication and improve maintainability.
 Extracted from TOOL_AUDIT_1112025 refactoring project - Phase 1 Task 1.4
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Union, Tuple
 import re
 import json
@@ -23,7 +23,7 @@ except ImportError:
     # Fallback implementations for compatibility
     def utcnow() -> datetime:
         """Get current UTC datetime."""
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
     def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
         """Parse timestamp string to datetime object."""

@@ -306,7 +306,9 @@ class TestLogToolCall:
             project_name="test_project",
             agent_id="TestAgent",
             error_message="Test error",
-            response_size_bytes=1024
+            response_size_bytes=1024,
+            correlation_id="call-123",
+            measurement_scope="tool_only",
         )
 
         content = test_log.read_text()
@@ -321,6 +323,8 @@ class TestLogToolCall:
         assert entry["agent_id"] == "TestAgent"
         assert entry["error_message"] == "Test error"
         assert entry["response_size_bytes"] == 1024
+        assert entry["correlation_id"] == "call-123"
+        assert entry["measurement_scope"] == "tool_only"
 
     def test_repo_root_parameter(self, tmp_path, monkeypatch):
         """Test that repo_root parameter is passed to get_tool_log_path and included in entry."""

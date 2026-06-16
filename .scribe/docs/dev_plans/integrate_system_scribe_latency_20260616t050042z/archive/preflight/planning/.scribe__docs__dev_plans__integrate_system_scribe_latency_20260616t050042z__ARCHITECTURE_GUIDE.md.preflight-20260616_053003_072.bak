@@ -1,0 +1,362 @@
+
+# 🏗️ Architecture Guide — integrate-system-scribe-latency-20260616T050042Z
+**Author:** ArchitectAgent
+**Version:** Draft v0.2
+**Status:** Ready for pre-implementation review
+**Last Updated:** 2026-06-16 05:27 UTC
+
+> Architecture contract for durable Scribe latency telemetry, cross-repo hook attribution, and bounded remediation planning.
+
+---
+## 1. Problem Statement
+<!-- ID: problem_statement -->
+
+Scribe latency is currently hard to reason about because the system exposes partial timing truth on several different surfaces:
+- `set_project` has rich structured timing in `src/scribe_mcp/tools/set_project.py`, but that timing is not the generic tool truth for all Scribe calls.
+- `append_entry` is intentionally durable and file-first, but its response does not decompose file WAL/fsync, DB mirror, state updates, reminders, and formatting into queryable sub-phases.
+- Generic tool logging in `src/scribe_mcp/utils/formatters/dispatcher.py` writes JSONL and schedules SQL `tool_calls`, but today it persists `duration_ms=None`, which prevents durable latency analysis after the transcript is gone.
+- `logs analyze` can build a timing envelope from progress-log evidence, but it currently returns `unknown` when compatible timing data is absent.
+- Council hooks add wall time before or after Scribe tool calls, especially `PostToolUse` after `mcp__scribe__set_project`, but that time is outside Scribe MCP response timing and must not be misattributed to Scribe itself.
+- The local Postgres backend is logically fresh while physical `.scribe/docs` and progress logs still exist, so file-backed truth and DB-backed truth can diverge without any destructive data loss.
+
+This architecture therefore optimizes for measurement first, attribution second, and behavior changes only after the measured evidence is durable and queryable.
+
+Success for this stage means:
+- Every planned implementation package preserves current Scribe and Council contracts unless a package explicitly defines an additive field or new read-only diagnostic.
+- Scribe-only latency, hook-added latency, and host wall time become distinguishable.
+- Fresh-DB inconsistency is diagnosed by a read-only report, not hidden by implicit ingestion.
+- Council hook rollout uses source/template/compiler authority from `council_mcp`, never stale generated copies under `scribe_mcp`.
+
+---
+## 2. Requirements & Constraints
+<!-- ID: requirements_constraints -->
+
+Mandatory constraints:
+- Reuse `src/scribe_mcp/runtime_timing_envelope.py`, `src/scribe_mcp/utils/tool_logger.py`, existing storage `tool_calls` APIs, Scribe diagnostics, and the Council MCP hook pipeline.
+- Preserve direct `mcp__scribe__*` usage and existing tool response contracts. Additive fields are allowed; breaking response-shape changes are not.
+- Preserve `append_entry` file-first durability and the existing `db_mirror` contract. DB failures may be reported, but file success remains authoritative for the append path.
+- Do not invent a replacement telemetry stack, replacement project registry, replacement hook system, or destructive DB migration.
+- Treat local Postgres as fresh logical state. Physical Scribe docs and logs remain real and must not be auto-ingested during ordinary `set_project`.
+- Hook planning must treat `council_mcp` source/templates/compiler/install surfaces as source authority. Generated hook copies in downstream repos are non-authoritative until regenerated.
+- Cross-repo ownership must stay explicit:
+  - `scribe_mcp` owns tool telemetry persistence, append-entry phase timing, controlled root comparison, and fresh-DB reconciliation diagnostics.
+  - `council_mcp` owns hook source-authority gates, runtime hook instrumentation, hook timeouts/fail-open behavior, and generated hook readback logic.
+
+Planning assumptions allowed by current evidence:
+- Wave 1 research is sufficient to design bounded packages.
+- Package P7 remains optional and must not route unless P1-P6 produce measured evidence that duplicate `set_project` writes are a real cost center.
+
+---
+## 3. Architecture Overview
+<!-- ID: architecture_overview -->
+
+The target architecture is a layered measurement contract, not a new subsystem.
+
+1. Generic tool boundary in `scribe_mcp` captures durable timing for every tool call.
+   - Reuse the existing logging/formatter path that already writes JSONL and schedules SQL `tool_calls`.
+   - Extend that path so it receives a real monotonic duration and correlation metadata rather than `duration_ms=None`.
+
+2. Tool-specific enrichment adds sub-phase detail only where the operator needs it.
+   - `set_project` keeps the existing `timing.set_project_phase_ms` contract.
+   - `append_entry` gains additive phase timing so file, DB, reminder, and formatting costs are distinguishable.
+   - Other tools may remain generic-only unless measurement proves they need dedicated sub-phases.
+
+3. Persistence sinks remain the existing sinks.
+   - Repo/project tool logs.
+   - Postgres `scribe.tool_calls` via existing storage methods.
+   - Progress-log-compatible timing evidence or an explicit `missing-data` status for `logs analyze`.
+
+4. Root-comparison and hook telemetry are separate measurement lanes.
+   - Scribe tool duration answers “how long did the Scribe server spend?”
+   - Hook telemetry answers “how much extra time did post-tool or session-start hook work add?”
+   - Host wall time answers “what did the operator actually wait for?”
+
+5. Fresh-DB reconciliation is diagnostic-only.
+   - A read-only report compares physical docs/configs/logs to logical Postgres rows.
+   - No implicit ingestion, migration, or repair runs during `set_project`.
+
+6. Optimization is gated by durable evidence.
+   - Only after P1-P6 are landed and validated may P7 reduce duplicate writes or batch operations.
+
+---
+## 4. Detailed Design
+<!-- ID: detailed_design -->
+
+### 4.1 Generic Durable Tool Telemetry Persistence (P1)
+
+Primary repo: `scribe_mcp`
+
+Source-anchored design:
+- `src/scribe_mcp/utils/response.py:1279-1311` and `src/scribe_mcp/utils/formatters/dispatcher.py:207-245` are the current generic logging router.
+- `dispatcher.py` already knows `tool_name`, `session_id`, `project_name`, `agent_id`, `response_size_bytes`, `repo_root`, and the tool result status.
+- The same code path currently writes JSONL through `tool_logger` and schedules SQL persistence with `record_tool_call_sync(... duration_ms=None ...)`.
+
+Architecture decision:
+- The implementation must keep this generic router as the persistence hub.
+- The implementation may add one additive timing carrier from the tool-execution boundary into `finalize_tool_response`, but it must not create a second unrelated logger.
+- If the current call graph only exposes the finalized response at this layer, the package must thread a start timestamp or precomputed duration through the existing response object or formatter call boundary.
+
+Required persisted fields:
+- `duration_ms`: real measured duration, never placeholder `None` for successful measured calls.
+- `correlation_id`: one additive logical call identifier shared across response/log/SQL/readback surfaces.
+- `measurement_scope`: one of `tool_only`, `tool_plus_hooks`, `hook_only`, or `host_wall`.
+- Existing metadata retained: `session_id`, `tool_name`, `project_name`, `agent_id`, `status`, `format_requested`, `response_size_bytes`, `repo_root`.
+
+Readback contract:
+- `TOOL_LOG.jsonl` and Postgres `tool_calls` must agree on the measured `duration_ms` and core correlation metadata for the same logical call.
+- `logs analyze` must either consume persisted timing evidence or clearly report that generic tool duration data is unavailable for the target project.
+
+### 4.2 `append_entry` Response And Sub-Phase Timing (P2)
+
+Primary repo: `scribe_mcp`
+
+Source-anchored design:
+- `src/scribe_mcp/tools/append_entry.py:639-715` shows the single-entry path: file append completes first, then DB mirror fetch/upsert/insert, then project activity and registry updates, then response assembly.
+- `src/scribe_mcp/tools/append_entry.py:2250-2288` shows reminders and optional bulk performance in the bulk path.
+- `src/scribe_mcp/runtime_timing_envelope.py:69-145` already has a `tools.generic.phases_ms` slot that should be reused rather than bypassed.
+
+Architecture decision:
+- Keep `db_mirror` exactly as the status/error contract for mirrored DB writes.
+- Add an additive `timing` payload for `append_entry` structured/compact outputs and a persisted phase map in generic telemetry metadata.
+- Use phase names that match actual awaited or blocking boundaries, not inferred abstractions.
+
+Required phase buckets:
+- `file_append_wal_ms`
+- `db_fetch_project_ms`
+- `db_upsert_project_ms`
+- `db_insert_entry_ms`
+- `db_insert_metrics_ms` if storage still performs a distinct metrics write
+- `state_update_ms`
+- `registry_touch_ms`
+- `reminders_ms`
+- `format_response_ms`
+- `total_ms`
+
+Rules:
+- Missing sub-phases must be absent or `null`, not faked.
+- DB mirror failure must not erase file success.
+- Bulk mode may expose a summarized phase map when per-item detail would be too heavy.
+
+### 4.3 Council Hook Source-Authority And Install Gate (P3)
+
+Primary repo: `council_mcp`
+
+Source-anchored design:
+- `src/council_mcp/hook_specs.py:146-195` seeds repo-local canonical hook source while preserving local overrides unless forced.
+- `src/council_mcp/hook_specs.py:345-473` resolves runtime hook sources and builds the Codex hook rendering plan.
+- Research already verified `compiler/phases/hooks.py`, `codex_toml.py`, `templates/defaults/hooks/registry.yaml`, runtime hook templates, update/export paths, and current tests as the authoritative install pipeline.
+
+Architecture decision:
+- No package may rely on `scribe_mcp/.codex/hooks/*` or other downstream generated hook copies as authoritative inputs.
+- The install gate must prove parity from Council source/templates to generated outputs before any rollout claims are accepted.
+- Operator-authored overrides in `.council/templates/claude/runtime_hooks/*`, `.council/hooks/*`, and preserved `.codex/config.toml` hook entries must survive regeneration unless the operator explicitly approves replacement.
+
+Gate outputs:
+- Source-parity report naming each authoritative source file and each generated destination.
+- `council update --dry-run` readback expectation for `.claude/hooks/*`, `.codex/hooks/*`, `.claude/settings.json`, `.codex/config.toml`, and duplicate generated `.claude/settings.local.json` pruning.
+- Stale generated-output classification when downstream generated hook files do not match the authoritative source chain.
+
+### 4.4 Hook Timing, Fail-Open Telemetry, And Timeout Boundaries (P4)
+
+Primary repo: `council_mcp`
+
+Source-anchored design:
+- `src/council_mcp/templates/claude/runtime_hooks/post_tool.py:273-423` shows `PostToolUse` self-heal writes, binding refresh, optional HTTP bind/get/log calls, session-state writes, and fallback file logging after `mcp__scribe__set_project`.
+- `src/council_mcp/hooks/client.py:82-221` shows the default hook timeout (`council.hooks.request_timeout`, default `5.0`) and `log_tool(... duration_ms=0.0 ...)` default behavior.
+- Wave 1 research also established a separate 1.5s `session/context` lane in `SessionStart` and fail-open expectations covered by existing tests.
+
+Architecture decision:
+- Hook timing must be recorded separately from Scribe MCP tool timing.
+- Hook telemetry must never write `duration_ms=0.0` as if it were measured data.
+- Hook packages must preserve fail-open behavior for daemon down, 401, missing `httpx`, timeout, malformed payload, and fallback-file logging scenarios.
+
+Required hook phase buckets:
+- `self_heal_binding_ms`
+- `refresh_session_state_ms`
+- `write_active_binding_ms`
+- `bind_project_http_ms`
+- `get_binding_http_ms`
+- `update_session_state_from_tool_ms`
+- `tool_log_http_ms`
+- `tool_log_fallback_ms`
+- `session_context_http_ms`
+- `session_start_http_ms`
+- `context_render_ms`
+- `total_hook_ms`
+
+Measurement labels:
+- `hook_measurement_scope=hook_only`
+- `tool_measurement_scope=tool_only`
+- comparison outputs must explicitly say whether reported host wall time includes hooks.
+
+### 4.5 Controlled Same-Server Root Comparison (P5)
+
+Primary repo: `scribe_mcp`
+
+Architecture decision:
+- The comparison probe must use the same running Scribe server and only vary the requested project root.
+- At minimum it must compare:
+  - `root=/home/austin/projects/MCP_SPINE/scribe_mcp`
+  - `root=/home/austin/projects/MCP_SPINE/council_mcp`
+- Every measurement row must include:
+  - Scribe structured timing from the tool response
+  - host wall time measured outside the tool call
+  - a hook label: `hook_excluded`, `hook_included`, or `hook_state_unknown`
+
+Output contract:
+- The probe result is a structured table or JSON report, not an informal transcript note.
+- It must name whether the observed delta is inside Scribe phases or outside Scribe in hook/wrapper time.
+- No config changes are justified by this package alone; it is an attribution package.
+
+### 4.6 Fresh Postgres / Physical Docs Reconciliation Diagnostic (P6)
+
+Primary repo: `scribe_mcp`
+
+Architecture decision:
+- Add a read-only diagnostic surface that compares physical Scribe assets with logical Postgres rows.
+- The report must compare at least:
+  - project config files and project rows
+  - core plan docs and dev-plan rows
+  - physical progress logs and `scribe_entries` counts
+  - tool logs and `tool_calls` counts
+- The report must classify each mismatch as `missing_logical_rows`, `physical_only`, `logical_only`, or `consistent`.
+
+Rules:
+- No auto-ingestion.
+- No auto-repair.
+- No mutation of historical file-backed logs during ordinary `set_project`.
+
+### 4.7 Optional `set_project` Write Reduction (P7)
+
+Primary repo: `scribe_mcp`
+
+Architecture decision:
+- P7 is explicitly deferred until P1-P6 prove where warm `set_project` time is actually spent.
+- Candidate changes may target duplicate recent/session writes, repeated project binding writes, or batchable dev-plan upserts.
+- No optimization is legal if the measured delta is dominated by hooks or by cold-start schema/bootstrap effects outside the candidate write path.
+
+Gate to route P7:
+- P1-P6 landed.
+- Durable telemetry proves the targeted writes materially contribute to warm `set_project` latency.
+- Fake-backend call-count tests and live probe evidence exist before behavior changes are proposed.
+
+---
+## 5. Directory Structure (Keep Updated)
+<!-- ID: directory_structure -->
+
+Planned `scribe_mcp` ownership:
+- `src/scribe_mcp/utils/response.py` — additive timing carrier into the generic formatter/logging boundary.
+- `src/scribe_mcp/utils/formatters/dispatcher.py` — persist real `duration_ms` and correlation metadata to JSONL and SQL.
+- `src/scribe_mcp/utils/tool_logger.py` — extend JSONL schema only if needed for additive correlation fields.
+- `src/scribe_mcp/runtime_timing_envelope.py` — reuse `tools.generic.phases_ms` and any additive envelope helpers.
+- `src/scribe_mcp/tools/append_entry.py` — additive response timing and sub-phase instrumentation.
+- `src/scribe_mcp/tools/set_project.py` — no redesign; only optional additive fields or duplicate-write optimization after proof.
+- `src/scribe_mcp/log_intelligence.py` and any diagnostics/readback surface selected by implementation — consume persisted timing or report explicit missing-data state.
+- `src/scribe_mcp/tools/*diagnostic*` or another existing diagnostics surface chosen during implementation — host the controlled root comparison and fresh-DB reconciliation report if the current tool inventory already has a suitable home.
+- `tests/test_set_project.py`, `tests/test_log_intelligence.py`, `tests/test_doctor_telemetry.py`, `tests/test_tools.py`, plus any new focused test files — prove additive telemetry and read-only diagnostics.
+
+Planned `council_mcp` ownership:
+- `src/council_mcp/templates/defaults/hooks/registry.yaml` — authoritative hook enablement metadata if timing fields or new gate labels require registry support.
+- `src/council_mcp/hook_specs.py` — source parity, runtime script resolution, and Codex hook rendering plan.
+- `src/council_mcp/templates/claude/runtime_hooks/post_tool.py` — post-tool timing and fail-open instrumentation.
+- `src/council_mcp/templates/claude/runtime_hooks/session_start.py` — startup/session timing attribution.
+- `src/council_mcp/hooks/client.py` — measured hook logging, timeout handling, and no-fake-duration behavior.
+- `src/council_mcp/compiler/phases/hooks.py` and `src/council_mcp/codex_toml.py` — install/readback and preservation behavior if hook config schema changes.
+- `tests/test_hook_specs.py`, `tests/test_runtime_hook_generation.py`, `tests/test_runtime_hooks_binding.py`, `tests/test_hooks/test_hook_client.py` — source-authority, generation, binding, and timeout/fail-open proof.
+
+---
+## 6. Data & Storage
+<!-- ID: data_storage -->
+
+Authoritative data sinks remain unchanged:
+- File-backed progress logs under `.scribe/docs/dev_plans/.../PROGRESS_LOG.md`
+- Repo/project tool logs (`TOOL_LOG.jsonl`) via existing tool logger surfaces
+- Postgres `scribe_entries`
+- Postgres `tool_calls`
+
+New or clarified additive data expectations:
+- Generic tool timing rows must include a real `duration_ms` and enough correlation metadata to match the row back to a tool response or probe report.
+- `append_entry` phase timing may live in response `timing`, in persisted metadata for `tool_calls`, or both, but the persisted readback must remain queryable after the transcript disappears.
+- `logs analyze` must never silently imply that timing data exists when it does not. Missing-data status is a first-class result.
+- Hook telemetry must remain logically separate from Scribe tool telemetry even if both ultimately land in hook logs or Council-side JSONL.
+
+---
+## 7. Testing & Validation Strategy
+<!-- ID: testing_strategy -->
+
+Validation is package-scoped and additive.
+
+Common proof surfaces:
+- `uv run pytest tests/test_set_project.py tests/test_log_intelligence.py tests/test_doctor_telemetry.py tests/test_tools.py`
+- Targeted MCP probes using `mcp__scribe__set_project`, `mcp__scribe__append_entry`, `mcp__scribe__read_recent`, and `mcp__scribe__manage_docs(action="quality_check", dry_run=true)`.
+- Readback proof from `TOOL_LOG.jsonl`, Postgres `tool_calls`, and `scribe_entries`.
+
+Council-side proof surfaces:
+- `uv run pytest tests/test_hook_specs.py tests/test_runtime_hook_generation.py tests/test_runtime_hooks_binding.py tests/test_hooks/test_hook_client.py`
+- `council update --dry-run` readback for source-authority/install packages only.
+- Generated-output readback after operator-approved generation, never hand-edited output files.
+
+Validation rules:
+- Every package that other packages depend on requires package-specific Crucible PASS before routing dependents.
+- Controlled timing comparisons must be run against the same Scribe server instance and must label hook inclusion state.
+- Reconciliation diagnostics must be read-only and must show no mutation side effects.
+
+---
+## 8. Deployment & Operations
+<!-- ID: deployment_operations -->
+
+Pre-implementation review recommendation:
+- Run both Witness and Arbiter before Forge.
+- Witness should verify:
+  - package ownership split between `scribe_mcp` and `council_mcp`
+  - no generated-output edits are included in source packages
+  - probe/readback commands exist for each package
+  - fresh-DB diagnostics are read-only
+- Arbiter should verify:
+  - P1 and P3 are the correct first routing gate
+  - P4 cannot route before P3
+  - P7 is explicitly optional and deferred until measured value exists
+  - no package silently turns into migration or redesign work
+
+Rollback and defer rules:
+- If P1 does not produce durable non-null generic tool timing, stop P2, P5, and P7.
+- If P3 cannot prove source parity or preserve operator overrides, stop any hook rollout and treat P4 as blocked.
+- If P4 cannot distinguish hook time from Scribe time, P5 comparison output must remain advisory and must not justify config changes.
+- If P6 discovers drift, emit the report and stop. Recovery or ingestion needs a separate operator-approved package.
+- If P7 measurements do not show meaningful warm-path savings, defer P7 and ship only the observability packages.
+
+---
+## 9. Open Questions & Follow-Ups
+<!-- ID: open_questions -->
+
+Open but non-blocking:
+- Whether readable `set_project` should eventually surface a compact timing footer or whether structured probes remain the sanctioned measurement path.
+- Whether project-local tool logs are intended for active dev plans or whether repo-level tool logs plus project metadata are the preferred durable surface.
+- Whether `logs analyze` should consume tool-call persistence directly or continue to derive timing only from progress-log-compatible evidence.
+
+Deferred by design:
+- Any destructive DB cleanup, historical ingestion, or auto-repair workflow.
+- Any Council runtime/proxy redesign beyond hook timing and timeout hardening.
+- Any broad `set_project` refactor before P1-P6 measure actual bottlenecks.
+
+---
+## 10. References & Appendix
+<!-- ID: references_appendix -->
+
+Primary planning inputs:
+- `SPEC_SCRIBE_TOOL_LATENCY_OPTIMIZATION_20260616.md`
+- `INTEGRATION_MAP_SCRIBE_TOOL_LATENCY_20260616.md`
+- `research/RESEARCH_TOOL_LATENCY_SURFACE_20260616.md`
+- `research/RESEARCH_STORAGE_POSTGRES_LATENCY_20260616.md`
+- `research/RESEARCH_RUNTIME_TELEMETRY_FLOW_20260616.md`
+- `research/RESEARCH_COUNCIL_CONTEXT_COMPARISON_20260616.md`
+- `research/RESEARCH_SCRIBE_HOOKS_INTEGRATION_20260616.md`
+
+Direct source verification performed during architecture:
+- `src/scribe_mcp/runtime_timing_envelope.py:1-145`
+- `src/scribe_mcp/utils/response.py:1279-1311`
+- `src/scribe_mcp/utils/formatters/dispatcher.py:207-245`
+- `src/scribe_mcp/tools/append_entry.py:639-715` and `2250-2288`
+- `/home/austin/projects/MCP_SPINE/council_mcp/src/council_mcp/hook_specs.py:146-195` and `345-473`
+- `/home/austin/projects/MCP_SPINE/council_mcp/src/council_mcp/templates/claude/runtime_hooks/post_tool.py:273-423`
+- `/home/austin/projects/MCP_SPINE/council_mcp/src/council_mcp/hooks/client.py:82-221`

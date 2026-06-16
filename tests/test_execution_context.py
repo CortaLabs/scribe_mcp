@@ -2,6 +2,7 @@
 """Tests for ExecutionContext session identity requirements."""
 
 import asyncio
+import gc
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1007,6 +1008,49 @@ async def test_background_service_status_tracks_failure():
     status = server_module.get_background_service_status()["unit_failure"]
     assert status["status"] == "failed"
     assert "unit boom" in (status["last_error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_background_task_without_service_name_observes_exception():
+    from scribe_mcp import server as server_module
+
+    loop = asyncio.get_running_loop()
+    captured: list[dict[str, object]] = []
+    original_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: captured.append(context))
+
+    async def _work() -> None:
+        await asyncio.sleep(0)
+        raise RuntimeError("anonymous boom")
+
+    try:
+        task = server_module.schedule_background_task(_work())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert task.done()
+        del task
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(original_handler)
+
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_drain_background_tasks_observes_anonymous_failures():
+    from scribe_mcp import server as server_module
+
+    async def _work() -> None:
+        await asyncio.sleep(0)
+        raise RuntimeError("drained boom")
+
+    task = server_module.schedule_background_task(_work())
+
+    await server_module.drain_background_tasks()
+
+    assert task.done()
+    assert not server_module.background_tasks
 
 
 def test_cli_path_tracking_normalizes_and_filters_outside_repo(tmp_path: Path) -> None:

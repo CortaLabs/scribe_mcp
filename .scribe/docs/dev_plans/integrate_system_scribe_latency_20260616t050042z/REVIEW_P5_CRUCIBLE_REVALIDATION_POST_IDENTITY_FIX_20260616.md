@@ -1,0 +1,89 @@
+---
+id: integrate_system_scribe_latency_20260616t050042z-review-p5-crucible-revalidation-post-identity-fix-20260616
+title: Executive Summary
+doc_type: custom
+doc_name: REVIEW_P5_CRUCIBLE_REVALIDATION_POST_IDENTITY_FIX_20260616
+category: engineering
+status: complete
+version: '0.1'
+last_updated: 2026-06-16 07:35:29 UTC
+maintained_by: Scribe
+created_by: Scribe
+owners:
+- Seshat
+related_docs: []
+tags:
+- latency
+- telemetry
+- p5
+- postgres
+- project-identity
+summary: P5 PASS after repo-scoped project identity repair, queryable telemetry, and
+  same-server root comparison proof.
+canonical_doc_type: custom
+edit_trace:
+  tool: manage_docs
+  created_at: 2026-06-16 07:26:34 UTC
+  created_via: create_doc
+  last_edited_at: 2026-06-16 07:35:29 UTC
+  last_edited_by: Scribe
+  last_action: frontmatter_update
+verdict: PASS
+score: 100/100
+review_target: P5 controlled same-server root comparison after repo-scoped identity
+  repair
+validated_by: Newton, Plato, SeshatLocalVerified
+---
+<!-- ID: executive_summary -->
+## Executive Summary
+
+Verdict: PASS, 100/100.
+
+P5 is accepted after the post-review identity fix. The original telemetry blocker was resolved, and the later root-swapping defect was repaired by removing the legacy global `scribe_projects(name)` uniqueness contract, using repo-scoped `project_key` identity, and making explicit project/root resolution verify against the requested repo root.
+
+This review supersedes the disputed `REVIEW_P5_CRUCIBLE_REVALIDATION_20260616` acceptance note. That earlier note accepted compatibility behavior that still allowed one project name to drift between `scribe_mcp` and `council_mcp` roots; this report accepts only the post-fix evidence.
+
+<!-- ID: phase_review_results -->
+## Phase Review Results
+
+- Same-server comparison: PASS. `uv run python -m scribe_mcp.scripts.scribe_probe --tools same_server_root_comparison --project integrate-system-scribe-latency-20260616T050042Z --agent SeshatProbePostIdentityFix --hook-label hook_excluded --roots /home/austin/projects/MCP_SPINE/scribe_mcp,/home/austin/projects/MCP_SPINE/council_mcp --compact` returned `ok=true`, `config_mutation=false`, and `classification=inside_scribe_phases`.
+- Measured rows: `scribe_mcp` root host wall `428.524 ms`, Scribe total `427.864 ms`; `council_mcp` root host wall `248.895 ms`, Scribe total `248.318 ms`; outside-Scribe delta `-0.083 ms`.
+- Project identity proof: live Postgres now has separate rows for the same project name under `scribe_mcp` and `council_mcp`, each with a distinct `repo_id` and `project_key`; `scribe_projects_name_key` is absent.
+- Telemetry queryability: recent `tool_calls` rows for `set_project`, `append_entry`, and `read_recent` include non-null correlation IDs, `measurement_scope=tool_only`, normalized `repo_root`, and positive `duration_ms`.
+- Focused regression proof: `uv run pytest tests/test_tools.py tests/test_postgres_project_identity_scoping.py tests/test_bootstrap_postgres_script.py tests/test_tool_runtime_repo_scope.py tests/security/test_project_binding_policy.py tests/test_auto_registration.py tests/test_auto_registration_real.py tests/test_auto_registration_production.py tests/test_query_entries_db.py -q` passed `91/91`.
+- Setup durability: `PostgresStorage.setup()` completed after the source patch and preserved the two root-scoped project rows with no legacy name constraint.
+
+<!-- ID: detailed_analysis -->
+## Detailed Analysis
+
+The critical defect was not just missing correlation metadata. The dangerous behavior was a legacy global uniqueness constraint on `scribe_projects(name)`: when the same project name was measured from `scribe_mcp` and `council_mcp`, one row could be updated to the other repo root, making apparent timing data and managed docs land under the wrong physical tree.
+
+The repair keeps one project name per repo scope by deriving `repo_id` from normalized root and `project_key` from root plus project name. Postgres setup now drops the legacy name constraint and name-based foreign keys, backfills missing repo-scoped identity before creating the unique project-key index, and fresh schema no longer installs the old global uniqueness contract. Runtime project lookup paths were also tightened so explicit project/root calls, logging, doc-management, `read_recent`, and `query_entries` use verified repo-root scope when duplicate project names exist.
+
+The P5 latency conclusion is now actionable: in this environment Council-root `set_project` is not slower than Scribe-root `set_project`, and the measured delta is inside Scribe phase timing rather than Codex hook overhead. The dominant warm Scribe-root cost in the final probe was `targeted_refresh_after` plus generic `record_tool`, not a proven cross-repo hook issue.
+
+During final documentation I found and repaired another degeneracy: non-progress `append_entry` writes could upsert the project row using the current log target path and wipe `docs_json` with a null upsert. That made custom managed docs fail to register after the project row drifted to `DOC_LOG.md`. The storage contract now preserves existing docs JSON on null upsert, document registration updates by repo root, and append/read/query paths fetch projects by root.
+
+<!-- ID: recommendations -->
+## Recommendations
+
+- Accept P5 and mark `p2-root-comparison` complete.
+- Defer P7. Current measurements do not prove warm `set_project` duplicate writes are material, and Council-root timing is faster than Scribe-root timing in the same-server comparison.
+- Keep the parent-session MCP transport closure as an operator/runtime hygiene note only. Tool discovery did expose the Scribe names after `tool_search`; the failure is this parent transport being closed after stale-process reload, while verified local runtime and source tests pass.
+- Treat future agent claims of missing tools as invalid unless they first show the `tool_search` query they ran and its exact result.
+
+<!-- ID: compliance_verification -->
+## Compliance Verification
+
+Why: P5 could not be accepted until root-scoped timing was measured without mutating shared project identity or confusing `scribe_mcp` and `council_mcp` physical roots.
+
+What: I verified source behavior, focused tests, live Postgres constraints/indexes, duplicate-name project rows, queryable `tool_calls` metadata, same-server root comparison, and managed-doc registration after the progress-log/docs-json drift fix.
+
+How: Evidence came from source files in storage/runtime/logging/doc-management, focused pytest suites, direct live Postgres readback, and `scribe_probe` output. Confidence: high.
+
+<!-- ID: final_decision -->
+## Final Decision
+
+PASS - 100/100.
+
+Gate effect: P5 is accepted. `p2-root-comparison` may be marked complete. P7 is explicitly deferred unless a later measurement proves duplicate warm `set_project` writes are material.

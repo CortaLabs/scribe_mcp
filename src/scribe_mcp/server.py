@@ -317,6 +317,44 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_asyncpg_shutdown_future(context: dict[str, object]) -> bool:
+    message = str(context.get("message") or "")
+    exception = context.get("exception")
+    return (
+        "Future exception was never retrieved" in message
+        and exception is not None
+        and exception.__class__.__module__.startswith("asyncpg.")
+        and exception.__class__.__name__ == "ConnectionDoesNotExistError"
+        and "closed in the middle of operation" in str(exception)
+    )
+
+
+def install_asyncpg_shutdown_exception_handler() -> None:
+    """Suppress known asyncpg connection-shutdown futures on the active loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if getattr(loop, "_scribe_asyncpg_shutdown_handler_installed", False):
+        return
+
+    previous_handler = loop.get_exception_handler()
+
+    def _handle_asyncpg_shutdown_future(
+        active_loop: asyncio.AbstractEventLoop,
+        context: dict[str, object],
+    ) -> None:
+        if _is_asyncpg_shutdown_future(context):
+            return
+        if previous_handler is not None:
+            previous_handler(active_loop, context)
+        else:
+            active_loop.default_exception_handler(context)
+
+    setattr(loop, "_scribe_asyncpg_shutdown_handler_installed", True)
+    loop.set_exception_handler(_handle_asyncpg_shutdown_future)
+
+
 async def _run_after_delay(
     delay_seconds: float,
     coroutine_factory: Callable[[], Awaitable[None]],
@@ -409,27 +447,30 @@ def schedule_background_task(
     def _on_done(completed_task: asyncio.Task) -> None:
         background_tasks.discard(completed_task)
 
+        if completed_task.cancelled():
+            if tracked_name:
+                service = _background_services.get(tracked_name)
+                if service is not None:
+                    service.status = "cancelled"
+                    service.last_error = "Task cancelled"
+            return
+
+        error: BaseException | None
+        try:
+            error = completed_task.exception()
+        except BaseException as exc:
+            error = exc
+
         if not tracked_name:
             return
 
+        duration_ms = int((asyncio.get_running_loop().time() - start_monotonic) * 1000)
         service = _background_services.get(tracked_name)
         if service is None:
             return
 
-        duration_ms = int((asyncio.get_running_loop().time() - start_monotonic) * 1000)
         service.last_duration_ms = duration_ms
         service.finished_at = _utc_now_iso()
-
-        if completed_task.cancelled():
-            service.status = "cancelled"
-            service.last_error = "Task cancelled"
-            return
-
-        error: Exception | None
-        try:
-            error = completed_task.exception()
-        except Exception as exc:
-            error = exc
 
         if error is not None:
             service.status = "failed"
@@ -452,6 +493,26 @@ def schedule_background_task(
     task.add_done_callback(_on_done)
     logger.debug("Task created and added to background_tasks (total: %d)", len(background_tasks))
     return task
+
+
+async def drain_background_tasks(*, timeout: float | None = None) -> list[BaseException]:
+    """Await currently tracked background tasks and observe their exceptions."""
+    tasks = tuple(background_tasks)
+    if not tasks:
+        return []
+
+    gatherer = asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        if timeout is None:
+            results = await gatherer
+        else:
+            results = await asyncio.wait_for(gatherer, timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        logger.warning("Timed out draining %d background task(s)", len(tasks))
+        return [exc]
+
+    return [result for result in results if isinstance(result, BaseException)]
+
 
 if _MCP_AVAILABLE:
     from mcp import types as mcp_types
@@ -1227,12 +1288,23 @@ if _HAS_LIFECYCLE_HOOKS:
 def get_agent_context_manager():
     """Get the global AgentContextManager instance."""
     global agent_context_manager
+    if storage_backend and state_manager and (
+        agent_context_manager is None
+        or getattr(agent_context_manager, "storage", None) is not storage_backend
+        or getattr(agent_context_manager, "state_manager", None) is not state_manager
+    ):
+        agent_context_manager = init_agent_context_manager(storage_backend, state_manager)
     return agent_context_manager
 
 
 def get_agent_identity():
     """Get the global AgentIdentity instance."""
     global agent_identity
+    if state_manager and (
+        agent_identity is None
+        or getattr(agent_identity, "state_manager", None) is not state_manager
+    ):
+        agent_identity = init_agent_identity(state_manager)
     return agent_identity
 
 

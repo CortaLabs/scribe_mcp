@@ -84,7 +84,13 @@ class StorageBackend(ABC):
         """Delete a project and all associated data. Returns True if project was deleted."""
 
     @abstractmethod
-    async def update_project_docs(self, name: str, docs_json: str) -> bool:
+    async def update_project_docs(
+        self,
+        name: str,
+        docs_json: str,
+        *,
+        repo_root: Optional[str] = None,
+    ) -> bool:
         """Update only the docs_json field for a project. Returns True if updated."""
 
     @abstractmethod
@@ -117,6 +123,16 @@ class StorageBackend(ABC):
         project_name: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Return minimal mirrored-entry proof for an entry id scoped by repo/project."""
+
+    async def update_entry_meta(
+        self,
+        *,
+        entry_id: str,
+        project: ProjectRecord,
+        meta: Dict[str, Any],
+    ) -> bool:
+        """Update metadata for an existing progress-log entry. Returns True if updated."""
+        raise NotImplementedError("update_entry_meta is not implemented for this storage backend")
 
     async def record_doc_change(
         self,

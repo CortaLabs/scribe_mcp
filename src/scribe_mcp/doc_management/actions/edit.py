@@ -237,7 +237,11 @@ async def handle_edit_action(
                     )
                     runtime_backend = getattr(server_module, "storage_backend", None)
                     if runtime_backend:
-                        await runtime_backend.update_project_docs(project.get("name"), json.dumps(docs_mapping))
+                        await runtime_backend.update_project_docs(
+                            project.get("name"),
+                            json.dumps(docs_mapping),
+                            repo_root=project.get("root"),
+                        )
                 except Exception as exc:
                     registry_warning = f"Registry update failed: {exc}"
                 response: Dict[str, Any] = {
@@ -568,7 +572,11 @@ async def handle_edit_action(
                 )
                 runtime_backend = getattr(server_module, "storage_backend", None)
                 if runtime_backend:
-                    await runtime_backend.update_project_docs(project.get("name"), json.dumps(docs_mapping))
+                    await runtime_backend.update_project_docs(
+                        project.get("name"),
+                        json.dumps(docs_mapping),
+                        repo_root=project.get("root"),
+                    )
             except Exception as exc:
                 registry_warning = f"Registry update failed: {exc}"
             if metadata.get("register_doc") is None:
