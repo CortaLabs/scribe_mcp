@@ -10,7 +10,10 @@ import pytest
 
 from scribe_mcp import server as server_module
 from scribe_mcp.doc_management.special_indexes import update_research_index
-from scribe_mcp.doc_management.scaffold_quality import build_research_index_hygiene_warnings
+from scribe_mcp.doc_management.scaffold_quality import (
+    DEFAULT_WARNING_POLICIES,
+    build_research_index_hygiene_warnings,
+)
 from scribe_mcp.doc_management.special_create import _normalize_research_doc_name, handle_special_document_creation
 from scribe_mcp.doc_management.runtime import _handle_rehome_doc
 from scribe_mcp.shared.logging_utils import LoggingContext
@@ -263,11 +266,11 @@ def test_research_index_hygiene_warnings_for_missing_and_stale(tmp_path: Path) -
     doc = research_dir / "RESEARCH_A.md"
     doc.write_text("# A\n", encoding="utf-8")
 
-    warnings_missing = build_research_index_hygiene_warnings(research_dir=research_dir, changed_path=doc)
+    warnings_missing = build_research_index_hygiene_warnings(research_dir=research_dir, changed_path=doc, warning_policies=DEFAULT_WARNING_POLICIES)
     assert any(w.get("code") == "SCF_INDEX_MISSING" for w in warnings_missing)
 
     (research_dir / "INDEX.md").write_text("# Research Documents Index\n", encoding="utf-8")
-    warnings_stale = build_research_index_hygiene_warnings(research_dir=research_dir, changed_path=doc)
+    warnings_stale = build_research_index_hygiene_warnings(research_dir=research_dir, changed_path=doc, warning_policies=DEFAULT_WARNING_POLICIES)
     codes = {w.get("code") for w in warnings_stale}
     assert "SCF_INDEX_STALE" in codes or "SCF_DOC_UNINDEXED" in codes
 
@@ -275,7 +278,7 @@ def test_research_index_hygiene_warnings_for_missing_and_stale(tmp_path: Path) -
         "# Research Documents Index\n- **[Missing](MISSING_RESEARCH.md)**\n",
         encoding="utf-8",
     )
-    warnings_orphan = build_research_index_hygiene_warnings(research_dir=research_dir, changed_path=doc)
+    warnings_orphan = build_research_index_hygiene_warnings(research_dir=research_dir, changed_path=doc, warning_policies=DEFAULT_WARNING_POLICIES)
     orphan = next(w for w in warnings_orphan if "orphaned" in str(w.get("message", "")).lower())
     assert orphan["code"] == "SCF_DOC_UNINDEXED"
     assert "Regenerate research/INDEX.md" in orphan["suggested_repair"]
@@ -294,6 +297,7 @@ def test_research_hygiene_warns_for_noncanonical_locations(tmp_path: Path) -> No
         research_dir=canonical_research,
         changed_path=nested_doc,
         canonical_research_dir=canonical_research,
+        warning_policies=DEFAULT_WARNING_POLICIES,
     )
 
     noncanonical = next(w for w in warnings if w.get("code") == "SCF_NONCANONICAL_LOCATION")
@@ -517,7 +521,7 @@ async def test_rehome_research_doc_refreshes_indexes_and_returns_path_metadata(
     )
 
     class _Backend:
-        async def update_project_docs(self, _name: str, _docs_json: str) -> None:
+        async def update_project_docs(self, _name: str, _docs_json: str, **_kwargs: Any) -> None:
             return None
 
     class _StateMgr:

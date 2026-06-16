@@ -18,7 +18,7 @@ async def test_read_recent_exposes_shared_resolution_metadata(monkeypatch: pytes
             return {"tool": tool_name}
 
     class DummyBackend:
-        async def fetch_project(self, _name: str) -> Any:
+        async def fetch_project(self, _name: str, **_kwargs: Any) -> Any:
             return SimpleNamespace(name="consumer_contract_project", repo_root="/tmp", progress_log_path="/tmp/PROGRESS_LOG.md")
 
         async def fetch_recent_entries_paginated(self, **_kwargs: Any) -> Any:
@@ -57,7 +57,7 @@ async def test_read_recent_exposes_shared_resolution_metadata(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
-async def test_read_recent_supplements_sparse_db_with_progress_log(
+async def test_read_recent_db_authoritative_does_not_file_supplement_when_db_has_rows(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -74,7 +74,7 @@ async def test_read_recent_supplements_sparse_db_with_progress_log(
             return {"tool": tool_name}
 
     class DummyBackend:
-        async def fetch_project(self, _name: str) -> Any:
+        async def fetch_project(self, _name: str, **_kwargs: Any) -> Any:
             return SimpleNamespace(
                 name="consumer_contract_project",
                 repo_root=str(tmp_path),
@@ -122,11 +122,17 @@ async def test_read_recent_supplements_sparse_db_with_progress_log(
 
     result = await read_recent_tool.read_recent(agent="CoderAgent", format="structured", page_size=5)
 
+    # DB-authoritative contract (read_recent passes db_authoritative=True): when the
+    # backend returns rows, read_recent trusts the DB and does NOT re-read / merge the
+    # progress-log file. This avoids per-call file I/O on furnace projects and prevents
+    # stale/un-mirrored file lines from masquerading as live entries. The mirror-lag
+    # fallback (DB returns 0 rows -> file supplementation still fires) is covered unit-
+    # level in tests/test_read_recent_supplement_gate.py.
     messages = [entry.get("message", "") for entry in result["entries"]]
     assert "Mirrored DB entry" in messages
-    assert "File-backed historical entry" in messages
-    assert len(messages) == 2
-    assert result["pagination"]["total_count"] == 2
+    assert "File-backed historical entry" not in messages
+    assert len(messages) == 1
+    assert result["pagination"]["total_count"] == 1
 
 
 @pytest.mark.asyncio

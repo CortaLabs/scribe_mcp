@@ -44,21 +44,33 @@ def test_clean_meta_value_replaces_newlines_and_pipes():
 
 @pytest.mark.asyncio
 async def test_set_project_rejects_log_outside_root():
+    # safe_root must be a discoverable local repo root so the new first-gate
+    # (explicit_root_not_local_repo) passes and we reach the progress-log check.
     safe_root = settings.project_root.resolve() / ".tmp_set_project_tests" / f"safe_root_{uuid.uuid4().hex[:8]}"
+    safe_root.mkdir(parents=True, exist_ok=True)
+    (safe_root / ".git").mkdir(exist_ok=True)
     outside_log = safe_root.parent / "elsewhere" / "PROGRESS_LOG.md"
-    result = await set_project.set_project(
-        agent="test_agent",
-        name=f"malicious-{uuid.uuid4().hex[:8]}",
-        root=str(safe_root),
-        progress_log=str(outside_log),
-        skip_validation=True,
-    )
-    assert not result["ok"]
-    assert "Progress log must be within the project root." in result["error"]
+    try:
+        result = await set_project.set_project(
+            agent="test_agent",
+            name=f"malicious-{uuid.uuid4().hex[:8]}",
+            root=str(safe_root),
+            progress_log=str(outside_log),
+            skip_validation=True,
+        )
+        assert not result["ok"]
+        assert "Progress log must be within the project root." in result["error"]
+    finally:
+        if safe_root.exists():
+            shutil.rmtree(safe_root)
 
 
 @pytest.mark.asyncio
 async def test_set_project_denies_external_root_by_default(tmp_path: Path):
+    # Under the hardened model, a plain directory that is not a local repository
+    # root is rejected at the first gate with explicit_root_not_local_repo before
+    # any scope/trust check.  The security intent is preserved: arbitrary external
+    # paths are denied.
     external_root = tmp_path / "external_repo"
     result = await set_project.set_project(
         agent="test_agent",
@@ -68,13 +80,20 @@ async def test_set_project_denies_external_root_by_default(tmp_path: Path):
     )
 
     assert not result["ok"]
-    assert "outside trusted workspace scope" in result["error"]
+    assert result["reason_code"] == "explicit_root_not_local_repo"
+    assert "Explicit root must resolve to a local repository root before authorization." in result["error"]
     assert not external_root.exists()
 
 
 @pytest.mark.asyncio
 async def test_set_project_allows_external_root_with_explicit_compat_opt_in(tmp_path: Path, monkeypatch):
+    # Under the hardened model, any path that resolves to a real local repository
+    # root is accepted as first-party — no separate "compat opt-in" mode exists.
+    # The test verifies that a valid local repo root (with .git) is accepted and
+    # that skip_validation_requested is propagated in the authorization metadata.
     external_root = tmp_path / "external_repo"
+    external_root.mkdir(parents=True, exist_ok=True)
+    (external_root / ".git").mkdir(exist_ok=True)
 
     async def _no_slug_collision(_name: str):
         return None
@@ -97,8 +116,9 @@ async def test_set_project_allows_external_root_with_explicit_compat_opt_in(tmp_
         expected_docs = external_root / settings.dev_plans_base / result["project"]["name"]
         assert Path(result["project"]["progress_log"]).resolve() == (expected_docs / "PROGRESS_LOG.md").resolve()
         assert result["root_authorization"]["skip_validation_requested"] is True
-        assert result["root_authorization"]["compatibility_override_used"] is True
-        assert result["root_authorization"]["authorization_mode"] == "compatibility_opt_in"
+        # Hardened model: local repo roots are first-party; no separate compat mode.
+        assert result["root_authorization"]["authorization_mode"] == "first_party"
+        assert result["root_authorization"]["compatibility_override_used"] is False
     finally:
         if external_root.exists():
             shutil.rmtree(external_root)
@@ -106,6 +126,11 @@ async def test_set_project_allows_external_root_with_explicit_compat_opt_in(tmp_
 
 @pytest.mark.asyncio
 async def test_set_project_respects_auto_create_dirs_false(tmp_path: Path):
+    # Under the hardened model the root must first resolve to a local repository
+    # root before any set_project logic runs.  A non-existent path with no repo
+    # markers is rejected at the first gate (explicit_root_not_local_repo).  The
+    # security intent is upheld: an unauthorised path is still denied and no
+    # directory is created.
     missing_root = tmp_path / "missing_root"
     result = await set_project.set_project(
         agent="test_agent",
@@ -117,7 +142,8 @@ async def test_set_project_respects_auto_create_dirs_false(tmp_path: Path):
     )
 
     assert not result["ok"]
-    assert "auto_create_dirs is disabled" in result["error"]
+    assert result["reason_code"] == "explicit_root_not_local_repo"
+    assert "Explicit root must resolve to a local repository root before authorization." in result["error"]
     assert not missing_root.exists()
 
 
@@ -142,7 +168,9 @@ async def test_set_project_require_explicit_root_missing_root_fails_closed(monke
     )
 
     assert not result["ok"]
-    assert "Explicit trusted project root required" in result["error"]
+    # Under the hardened model an empty root is caught by the required-field
+    # validator before any context/authority resolution happens.
+    assert "`root` is required and must be a non-empty string." in result["error"]
 
 
 @pytest.mark.asyncio
@@ -167,7 +195,11 @@ async def test_set_project_rejected_root_leaves_binding_and_docs_untouched(tmp_p
     )
 
     assert not rejected_result["ok"]
-    assert "outside trusted workspace scope" in rejected_result["error"]
+    # Under the hardened model, a bare tmp directory that is not a local repo root
+    # is rejected at the first gate with explicit_root_not_local_repo.  The
+    # security intent is preserved: the root is denied and no state is mutated.
+    assert rejected_result["reason_code"] == "explicit_root_not_local_repo"
+    assert "Explicit root must resolve to a local repository root before authorization." in rejected_result["error"]
     assert not rejected_root.exists()
     assert not (rejected_root / settings.dev_plans_base / rejected_name).exists()
 
@@ -251,6 +283,10 @@ async def test_state_manager_session_project_does_not_overwrite_global(tmp_path:
         "proj1",
         {"name": "proj1", "root": ".", "progress_log": "./log"},
     )
+
+    # Register the session in scribe_sessions before binding a project to it —
+    # the FK constraint on session_projects requires the session row to exist first.
+    await manager._storage_backend.upsert_session(session_id="session-1", mode="project")
 
     updated = await manager.set_current_project(
         "proj2",

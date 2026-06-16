@@ -214,6 +214,10 @@ async def test_get_session_tool_calls():
     storage = SQLiteStorage(test_db)
     await storage.setup()
 
+    # Ensure the session row exists in scribe_sessions before recording tool
+    # calls — the FK constraint on tool_calls.session_id requires this.
+    await storage.upsert_session(session_id="test-session-123", mode="project")
+
     # Record multiple tool calls
     tools = ["append_entry", "list_projects", "get_project", "query_entries"]
     for i, tool in enumerate(tools):

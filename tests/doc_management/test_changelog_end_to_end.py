@@ -134,7 +134,15 @@ async def test_changelog_end_to_end_scaffold_preview_apply_and_trust_paths(tmp_p
 
         (project_root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "2.0.0"\n', encoding="utf-8")
 
-        quality_result = await manage_docs(action="quality_check", doc="CHANGELOG", dry_run=True)
+        # The observed_context drift check for CHANGELOG only runs under the
+        # release_gate quality mode (governance hardening gated it there), so the
+        # quality_check must explicitly request release_gate to surface the drift.
+        quality_result = await manage_docs(
+            action="quality_check",
+            doc="CHANGELOG",
+            dry_run=True,
+            metadata={"quality": {"mode": "release_gate"}},
+        )
         assert quality_result["ok"] is True
         warning_codes = {w.get("code") for w in quality_result.get("warnings", [])}
         assert "SCF_RESEARCH_CONTEXT_DRIFT" in warning_codes

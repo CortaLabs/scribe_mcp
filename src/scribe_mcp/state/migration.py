@@ -177,6 +177,14 @@ async def migrate_legacy_state_file(
                     metadata={"source": "legacy_state"},
                 )
 
+            # Ensure the synthetic migration session row exists in scribe_sessions
+            # before binding a project to it — the FK constraint requires this.
+            if hasattr(storage_backend, "upsert_session"):
+                await storage_backend.upsert_session(
+                    session_id=_LEGACY_MIGRATION_SESSION_ID,
+                    mode="project",
+                )
+
             if hasattr(storage_backend, "set_agent_project"):
                 await storage_backend.set_agent_project(
                     agent_id=_GLOBAL_AGENT_ID,
@@ -222,10 +230,12 @@ async def migrate_legacy_state_file(
             docs_json=normalised["docs_json"],
         )
 
-        if hasattr(storage_backend, "set_session_project"):
-            await storage_backend.set_session_project(session_id, project_name)
+        # Ensure the session row exists in scribe_sessions before binding a project
+        # to it — the FK constraint on session_projects requires this ordering.
         if hasattr(storage_backend, "upsert_session"):
             await storage_backend.upsert_session(session_id=session_id, mode="project")
+        if hasattr(storage_backend, "set_session_project"):
+            await storage_backend.set_session_project(session_id, project_name)
 
         session_projects_migrated += 1
 

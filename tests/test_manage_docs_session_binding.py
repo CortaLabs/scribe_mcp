@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -14,7 +15,7 @@ class _BackendStub:
     def __init__(self) -> None:
         self.update_calls = 0
 
-    async def update_project_docs(self, project_name: str, docs_json: str) -> None:
+    async def update_project_docs(self, project_name: str, docs_json: str, **_kwargs: Any) -> None:
         self.update_calls += 1
 
 

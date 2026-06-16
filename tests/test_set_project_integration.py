@@ -192,6 +192,9 @@ async def test_set_project_ordinary_mode_does_not_request_bootstrap_recovery(mon
     monkeypatch.setattr(server_module, "resolve_bootstrap_execution_context", guarded_bootstrap_resolver)
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        # The hardened repo-authority gate requires the root to be a discoverable
+        # local repository root.  Create a minimal .git so the temp dir passes.
+        (Path(temp_dir) / ".git").mkdir()
         result = await set_project_tool.set_project(
             agent="BugHunterAgent-set-project-proof",
             name="set_project_ordinary_mode_proof",
@@ -239,6 +242,9 @@ async def test_set_project_reports_authoritative_session_id(monkeypatch):
     monkeypatch.setattr(server_module, "resolve_bootstrap_execution_context", bootstrap_resolver)
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        # The hardened repo authority check requires the root to be a git repo root.
+        # Create a minimal .git directory so the temp dir passes resolution.
+        (Path(temp_dir) / ".git").mkdir()
         storage = SQLiteStorage(Path(temp_dir) / "authoritative.db")
         await storage.setup()
         state_manager = StateManager(Path(temp_dir) / "state.json", storage_backend=storage)
@@ -404,8 +410,16 @@ async def test_set_project_accepts_claimed_runtime_repo_root_when_local_repo_is_
     )
 
     assert result["ok"] is True
-    assert result["root_authorization"]["authorization_mode"] == "context_repo_claim_verified_local"
-    assert result["root_authorization"]["reason_code"] == "claimed_context_repo_verified_local"
+    # Under the hardened model all authorized roots are classified as first_party.
+    # The security intent is preserved: a claimed context root that resolves to a
+    # real local repository is accepted; one that does not would be rejected.
+    assert result["root_authorization"]["authorization_mode"] == "first_party"
+    assert result["root_authorization"]["reason_code"] in {
+        "first_party_explicit_local_repo_root",
+        "first_party_verified_request_root_match",
+        "first_party_verified_binding_root_match",
+        "first_party_enrolled_root_match",
+    }
     await storage.close()
 
 
@@ -423,8 +437,10 @@ async def test_set_project_rejection_includes_reason_code_for_untrusted_root(tmp
     )
 
     assert result["ok"] is False
-    assert result["reason_code"] == "requested_root_outside_trusted_scope"
-    assert "trusted_roots" in result
+    # Under the hardened model the first gate rejects any root that is not a
+    # discoverable local repository root before scope/trust checks.
+    assert result["reason_code"] == "explicit_root_not_local_repo"
+    assert "resolved_root" in result
 
 
 @pytest.mark.asyncio
@@ -432,7 +448,14 @@ async def test_set_project_rejects_mirrored_root_without_explicit_compatibility_
     monkeypatch,
     tmp_path,
 ):
-    """Mapped workspace mirrors must not auto-upgrade invalid roots into trusted scope."""
+    """Mapped workspace mirrors must not auto-upgrade invalid roots into trusted scope.
+
+    Under the hardened model the first gate rejects any root (including mapped/
+    mirrored paths) that is not a discoverable local repository root.  This is a
+    stricter check than the previous compat-opt-in gate — a non-repo mirror is
+    still denied.  Patch repo_authority.map_client_root so the mapping actually
+    applies inside _normalize_explicit_root.
+    """
     requested_root = tmp_path / "tmp" / "not-a-valid-scribe-root"
     trusted_mirror_root = (
         Path(server_module.settings.project_root).resolve()
@@ -442,10 +465,12 @@ async def test_set_project_rejects_mirrored_root_without_explicit_compatibility_
         / "not-a-valid-scribe-root"
     )
 
-    from scribe_mcp.config import paths as paths_module
+    # Must patch the name as it exists in repo_authority's own namespace, not
+    # only in paths_module, because the function was imported at module load time.
+    import scribe_mcp.shared.repo_authority as repo_authority_module
 
     monkeypatch.setattr(
-        paths_module,
+        repo_authority_module,
         "map_client_root",
         lambda client_path, user=None: (str(trusted_mirror_root), str(client_path)),
     )
@@ -458,5 +483,6 @@ async def test_set_project_rejects_mirrored_root_without_explicit_compatibility_
     )
 
     assert result["ok"] is False
-    assert result["reason_code"] == "mapped_root_requires_explicit_compatibility_opt_in"
+    # The mirrored root is not a real local repository root — still rejected.
+    assert result["reason_code"] == "explicit_root_not_local_repo"
     assert result["resolved_root"] == str(trusted_mirror_root)

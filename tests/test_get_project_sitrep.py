@@ -54,6 +54,12 @@ class TestGetProjectStateDetection:
             mock_context.project = project_data
             mock_context.recent_projects = []
             mock_context.reminders = []
+            # build_resolution_metadata reads these attrs directly; set real values
+            # so list(context.fallback_chain or []) doesn't hit TypeError on a Mock.
+            mock_context.resolution_source = "direct"
+            mock_context.fallback_used = False
+            mock_context.fallback_chain = None
+            mock_context.denied_fallback_attempts = None
             mock_helper.prepare_context = AsyncMock(return_value=mock_context)
             mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
 
@@ -134,6 +140,12 @@ class TestRecentEntriesDisplay:
             mock_context.project = project_data
             mock_context.recent_projects = []
             mock_context.reminders = []
+            # build_resolution_metadata reads these attrs directly; set real values
+            # so list(context.fallback_chain or []) doesn't raise TypeError.
+            mock_context.resolution_source = "direct"
+            mock_context.fallback_used = False
+            mock_context.fallback_chain = None
+            mock_context.denied_fallback_attempts = None
             mock_helper.prepare_context = AsyncMock(return_value=mock_context)
             mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
 
@@ -239,6 +251,12 @@ class TestTimestamps:
             mock_context.project = project_data
             mock_context.recent_projects = []
             mock_context.reminders = []
+            # build_resolution_metadata reads these attrs directly; set real values
+            # so list(context.fallback_chain or []) doesn't raise TypeError.
+            mock_context.resolution_source = "direct"
+            mock_context.fallback_used = False
+            mock_context.fallback_chain = None
+            mock_context.denied_fallback_attempts = None
             mock_helper.prepare_context = AsyncMock(return_value=mock_context)
             mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
 
@@ -348,6 +366,13 @@ class TestJSONFormat:
             mock_context.project = project_data
             mock_context.recent_projects = []
             mock_context.reminders = []
+            # Give resolution fields concrete values (not bare Mocks) so the
+            # build_resolution_metadata list(...) calls don't raise TypeError.
+            mock_context.resolution_source = "direct"
+            mock_context.fallback_used = False
+            mock_context.fallback_chain = None
+            mock_context.denied_fallback_attempts = None
+            mock_context.compatibility_usage = None
             mock_helper.prepare_context = AsyncMock(return_value=mock_context)
             mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
 

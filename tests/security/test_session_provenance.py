@@ -99,9 +99,26 @@ async def test_public_release_rejects_mixed_untrusted_session_identifiers() -> N
 
 
 @pytest.mark.asyncio
-async def test_public_release_ignores_single_untrusted_identifier_and_uses_runtime_transport() -> None:
+async def test_public_release_ignores_single_untrusted_identifier_and_uses_runtime_transport(
+    tmp_path: Path,
+) -> None:
+    # In public_release mode a caller-supplied session_id is untrusted and is
+    # discarded.  The runtime derives the transport_session_id from a trusted
+    # transport source on request_context (here: request_context.meta).  Unlike
+    # the caller-supplied session_id — and unlike a client-settable mcp-session-id
+    # HTTP header — meta is NOT counted as an untrusted caller claim, so exactly
+    # ONE untrusted identifier (the forged session_id) remains, which the
+    # public_release path must ignore in favor of the runtime transport.
+    #
+    # The repo_root must be a real directory with a repo marker and must be
+    # listed in trusted_repo_roots so the runtime can verify it.
+    repo_root = tmp_path / "trusted-repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
     router = RouterContextManager()
     observed: dict[str, str] = {}
+    trusted_transport_id = "runtime-transport-abc123"
 
     def capture(agent: str) -> str:
         current = router.get_current()
@@ -110,17 +127,29 @@ async def test_public_release_ignores_single_untrusted_identifier_and_uses_runti
         observed["session_id"] = current.session_id
         return agent
 
+    # Trusted runtime transport supplied via request_context.meta (not a header,
+    # not a caller kwarg) so it is treated as the verified runtime transport and
+    # not as an untrusted caller claim.
+    mock_request_context = SimpleNamespace(
+        request=None, meta={"transport_session_id": trusted_transport_id}
+    )
+    app = SimpleNamespace(request_context=mock_request_context)
+
     result = await execute_tool_call(
         name="capture",
         arguments={
             "agent": "security-tester",
-            "context": {"repo_root": "/tmp/repo", "mode": "project", "session_id": "forged"},
+            "context": {"repo_root": str(repo_root), "mode": "project", "session_id": "forged"},
         },
         kwargs={},
         registry={"capture": capture},
-        app=SimpleNamespace(request_context=None),
+        app=app,
         storage_backend=None,
-        settings=SimpleNamespace(project_root=Path("/tmp/repo"), public_release=True),
+        settings=SimpleNamespace(
+            project_root=repo_root,
+            public_release=True,
+            trusted_repo_roots=(str(repo_root),),
+        ),
         state_manager=_StateManager(),
         router_context_manager=router,
         sentinel_only=set(),
@@ -129,7 +158,9 @@ async def test_public_release_ignores_single_untrusted_identifier_and_uses_runti
     )
 
     assert result == "security-tester"
-    assert observed["transport_session_id"].startswith("process:")
+    # The runtime-derived transport ID (from request_context.meta) is used,
+    # not the untrusted caller-supplied session_id.
+    assert observed["transport_session_id"] == trusted_transport_id
     assert observed["session_id"]
 
 
@@ -152,11 +183,30 @@ async def test_execution_context_public_release_requires_runtime_owned_identity(
 
 
 @pytest.mark.asyncio
-async def test_public_release_sentinel_isolates_same_day_runs_by_trusted_transport_context() -> None:
+async def test_public_release_sentinel_isolates_same_day_runs_by_trusted_transport_context(
+    tmp_path: Path,
+) -> None:
+    # In public_release mode the only trusted session discriminator is the
+    # runtime-derived transport_session_id from the HTTP mcp-session-id header.
+    # Two requests arriving on different transport connections (different header
+    # values) must produce different stable session IDs, while repeated calls on
+    # the same connection must produce the same stable session ID.
+    #
+    # The repo_root must be a real directory with a repo marker and must be
+    # listed in trusted_repo_roots so the runtime can verify the scope binding.
+    repo_root = tmp_path / "sentinel-repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
     observed: dict[str, str] = {}
     storage = _SessionAllocatorStorage()
 
-    async def invoke(router: RouterContextManager, label: str) -> str:
+    def _make_app(transport_id: str) -> SimpleNamespace:
+        mock_request = SimpleNamespace(headers={"mcp-session-id": transport_id})
+        mock_request_context = SimpleNamespace(request=mock_request, meta=None)
+        return SimpleNamespace(request_context=mock_request_context)
+
+    async def invoke(router: RouterContextManager, label: str, transport_id: str) -> str:
         def capture(agent: str) -> str:
             current = router.get_current()
             assert current is not None
@@ -165,12 +215,16 @@ async def test_public_release_sentinel_isolates_same_day_runs_by_trusted_transpo
 
         return await execute_tool_call(
             name="capture",
-            arguments={"agent": "security-tester", "context": {"repo_root": "/tmp/repo"}},
+            arguments={"agent": "security-tester", "context": {"repo_root": str(repo_root)}},
             kwargs={},
             registry={"capture": capture},
-            app=SimpleNamespace(request_context=None),
+            app=_make_app(transport_id),
             storage_backend=storage,
-            settings=SimpleNamespace(project_root=Path("/tmp/repo"), public_release=True),
+            settings=SimpleNamespace(
+                project_root=repo_root,
+                public_release=True,
+                trusted_repo_roots=(str(repo_root),),
+            ),
             state_manager=_StateManager(),
             router_context_manager=router,
             sentinel_only={"capture"},
@@ -180,14 +234,14 @@ async def test_public_release_sentinel_isolates_same_day_runs_by_trusted_transpo
 
     first_router = RouterContextManager()
     second_router = RouterContextManager()
-    first_router._process_instance_id = "run-A"  # trusted runtime process boundary
-    second_router._process_instance_id = "run-B"  # trusted runtime process boundary
 
-    assert await invoke(first_router, "run_a_first") == "security-tester"
-    assert await invoke(first_router, "run_a_second") == "security-tester"
-    assert await invoke(second_router, "run_b_first") == "security-tester"
+    assert await invoke(first_router, "run_a_first", "transport-run-A") == "security-tester"
+    assert await invoke(first_router, "run_a_second", "transport-run-A") == "security-tester"
+    assert await invoke(second_router, "run_b_first", "transport-run-B") == "security-tester"
 
+    # Same transport connection → same stable session
     assert observed["run_a_first"] == observed["run_a_second"]
+    # Different transport connections → different stable sessions
     assert observed["run_a_first"] != observed["run_b_first"]
 
 

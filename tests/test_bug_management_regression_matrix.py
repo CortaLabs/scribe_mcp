@@ -238,6 +238,20 @@ def test_bug_management_regression_matrix_two_sessions_two_roots(
             assert denied_link["ok"] is False
             assert "repo ownership mismatch" in denied_link["error"]
 
+            # list_open_cases remains repo-scoped even when project names are repeated.
+            # Verify open-case scoping BEFORE the merged fix below closes bug_a: a
+            # link_fix with landing_status="merged" auto-closes the case by design
+            # (case-registry follow-up), so an open-case listing must precede it.
+            active_context = _context(session_key=session_1, repo_root=repo_a, project_name=project_name)
+            list_a = await list_open_cases(case_type="bug", limit=10)
+            assert list_a["ok"] is True
+            assert {item["case_id"] for item in list_a["cases"]} == {bug_a["case_id"]}
+
+            active_context = _context(session_key=session_2, repo_root=repo_b, project_name=project_name)
+            list_b = await list_open_cases(case_type="bug", limit=10)
+            assert list_b["ok"] is True
+            assert {item["case_id"] for item in list_b["cases"]} == {bug_b["case_id"]}
+
             active_context = _context(session_key=session_1, repo_root=repo_a, project_name=project_name)
             allowed_link = await sentinel_tools.link_fix(
                 agent="test-agent",
@@ -248,16 +262,11 @@ def test_bug_management_regression_matrix_two_sessions_two_roots(
             )
             assert allowed_link["ok"] is True
 
-        # list_open_cases remains repo-scoped even when project names are repeated.
-        active_context = _context(session_key=session_1, repo_root=repo_a, project_name=project_name)
-        list_a = await list_open_cases(case_type="bug", limit=10)
-        assert list_a["ok"] is True
-        assert {item["case_id"] for item in list_a["cases"]} == {bug_a["case_id"]}
-
-        active_context = _context(session_key=session_2, repo_root=repo_b, project_name=project_name)
-        list_b = await list_open_cases(case_type="bug", limit=10)
-        assert list_b["ok"] is True
-        assert {item["case_id"] for item in list_b["cases"]} == {bug_b["case_id"]}
+            # The merged fix above closed bug_a; it must no longer appear as open.
+            active_context = _context(session_key=session_1, repo_root=repo_a, project_name=project_name)
+            list_a_after = await list_open_cases(case_type="bug", limit=10)
+            assert list_a_after["ok"] is True
+            assert bug_a["case_id"] not in {item["case_id"] for item in list_a_after["cases"]}
 
         # Repeated project names across repos must remain distinct in case registry ownership.
         case_a = await storage.fetch_case_registry_record(bug_a["case_id"])
