@@ -124,7 +124,11 @@ async def test_create_custom_returns_governed_scaffold_intent(tmp_path: Path) ->
     assert result.get("project_name") == project["name"]
     assert isinstance(result.get("editable_sections"), list)
     assert result.get("editable_sections")
-    assert "replace_section" in result.get("next_step_guidance", "")
+    assert result.get("section_source") == "headings"
+    assert result.get("first_write_action") == "apply_patch"
+    assert "heading-derived section inventory" in result.get("next_step_guidance", "")
+    assert "apply_patch" in result.get("next_step_guidance", "")
+    assert "replace_range" in result.get("next_step_guidance", "")
     assert "INTENT_CUSTOM_DOC" in result.get("next_step_guidance", "")
 
 
@@ -152,6 +156,7 @@ async def test_create_special_doc_returns_contentful_intent(tmp_path: Path) -> N
     assert result.get("project_name") == project["name"]
     assert isinstance(result.get("editable_sections"), list)
     assert "contentful special document" in result.get("next_step_guidance", "")
+    assert result.get("first_write_action") == "replace_section"
 
 
 @pytest.mark.asyncio

@@ -6,19 +6,18 @@ import asyncio
 import ast
 import difflib
 import hashlib
-import json
 import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 # Import with absolute paths from scribe_mcp root
 from scribe_mcp.doc_management import errors as doc_errors
 from scribe_mcp.utils.files import async_atomic_write, ensure_parent, preflight_backup
 from scribe_mcp.utils.slug import slugify_filename, slugify_project_name
-from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.utils.frontmatter import (
+    FrontmatterResult,
     apply_frontmatter_updates,
     build_frontmatter,
     parse_frontmatter,
@@ -30,10 +29,7 @@ from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
 from scribe_mcp.doc_management.utils import strip_trailing_whitespace_lines
-from scribe_mcp.doc_management.boundary_guidance import (
-    build_manage_docs_boundary_guidance,
-    is_manage_docs_boundary_error,
-)
+from scribe_mcp.shared.write_barrier import WriteBarrierError, assert_writes_allowed
 from scribe_mcp.utils.error_handler import sanitize_error_message
 from scribe_mcp.doc_management.lifecycle import derive_canonical_doc_type, normalize_canonical_status
 from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
@@ -88,9 +84,6 @@ def _log_operation(
         "error_message": redacted_error_message,
         "metadata": redacted_metadata,
     }
-
-    # Convert to JSON for structured logging
-    log_message = json.dumps(log_data, separators=(',', ':'))
 
     if level == "error":
         doc_logger.error(f"Document operation failed: {operation} on {doc_name} - {redacted_error_message or 'Unknown error'}", extra={"structured_log": log_data})
@@ -316,6 +309,9 @@ async def apply_doc_change(
             doc_name, action, section, content, patch, patch_source_hash, edit,
             start_line, end_line, template, metadata
         )
+        repo_root = Path(project["root"]).resolve()
+        if not dry_run:
+            assert_writes_allowed(repo_root, operation_label="manage_docs")
 
         # Resolve and validate document path
         if action == "create_doc":
@@ -331,7 +327,6 @@ async def apply_doc_change(
                     doc_logger.info("Auto-registered '%s' at %s", doc_name, doc_path)
                 else:
                     raise DocumentOperationError(f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered")
-        repo_root = Path(project["root"]).resolve()
         await ensure_parent(doc_path, repo_root=repo_root)
 
         # Get original content and metadata
@@ -802,7 +797,14 @@ async def apply_doc_change(
         explicit_create_if_missing = bool(
             isinstance(metadata, dict) and metadata.get("frontmatter_create_if_missing") is True
         )
-        allow_frontmatter_create = action in {"frontmatter_update", "create_doc"} or explicit_create_if_missing
+        has_frontmatter_payload = bool(
+            isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict)
+        )
+        allow_frontmatter_create = (
+            action in {"frontmatter_update", "create_doc"}
+            or explicit_create_if_missing
+            or (action != "status_update" and has_frontmatter_payload)
+        )
         frontmatter_metadata = metadata
         if action == "status_update" and isinstance(metadata, dict) and "status" in metadata:
             frontmatter_metadata = dict(metadata)
@@ -996,7 +998,7 @@ async def apply_doc_change(
             file_size_after=file_size_after,
         )
 
-    except (DocumentValidationError, DocumentOperationError, DocumentVerificationError) as e:
+    except (DocumentValidationError, DocumentOperationError, DocumentVerificationError, WriteBarrierError) as e:
         sanitized_error = sanitize_error_message(str(e))
         duration_ms = (time.time() - start_time) * 1000
         _log_operation(
@@ -2274,7 +2276,6 @@ def _apply_unified_patch_smart(
             raise DocumentOperationError(f"PATCH_INVALID_FORMAT: expected hunk header: {header!r}")
 
         hunk_old_start = int(match.group(1))
-        hunk_old_count = int(match.group(2)) if match.group(2) else 1
         i += 1
 
         # Collect all lines in this hunk
@@ -2366,7 +2367,7 @@ def _apply_unified_patch_smart(
                 # Context line - verify and copy
                 if original_index >= len(original_lines):
                     raise DocumentOperationError(
-                        f"PATCH_CONTEXT_MISMATCH: unexpected EOF at context line"
+                        "PATCH_CONTEXT_MISMATCH: unexpected EOF at context line"
                     )
                 if not _line_matches(patched_line, original_lines[original_index]):
                     raise DocumentOperationError(
@@ -2378,7 +2379,7 @@ def _apply_unified_patch_smart(
                 # Delete line - verify and skip
                 if original_index >= len(original_lines):
                     raise DocumentOperationError(
-                        f"PATCH_DELETE_MISMATCH: unexpected EOF at delete line"
+                        "PATCH_DELETE_MISMATCH: unexpected EOF at delete line"
                     )
                 if not _line_matches(patched_line, original_lines[original_index]):
                     raise DocumentOperationError(
@@ -3048,7 +3049,7 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     replacement = False
     search_start = (section_start_idx + 1) if section_start_idx is not None else 0
     search_end = section_end_idx
-    candidate_indices: List[int]
+    candidate_indices: list[int]
     if inline_target_idx is not None:
         candidate_indices = [inline_target_idx]
     else:
@@ -3249,7 +3250,7 @@ def _normalize_string_list(value: Any) -> list[str]:
 
 
 def _apply_frontmatter_pipeline(
-    parsed: "FrontmatterResult",
+    parsed: FrontmatterResult,
     updated_body: str,
     *,
     doc_name: str,

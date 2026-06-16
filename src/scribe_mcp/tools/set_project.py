@@ -6,10 +6,8 @@ import logging
 import os
 import re
 import asyncio
-from time import perf_counter as _pc
-
-logger = logging.getLogger(__name__)
 from pathlib import Path
+from time import perf_counter as _pc
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp import server as server_module
@@ -41,7 +39,11 @@ from scribe_mcp.shared.repo_authority import (
     build_repo_authority_snapshot,
     resolve_authorized_project_root,
 )
+from scribe_mcp.shared.write_barrier import assert_writes_allowed
 from scribe_mcp.runtime_timing_envelope import build_runtime_efficiency_budget_status
+
+
+logger = logging.getLogger(__name__)
 
 
 class _SetProjectHelper(LoggingToolMixin):
@@ -54,6 +56,49 @@ _PROJECT_REGISTRY = get_runtime_project_registry()
 _SESSION_DEBUG_ENABLED = os.environ.get("SCRIBE_SESSION_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 _TARGETED_REMINDER_REFRESH_TIMEOUT_SECONDS = 0.5
 _POST_BIND_CONTEXT_REFRESH_TIMEOUT_SECONDS = 1.0
+
+_SET_PROJECT_INPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "agent": {"type": "string"},
+        "name": {"type": "string"},
+        "root": {"type": "string"},
+        "grant_id": {"type": "string"},
+        "progress_log": {"type": "string"},
+        "defaults": {"type": "object"},
+        "author": {"type": "string"},
+        "overwrite_docs": {"type": "boolean"},
+        "expected_version": {"type": ["integer", "string"]},
+        "description": {"type": "string"},
+        "tags": {"type": "array"},
+        "template": {"type": "string"},
+        "auto_create_dirs": {"type": "boolean"},
+        "skip_validation": {"type": "boolean"},
+        "reminder_settings": {"type": "object"},
+        "notification_config": {"type": "object"},
+        "reset_reminders": {"type": "boolean"},
+        "emoji": {"type": "string"},
+        "bridge_id": {"type": "string"},
+        "bridge_managed": {"type": "boolean"},
+        "format": {"type": "string"},
+        "_scribe_user": {"type": "string"},
+    },
+    "required": ["agent", "name", "root"],
+    "additionalProperties": True,
+}
+
+
+def _validate_required_project_input(field_name: str, value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, str) and value.strip():
+        return None
+    return _SET_PROJECT_HELPER.error_response(
+        f"`{field_name}` is required and must be a non-empty string.",
+        suggestion=f"Pass a meaningful {field_name} value when calling set_project.",
+        extra={
+            "error_code": "missing_required_input",
+            "field": field_name,
+        },
+    )
 
 
 class ProjectRootAuthorizationError(ValueError):
@@ -432,7 +477,10 @@ async def _targeted_post_bind_refresh(
         return []
 
 
-@app.tool(**stateful_local_tool(title="Set Project Context", tags=("projects", "context", "write")))
+@app.tool(
+    **stateful_local_tool(title="Set Project Context", tags=("projects", "context", "write")),
+    input_schema=_SET_PROJECT_INPUT_SCHEMA,
+)
 async def set_project(
     agent: str = "Codex",  # REQUIRED: Agent name for session identity (e.g., "Coder-1", "ResearchAgent")
     name: str = "",
@@ -470,6 +518,12 @@ async def set_project(
       tool calls (append_entry, etc.) for session isolation to work.
     - The `root` parameter is REQUIRED and specifies the repository root path.
     """
+    for field_name, value in (("name", name), ("root", root)):
+        validation_error = _validate_required_project_input(field_name, value)
+        if validation_error is not None:
+            return validation_error
+    assert_writes_allowed(Path(root), operation_label="set_project")
+
     _t0 = _pc()
     _timings: list[tuple[str, float]] = []
     def _mark(label: str) -> None:
@@ -856,7 +910,6 @@ async def set_project(
             session_id = await ensure_agent_session(agent_id, stable_session_id=stable_session_id)
             if not session_id:
                 # Fallback: create simple session with stable session if available
-                import uuid
                 session_id = await agent_manager.start_session(
                     agent_id,
                     session_id=stable_session_id,  # Use stable session in fallback too
@@ -968,9 +1021,8 @@ async def set_project(
 
     # Handle readable format with SITREP formatters
     if format == "readable":
-        context_after = base_context
         try:
-            context_after = await asyncio.wait_for(
+            await asyncio.wait_for(
                 _SET_PROJECT_HELPER.prepare_context(
                     tool_name="set_project",
                     agent_id=agent_id,
@@ -981,12 +1033,11 @@ async def set_project(
                 timeout=_POST_BIND_CONTEXT_REFRESH_TIMEOUT_SECONDS,
             )
         except ProjectResolutionError:
-            context_after = base_context
+            pass
         except TimeoutError:
             logger.warning(
                 "Timed out during set_project post-bind context refresh; using base context"
             )
-            context_after = base_context
         _mark("prepare_context_after")
         from scribe_mcp.utils.response import default_formatter
 

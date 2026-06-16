@@ -42,9 +42,9 @@ def test_teaching_reminder_tells_unified_story():
     assert FORBIDDEN not in template
 
 
-def test_scaffold_create_intent_recommends_replace_section():
+def test_scaffold_create_intent_recommends_replace_section_for_anchor_inventory():
     payload = build_create_intent_payload(
-        result={"ok": True, "doc_name": "X"},
+        result={"ok": True, "doc_name": "X", "section_source": "anchors"},
         metadata={"doc_type": "custom"},
         requested_doc_name="X",
     )
@@ -52,6 +52,20 @@ def test_scaffold_create_intent_recommends_replace_section():
     assert payload["first_write_action"] == "replace_section"
     assert "replace_section" in payload["next_step_guidance"]
     assert "apply_patch" in payload["next_step_guidance"]
+
+
+def test_heading_derived_create_intent_recommends_explicit_control():
+    payload = build_create_intent_payload(
+        result={"ok": True, "doc_name": "X", "section_source": "headings"},
+        metadata={"doc_type": "custom"},
+        requested_doc_name="X",
+    )
+    assert payload["kind"] == "governed_scaffold_doc"
+    assert payload["first_write_action"] == "apply_patch"
+    assert "heading-derived section inventory" in payload["next_step_guidance"]
+    assert "preview-only" in payload["next_step_guidance"]
+    assert "replace_range" in payload["next_step_guidance"]
+    assert "replace_section" in payload["next_step_guidance"]
 
 
 def test_special_doc_create_intent_recommends_section_population():

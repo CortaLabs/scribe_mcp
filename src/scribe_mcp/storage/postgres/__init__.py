@@ -2476,8 +2476,10 @@ class PostgresStorage(StorageBackend):
                 "SELECT COUNT(*) FROM scribe_projects WHERE name = $1;",
                 canonical,
             )
-            if int(canonical_count or 0) > 1:
+            canonical_count_int = int(canonical_count or 0)
+            if canonical_count_int > 1:
                 return None
+            if canonical_count_int == 1:
                 row = await self._fetchrow(
                     """
                     SELECT id, name, repo_root, repo_id, project_key, progress_log_path, docs_json, created_at, updated_at, bridge_id, bridge_managed
@@ -2500,8 +2502,8 @@ class PostgresStorage(StorageBackend):
                         """,
                         int(row["id"]),
                     )
-            if row:
-                return row
+                if row:
+                    return row
 
         if "_" in name:
             denormalized = name.replace("_", "-")

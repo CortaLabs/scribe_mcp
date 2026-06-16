@@ -44,14 +44,15 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.4.1` keeps Scribe's managed documents as a deterministic document topology layer for agents and downstream corpus builders, and smooths the bug/security report workflow:
+`2.6.0` makes Scribe's governed-doc and operator-safety surfaces more useful for real agent teams:
 
-- Managed docs now receive canonical lifecycle metadata, display-name-first attribution, stable IDs, summaries, and canonical doc-type/status normalization.
-- Frontmatter supports typed topology edges for dependencies, support, validation, supersession, blockers, and code/path touchpoints.
-- `open_bug` and `open_security` return obvious follow-up handles, and `manage_docs` can edit the governed bug/security report by case id, governed path, or canonical category metadata.
-- `quality_check` remains the single quality path and now blocks scaffold residue, failed-write residue, invalid lifecycle state, malformed topology, dangling edges, and unsafe ready/complete handoffs.
-- New document-intelligence actions provide read-only topology and metadata scans, deterministic safe metadata repair, assisted repair plans, stale cleanup recommendations, handoff checks, and downstream ingestion manifest inspection.
-- Scribe emits derived, sanitized topology artifacts under `.scribe/indexes/` for downstream consumers without turning Scribe into a retrieval or semantic-ranking system.
+- `quality_check` now returns agent-ready summaries, grouped warning families, ranked `agent_actions`, body/file location mapping, nearest-section context, repair kind, edit-action hints, and deterministic provenance.
+- Atlas and orchestration agents can run project or wave-level bulk checks with `metadata={"quality": {"bulk": true}}` or explicit `doc_names`, producing aggregate counts plus per-document results.
+- `quality_handoff_check` now includes quality summaries and direct follow-up actions so agents know which managed docs block handoff.
+- Scribe-owned write barriers now fail closed around Scribe mutation surfaces during maintenance operations, including `append_entry`, `set_project`, `manage_docs`, and Postgres restore/backup paths.
+- Exported remote transport blocks local operator-only tools unless the tool declares itself remote-invokable.
+- `read_recent` supplements sparse Postgres mirrors from the canonical progress log when safe, so context rehydration does not silently hide older file-backed history.
+- Postgres backup/restore helpers enforce owner-only custody and barrier protection before handling dump/restore material.
 - Release governance still treats missing current-version changelog coverage as blocking quality truth: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is raised through `quality_check`, reminders, and `project_health` until coverage is repaired and reconciliation proof is run.
 
 ## What makes Scribe different

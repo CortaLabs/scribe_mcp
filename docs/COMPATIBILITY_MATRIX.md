@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
-Baseline date: **2026-06-11**
-Release framing: **v2.5.0 compatibility baseline**
+Baseline date: **2026-06-16**
+Release framing: **v2.6.0 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.5.0 agent-friction release line: manage_docs defect repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, and logging-never-blocked healing:
+This baseline keeps compatibility posture for the 2.6.0 agent-friction and quality-governance release line: manage_docs defect repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.5.0`
+- **Core package version:** `scribe-mcp==2.6.0`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,7 +19,7 @@ This baseline keeps compatibility posture for the 2.5.0 agent-friction release l
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.5.0` | Supported | Public Scribe install for local/core usage with deterministic document topology and first-class bug/security report follow-up editing. |
+| `2.6.0` | Supported | Public Scribe install for local/core usage with deterministic document topology, agent-ready quality checks, write-barrier safety, and first-class bug/security report follow-up editing. |
 
 ## Not supported by this baseline
 
@@ -32,15 +32,20 @@ This baseline keeps compatibility posture for the 2.5.0 agent-friction release l
 
 ## What is shipped
 
-### `scribe-mcp 2.5.0`
+### `scribe-mcp 2.6.0`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`
 - Managed-doc hygiene includes scaffold-aware quality checks, project-local preflight archive routing, canonical research artifact naming, stale index-backup cleanup, and quality-check recovery for registered or discoverable package/research docs.
 - Managed-doc project memory includes project `CHANGELOG.md`, derived global changelog reconciliation, advisory version context, research-context drift warnings, lifecycle/body-status mismatch warnings, and malformed changelog escaped-newline blocking checks.
 - Managed-doc release governance also blocks missing accepted coverage for the active `pyproject.toml` version via `SCF_CHANGELOG_CURRENT_VERSION_MISSING` in `quality_check`, reminders, and `project_health`.
+- Managed-doc quality output includes grouped warning families, ranked agent actions, body/file location mapping, nearest-section context, repair kind, edit-action hints, deterministic provenance, and additive handoff actions.
+- Bulk quality mode checks all managed readiness docs or an explicit `doc_names` wave using the existing `quality_check` contract, with compact controls for clean docs, warnings, document caps, and action caps.
 - Managed-doc topology includes canonical metadata normalization, typed deterministic edges, topology/metadata scan actions, safe/assisted metadata repair, stale cleanup recommendations, hard quality handoff checks, and sanitized downstream ingestion manifest inspection.
 - Bug and security case tooling returns managed follow-up handles, and `manage_docs` resolves governed bug/security reports by case id, governed path, or canonical category metadata before applying edits.
+- Scribe mutation surfaces fail closed while a Scribe-owned write barrier is active, and Postgres backup/restore helpers enforce owner-only custody before producing or consuming migration material.
+- Exported remote transport blocks local operator-only tools unless their metadata explicitly declares remote invocation support.
+- `read_recent` supplements sparse Postgres rows from the canonical progress log on the first page when the DB mirror is incomplete.
 - Derived topology artifacts are local Scribe outputs under `.scribe/indexes/`; downstream consumers may ingest those sanitized records, but Scribe does not implement embeddings, semantic ranking, retrieval, or graph-RAG traversal.
 
 ## Versioning contract

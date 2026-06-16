@@ -16,6 +16,7 @@ from scribe_mcp.utils.estimator import ParameterTypeEstimator
 from scribe_mcp.utils.config_manager import TokenBudgetManager
 from scribe_mcp.utils.entry_limit import EntryLimitManager
 from scribe_mcp.utils.error_handler import HealingErrorHandler
+from scribe_mcp.config.settings import settings
 from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
     build_resolution_metadata,
@@ -164,6 +165,61 @@ def _attach_resolution_metadata(response: Dict[str, Any], context: Any) -> None:
     response["project_resolution"] = {
         key: value for key, value in resolution_payload.items() if key != "project"
     }
+
+
+def _entry_identity(entry: Dict[str, Any]) -> str:
+    raw_line = str(entry.get("raw_line") or "").strip()
+    if raw_line:
+        return raw_line
+    entry_id = str(entry.get("id") or "").strip()
+    if entry_id:
+        return f"id:{entry_id}"
+    return "|".join(
+        str(entry.get(key) or "").strip()
+        for key in ("ts", "ts_iso", "agent", "message")
+    )
+
+
+async def _supplement_sparse_db_rows_from_progress_log(
+    *,
+    project: Dict[str, Any],
+    rows: List[Dict[str, Any]],
+    page: int,
+    page_size: int,
+    filters: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    if page != 1 or len(rows) >= page_size:
+        return rows
+
+    progress_log = project.get("progress_log")
+    if not progress_log or not Path(progress_log).exists():
+        return rows
+
+    fetch_limit = max(page_size * 3, page_size + len(rows))
+    file_lines = await read_tail(
+        _progress_log_path(project),
+        fetch_limit,
+        repo_root=Path(project.get("root") or settings.project_root).resolve(),
+        context={"component": "logs", "project_name": project.get("name")},
+    )
+    file_lines = _apply_line_filters(file_lines, filters)
+
+    from scribe_mcp.utils.logs import parse_log_line
+
+    merged_rows = list(rows)
+    seen = {_entry_identity(row) for row in merged_rows}
+    for line in file_lines:
+        parsed = parse_log_line(line)
+        entry = parsed if parsed else {"raw_line": line, "message": line}
+        identity = _entry_identity(entry)
+        if identity in seen:
+            continue
+        merged_rows.append(entry)
+        seen.add(identity)
+        if len(merged_rows) >= page_size:
+            break
+
+    return merged_rows
 
 
 @app.tool(**read_only_local_tool(title="Read Recent Entries", tags=("logs", "inspection", "read-only")))
@@ -352,6 +408,17 @@ async def read_recent(
                     project=record,
                     filters=_normalise_filters(filters)
                 )
+                pagination_info = create_pagination_info(page, page_size, total_count)
+
+            rows = await _supplement_sparse_db_rows_from_progress_log(
+                project=project,
+                rows=rows,
+                page=page,
+                page_size=page_size,
+                filters=filters,
+            )
+            if len(rows) > total_count:
+                total_count = len(rows)
                 pagination_info = create_pagination_info(page, page_size, total_count)
 
             response = _READ_RECENT_HELPER.success_with_entries(

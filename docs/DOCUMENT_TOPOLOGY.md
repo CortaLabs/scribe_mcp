@@ -1,7 +1,7 @@
 # Document topology and downstream export
 
-Release line: `2.4.1`
-Updated: `2026-06-04`
+Release line: `2.6.0`
+Updated: `2026-06-16`
 
 Scribe now treats managed documents as a deterministic corpus, not loose markdown. The goal is simple: Scribe owns document truth, lifecycle state, quality posture, typed relationships, and sanitized export records. Downstream systems can build retrieval, datasets, dashboards, or graph traversal from those records, but they do not define Scribe truth.
 
@@ -36,6 +36,7 @@ Allowed lifecycle statuses are:
 - `archived`
 
 `ready` and `complete` are quality-gated. A document with scaffold residue, failed-write residue, unresolved blockers, invalid topology, or missing required metadata is not clean handoff material.
+`quality_check` now gives agents a direct repair map for that gate: grouped warning families, ranked actions, body/file line mapping, nearest-section context, repair kind, edit-action hints, and provenance. Atlas-style bulk mode can evaluate the whole managed-doc set or a bounded `doc_names` wave without building a parallel scanner.
 
 ## Typed topology
 

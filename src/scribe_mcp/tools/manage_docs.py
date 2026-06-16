@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -119,37 +118,50 @@ async def manage_docs(
     if doc_name is None and doc is not None:
         doc_name = doc
 
-    result = await runtime_shared.handle_manage_docs_request(
-        action=action,
-        doc_category=doc_category,
-        section=section,
-        content=content,
-        patch=patch,
-        patch_source_hash=patch_source_hash,
-        edit=edit,
-        patch_mode=patch_mode,
-        start_line=start_line,
-        end_line=end_line,
-        template=template,
-        metadata=metadata,
-        dry_run=dry_run,
-        doc_name=doc_name,
-        target_dir=target_dir,
-        project=project,
-        state_snapshot=state_snapshot,
-        helper=_MANAGE_DOCS_HELPER,
-        server_module=server_module,
-        append_entry=append_entry,
-        project_registry=_PROJECT_REGISTRY,
-        logger=logger,
-        caller_agent=agent,
-        handle_special_document_creation=_handle_special_document_creation,
-        get_or_create_storage_project=_get_or_create_storage_project,
-        get_index_updater_for_path=_get_index_updater_for_path,
-        auto_register_document=_auto_register_document,
-        valid_actions=VALID_ACTIONS,
-        action_router=ACTION_ROUTER,
-    )
+    try:
+        result = await runtime_shared.handle_manage_docs_request(
+            action=action,
+            doc_category=doc_category,
+            section=section,
+            content=content,
+            patch=patch,
+            patch_source_hash=patch_source_hash,
+            edit=edit,
+            patch_mode=patch_mode,
+            start_line=start_line,
+            end_line=end_line,
+            template=template,
+            metadata=metadata,
+            dry_run=dry_run,
+            doc_name=doc_name,
+            target_dir=target_dir,
+            project=project,
+            state_snapshot=state_snapshot,
+            helper=_MANAGE_DOCS_HELPER,
+            server_module=server_module,
+            append_entry=append_entry,
+            project_registry=_PROJECT_REGISTRY,
+            logger=logger,
+            caller_agent=agent,
+            handle_special_document_creation=_handle_special_document_creation,
+            get_or_create_storage_project=_get_or_create_storage_project,
+            get_index_updater_for_path=_get_index_updater_for_path,
+            auto_register_document=_auto_register_document,
+            valid_actions=VALID_ACTIONS,
+            action_router=ACTION_ROUTER,
+        )
+    except Exception as exc:
+        logger.exception("manage_docs runtime request failed unexpectedly")
+        return {
+            "ok": False,
+            "error": "manage_docs_runtime_error",
+            "error_code": "MANAGE_DOCS_RUNTIME_EXCEPTION",
+            "message": "manage_docs failed while processing the runtime request.",
+            "exception_type": exc.__class__.__name__,
+            "action": action,
+            "doc_name": doc_name,
+            "supported_actions": runtime_shared.build_manage_docs_action_manifest(),
+        }
     if isinstance(result, dict):
         result.setdefault("supported_actions", runtime_shared.build_manage_docs_action_manifest())
     if action == "create" and isinstance(result, dict) and result.get("ok"):

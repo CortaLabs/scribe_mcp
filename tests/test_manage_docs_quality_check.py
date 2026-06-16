@@ -74,13 +74,99 @@ async def test_quality_check_returns_structured_quality_proof(tmp_path: Path) ->
     assert result["scope"]["doc_name"] == "ARCHITECTURE_GUIDE"
     assert result["summary"]["total_warnings"] >= 1
     first = result["warnings"][0]
-    for key in ("code", "severity", "blocking", "location", "excerpt", "message", "suggested_repair"):
+    for key in ("code", "severity", "blocking", "location", "file_location", "location_basis", "excerpt", "message", "suggested_repair"):
         assert key in first
-    for key in ("category", "gate_scope", "scope_kind", "suppressible", "source_owner", "rule_version"):
+    for key in ("category", "gate_scope", "scope_kind", "suppressible", "source_owner", "rule_version", "repair_kind", "edit_action_hint", "provenance"):
         assert key in first
-    for key in ("ok", "quality_status", "scope", "summary", "warnings", "runtime_warnings", "readiness_blockers", "next_actions"):
+    for key in ("ok", "quality_status", "scope", "summary", "warnings", "warning_groups", "agent_actions", "runtime_warnings", "readiness_blockers", "next_actions"):
         assert key in result
     assert result["summary"]["mode"] == "local_default"
+    assert result["summary"]["has_blockers"] is True
+    assert result["summary"]["highest_severity"] in {"critical", "high"}
+    assert result["summary"]["warning_counts_by_code"]
+    assert result["summary"]["blocking_warning_counts_by_code"]
+    assert result["summary"]["category_counts"]
+    assert result["summary"]["repair_kind_counts"]
+    assert result["warning_groups"]
+    assert result["agent_actions"]
+    assert result["readiness_blockers"]
+    assert result["next_actions"]
+    assert isinstance(result["next_actions"][0], str)
+    assert result["agent_actions"][0]["blocking"] is True
+    assert result["agent_actions"][0]["suggested_repair"]
+
+
+@pytest.mark.asyncio
+async def test_quality_check_returns_agent_triage_groups_and_actions(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_agent_triage_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    arch = docs_dir / "ARCHITECTURE_GUIDE.md"
+    arch.write_text(
+        """---
+status: complete
+---
+# Findings
+| finding |
+| |
+
+[fill this section]
+TODO: add implementation evidence
+""",
+        encoding="utf-8",
+    )
+    project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-agent-triage-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-agent-triage-session"):
+        result = await manage_docs(action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+
+    summary = result["summary"]
+    assert summary["warning_counts_by_code"]["SCF_PLACEHOLDER_BRACKET"] == 1
+    assert summary["blocking_warning_counts_by_code"]["SCF_PLACEHOLDER_BRACKET"] == 1
+    assert summary["has_blockers"] is True
+    assert summary["actionable_warning_count"] >= 3
+    assert summary["repair_kind_counts"]["content_completion"] >= 1
+
+    placeholder_warning = next(warning for warning in result["warnings"] if warning["code"] == "SCF_PLACEHOLDER_BRACKET")
+    assert placeholder_warning["location_basis"] == "body_relative"
+    assert placeholder_warning["location"]["line"] == 5
+    assert placeholder_warning["file_location"]["line"] == 8
+    assert placeholder_warning["file_location"]["source_line"] == 5
+    assert placeholder_warning["section"]["heading"] == "Findings"
+    assert placeholder_warning["section"]["file_line"] == 4
+    assert placeholder_warning["repair_kind"] == "content_completion"
+    assert placeholder_warning["edit_action_hint"] == "replace_range"
+    assert placeholder_warning["provenance"]["body_start_line"] == 4
+
+    groups_by_code = {group["code"]: group for group in result["warning_groups"]}
+    placeholder = groups_by_code["SCF_PLACEHOLDER_BRACKET"]
+    assert placeholder["count"] == 1
+    assert placeholder["blocking_count"] == 1
+    assert placeholder["first_location"]["line"] >= 1
+    assert placeholder["first_file_location"]["line"] == 8
+    assert placeholder["affected_lines"]
+    assert placeholder["affected_lines"] == [8]
+    assert placeholder["sections"][0]["heading"] == "Findings"
+    assert placeholder["repair_kind"] == "content_completion"
+    assert placeholder["edit_action_hint"] == "replace_range"
+    assert placeholder["message_samples"]
+    assert placeholder["suggested_repair"]
+
+    action_codes = [action["code"] for action in result["agent_actions"]]
+    assert "SCF_PLACEHOLDER_BRACKET" in action_codes
+    placeholder_action = next(action for action in result["agent_actions"] if action["code"] == "SCF_PLACEHOLDER_BRACKET")
+    assert placeholder_action["rank"] >= 1
+    assert placeholder_action["blocking"] is True
+    assert placeholder_action["summary"]
+    assert placeholder_action["affected_lines"] == [8]
+    assert placeholder_action["first_file_location"]["line"] == 8
+    assert placeholder_action["section"]["heading"] == "Findings"
+    assert placeholder_action["repair_kind"] == "content_completion"
+    assert placeholder_action["edit_action_hint"] == "replace_range"
 
 
 @pytest.mark.asyncio
@@ -105,6 +191,110 @@ async def test_quality_check_clean_doc_passes(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_quality_check_bulk_project_returns_atlas_aggregate_payload(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_bulk_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    arch = docs_dir / "ARCHITECTURE_GUIDE.md"
+    phase = docs_dir / "PHASE_PLAN.md"
+    progress_log = docs_dir / "PROGRESS_LOG.md"
+    arch.write_text("---\nstatus: complete\n---\n# Findings\n[fill this section]\n", encoding="utf-8")
+    phase.write_text("---\nstatus: in_progress\n---\n# Phase\nReal implementation evidence.\n", encoding="utf-8")
+    progress_log.write_text("[fill should not affect project bulk quality]\n", encoding="utf-8")
+    project = {
+        "name": "Q",
+        "root": str(project_root),
+        "progress_log": str(progress_log),
+        "docs": {
+            "ARCHITECTURE_GUIDE": str(arch),
+            "PHASE_PLAN": str(phase),
+            "progress_log": str(progress_log),
+        },
+    }
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-bulk-session", project["root"])
+
+    metadata = {"quality": {"bulk": {"scope": "project", "include_clean": True, "max_agent_actions": 3}}}
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-bulk-session"):
+        result = await manage_docs(action="quality_check", metadata=metadata, dry_run=True)
+
+    assert result["ok"] is True
+    assert result["quality_status"] == "fail"
+    assert result["scope"]["type"] == "bulk"
+    assert result["scope"]["checked_count"] == 2
+    assert result["scope"]["included_document_count"] == 2
+    assert result["summary"]["scope_kind"] == "bulk"
+    assert result["summary"]["checked_documents"] == 2
+    assert result["summary"]["documents_with_warnings"] == 1
+    assert result["summary"]["documents_with_blockers"] == 1
+    assert result["summary"]["warning_counts_by_code"]["SCF_PLACEHOLDER_BRACKET"] == 1
+    assert result["summary"]["blocking_warning_counts_by_code"]["SCF_PLACEHOLDER_BRACKET"] == 1
+    assert {document["doc_name"] for document in result["documents"]} == {"ARCHITECTURE_GUIDE", "PHASE_PLAN"}
+    assert all(document["doc_name"] != "progress_log" for document in result["documents"])
+
+    placeholder_warning = next(warning for warning in result["warnings"] if warning["code"] == "SCF_PLACEHOLDER_BRACKET")
+    assert placeholder_warning["doc_name"] == "ARCHITECTURE_GUIDE"
+    assert placeholder_warning["path"] == str(arch.resolve())
+    placeholder_group = next(group for group in result["warning_groups"] if group["code"] == "SCF_PLACEHOLDER_BRACKET")
+    assert placeholder_group["document_count"] == 1
+    assert placeholder_group["documents"][0]["doc_name"] == "ARCHITECTURE_GUIDE"
+    placeholder_action = next(action for action in result["agent_actions"] if action["code"] == "SCF_PLACEHOLDER_BRACKET")
+    assert placeholder_action["document_count"] == 1
+    assert placeholder_action["documents"][0]["path"] == str(arch.resolve())
+    assert result["next_actions"]
+
+
+@pytest.mark.asyncio
+async def test_quality_check_bulk_doc_list_supports_compact_atlas_mode(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_bulk_compact_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    arch = docs_dir / "ARCHITECTURE_GUIDE.md"
+    phase = docs_dir / "PHASE_PLAN.md"
+    arch.write_text("---\nstatus: complete\n---\n# Findings\nTODO: replace planning stub.\n", encoding="utf-8")
+    phase.write_text("---\nstatus: in_progress\n---\n# Phase\nReal implementation evidence.\n", encoding="utf-8")
+    project = {
+        "name": "Q",
+        "root": str(project_root),
+        "docs": {"ARCHITECTURE_GUIDE": str(arch), "PHASE_PLAN": str(phase)},
+    }
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-bulk-compact-session", project["root"])
+
+    metadata = {
+        "quality": {
+            "bulk": {
+                "doc_names": ["ARCHITECTURE_GUIDE", "PHASE_PLAN"],
+                "include_clean": False,
+                "include_warnings": False,
+                "max_agent_actions": 1,
+            }
+        }
+    }
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-bulk-compact-session"):
+        result = await manage_docs(action="quality_check", metadata=metadata, dry_run=True)
+
+    assert result["ok"] is True
+    assert result["scope"]["type"] == "bulk"
+    assert result["scope"]["mode"] == "doc_names"
+    assert result["scope"]["checked_count"] == 2
+    assert result["scope"]["included_document_count"] == 1
+    assert result["scope"]["include_warnings"] is False
+    assert result["warnings"] == []
+    assert result["readiness_blockers"] == []
+    assert result["summary"]["total_warnings"] >= 1
+    assert result["summary"]["documents_with_warnings"] == 1
+    assert [document["doc_name"] for document in result["documents"]] == ["ARCHITECTURE_GUIDE"]
+    assert result["documents"][0]["warnings"] == []
+    assert len(result["agent_actions"]) == 1
+    assert result["agent_actions"][0]["documents"][0]["doc_name"] == "ARCHITECTURE_GUIDE"
+
+
+@pytest.mark.asyncio
 async def test_quality_handoff_check_blocks_when_scaffold_blockers_exist(tmp_path: Path) -> None:
     project_root = tmp_path / "quality_handoff_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
@@ -124,6 +314,12 @@ async def test_quality_handoff_check_blocks_when_scaffold_blockers_exist(tmp_pat
     assert result["blocked"] is True
     assert result["action"] == "quality_handoff_check"
     assert result["total_blocker_count"] >= 1
+    assert result["quality_summary"]["readiness_blocker_count"] >= 1
+    assert result["quality_summary"]["readiness_blocker_counts_by_code"]
+    assert result["handoff_actions"]
+    assert result["handoff_actions"][0]["doc_name"] == "ARCHITECTURE_GUIDE"
+    assert "quality_check" in result["handoff_actions"][0]["command_hint"]
+    assert result["handoff_actions"][0]["blocker_codes"]
 
 
 @pytest.mark.asyncio

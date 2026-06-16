@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from scribe_mcp.config.settings import settings
+from scribe_mcp.shared.write_barrier import WriteBarrierError, scribe_owned_write_barrier_lock
 
 RestoreRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
@@ -192,6 +193,16 @@ def _default_runner(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True)
 
 
+def _barrier_root_for_path(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    parts = resolved.parts
+    if ".scribe" in parts:
+        index = parts.index(".scribe")
+        if index > 0:
+            return Path(*parts[:index])
+    return resolved.parent
+
+
 def _run_backup_before_restore(plan: RestorePlan, *, runner: RestoreRunner) -> None:
     if not plan.target_postgres_dsn:
         raise RuntimeError("target connection source is unavailable")
@@ -324,36 +335,50 @@ def _plan_from_args(args: argparse.Namespace) -> RestorePlan:
 
 
 def _execute_plan(plan: RestorePlan, *, runner: RestoreRunner = _default_runner) -> int:
-    errors = _validate_plan(plan)
-    if errors:
-        reason = "; ".join(errors)
-        _write_public_summary(plan, status="blocked", reason=reason)
-        print(f"restore blocked: {reason}", file=sys.stderr)
-        return 2
-
+    barrier_acquired = False
     try:
-        _write_private_manifest(plan, status="preflight" if plan.preflight_only else "started")
-        if plan.preflight_only:
-            _write_public_summary(plan, status="preflight-ok")
-            print("restore preflight ok")
-            print(f"target_class_label={plan.target_class_label}")
-            print(f"active_runtime_exclusion_label={plan.active_runtime_exclusion_label}")
-            print(f"mode={plan.mode}")
-            print("private_inputs=redacted")
-            return 0
+        barrier_root = _barrier_root_for_path(plan.private_manifest_dir)
+        with scribe_owned_write_barrier_lock(
+            barrier_root,
+            owner_label="postgres_restore",
+            reason_label="postgres_restore",
+        ):
+            barrier_acquired = True
+            errors = _validate_plan(plan)
+            if errors:
+                reason = "; ".join(errors)
+                _write_public_summary(plan, status="blocked", reason=reason)
+                print(f"restore blocked: {reason}", file=sys.stderr)
+                return 2
 
-        if plan.mode == "require-empty-target":
-            _run_empty_target_check(plan, runner=runner)
-        if plan.backup_before_restore:
-            _run_backup_before_restore(plan, runner=runner)
-        _run_restore(plan, runner=runner)
-        _write_private_manifest(plan, status="restored")
-        _write_public_summary(plan, status="restored")
+            _write_private_manifest(plan, status="preflight" if plan.preflight_only else "started")
+            if plan.preflight_only:
+                _write_public_summary(plan, status="preflight-ok")
+                print("restore preflight ok")
+                print(f"target_class_label={plan.target_class_label}")
+                print(f"active_runtime_exclusion_label={plan.active_runtime_exclusion_label}")
+                print(f"mode={plan.mode}")
+                print("private_inputs=redacted")
+                return 0
+
+            if plan.mode == "require-empty-target":
+                _run_empty_target_check(plan, runner=runner)
+            if plan.backup_before_restore:
+                _run_backup_before_restore(plan, runner=runner)
+            _run_restore(plan, runner=runner)
+            _write_private_manifest(plan, status="restored")
+            _write_public_summary(plan, status="restored")
         print("restore complete")
         print(f"target_class_label={plan.target_class_label}")
         print("private_inputs=redacted")
         return 0
+    except WriteBarrierError as exc:
+        print(f"restore blocked: {exc}", file=sys.stderr)
+        return 1
     except (OSError, RuntimeError, ValueError) as exc:
+        if not barrier_acquired:
+            print(f"restore blocked: {exc}", file=sys.stderr)
+            return 1
         _write_public_summary(plan, status="blocked", reason=str(exc))
         print(f"restore blocked: {exc}", file=sys.stderr)
         return 1

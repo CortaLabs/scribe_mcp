@@ -216,6 +216,43 @@ def _operation_is_permitted(operation: str, *, public_release: bool) -> bool:
     return operation in _LEGACY_OPERATION_ALLOWLIST
 
 
+def _is_remote_tool_invoke_transport() -> bool:
+    policy = server_module.get_transport_policy()
+    return _is_public_release_transport() or bool(policy.get("network_exposed"))
+
+
+def _tool_is_local_operator_only(tool_name: str) -> bool:
+    tool_descriptions = server_module.describe_registered_tools()
+    tool_description = tool_descriptions.get(tool_name)
+    if not isinstance(tool_description, dict):
+        return False
+
+    meta = tool_description.get("meta", {})
+    scribe_meta = meta.get("scribe", {}) if isinstance(meta, dict) else {}
+    if not isinstance(scribe_meta, dict):
+        return False
+    if scribe_meta.get("remoteInvokable") is True:
+        return False
+
+    surface = scribe_meta.get("surface")
+    locality = scribe_meta.get("locality")
+    trust_tier = scribe_meta.get("trustTier")
+    return surface == "operator" and (locality == "local" or trust_tier == 0)
+
+
+def _local_operator_tool_blocked_response(tool_name: str) -> JSONResponse:
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": "tool_not_remote_invokable",
+            "reason_code": "local_operator_tool_blocked",
+            "tool_name": tool_name,
+            "message": "This tool is not available over exported remote transport.",
+        },
+        status_code=403,
+    )
+
+
 def _shutdown_phase_response(phase: str) -> JSONResponse:
     if phase == "backend_close" or phase == "closed":
         return JSONResponse(
@@ -545,6 +582,9 @@ async def handle_tool_invoke(request: Request) -> JSONResponse:
                 {"error": "'context' must be an object", "type": "ValidationError"},
                 status_code=400,
             )
+
+        if _is_remote_tool_invoke_transport() and _tool_is_local_operator_only(tool_name):
+            return _local_operator_tool_blocked_response(tool_name)
 
         try:
             result = await server_module.invoke_tool(tool_name, arguments, context=context)

@@ -1,7 +1,7 @@
 # MCP server guide
 
-Release line: `2.4.1`
-Updated: `2026-06-04`
+Release line: `2.6.0`
+Updated: `2026-06-16`
 
 This guide shows how to run Scribe as an MCP server for hosts such as Codex or Claude-compatible clients.
 
@@ -28,6 +28,7 @@ The package also ships a broader operational surface than just one stdio entry p
 - `scribe-server-sse` for SSE transport
 - `scribe_doctor` and startup probes for diagnostics
 - bundled plugin assets under `plugins/` plus `scribe plugins project-codex` for Codex projection
+- write-barrier protected Postgres backup/restore helpers for Scribe-owned maintenance windows
 
 ## Quick host examples
 
@@ -106,6 +107,7 @@ Good follow-up checks include:
 - `list_projects` for the project inventory surface
 - `read_recent` for immediate context rehydration
 - `manage_docs` / `project_health` to confirm the governed-doc surface is visible
+- `manage_docs(action="quality_check", metadata={"quality": {"bulk": true}}, dry_run=True)` to get Atlas-style project quality summaries, per-doc results, grouped warnings, and ranked agent actions
 
 ## Remote/client naming
 
@@ -114,6 +116,8 @@ For this release line, the public naming story is:
 - `SCRIBE_REMOTE_URL`
 - `SCRIBE_REMOTE_AUTH_TOKEN`
 - `SCRIBE_TRANSPORT_AUTH_TOKEN` for server-side transport enforcement
+
+Exported remote transport blocks local operator-only Scribe tools unless the tool metadata explicitly marks the tool as remote-invokable. Treat remote/client use as internal compatibility unless the deployment has its own reviewed trust boundary.
 
 Release-governance reminder for operators: missing accepted changelog coverage for the active package version raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` through `manage_docs` quality/readiness flows (`quality_check`, reminders, `project_health`) until coverage and reconciliation proof are complete.
 

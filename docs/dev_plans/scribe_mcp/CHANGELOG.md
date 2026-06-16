@@ -10,6 +10,30 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Quality-check agent actions, bulk validation, and write-barrier safety
+- `entry_id`: 20260616:quality-check-agent-actions-bulk-write-barrier-2-6-0
+- `entry_status`: accepted
+- `title`: Quality-check agent actions, bulk validation, and write-barrier safety
+- `summary`: Bumped the public release line to `2.6.0`. `manage_docs quality_check` now returns agent-actionable summaries with grouped warning families, ranked `agent_actions`, file/section context, repair hints, and provenance; Atlas can run bulk quality checks across a project or bounded doc list; `quality_handoff_check` returns concrete follow-up actions; write barriers protect mutation surfaces and Postgres backup/restore custody; exported remote transport blocks local operator-only tools; sparse Postgres `read_recent` responses can be supplemented from canonical progress logs.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/doc_management/quality/results.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/shared/write_barrier.py
+  - src/scribe_mcp/tools/append_entry.py
+  - src/scribe_mcp/tools/manage_docs.py
+  - src/scribe_mcp/tools/read_recent.py
+  - src/scribe_mcp/tools/set_project.py
+  - src/scribe_mcp/server_sse.py
+  - src/scribe_mcp/scripts/postgres_backup.py
+  - src/scribe_mcp/scripts/postgres_restore.py
+  - tests/test_manage_docs_quality_check.py
+  - tests/test_write_barrier_contract.py
+  - tests/security/test_transport_authorization.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.6.0
+
 ## Unified create contract + error remediation envelopes (P2-P3)
 - `entry_id`: 20260611:create-contract-error-envelopes-2-5-0
 - `entry_status`: accepted

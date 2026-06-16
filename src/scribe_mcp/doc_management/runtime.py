@@ -16,9 +16,11 @@ from scribe_mcp.log_intelligence import build_report_from_path
 from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key
 from scribe_mcp.doc_management.scaffold_quality import (
     collect_managed_doc_quality_warnings,
+    configured_log_quality_exclusion_paths,
+    is_managed_doc_quality_target,
     summarize_quality_warnings,
 )
-from scribe_mcp.doc_management.quality.results import DEFAULT_MODE, SCHEMA_VERSION, normalize_warnings
+from scribe_mcp.doc_management.quality.results import SCHEMA_VERSION, build_quality_agent_actions, enrich_quality_warning_context, group_quality_warnings, normalize_warnings
 from scribe_mcp.doc_management.quality.rules.release_gate import resolve_quality_mode
 from scribe_mcp.readiness import (
     build_readiness_summary,
@@ -44,6 +46,7 @@ from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
     build_resolution_metadata,
 )
+from scribe_mcp.shared.write_barrier import assert_writes_allowed
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input
 
@@ -936,8 +939,265 @@ async def _handle_quality_check(
             return None
         return candidate
 
+    def _coerce_bool(value: Any, *, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return default
+
+    def _coerce_positive_int(value: Any, *, default: int, maximum: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        if parsed < 1:
+            return default
+        return min(parsed, maximum)
+
+    def _metadata_quality_cfg() -> Dict[str, Any]:
+        quality_metadata = metadata or {}
+        quality_cfg = quality_metadata.get("quality") if isinstance(quality_metadata.get("quality"), dict) else {}
+        return quality_cfg
+
+    def _quality_bulk_options(requested_value: str) -> Optional[Dict[str, Any]]:
+        quality_metadata = metadata if isinstance(metadata, dict) else {}
+        quality_cfg = _metadata_quality_cfg()
+        bulk_raw: Any = quality_cfg.get("bulk")
+        if bulk_raw is None:
+            bulk_raw = quality_metadata.get("bulk_quality_check")
+        if bulk_raw is None:
+            bulk_raw = quality_metadata.get("bulk")
+
+        requested_normalized = str(requested_value or "").strip().lower()
+        if bulk_raw is None and requested_normalized in {"*", "all", "atlas", "managed_docs", "project"}:
+            bulk_raw = True
+        if bulk_raw is None or bulk_raw is False:
+            return None
+
+        bulk_cfg = bulk_raw if isinstance(bulk_raw, dict) else {}
+        doc_names_raw = (
+            bulk_cfg.get("doc_names")
+            or bulk_cfg.get("docs")
+            or bulk_cfg.get("documents")
+            or bulk_cfg.get("targets")
+        )
+        doc_names: list[str] = []
+        if isinstance(doc_names_raw, str):
+            doc_names = [part.strip() for part in doc_names_raw.split(",") if part.strip()]
+        elif isinstance(doc_names_raw, list):
+            doc_names = [str(item).strip() for item in doc_names_raw if str(item).strip()]
+
+        return {
+            "scope": str(bulk_cfg.get("scope") or ("doc_names" if doc_names else "project")),
+            "doc_names": doc_names,
+            "include_clean": _coerce_bool(bulk_cfg.get("include_clean"), default=True),
+            "include_warnings": _coerce_bool(bulk_cfg.get("include_warnings"), default=True),
+            "max_agent_actions": _coerce_positive_int(bulk_cfg.get("max_agent_actions"), default=10, maximum=50),
+            "max_docs": _coerce_positive_int(bulk_cfg.get("max_docs"), default=250, maximum=500),
+        }
+
+    def _build_document_quality_payload(
+        *,
+        target_name: str,
+        path: Path,
+        mode_info: Dict[str, Any],
+        runtime_warnings: list[str],
+    ) -> Dict[str, Any]:
+        text = path.read_text(encoding="utf-8")
+        quality_metadata = metadata or {}
+        quality_cfg = _metadata_quality_cfg()
+        warnings = collect_managed_doc_quality_warnings(
+            text=text,
+            metadata={**quality_metadata, "quality": {**quality_cfg, "mode": mode_info["mode"]}},
+            doc_name=target_name,
+            path=path,
+            project=active_project,
+        )
+        warnings = enrich_quality_warning_context(normalize_warnings(warnings), text=text)
+        summary = summarize_quality_warnings(warnings)
+        warning_groups = group_quality_warnings(warnings)
+        readiness_blockers = [w for w in warnings if bool(w.get("blocking"))]
+        status = "pass" if not warnings else ("fail" if readiness_blockers else "warn")
+        return {
+            "ok": True,
+            "quality_status": status,
+            "scope": {"type": "document", "doc_name": target_name, "path": str(path)},
+            "summary": {
+                **summary,
+                "config_source": "metadata.quality" if isinstance((metadata or {}).get("quality"), dict) else "defaults",
+                "mode": mode_info["mode"],
+                "schema_version": SCHEMA_VERSION,
+                "category": "quality_check",
+                "gate_scope": "manage_docs",
+                "scope_kind": "document",
+                "release_trigger": mode_info["release_trigger"],
+                "release_trigger_source": mode_info["trigger_source"],
+                "release_triggers": mode_info.get("release_triggers", []),
+            },
+            "warnings": warnings,
+            "warning_groups": warning_groups,
+            "agent_actions": build_quality_agent_actions(warning_groups),
+            "runtime_warnings": runtime_warnings,
+            "readiness_blockers": readiness_blockers,
+            "next_actions": [w.get("suggested_repair") for w in readiness_blockers[:3] if isinstance(w.get("suggested_repair"), str)],
+        }
+
+    def _select_bulk_quality_targets(options: Dict[str, Any], runtime_warnings: list[str]) -> list[Dict[str, Any]]:
+        docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
+        selected: list[Dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        configured_log_paths = configured_log_quality_exclusion_paths(active_project)
+        explicit_doc_names = list(options.get("doc_names") or [])
+
+        if explicit_doc_names:
+            iterable = [(requested, docs.get(resolve_registered_doc_key(active_project, requested) or _canonical_doc_key(requested))) for requested in explicit_doc_names]
+        else:
+            iterable = list(docs.items())
+
+        for raw_name, raw_path in iterable:
+            requested_name = str(raw_name or "").strip()
+            resolved_path = _resolve_explicit_markdown_path(requested_name)
+            if resolved_path is not None:
+                target_name = _canonical_doc_key(resolved_path.stem)
+                path = resolved_path
+            else:
+                target_name = resolve_registered_doc_key(active_project, requested_name) or _canonical_doc_key(requested_name)
+                if not isinstance(raw_path, str) or not raw_path.strip():
+                    runtime_warnings.append(f"bulk quality_check skipped unresolved document '{requested_name}'.")
+                    continue
+                path = Path(raw_path).expanduser().resolve()
+
+            if path.suffix.lower() != ".md" or not path.exists():
+                runtime_warnings.append(f"bulk quality_check skipped missing or non-markdown document '{requested_name}' at '{path}'.")
+                continue
+            if not explicit_doc_names and not is_managed_doc_quality_target(
+                target_name,
+                path,
+                configured_log_paths=configured_log_paths,
+            ):
+                continue
+            key = str(path)
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            selected.append({"doc_name": target_name, "path": path})
+
+        max_docs = int(options.get("max_docs") or 250)
+        if len(selected) > max_docs:
+            runtime_warnings.append(
+                f"bulk quality_check truncated {len(selected)} candidate documents to max_docs={max_docs}."
+            )
+            selected = selected[:max_docs]
+        return selected
+
+    def _build_bulk_quality_response(options: Dict[str, Any], runtime_warnings: list[str]) -> Dict[str, Any]:
+        mode_info = resolve_quality_mode(metadata=metadata, project_root=Path(str(active_project.get("root") or "")).resolve())
+        targets = _select_bulk_quality_targets(options, runtime_warnings)
+        include_clean = bool(options.get("include_clean"))
+        include_warnings = bool(options.get("include_warnings"))
+        flat_warnings: list[Dict[str, Any]] = []
+        document_results: list[Dict[str, Any]] = []
+
+        for target in targets:
+            doc_runtime_warnings: list[str] = []
+            document_payload = _build_document_quality_payload(
+                target_name=str(target["doc_name"]),
+                path=target["path"],
+                mode_info=mode_info,
+                runtime_warnings=doc_runtime_warnings,
+            )
+            if doc_runtime_warnings:
+                runtime_warnings.extend(doc_runtime_warnings)
+            warnings_with_doc = [
+                {**warning, "doc_name": document_payload["scope"]["doc_name"], "path": document_payload["scope"]["path"]}
+                for warning in document_payload["warnings"]
+            ]
+            flat_warnings.extend(warnings_with_doc)
+            if include_clean or warnings_with_doc:
+                document_results.append(
+                    {
+                        "doc_name": document_payload["scope"]["doc_name"],
+                        "path": document_payload["scope"]["path"],
+                        "quality_status": document_payload["quality_status"],
+                        "summary": document_payload["summary"],
+                        "warnings": warnings_with_doc if include_warnings else [],
+                        "warning_groups": document_payload["warning_groups"],
+                        "agent_actions": document_payload["agent_actions"],
+                        "readiness_blockers": [
+                            {**warning, "doc_name": document_payload["scope"]["doc_name"], "path": document_payload["scope"]["path"]}
+                            for warning in document_payload["readiness_blockers"]
+                        ]
+                        if include_warnings
+                        else [],
+                    }
+                )
+
+        bulk_summary = summarize_quality_warnings(flat_warnings)
+        readiness_blockers = [warning for warning in flat_warnings if bool(warning.get("blocking"))]
+        warning_groups = group_quality_warnings(flat_warnings)
+        max_agent_actions = int(options.get("max_agent_actions") or 10)
+        agent_actions = build_quality_agent_actions(warning_groups, max_items=max_agent_actions)
+        documents_with_warnings = sum(1 for document in document_results if int((document.get("summary") or {}).get("total_warnings", 0) or 0) > 0)
+        documents_with_blockers = sum(
+            1 for document in document_results if int((document.get("summary") or {}).get("readiness_blocker_count", 0) or 0) > 0
+        )
+        status = "pass" if not flat_warnings else ("fail" if readiness_blockers else "warn")
+        response = {
+            "ok": True,
+            "quality_status": status,
+            "scope": {
+                "type": "bulk",
+                "project": active_project.get("name"),
+                "mode": options.get("scope"),
+                "requested_count": len(options.get("doc_names") or targets),
+                "checked_count": len(targets),
+                "included_document_count": len(document_results),
+                "include_clean": include_clean,
+                "include_warnings": include_warnings,
+            },
+            "summary": {
+                **bulk_summary,
+                "config_source": "metadata.quality" if isinstance((metadata or {}).get("quality"), dict) else "defaults",
+                "mode": mode_info["mode"],
+                "schema_version": SCHEMA_VERSION,
+                "category": "quality_check",
+                "gate_scope": "manage_docs",
+                "scope_kind": "bulk",
+                "release_trigger": mode_info["release_trigger"],
+                "release_trigger_source": mode_info["trigger_source"],
+                "release_triggers": mode_info.get("release_triggers", []),
+                "checked_documents": len(targets),
+                "included_documents": len(document_results),
+                "documents_with_warnings": documents_with_warnings,
+                "documents_with_blockers": documents_with_blockers,
+                "max_agent_actions": max_agent_actions,
+            },
+            "documents": document_results,
+            "warnings": flat_warnings if include_warnings else [],
+            "warning_groups": warning_groups,
+            "agent_actions": agent_actions,
+            "runtime_warnings": runtime_warnings,
+            "readiness_blockers": readiness_blockers if include_warnings else [],
+            "next_actions": [
+                warning.get("suggested_repair")
+                for warning in readiness_blockers[:3]
+                if isinstance(warning.get("suggested_repair"), str)
+            ],
+        }
+        return response
+
     docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
     requested_name = str(doc_name or "").strip()
+    runtime_warnings: list[str] = []
+    bulk_options = _quality_bulk_options(requested_name)
+    if bulk_options is not None:
+        return helper.apply_context_payload(_build_bulk_quality_response(bulk_options, runtime_warnings), context)
+
     explicit_md_path = _resolve_explicit_markdown_path(requested_name)
     if explicit_md_path is not None:
         path_str = str(explicit_md_path)
@@ -945,7 +1205,6 @@ async def _handle_quality_check(
     else:
         target_name = resolve_registered_doc_key(active_project, requested_name) if requested_name else ""
         path_str = docs.get(target_name) if target_name else None
-    runtime_warnings: list[str] = []
     requested_category = str(doc_category or "").strip().lower()
     requested_stem = requested_name[:-3] if requested_name.lower().endswith(".md") else requested_name
     research_like = bool(requested_name) and (
@@ -1080,43 +1339,13 @@ async def _handle_quality_check(
             ),
             context,
         )
-    path = Path(path_str)
-    text = path.read_text(encoding="utf-8")
     mode_info = resolve_quality_mode(metadata=metadata, project_root=Path(str(active_project.get("root") or "")).resolve())
-    quality_metadata = metadata or {}
-    quality_cfg = quality_metadata.get("quality") if isinstance(quality_metadata.get("quality"), dict) else {}
-    warnings = collect_managed_doc_quality_warnings(
-        text=text,
-        metadata={**quality_metadata, "quality": {**quality_cfg, "mode": mode_info["mode"]}},
-        doc_name=target_name,
-        path=path,
-        project=active_project,
+    response = _build_document_quality_payload(
+        target_name=target_name,
+        path=Path(path_str),
+        mode_info=mode_info,
+        runtime_warnings=runtime_warnings,
     )
-    warnings = normalize_warnings(warnings)
-    summary = summarize_quality_warnings(warnings)
-    readiness_blockers = [w for w in warnings if bool(w.get("blocking"))]
-    status = "pass" if not warnings else ("fail" if readiness_blockers else "warn")
-    response = {
-        "ok": True,
-        "quality_status": status,
-        "scope": {"type": "document", "doc_name": target_name, "path": str(path)},
-        "summary": {
-            **summary,
-            "config_source": "metadata.quality" if isinstance((metadata or {}).get("quality"), dict) else "defaults",
-            "mode": mode_info["mode"],
-            "schema_version": SCHEMA_VERSION,
-            "category": "quality_check",
-            "gate_scope": "manage_docs",
-            "scope_kind": "document",
-            "release_trigger": mode_info["release_trigger"],
-            "release_trigger_source": mode_info["trigger_source"],
-            "release_triggers": mode_info.get("release_triggers", []),
-        },
-        "warnings": warnings,
-        "runtime_warnings": runtime_warnings,
-        "readiness_blockers": readiness_blockers,
-        "next_actions": [w.get("suggested_repair") for w in readiness_blockers[:3] if isinstance(w.get("suggested_repair"), str)],
-    }
     return helper.apply_context_payload(response, context)
 
 
@@ -1124,6 +1353,27 @@ async def _handle_quality_handoff_check(*, active_project: Dict[str, Any], agent
     blocker_result = collect_managed_doc_quality_blockers(active_project)
     blocked = bool(blocker_result.get("blocked"))
     blocker_docs = list(blocker_result.get("blocker_docs") or [])
+    quality_state = blocker_result.get("quality_state") if isinstance(blocker_result.get("quality_state"), dict) else {}
+    handoff_actions = [
+        {
+            "rank": index,
+            "doc_name": document.get("doc_name"),
+            "path": document.get("path"),
+            "blocker_codes": list(document.get("blocker_codes") or []),
+            "command_hint": f"manage_docs(action='quality_check', doc_name='{document.get('doc_name')}', dry_run=True)",
+            "suggested_next_step": "Run quality_check for this document, then resolve the listed blocker codes before handoff.",
+        }
+        for index, document in enumerate(blocker_docs[:5], start=1)
+        if isinstance(document, dict)
+    ]
+    if not handoff_actions:
+        handoff_actions = [
+            {
+                "rank": 1,
+                "status": "clear",
+                "suggested_next_step": "Managed-doc quality handoff is clear for current project scope.",
+            }
+        ]
     response = {
         "ok": not blocked,
         "action": "quality_handoff_check",
@@ -1132,6 +1382,16 @@ async def _handle_quality_handoff_check(*, active_project: Dict[str, Any], agent
         "blocked": blocked,
         "blocker_docs": blocker_docs,
         "total_blocker_count": int(blocker_result.get("total_blocker_count", 0)),
+        "quality_summary": {
+            "status": quality_state.get("status", "blocked" if blocked else "pass"),
+            "total_warning_count": int(quality_state.get("total_warning_count", 0) or 0),
+            "readiness_blocker_count": int(quality_state.get("readiness_blocker_count", 0) or 0),
+            "warning_counts_by_code": dict(quality_state.get("warning_counts_by_code") or {}),
+            "readiness_blocker_counts_by_code": dict(quality_state.get("readiness_blocker_counts_by_code") or {}),
+            "frontmatter_mismatch_count": int(quality_state.get("frontmatter_mismatch_count", 0) or 0),
+            "stale_research_index_count": int(quality_state.get("stale_research_index_count", 0) or 0),
+        },
+        "handoff_actions": handoff_actions,
     }
     return helper.apply_context_payload(response, context)
 
@@ -1532,6 +1792,7 @@ def build_create_intent_payload(
     )
     canonical_doc_name = str(canonical_doc_name).strip() if canonical_doc_name else ""
 
+    section_source = str(result.get("section_source") or "").strip().lower()
     first_write_action = "replace_section"
     target_for_guidance = canonical_doc_name or requested_doc_name or "doc_name"
 
@@ -1565,13 +1826,23 @@ def build_create_intent_payload(
             "next_step_guidance": follow_up,
         }
 
-    follow_up = (
-        "create scaffolds a governed document. Next, call "
-        f"manage_docs(action='replace_section', doc='{target_for_guidance}', ...) "
-        "to add or replace section content anchored by <!-- ID: ... --> markers. "
-        "If section boundaries drift or anchors/headings become ambiguous, switch to "
-        "manage_docs(action='replace_range', ...) or action='apply_patch' for explicit control."
-    )
+    if section_source == "headings":
+        first_write_action = "apply_patch"
+        follow_up = (
+            "create produced a governed document with heading-derived section inventory. "
+            "Those ids are preview-only until explicit <!-- ID: ... --> anchors exist. "
+            "For the first mutation, use manage_docs(action='apply_patch', ...) or "
+            "manage_docs(action='replace_range', ...) for explicit control, or add explicit "
+            f"anchors before using manage_docs(action='replace_section', doc='{target_for_guidance}', ...)."
+        )
+    else:
+        follow_up = (
+            "create scaffolds a governed document. Next, call "
+            f"manage_docs(action='replace_section', doc='{target_for_guidance}', ...) "
+            "to add or replace section content anchored by <!-- ID: ... --> markers. "
+            "If section boundaries drift or anchors/headings become ambiguous, switch to "
+            "manage_docs(action='replace_range', ...) or action='apply_patch' for explicit control."
+        )
     return {
         "kind": "governed_scaffold_doc",
         "canonical_doc_name": canonical_doc_name or None,
@@ -2088,6 +2359,11 @@ async def handle_manage_docs_request(
         logger.info("Canonicalized doc reference '%s' -> '%s'", original_doc_name, doc_name)
 
     backend = server_module.storage_backend
+    if _is_manage_docs_write_intent(action) and not dry_run:
+        assert_writes_allowed(
+            Path(active_project.get("root") or ""),
+            operation_label="manage_docs",
+        )
 
     runtime_warnings: list[str] = []
     execution_context = None

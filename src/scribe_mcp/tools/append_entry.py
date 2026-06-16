@@ -40,6 +40,7 @@ from scribe_mcp.shared.logging_utils import (
     resolve_log_definition as shared_resolve_log_definition,
     resolve_logging_context,
 )
+from scribe_mcp.shared.write_barrier import assert_writes_allowed
 from scribe_mcp.shared.log_enums import (
     LogPriority,
     LogCategory,
@@ -912,7 +913,7 @@ async def _process_bulk_entries(
                 alternative_items = healed_bulk.get("healed_values", {}).get("bulk_items", bulk_items[:1])
                 results = []
 
-                for item in alternative_items:
+                for item_index, item in enumerate(alternative_items):
                     try:
                         item_config = AppendEntryConfig.from_legacy_params(
                             message=item.get("message", "Bulk item processed after error"),
@@ -939,7 +940,7 @@ async def _process_bulk_entries(
                         results.append({
                             "ok": False,
                             "error": f"Failed to process bulk item: {str(item_error)}",
-                            "item_index": i
+                            "item_index": item_index
                         })
             else:
                 # No items to process - return clean error
@@ -1150,10 +1151,8 @@ async def append_entry(
     # Phase 3 Task 3.5: Enhanced Function Decomposition
     # This function now uses decomposed sub-functions with bulletproof error handling
 
-    try:
-        state_snapshot = await server_module.state_manager.record_tool("append_entry")
-    except Exception:
-        state_snapshot = {}
+    state_snapshot: Dict[str, Any] = {}
+    explicit_agent_id = agent_id is not None
 
     exec_context = None
     if hasattr(server_module, "get_execution_context"):
@@ -1210,20 +1209,8 @@ async def append_entry(
         meta_pairs = _normalise_meta(meta)
         meta_payload = {key: value for key, value in meta_pairs}
 
-        # Auto-detect agent ID if not provided
-        if agent_id is None:
-            agent_identity = server_module.get_agent_identity()
-            if agent_identity:
-                agent_id = await agent_identity.get_or_create_agent_id()
-            else:
-                agent_id = "Scribe"  # Fallback
-
-        # Update agent activity tracking
-        agent_identity = server_module.get_agent_identity()
-        if agent_identity:
-            await agent_identity.update_agent_activity(
-                agent_id, "append_entry", {"message_length": len(message), "status": status, "bulk_mode": items is not None}
-            )
+        explicit_agent_id = explicit_agent_id or final_config.agent_id is not None
+        resolution_agent_id = agent_id or agent or "Scribe"
 
         def _collect_bulk_items(raw_items: Optional[str], raw_items_list: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
             if isinstance(raw_items_list, list):
@@ -1316,7 +1303,7 @@ async def append_entry(
             context = await resolve_logging_context(
                 tool_name="append_entry",
                 server_module=server_module,
-                agent_id=agent_id,
+                agent_id=resolution_agent_id,
                 explicit_project=explicit_project,
                 require_project=True,
                 state_snapshot=state_snapshot,
@@ -1324,7 +1311,7 @@ async def append_entry(
         except ProjectResolutionError as exc:
             # Apply Phase 2 ExceptionHealer for project resolution errors
             healed_context = _EXCEPTION_HEALER.heal_parameter_validation_error(
-                exc, {"tool_name": "append_entry", "agent_id": agent_id}
+                exc, {"tool_name": "append_entry", "agent_id": resolution_agent_id}
             )
 
             if healed_context["success"]:
@@ -1333,7 +1320,7 @@ async def append_entry(
                     context = await resolve_logging_context(
                         tool_name="append_entry",
                         server_module=server_module,
-                        agent_id=healed_context["healed_values"].get("agent_id", agent_id),
+                        agent_id=healed_context["healed_values"].get("agent_id", resolution_agent_id),
                         explicit_project=explicit_project,
                         require_project=True,
                         state_snapshot=state_snapshot,
@@ -1362,7 +1349,7 @@ async def append_entry(
                     error_response = ErrorHandler.create_project_resolution_error(
                         error=exc,
                         tool_name="append_entry",
-                        suggestion=f"Invoke set_project with agent_id='{agent_id}' before appending entries"
+                        suggestion=f"Invoke set_project with agent_id='{resolution_agent_id}' before appending entries"
                     )
                 error_response["debug_path"] = "project_resolution_failed_healed"
                 return error_response
@@ -1389,7 +1376,7 @@ async def append_entry(
                 error_response = ErrorHandler.create_project_resolution_error(
                     error=exc,
                     tool_name="append_entry",
-                    suggestion=f"Invoke set_project with agent_id='{agent_id}' before appending entries"
+                    suggestion=f"Invoke set_project with agent_id='{resolution_agent_id}' before appending entries"
                 )
             error_response["debug_path"] = "project_resolution_failed"
             return error_response
@@ -1397,6 +1384,28 @@ async def append_entry(
         project = context.project or {}
         recent = list(context.recent_projects)
         reminders_payload: List[Dict[str, Any]] = list(context.reminders)
+        assert_writes_allowed(
+            Path(project.get("root") or settings.project_root),
+            operation_label="append_entry",
+        )
+        try:
+            state_snapshot = await server_module.state_manager.record_tool("append_entry")
+        except Exception:
+            state_snapshot = {}
+
+        agent_identity = server_module.get_agent_identity()
+        if agent_identity and not explicit_agent_id:
+            agent_id = await agent_identity.get_or_create_agent_id()
+            final_config.agent_id = agent_id
+        elif agent_id is None:
+            agent_id = resolution_agent_id
+            final_config.agent_id = agent_id
+
+        # Update agent activity tracking after the write barrier has allowed mutation.
+        if agent_identity:
+            await agent_identity.update_agent_activity(
+                agent_id, "append_entry", {"message_length": len(message), "status": status, "bulk_mode": items is not None}
+            )
 
         # === INPUT VALIDATION ===
         # Validate that either message, items, or items_list is provided

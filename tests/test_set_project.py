@@ -10,7 +10,6 @@ import asyncio
 import tempfile
 from pathlib import Path
 import pytest
-import shutil
 from types import SimpleNamespace
 import uuid
 
@@ -676,6 +675,42 @@ async def test_set_project_handles_execution_context_failure(monkeypatch):
         )
         result = extract_result(result)
         assert result.get("ok", False), f"set_project should tolerate context failure. Got: {result}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected_field"),
+    [
+        ({}, "name"),
+        ({"name": "", "root": "/tmp/example"}, "name"),
+        ({"name": "   ", "root": "/tmp/example"}, "name"),
+        ({"name": "project_without_root"}, "root"),
+        ({"name": "project_with_blank_root", "root": ""}, "root"),
+        ({"name": "project_with_whitespace_root", "root": "\t"}, "root"),
+        ({"name": "project_with_none_root", "root": None}, "root"),
+    ],
+)
+async def test_set_project_rejects_missing_or_blank_required_inputs_before_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict,
+    expected_field: str,
+):
+    async def _fail_if_resolving_root(*_args, **_kwargs):
+        raise AssertionError("set_project should validate required inputs before root resolution")
+
+    monkeypatch.setattr(set_project_module, "_resolve_root", _fail_if_resolving_root)
+
+    result = await set_project(
+        agent="TestAgent-RequiredInputs",
+        format="structured",
+        **payload,
+    )
+    result = extract_result(result)
+
+    assert result["ok"] is False
+    assert result["error_code"] == "missing_required_input"
+    assert result["field"] == expected_field
+    assert expected_field in result["error"]
 
 
 if __name__ == "__main__":

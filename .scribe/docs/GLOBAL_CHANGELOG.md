@@ -49,3 +49,8 @@
 - `source_project`: scribe_mcp_bug_log_tooling_20260604
 - `source_entry_id`: 20260604:case-report-manage-docs-followup-2-4-1
 - `summary`: Bumped the public release line to `2.4.1`, added obvious `open_bug` and `open_security` follow-up handles, and taught `manage_docs` to resolve governed bug/security reports by case id, governed path, or canonical category metadata before applying edits.
+
+## Quality-check agent actions, bulk validation, and write-barrier safety
+- `source_project`: scribe_mcp
+- `source_entry_id`: 20260616:quality-check-agent-actions-bulk-write-barrier-2-6-0
+- `summary`: Release 2.6.0 makes `manage_docs quality_check` agent-actionable with grouped warning families, ranked `agent_actions`, file/section context, repair hints, and provenance; adds Atlas bulk quality checks for project or bounded doc-list validation; adds concrete quality handoff actions; protects mutation surfaces with write barriers and Postgres backup/restore custody; blocks local operator-only tools over exported remote transport; and supplements sparse Postgres `read_recent` responses from canonical progress logs.

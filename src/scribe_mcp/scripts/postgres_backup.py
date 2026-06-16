@@ -16,6 +16,7 @@ from typing import Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 from scribe_mcp.config.settings import settings
+from scribe_mcp.shared.write_barrier import WriteBarrierError, assert_writes_allowed
 
 
 @dataclass(frozen=True)
@@ -173,6 +174,16 @@ def _prepare_output_dir(output_dir: Path) -> bool:
     return True
 
 
+def _barrier_root_for_path(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    parts = resolved.parts
+    if ".scribe" in parts:
+        index = parts.index(".scribe")
+        if index > 0:
+            return Path(*parts[:index])
+    return resolved.parent
+
+
 def _secure_existing_private_file(path: Path) -> bool:
     if not path.is_file():
         print("dump_status=missing", file=sys.stderr)
@@ -284,6 +295,11 @@ def main(argv: list[str] | None = None) -> int:
     dry_run = bool(args.dry_run)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
+    try:
+        assert_writes_allowed(_barrier_root_for_path(output_dir), operation_label="postgres_backup")
+    except WriteBarrierError:
+        print("write_barrier_status=blocked", file=sys.stderr)
+        return 1
     if not _prepare_output_dir(output_dir):
         return 1
 

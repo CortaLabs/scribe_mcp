@@ -112,6 +112,28 @@ async def _setup_project(tmp_path: Path) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_manage_docs_returns_structured_error_when_runtime_raises(tmp_path: Path) -> None:
+    state_manager = StateManager(path=tmp_path / "state.json")
+
+    async def _raise_runtime_error(**kwargs):
+        raise RuntimeError("boom")
+
+    with _isolated_server(state_manager, project_root=tmp_path):
+        with patch(
+            "scribe_mcp.tools.manage_docs.runtime_shared.handle_manage_docs_request",
+            _raise_runtime_error,
+        ):
+            result = await manage_docs(action="list_sections", doc="architecture")
+
+    assert result["ok"] is False
+    assert result["error"] == "manage_docs_runtime_error"
+    assert result["error_code"] == "MANAGE_DOCS_RUNTIME_EXCEPTION"
+    assert result["exception_type"] == "RuntimeError"
+    assert result["action"] == "list_sections"
+    assert "supported_actions" in result
+
+
+@pytest.mark.asyncio
 async def test_manage_docs_reminder_scaffold_and_non_scaffold(tmp_path: Path) -> None:
     """Ensure replace_section reminders distinguish scaffold vs non-scaffold usage."""
     project = await _setup_project(tmp_path)

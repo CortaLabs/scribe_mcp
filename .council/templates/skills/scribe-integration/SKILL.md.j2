@@ -141,7 +141,8 @@ meta={
 - Managed-doc frontmatter should include stable `id`, `doc_type`, `doc_name`, `status`, `summary`, `owners`, `tags`, and typed topology when relevant.
 - Human-facing attribution should use display names such as `Forge`, `Atlas`, `Witness`, `Crucible`, `Blueprint`, `Arbiter`, `Loom`, and `Quill`; preserve opaque runtime IDs only as secondary provenance when Scribe provides them.
 - Scaffold residue means not done; completion/readiness can be blocked with `DOC_NOT_DONE_SCAFFOLD_QUALITY`.
-- Run `quality_check` before handoff on managed docs, run `quality_handoff_check` before clean clock-out/handoff claims, and run `project_health` before closeout.
+- Run `quality_check` before handoff on managed docs, use bulk `quality_check` for Atlas/project-wave validation, run `quality_handoff_check` before clean clock-out/handoff claims, and run `project_health` before closeout.
+- `quality_check` is the agent remediation surface: consume `summary`, `warning_groups`, `agent_actions`, warning `location`, `section`, `repair_hint`, and provenance fields before inventing a manual grep plan.
 - Configured log surfaces, including custom `logs:` entries in `.scribe/config/scribe.yaml`, are not readiness-quality targets.
 
 Quality warnings to treat as authoritative:
@@ -280,7 +281,34 @@ manage_docs(
 )
 ```
 
-Treat blocking warnings as unfinished work. Lifecycle/status mismatch and changelog escaped-newline warnings are blockers, not cosmetic notes.
+For Atlas-style project or wave validation, keep the existing `quality_check` action and request bulk mode through metadata:
+
+```python
+manage_docs(
+    agent="atlas",
+    action="quality_check",
+    metadata={"quality": {"bulk": True}},
+    dry_run=True
+)
+
+manage_docs(
+    agent="atlas",
+    action="quality_check",
+    metadata={
+        "quality": {
+            "bulk": {
+                "doc_names": ["ARCHITECTURE_GUIDE", "PHASE_PLAN", "CHECKLIST"],
+                "include_clean": False,
+                "include_warnings": False,
+                "max_agent_actions": 5
+            }
+        }
+    },
+    dry_run=True
+)
+```
+
+Bulk results include an aggregate `summary`, per-document `documents`, doc-aware flattened warnings, grouped warning families, and ranked `agent_actions`. Treat blocking warnings as unfinished work. Lifecycle/status mismatch and changelog escaped-newline warnings are blockers, not cosmetic notes.
 
 ### Quality Handoff MCP Usage
 
@@ -294,7 +322,7 @@ manage_docs(
 )
 ```
 
-If `handoff_allowed` is false, fix the listed managed docs before handing work back. Scaffold placeholders, failed-write residue, unresolved blockers, and serious topology warnings are not acceptable final-state paperwork.
+If `handoff_allowed` is false, fix the listed managed docs before handing work back. Use returned actions as the repair checklist. Scaffold placeholders, failed-write residue, unresolved blockers, and serious topology warnings are not acceptable final-state paperwork.
 
 ### Planning Doc Ownership vs Checklist Proof
 

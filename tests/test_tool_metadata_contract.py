@@ -19,6 +19,7 @@ EXPECTED_REGISTERED_TOOLS = {
     "manage_docs",
     "open_bug",
     "open_security",
+    "progress_log_projection",
     "query_entries",
     "query_reminders",
     "read_file",
@@ -123,10 +124,14 @@ def test_describe_registered_tools_returns_json_friendly_metadata():
     assert "bounded-preflight" in roundtrip_preflight["tags"]
 
 
-def test_direct_selector_and_readiness_schemas_require_runtime_agent_identity():
+def test_direct_tool_schemas_require_operational_inputs():
     details = server.describe_registered_tools()
 
     expected_public_arguments = {
+        "set_project": {
+            "name",
+            "root",
+        },
         "scribe_private_context_selector_readback": {
             "selector_class_label",
             "target_fingerprint_binding_label",
