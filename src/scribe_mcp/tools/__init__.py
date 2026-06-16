@@ -32,6 +32,7 @@ _TOOL_MODULES: Dict[str, str] = {
     "search": "scribe_mcp.tools.search",
     "sentinel_tools": "scribe_mcp.tools.sentinel_tools",
     "set_project": "scribe_mcp.tools.set_project",
+    "write_barrier": "scribe_mcp.tools.write_barrier",
 }
 
 _TOOL_NAME_TO_MODULE: Dict[str, str] = {
@@ -60,6 +61,8 @@ _TOOL_NAME_TO_MODULE: Dict[str, str] = {
     "scribe_doctor": "doctor",
     "search": "search",
     "set_project": "set_project",
+    "read_write_barrier_state": "write_barrier",
+    "scribe_owned_write_barrier_acquire_release_proof": "write_barrier",
 }
 
 _LOADED_MODULES: Set[str] = set()
