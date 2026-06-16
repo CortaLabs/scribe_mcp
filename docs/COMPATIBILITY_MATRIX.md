@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
 Baseline date: **2026-06-16**
-Release framing: **v2.7.0 compatibility baseline**
+Release framing: **v2.7.1 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.7.0 latency, telemetry, and quality-governance release line: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc defect repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
+This baseline keeps compatibility posture for the 2.7.1 latency, telemetry, and quality-governance release line: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.7.0`
+- **Core package version:** `scribe-mcp==2.7.1`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,7 +19,7 @@ This baseline keeps compatibility posture for the 2.7.0 latency, telemetry, and 
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.7.0` | Supported | Public Scribe install for local/core usage with faster repeated project binding, queryable runtime telemetry, deterministic document topology, agent-ready quality checks, write-barrier safety, and first-class bug/security report follow-up editing. |
+| `2.7.1` | Supported | Public Scribe install for local/core usage with faster repeated project binding, queryable runtime telemetry, deterministic document topology, agent-ready quality checks, write-barrier safety, and first-class bug/security report follow-up editing. |
 
 ## Not supported by this baseline
 
@@ -32,7 +32,7 @@ This baseline keeps compatibility posture for the 2.7.0 latency, telemetry, and 
 
 ## What is shipped
 
-### `scribe-mcp 2.7.0`
+### `scribe-mcp 2.7.1`
 
 - CLI entry points include: `scribe`, `scribe-mcp`, `scribe-server`, `scribe-server-sse`
 - Core runtime and tool surface in `src/scribe_mcp/**`
@@ -47,7 +47,7 @@ This baseline keeps compatibility posture for the 2.7.0 latency, telemetry, and 
 - Managed-doc quality output includes grouped warning families, ranked agent actions, body/file location mapping, nearest-section context, repair kind, edit-action hints, deterministic provenance, and additive handoff actions.
 - Bulk quality mode checks all managed readiness docs or an explicit `doc_names` wave using the existing `quality_check` contract, with compact controls for clean docs, warnings, document caps, and action caps.
 - Managed-doc topology includes canonical metadata normalization, typed deterministic edges, topology/metadata scan actions, safe/assisted metadata repair, stale cleanup recommendations, hard quality handoff checks, and sanitized downstream ingestion manifest inspection.
-- Bug and security case tooling returns managed follow-up handles, and `manage_docs` resolves governed bug/security reports by case id, governed path, or canonical category metadata before applying edits.
+- Bug and security case tooling returns managed follow-up handles, `manage_docs` resolves governed bug/security reports by case id, governed path, explicit report path, or canonical category metadata before applying edits, and `link_fix` closes shared registry rows for resolved fix statuses.
 - Scribe mutation surfaces fail closed while a Scribe-owned write barrier is active, and Postgres backup/restore helpers enforce owner-only custody before producing or consuming migration material.
 - Exported remote transport blocks local operator-only tools unless their metadata explicitly declares remote invocation support.
 - `read_recent` supplements sparse Postgres rows from the canonical progress log on the first page when the DB mirror is incomplete.

@@ -201,6 +201,42 @@ def resolve_registered_doc_key(project: Dict[str, Any], doc_name: str) -> str:
         return lowered_lookup[lowered_candidate]
 
     candidate_path = Path(candidate)
+    candidate_is_path_like = (
+        candidate_path.is_absolute()
+        or "/" in candidate
+        or "\\" in candidate
+    )
+    candidate_name = candidate_path.name
+    normalized_candidate_rel = candidate.replace("\\", "/").lstrip("./")
+    candidate_abs: Optional[Path] = None
+    try:
+        if candidate_path.is_absolute():
+            candidate_abs = candidate_path.resolve()
+    except Exception:
+        candidate_abs = None
+
+    if candidate_is_path_like:
+        for key, value in docs.items():
+            try:
+                value_path = Path(str(value))
+            except Exception:
+                continue
+
+            normalized_value_rel = str(value_path).replace("\\", "/")
+            if normalized_candidate_rel and (
+                normalized_value_rel == normalized_candidate_rel
+                or normalized_value_rel.endswith(f"/{normalized_candidate_rel}")
+            ):
+                return key
+
+            if candidate_abs is not None:
+                try:
+                    if value_path.resolve() == candidate_abs:
+                        return key
+                except Exception:
+                    pass
+        return candidate
+
     candidate_name = candidate_path.name
     if candidate_name in docs:
         return candidate_name
@@ -214,14 +250,6 @@ def resolve_registered_doc_key(project: Dict[str, Any], doc_name: str) -> str:
         return candidate_stem
     if candidate_stem_lower in lowered_lookup:
         return lowered_lookup[candidate_stem_lower]
-
-    normalized_candidate_rel = candidate.replace("\\", "/").lstrip("./")
-    candidate_abs: Optional[Path] = None
-    try:
-        if candidate_path.is_absolute():
-            candidate_abs = candidate_path.resolve()
-    except Exception:
-        candidate_abs = None
 
     for key, value in docs.items():
         try:
@@ -1132,6 +1160,27 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
     project_root = Path(project.get("root", ""))
     if not project_root.exists():
         raise ValueError(f"Project root does not exist: {project_root}")
+
+    candidate_path = Path(doc_name)
+    if candidate_path.is_absolute() or "/" in doc_name or "\\" in doc_name:
+        resolved_candidate = (
+            candidate_path
+            if candidate_path.is_absolute()
+            else project_root / candidate_path
+        ).resolve()
+        try:
+            resolved_candidate.relative_to(project_root)
+        except ValueError as e:
+            raise SecurityError(
+                f"Document path {resolved_candidate} is outside project root {project_root}"
+            ) from e
+        if resolved_candidate.exists():
+            doc_logger.debug(
+                "Resolved doc path for %s using explicit path: %s",
+                doc_name,
+                resolved_candidate,
+            )
+            return resolved_candidate
 
     # Try explicit paths first
     docs = project.get("docs") or {}

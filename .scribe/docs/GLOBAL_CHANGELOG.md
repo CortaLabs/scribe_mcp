@@ -59,3 +59,8 @@
 - `source_project`: integrate_system_scribe_latency_20260616t050042z
 - `source_entry_id`: 20260616:runtime-latency-telemetry-binding-reuse-2-7-0
 - `summary`: Bumped the public release line to `2.7.0`. Scribe now records queryable tool runtimes with durations, correlation IDs, measurement scope, and repo root; `append_entry` returns phase timing; `set_project` has a strict same-agent/session/project/root no-write reuse path that skips redundant writes and mutation-time reminder refresh; successful timing logs stay out of warning output; local probes support JSON output, same-server root comparison, and background telemetry draining; diagnostics expose physical/logical reconciliation for fresh Postgres installs with existing file-backed Scribe artifacts.
+
+## Case registry and Council closeout patch
+- `source_project`: integrate_system_scribe_latency_20260616t050042z
+- `source_entry_id`: 20260616:case-registry-council-closeout-2-7-1
+- `summary`: Release 2.7.1 repairs governed bug/security report path targeting so explicit report paths do not collapse onto unrelated `report.md` basenames, closes shared case-registry rows for resolved/validated/implemented fix statuses, and completes the Council hook/guidance readback for bind-once `set_project` behavior.

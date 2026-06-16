@@ -2,10 +2,10 @@
 # 🐞 P1 telemetry persistence under-reports tool runtime and fails validation proof — integrate-system-scribe-latency-20260616T050042Z
 **Author:** Scribe
 **Version:** v0.1
-**Status:** INVESTIGATING
-**Last Updated:** 2026-06-16 06:09:29 UTC
+**Status:** RESOLVED
+**Last Updated:** 2026-06-16 09:55:00 UTC
 
-> Summarise why this document exists and what decisions it captures.
+This report tracks the P1 telemetry validation failure where durable timings under-reported real tool execution time.
 
 ---
 ## Bug Overview
@@ -57,8 +57,9 @@ P1 implementation measured formatter/finalization elapsed time rather than threa
 Fix landed with status: **validated**
 
 ### Fix Details
-- Artifact: .scribe/docs/dev_plans/integrate_system_scribe_latency_20260616t050042z/REVIEW_REPORT_post_implementation_review_2026-06-16_0621.md
-- Execution ID: 80903aa5-d7ae-40b4-b90f-d4e2700b2ace
+- Artifact: src/scribe_mcp/tools/set_project.py:1026; src/scribe_mcp/tools/append_entry.py:1585; src/scribe_mcp/tools/read_recent.py:452; src/scribe_mcp/utils/formatters/dispatcher.py; tests/test_dispatcher.py; tests/test_log_intelligence.py; tests/test_tool_calls_schema.py
+- Execution ID: 18eabb5e-4710-45c2-86ea-16c12dfbb618
+- Verification: Popper bug-hunter audit plus focused telemetry suites confirmed key tools pass execution-start timing into persisted telemetry and the post-implementation review remained PASS.
 
 
 ---
@@ -75,8 +76,8 @@ Fix landed with status: **validated**
 ---
 ## Appendix
 <!-- ID: appendix -->
-- **Fix Reference:** .scribe/docs/dev_plans/integrate_system_scribe_latency_20260616t050042z/REVIEW_REPORT_post_implementation_review_2026-06-16_0621.md (execution: 80903aa5-d7ae-40b4-b90f-d4e2700b2ace)
-- **Landing Status:** validated
+- **Fix Reference:** src/scribe_mcp/tools/set_project.py:1026; src/scribe_mcp/tools/append_entry.py:1585; src/scribe_mcp/tools/read_recent.py:452; src/scribe_mcp/utils/formatters/dispatcher.py; tests/test_dispatcher.py; tests/test_log_intelligence.py; tests/test_tool_calls_schema.py (execution: 18eabb5e-4710-45c2-86ea-16c12dfbb618)
+- **Landing Status:** resolved
 - **Fix Linked By:** seshat
 
 

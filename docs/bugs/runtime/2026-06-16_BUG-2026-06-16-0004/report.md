@@ -2,10 +2,10 @@
 # 🐞 Probe exits with unobserved asyncpg telemetry task exceptions — integrate-system-scribe-latency-20260616T050042Z
 **Author:** Scribe
 **Version:** v0.1
-**Status:** INVESTIGATING
-**Last Updated:** 2026-06-16 08:04:57 UTC
+**Status:** RESOLVED
+**Last Updated:** 2026-06-16 09:55:00 UTC
 
-> Summarise why this document exists and what decisions it captures.
+This report tracks the asyncpg/asyncio shutdown warning path that made successful local probes look dirty.
 
 ---
 ## Bug Overview
@@ -51,11 +51,12 @@ A direct no-handler Python double-bind probe against the edited runtime returned
 ## Resolution Plan
 <!-- ID: resolution_plan -->
 ### Immediate Actions
-Fix landed with status: **implemented**
+Fix landed with status: **resolved**
 
 ### Fix Details
 - Artifact: src/scribe_mcp/server.py; src/scribe_mcp/tools/set_project.py; src/scribe_mcp/state/agent_manager.py; tests/test_set_project.py; docs/bugs/runtime/2026-06-16_BUG-2026-06-16-0004/report.md
-- Execution ID: 6fc24f49-811e-474d-bf0b-5e527d63df6a
+- Execution ID: 18eabb5e-4710-45c2-86ea-16c12dfbb618
+- Verification: Direct structured double-bind probes and focused probe/background tests emitted no `Future exception was never retrieved` or asyncpg `ConnectionDoesNotExistError` warning text.
 
 
 ---
@@ -72,9 +73,9 @@ Fix landed with status: **implemented**
 ---
 ## Appendix
 <!-- ID: appendix -->
-- **Fix Reference:** src/scribe_mcp/server.py; src/scribe_mcp/tools/set_project.py; src/scribe_mcp/state/agent_manager.py; tests/test_set_project.py; docs/bugs/runtime/2026-06-16_BUG-2026-06-16-0004/report.md (execution: 6fc24f49-811e-474d-bf0b-5e527d63df6a)
-- **Landing Status:** implemented
-- **Fix Linked By:** GaussRepair
+- **Fix Reference:** src/scribe_mcp/server.py; src/scribe_mcp/tools/set_project.py; src/scribe_mcp/state/agent_manager.py; tests/test_set_project.py; tests/test_scribe_probe.py (execution: 18eabb5e-4710-45c2-86ea-16c12dfbb618)
+- **Landing Status:** resolved
+- **Fix Linked By:** seshat
 
 
 ---

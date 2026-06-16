@@ -44,7 +44,7 @@ class _CaseRegistryBackend:
             metadata={},
         )
 
-    async def update_project_docs(self, _project_name: str, docs_json: str):
+    async def update_project_docs(self, _project_name: str, docs_json: str, **_kwargs):
         self.docs_json = docs_json
 
 
@@ -279,6 +279,52 @@ async def test_bug_report_resolution_accepts_case_id_governed_path_and_canonical
         assert path_result.get("ok") is True, path_result
 
     assert "Path-backed investigation." in report_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_bug_report_path_resolution_does_not_collapse_to_first_report(tmp_path: Path) -> None:
+    """Explicit report paths must not match an unrelated registered report.md basename."""
+    project = await _setup_project(tmp_path)
+    project_root = Path(project["root"])
+    first_case_id = "BUG-2026-06-16-0001"
+    second_case_id = "BUG-2026-06-16-0002"
+    first_report = project_root / "docs" / "bugs" / "performance" / f"2026-06-16_{first_case_id}" / "report.md"
+    second_report = project_root / "docs" / "bugs" / "performance" / f"2026-06-16_{second_case_id}" / "report.md"
+    first_report.parent.mkdir(parents=True, exist_ok=True)
+    second_report.parent.mkdir(parents=True, exist_ok=True)
+    first_report.write_text(
+        "# First\n\n## Investigation\n<!-- ID: investigation -->\nFirst report.\n",
+        encoding="utf-8",
+    )
+    second_report.write_text(
+        "# Second\n\n## Investigation\n<!-- ID: investigation -->\nSecond report.\n",
+        encoding="utf-8",
+    )
+    project.setdefault("docs", {})[first_case_id] = str(first_report)
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await _seed_runtime_session(state_manager, project_root=project_root)
+    await state_manager.set_current_project(project["name"], project)
+    backend = _CaseRegistryBackend(
+        case_id=second_case_id,
+        doc_path=second_report,
+        project_name=project["name"],
+        repo_root=project_root,
+    )
+
+    with _isolated_server(state_manager, project_root=project_root, storage_backend=backend):
+        result = await manage_docs(
+            action="replace_section",
+            doc_name=str(second_report),
+            doc_category="bugs",
+            section="investigation",
+            content="Second report updated.",
+            dry_run=False,
+        )
+
+    assert result.get("ok") is True, result
+    assert "First report." in first_report.read_text(encoding="utf-8")
+    assert "Second report updated." in second_report.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

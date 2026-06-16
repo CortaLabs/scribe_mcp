@@ -1,6 +1,6 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.7.0`
+Release line: `2.7.1`
 Updated: `2026-06-16`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
@@ -14,7 +14,7 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.7.0` makes Scribe's runtime faster to operate and easier to audit while keeping managed docs topology-aware, quality-check output agent-actionable, and operator-only mutation safer:
+Release `2.7.1` makes Scribe's runtime faster to operate and easier to audit while keeping managed docs topology-aware, quality-check output agent-actionable, and operator-only mutation safer:
 
 - Repeated same-session `set_project` calls for the same agent, project, and repo root return `side_effects.binding_reused=true` on the cheap path instead of repeating persistent binding writes or mutation-time reminder refresh.
 - Runtime telemetry now persists tool durations, correlation IDs, measurement scope, and repo root for later audit.
@@ -26,7 +26,7 @@ Release `2.7.0` makes Scribe's runtime faster to operate and easier to audit whi
 - `quality_check` returns grouped warning families, ranked agent actions, body/file line mapping, nearest-section context, repair kind, edit-action hints, and provenance.
 - Atlas-style bulk mode can check all managed readiness docs or an explicit doc wave with `metadata={"quality": {"bulk": true}}` or `metadata={"quality": {"bulk": {"doc_names": [...]}}}`.
 - Operators and agents can run topology scans, metadata scans, safe repairs, assisted repair plans, stale cleanup scans, handoff checks, and downstream manifest inspection through `manage_docs`.
-- Operators and agents can edit bug/security reports created by `open_bug` or `open_security` through `manage_docs` using the returned case id, governed path, or canonical category metadata.
+- Operators and agents can edit bug/security reports created by `open_bug` or `open_security` through `manage_docs` using the returned case id, governed path, explicit report path, or canonical category metadata; resolved fix links close the shared case registry.
 - Scribe exports sanitized derived topology and ingestion-manifest artifacts for downstream systems while leaving retrieval, embeddings, semantic ranking, and graph-RAG traversal outside Scribe.
 - Managed-doc release governance still raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` when the active package version lacks accepted changelog coverage, and that warning flows through `quality_check`, reminders, and `project_health`.
 - Scribe-owned write barriers protect mutation surfaces during maintenance, and exported remote transport blocks local operator-only tools unless they are explicitly remote-invokable.

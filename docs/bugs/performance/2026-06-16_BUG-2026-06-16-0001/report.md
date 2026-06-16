@@ -2,10 +2,10 @@
 # 🐞 Scribe tool runtime telemetry is not queryable after tool completion — integrate-system-scribe-latency-20260616T050042Z
 **Author:** Scribe
 **Version:** v0.1
-**Status:** INVESTIGATING
-**Last Updated:** 2026-06-16 05:08:30 UTC
+**Status:** RESOLVED
+**Last Updated:** 2026-06-16 09:55:00 UTC
 
-> Summarise why this document exists and what decisions it captures.
+This report tracks the telemetry persistence gap that made Scribe tool runtimes unavailable after the immediate MCP response completed.
 
 ---
 ## Bug Overview
@@ -18,7 +18,7 @@
 
 **Severity:** MEDIUM
 
-**Status:** INVESTIGATING
+**Status:** RESOLVED
 
 **Component:** runtime telemetry
 
@@ -69,14 +69,12 @@ The generic finalize_tool_response path does not measure elapsed tool duration a
 ## Resolution Plan
 <!-- ID: resolution_plan -->
 ### Immediate Actions
-- [ ] Research only. Blueprint should package a minimal telemetry fix that measures duration at the wrapper boundary, persists it consistently to TOOL_LOG and Postgres, preserves correlation keys, and adds a readback/diagnostic harness proving queryability.
+Fix landed with status: **resolved**
 
-
-### Long-Term Fixes
-- [ ] Outline long-term remedial work or refactors.
-
-### Testing Strategy
-- [ ] Define validation steps for the fix (unit, integration, regression).
+### Fix Details
+- Artifact: src/scribe_mcp/utils/formatters/dispatcher.py:214; src/scribe_mcp/utils/tool_logger.py; src/scribe_mcp/storage/postgres/__init__.py; tests/test_dispatcher.py; tests/test_tool_calls_schema.py
+- Execution ID: 18eabb5e-4710-45c2-86ea-16c12dfbb618
+- Verification: Popper bug-hunter audit plus focused telemetry suites confirmed durable duration, correlation_id, measurement_scope, TOOL_LOG, and SQL scheduling are populated.
 
 
 ---
@@ -93,9 +91,9 @@ The generic finalize_tool_response path does not measure elapsed tool duration a
 ---
 ## Appendix
 <!-- ID: appendix -->
-- **Logs & Evidence:** [Link to relevant logs, traces, screenshots]
-- **Fix References:** [Git commits, PRs, or documentation]
-- **Open Questions:** [List unresolved unknowns or next investigations]
+- **Fix Reference:** src/scribe_mcp/utils/formatters/dispatcher.py:214; src/scribe_mcp/utils/tool_logger.py; src/scribe_mcp/storage/postgres/__init__.py; tests/test_dispatcher.py; tests/test_tool_calls_schema.py (execution: 18eabb5e-4710-45c2-86ea-16c12dfbb618)
+- **Landing Status:** resolved
+- **Fix Linked By:** seshat
 
 
 ---

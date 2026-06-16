@@ -2,10 +2,10 @@
 # 🐞 Postgres legacy project name uniqueness mutates active project root during same-server root comparison — integrate-system-scribe-latency-20260616T050042Z
 **Author:** Scribe
 **Version:** v0.1
-**Status:** INVESTIGATING
-**Last Updated:** 2026-06-16 06:58:10 UTC
+**Status:** RESOLVED
+**Last Updated:** 2026-06-16 09:55:00 UTC
 
-> Summarise why this document exists and what decisions it captures.
+This report tracks the Postgres project identity defect that could mutate a named project onto the wrong repository root.
 
 ---
 ## Bug Overview
@@ -18,7 +18,7 @@
 
 **Severity:** CRITICAL
 
-**Status:** INVESTIGATING
+**Status:** RESOLVED
 
 **Component:** postgres-project-identity
 
@@ -73,14 +73,17 @@ Legacy global project-name uniqueness remains in the live schema. The recent com
 ## Resolution Plan
 <!-- ID: resolution_plan -->
 ### Immediate Actions
-- [ ] Fix schema migration/bootstrap to remove or neutralize the legacy global name uniqueness once project_key is available, update upsert_project so same-name different-root inserts are possible and never root-swap an existing project row, then verify the same-server probe leaves the active project row unchanged.
+- [x] Fix schema/bootstrap so repo-scoped project identity uses project_key/repo_id and refuses legacy same-name root swaps.
+- [x] Update the Postgres upsert path so same-name different-root calls do not silently mutate the existing project row.
+- [x] Verify the same-server/root-comparison path preserves the active project binding.
 
 
 ### Long-Term Fixes
-- [ ] Outline long-term remedial work or refactors.
+- Keep project identity checks in the Postgres backend, where durable root/project_key truth is enforced for every caller.
 
 ### Testing Strategy
-- [ ] Define validation steps for the fix (unit, integration, regression).
+- Focused regression coverage: tests/test_postgres_project_identity_scoping.py and tests/test_scribe_probe.py.
+- Popper bug-hunter closeout verification: `uv run pytest tests/test_dispatcher.py tests/test_log_intelligence.py tests/test_tool_calls_schema.py tests/test_postgres_project_identity_scoping.py tests/test_scribe_probe.py tests/test_set_project.py -q` -> 93 passed.
 
 
 ---
@@ -97,9 +100,9 @@ Legacy global project-name uniqueness remains in the live schema. The recent com
 ---
 ## Appendix
 <!-- ID: appendix -->
-- **Logs & Evidence:** [Link to relevant logs, traces, screenshots]
-- **Fix References:** [Git commits, PRs, or documentation]
-- **Open Questions:** [List unresolved unknowns or next investigations]
+- **Fix Reference:** src/scribe_mcp/storage/postgres/__init__.py:198; src/scribe_mcp/storage/postgres/schema.py; tests/test_postgres_project_identity_scoping.py; tests/test_scribe_probe.py (execution: 18eabb5e-4710-45c2-86ea-16c12dfbb618)
+- **Landing Status:** resolved
+- **Fix Linked By:** seshat
 
 
 ---

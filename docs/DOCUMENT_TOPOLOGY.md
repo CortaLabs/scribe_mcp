@@ -1,6 +1,6 @@
 # Document topology and downstream export
 
-Release line: `2.7.0`
+Release line: `2.7.1`
 Updated: `2026-06-16`
 
 Scribe now treats managed documents as a deterministic corpus, not loose markdown. The goal is simple: Scribe owns document truth, lifecycle state, quality posture, typed relationships, and sanitized export records. Downstream systems can build retrieval, datasets, dashboards, or graph traversal from those records, but they do not define Scribe truth.

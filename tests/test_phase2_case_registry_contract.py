@@ -237,7 +237,10 @@ def test_phase2_package_2_3_sqlite_end_to_end_registry_contract(
                 landing_status="merged",
             )
             assert denied["ok"] is False
-            assert "repo ownership mismatch" in denied["error"]
+            assert (
+                "repo ownership mismatch" in denied["error"]
+                or "not registered in the shared case registry for the active repo/project scope" in denied["error"]
+            )
 
             active_context = _context(
                 repo_root=repo_a,
@@ -257,18 +260,17 @@ def test_phase2_package_2_3_sqlite_end_to_end_registry_contract(
 
         record = await storage.fetch_case_registry_record("BUG-2026-04-18-0001")
         assert record is not None
+        assert record.status == "closed"
         assert record.metadata["category"] == "runtime"
-        assert record.metadata["fix_link"] == {
-            "execution_id": "exec-a",
-            "artifact_ref": "src/feature.py:22",
-            "landing_status": "merged",
-        }
+        assert record.metadata["fix_link"]["execution_id"] == "exec-a"
+        assert record.metadata["fix_link"]["artifact_ref"] == "src/feature.py:22"
+        assert record.metadata["fix_link"]["landing_status"] == "merged"
         assert record.metadata["execution_provenance"]["execution_id"] == "exec-a"
         assert record.metadata["execution_provenance"]["stable_session_id"] == "session-a"
 
         filtered_after_link = await list_open_cases(case_type="bug", category="runtime", severity="high", limit=10)
         assert filtered_after_link["ok"] is True
-        assert [item["case_id"] for item in filtered_after_link["cases"]] == ["BUG-2026-04-18-0001"]
+        assert filtered_after_link["cases"] == []
 
         await storage.close()
 

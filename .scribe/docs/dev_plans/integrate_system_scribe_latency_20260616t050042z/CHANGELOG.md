@@ -9,6 +9,25 @@ Use one section per curated project outcome.
 - `summary`: <short human-readable outcome summary>
 - `evidence_refs`:
   - <path-or-proof-reference>
+## Case registry and Council closeout patch
+- `entry_id`: 20260616:case-registry-council-closeout-2-7-1
+- `entry_status`: accepted
+- `title`: Case registry and Council closeout patch
+- `summary`: Bumped the public patch line to `2.7.1`. The latency closeout now repairs governed bug report path targeting, closes fixed cases in the shared registry for resolved/validated/implemented statuses, and verifies Council source-authority hook/guidance regeneration for bind-once `set_project` behavior.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/tools/sentinel_tools.py
+  - tests/test_manage_docs_target_resolution.py
+  - tests/test_phase2_case_registry_contract.py
+  - /home/austin/projects/MCP_SPINE/council_mcp/src/council_mcp/templates/claude/CLAUDE.md.j2
+  - /home/austin/projects/MCP_SPINE/council_mcp/src/council_mcp/templates/claude/runtime_hooks/post_tool.py
+  - /home/austin/projects/MCP_SPINE/council_mcp/tests/test_runtime_hooks_binding.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.7.1
 ## Runtime latency, telemetry, and binding reuse release
 - `entry_id`: 20260616:runtime-latency-telemetry-binding-reuse-2-7-0
 - `entry_status`: accepted

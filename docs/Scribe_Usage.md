@@ -1,6 +1,6 @@
 # Scribe MCP usage guide
 
-Release line: `2.7.0`
+Release line: `2.7.1`
 Updated: `2026-06-16`
 
 This guide is about day-to-day usage once Scribe is installed.
@@ -15,7 +15,7 @@ Install behavior reminder for day-to-day operators:
 - use `scribe install --commit --yes` for approved non-interactive commit flows
 - use `--project-codex` only when you explicitly want Codex projection after core install
 
-In `2.7.0`, Scribe ships faster repeated project binding, queryable runtime telemetry, append-entry phase timing, physical/logical reconciliation diagnostics, JSON probe output, same-server root comparison tooling, and background telemetry cleanup for local probes. It also includes the document topology foundation plus first-class bug/security report follow-up editing and agent-ready quality governance: managed docs have canonical lifecycle metadata, typed deterministic edges, topology/metadata scans, safe repair modes, stale cleanup recommendations, quality handoff checks, bulk `quality_check` mode for Atlas-style project or wave validation, sanitized downstream ingestion manifests, and governed case-report resolution through `manage_docs`.
+In `2.7.1`, Scribe ships faster repeated project binding, queryable runtime telemetry, append-entry phase timing, physical/logical reconciliation diagnostics, JSON probe output, same-server root comparison tooling, and background telemetry cleanup for local probes. It also includes the document topology foundation plus first-class bug/security report follow-up editing and agent-ready quality governance: managed docs have canonical lifecycle metadata, typed deterministic edges, topology/metadata scans, safe repair modes, stale cleanup recommendations, quality handoff checks, bulk `quality_check` mode for Atlas-style project or wave validation, sanitized downstream ingestion manifests, governed case-report resolution through `manage_docs`, and shared case-registry closure for resolved fix links.
 Release governance in this line also blocks missing current-version changelog coverage: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is emitted by `quality_check`, echoed in reminders, and shown in `project_health` quality signals until fixed. Quality responses include grouped warning families, ranked agent actions, file/section repair hints, and handoff follow-up actions so agents can move directly from finding to fix.
 
 ## The short mental model

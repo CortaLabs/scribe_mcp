@@ -10,6 +10,23 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Case registry and report closeout patch
+- `entry_id`: 20260616:case-registry-report-closeout-2-7-1
+- `entry_status`: accepted
+- `title`: Case registry and report closeout patch
+- `summary`: Bumped the public patch line to `2.7.1`. Scribe now resolves explicit governed bug/security report paths without collapsing unrelated `report.md` basenames onto the first registered case, and `link_fix` closes shared case-registry rows for resolved, validated, implemented, merged, landed, fixed, done, completed, and closed landing statuses.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/tools/sentinel_tools.py
+  - tests/test_manage_docs_target_resolution.py
+  - tests/test_phase2_case_registry_contract.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.7.1
+
 ## Runtime latency, telemetry, and binding reuse
 - `entry_id`: 20260616:runtime-latency-telemetry-binding-reuse-2-7-0
 - `entry_status`: accepted

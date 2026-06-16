@@ -634,9 +634,21 @@ async def _register_case_registry_fix_link(
         "authoritative_session_key": getattr(context, "authoritative_session_key", None),
         "stable_session_id": getattr(context, "stable_session_id", None),
     }
+    normalized_landing_status = str(landing_status or "").strip().lower().replace(" ", "_")
+    closes_case = normalized_landing_status in {
+        "closed",
+        "completed",
+        "done",
+        "fixed",
+        "implemented",
+        "landed",
+        "merged",
+        "resolved",
+        "validated",
+    }
     upsert_kwargs = doc_utils.build_case_registry_upsert_kwargs(
         existing_record=case_record,
-        overrides={"case_id": case_id},
+        overrides={"case_id": case_id, "status": "closed" if closes_case else None},
         metadata_overrides={
             "execution_provenance": execution_meta,
             "fix_link": {

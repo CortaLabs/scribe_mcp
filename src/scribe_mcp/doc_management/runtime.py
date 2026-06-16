@@ -2188,6 +2188,15 @@ async def _resolve_case_report_registered_key(
             f"Refused case report path outside active project root: {resolved_path}"
         )
 
+    if not str(candidate_doc_name or "").upper().startswith(("BUG-", "SEC-")):
+        extracted_case = utils_shared.extract_case_registry_metadata_from_report(
+            resolved_path,
+            project_root=project_root,
+            project=active_project,
+        )
+        if isinstance(extracted_case, dict) and extracted_case.get("case_id"):
+            candidate_doc_name = str(extracted_case["case_id"])
+
     path_bound_key = resolve_registered_doc_key(active_project, str(resolved_path))
     if path_bound_key and path_bound_key in docs_mapping:
         return path_bound_key, canonical_category, None
@@ -2389,7 +2398,16 @@ async def handle_manage_docs_request(
         if isinstance(fallback_project, dict) and fallback_project:
             active_project = fallback_project
     original_doc_name = doc_name
-    doc_name = resolve_registered_doc_key(active_project, doc_name) if doc_name else doc_name
+    doc_name_is_case_path = (
+        bool(doc_name)
+        and utils_shared.looks_like_case_report_reference(doc_name, doc_category=doc_category)
+        and ("/" in str(doc_name) or "\\" in str(doc_name))
+    )
+    doc_name = (
+        resolve_registered_doc_key(active_project, doc_name)
+        if doc_name and not doc_name_is_case_path
+        else doc_name
+    )
     if original_doc_name and doc_name and original_doc_name != doc_name:
         logger.info("Canonicalized doc reference '%s' -> '%s'", original_doc_name, doc_name)
 
