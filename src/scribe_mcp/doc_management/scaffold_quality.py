@@ -444,7 +444,19 @@ def collect_managed_doc_quality_warnings(
     path: str | Path | None = None,
     project: Optional[Mapping[str, Any]] = None,
     metadata: Optional[Mapping[str, Any]] = None,
+    research_docs: Optional[Sequence[Path]] = None,
 ) -> List[Dict[str, Any]]:
+    """Collect quality warnings for a single managed document.
+
+    Parameters
+    ----------
+    research_docs:
+        Optional pre-computed list of ``*.md`` files in the research directory
+        (same semantics as ``build_research_index_hygiene_warnings``).  Pass
+        this when the caller has already done the ``rglob`` once so this
+        function can avoid repeating it.  ``None`` (the default) preserves the
+        original behavior and maintains full backward compatibility.
+    """
     warnings = analyze_scaffold_quality(text=text, metadata=metadata, doc_name=doc_name)
     is_research_target = path is not None and is_research_doc_target(doc_name, path)
 
@@ -472,6 +484,7 @@ def collect_managed_doc_quality_warnings(
             changed_path=doc_path,
             canonical_research_dir=canonical_research_dir,
             warning_policies=DEFAULT_WARNING_POLICIES,
+            research_docs=research_docs,
         )
     )
     configured, _suppressed, _meta = _apply_quality_overrides(warnings, metadata=metadata)

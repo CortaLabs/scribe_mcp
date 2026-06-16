@@ -944,6 +944,21 @@ class PostgresStorage(StorageBackend):
                 break
         return results
 
+    @staticmethod
+    def _metrics_counter_for_filters(filters: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Return the scribe_metrics column name that satisfies *filters*, or None.
+
+        Only the empty/None filter case maps to ``total_entries``.  All other
+        filters are not tracked in scribe_metrics and must use COUNT(*).
+
+        Q1 resolution: success_count/warn_count/error_count are maintained by
+        emoji (✅/⚠️/❌), not by the status/log_type fields used in
+        _build_recent_filter_clauses, so no status→column mapping is safe.
+        """
+        if not filters:
+            return "total_entries"
+        return None
+
     async def count_entries(
         self,
         project: Union[ProjectRecord, str],
@@ -952,6 +967,19 @@ class PostgresStorage(StorageBackend):
         project_record = await self._resolve_project_record(project)
         if project_record is None:
             return 0
+
+        # Fast path: O(1) read from scribe_metrics when no filters are applied.
+        # Falls through to COUNT(*) when (a) filters are present, or (b) no
+        # metrics row exists yet for this project.
+        metric_col = self._metrics_counter_for_filters(filters)
+        if metric_col is not None:
+            metrics_value = await self._fetchval(
+                f"SELECT {metric_col} FROM scribe_metrics WHERE project_id = $1;",
+                project_record.id,
+            )
+            if metrics_value is not None:
+                return int(metrics_value or 0)
+            # No metrics row yet — fall through to COUNT(*)
 
         clauses, params = self._build_recent_filter_clauses(project_record.id, filters or {})
         where_clause = " AND ".join(clauses)

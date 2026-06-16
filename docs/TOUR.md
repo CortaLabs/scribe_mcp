@@ -1,6 +1,6 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.7.1`
+Release line: `2.7.2`
 Updated: `2026-06-16`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
@@ -14,7 +14,7 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-Release `2.7.1` makes Scribe's runtime faster to operate and easier to audit while keeping managed docs topology-aware, quality-check output agent-actionable, and operator-only mutation safer:
+Release `2.7.2` adds furnace-project quality-check O(N^2) elimination and several O(1) fast paths (see COMPATIBILITY_MATRIX.md). Release `2.7.1` made Scribe's runtime faster to operate and easier to audit while keeping managed docs topology-aware, quality-check output agent-actionable, and operator-only mutation safer:
 
 - Repeated same-session `set_project` calls for the same agent, project, and repo root return `side_effects.binding_reused=true` on the cheap path instead of repeating persistent binding writes or mutation-time reminder refresh.
 - Runtime telemetry now persists tool durations, correlation IDs, measurement scope, and repo root for later audit.

@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
 Baseline date: **2026-06-16**
-Release framing: **v2.7.1 compatibility baseline**
+Release framing: **v2.7.2 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.7.1 latency, telemetry, and quality-governance release line: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
+This baseline keeps compatibility posture for the 2.7.2 furnace-project quality-check performance release line (builds on 2.7.1 latency, telemetry, and quality-governance): fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.7.1`
+- **Core package version:** `scribe-mcp==2.7.2`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,7 +19,8 @@ This baseline keeps compatibility posture for the 2.7.1 latency, telemetry, and 
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.7.1` | Supported | Public Scribe install for local/core usage with faster repeated project binding, queryable runtime telemetry, deterministic document topology, agent-ready quality checks, write-barrier safety, and first-class bug/security report follow-up editing. |
+| `2.7.2` | Supported | Public Scribe install for local/core usage with faster repeated project binding, queryable runtime telemetry, deterministic document topology, agent-ready quality checks, write-barrier safety, first-class bug/security report follow-up editing, and furnace-project quality-check O(N^2) elimination for large-project performance. |
+| `2.7.1` | Supported (previous) | Prior patch line; 2.7.2 is a drop-in upgrade with no public API changes. |
 
 ## Not supported by this baseline
 
@@ -31,6 +32,10 @@ This baseline keeps compatibility posture for the 2.7.1 latency, telemetry, and 
 | Unversioned or mixed versions outside the baseline above | Not signed off | This baseline only certifies the combinations listed in this document. |
 
 ## What is shipped
+
+### `scribe-mcp 2.7.2`
+
+2.7.2 adds furnace-project quality-check O(N^2) elimination: per-inline-span line-number computation replaced with a precomputed line-offset index + bisect; `offset_in_scope` linear scan replaced with per-kind sorted interval index + bisect. Measured: 18,867-line PHASE_PLAN quality check 18.0s → 1.15s; furnace `set_project` ~20.3s → ~2.1s. Also in this line: `read_recent` limit/n returns exactly the requested row count; progress-log supplementation gated for DB-authoritative projects; readiness doc-quality cache key is O(1) via directory-stat sentinel; `count_entries()` uses the scribe_metrics counter as an O(1) fast path; session-binding lookups cached; research-index rglob hoisted out of per-doc loop.
 
 ### `scribe-mcp 2.7.1`
 

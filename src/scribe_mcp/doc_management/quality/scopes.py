@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import Protocol, Sequence
 
@@ -89,8 +90,10 @@ class HeuristicFenceScopeProvider:
         # Inline code spans: suppress placeholder/lifecycle checks inside `...`.
         for match in re.finditer(r"`[^`\n]+`", body):
             start_offset, end_offset = match.span()
-            start_line = body.count("\n", 0, start_offset) + 1
-            end_line = body.count("\n", 0, max(start_offset, end_offset - 1)) + 1
+            # O(log L) line lookup via precomputed line_offsets.
+            # Was body.count("\n", 0, offset) per match -> O(L) each -> O(N^2) overall.
+            start_line = bisect_right(line_offsets, start_offset)
+            end_line = bisect_right(line_offsets, max(start_offset, end_offset - 1))
             scopes.append(
                 DocumentScope(
                     kind="inline_code",
@@ -240,8 +243,10 @@ class MarkdownItScopeProvider(HeuristicFenceScopeProvider):
                 scopes.append(
                     DocumentScope(
                         kind="inline_code",
-                        start_line=body.count("\n", 0, pos) + 1,
-                        end_line=body.count("\n", 0, pos + len(seek) - 1) + 1,
+                        # O(log L) line lookup via precomputed line_offsets (was O(L) per
+                        # inline-code span via body.count -> O(N^2) on large docs).
+                        start_line=bisect_right(line_offsets, pos),
+                        end_line=bisect_right(line_offsets, pos + len(seek) - 1),
                         start_offset=pos,
                         end_offset=pos + len(seek),
                         attributes={"token_source": "markdown-it-py"},

@@ -64,3 +64,8 @@
 - `source_project`: integrate_system_scribe_latency_20260616t050042z
 - `source_entry_id`: 20260616:case-registry-council-closeout-2-7-1
 - `summary`: Release 2.7.1 repairs governed bug/security report path targeting so explicit report paths do not collapse onto unrelated `report.md` basenames, closes shared case-registry rows for resolved/validated/implemented fix statuses, and completes the Council hook/guidance readback for bind-once `set_project` behavior.
+
+## Furnace-project quality-check O(N^2) elimination + read_recent fixes
+- `source_project`: scribe_scale_cache_arch
+- `source_entry_id`: 20260616:furnace-quality-check-perf-2-7-2
+- `summary`: Release 2.7.2 eliminates two O(N^2) defects in managed-doc quality analysis that made set_project/prepare_context ~20s on large ("furnace") projects: (1) per-inline-span line-number computation via str.count("\n", 0, offset) replaced with a precomputed line-offset index + bisect in quality/scopes.py; (2) offset_in_scope linear any()-over-scopes replaced with a per-kind sorted interval index + bisect in quality/context.py. Measured: an 18,867-line PHASE_PLAN quality check dropped 18.0s -> 1.15s; furnace set_project ~20.3s -> ~2.1s; warm rebind stays ~70ms. Also in this line: read_recent limit/n now returns exactly the requested row count; progress-log supplementation gated for DB-authoritative projects; readiness doc-quality cache key is O(1) via directory-stat sentinel; count_entries() uses the scribe_metrics counter as an O(1) fast path; session-binding lookups cached; research-index rglob hoisted out of per-doc loop. No public API/CLI/schema contract changes (PATCH).

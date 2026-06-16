@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 
 def _research_warning(*, code: str, excerpt: str, message: str, repair: str, warning_policies: dict[str, dict[str, Any]]) -> Dict[str, Any]:
@@ -19,14 +19,45 @@ def _research_warning(*, code: str, excerpt: str, message: str, repair: str, war
     }
 
 
-def build_research_index_hygiene_warnings(*, research_dir: Path, warning_policies: dict[str, dict[str, Any]], changed_path: Optional[Path] = None, canonical_research_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
+def build_research_index_hygiene_warnings(
+    *,
+    research_dir: Path,
+    warning_policies: dict[str, dict[str, Any]],
+    changed_path: Optional[Path] = None,
+    canonical_research_dir: Optional[Path] = None,
+    research_docs: Optional[Sequence[Path]] = None,
+) -> List[Dict[str, Any]]:
+    """Check hygiene of the research index for a managed-doc quality pass.
+
+    Parameters
+    ----------
+    research_dir:
+        Resolved directory that holds the research artifacts.
+    warning_policies:
+        Mapping of warning code -> severity/blocking policy.
+    changed_path:
+        Optional path of the document being quality-checked (used for
+        per-doc unindexed/noncanonical warnings).
+    canonical_research_dir:
+        Optional canonical research dir when the caller knows it separately
+        from ``research_dir`` (used for noncanonical-location detection).
+    research_docs:
+        Optional pre-computed list of ``*.md`` files under ``research_dir``
+        (excluding ``INDEX.md`` and ``_``-prefixed files), sorted.  When
+        provided the function avoids calling ``research_dir.rglob("*.md")``,
+        turning the per-call cost from O(F) to O(1) for the listing step.
+        When ``None`` (the default), the listing is computed via ``rglob``
+        exactly as before — preserving full backward compatibility for all
+        external callers.
+    """
     warnings: List[Dict[str, Any]] = []
     research_dir = research_dir.resolve()
     canonical_dir = (canonical_research_dir or research_dir).resolve()
     index_path = research_dir / "INDEX.md"
-    research_docs = sorted(
-        p for p in research_dir.rglob("*.md") if p.name != "INDEX.md" and not p.name.startswith("_")
-    )
+    if research_docs is None:
+        research_docs = sorted(
+            p for p in research_dir.rglob("*.md") if p.name != "INDEX.md" and not p.name.startswith("_")
+        )
     index_text = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
 
     if changed_path and changed_path.suffix.lower() == ".md" and changed_path.name != "INDEX.md":

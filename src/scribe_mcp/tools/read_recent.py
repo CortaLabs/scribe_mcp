@@ -188,7 +188,14 @@ async def _supplement_sparse_db_rows_from_progress_log(
     page: int,
     page_size: int,
     filters: Dict[str, Any],
+    db_authoritative: bool = False,
 ) -> List[Dict[str, Any]]:
+    # Skip supplementation when the DB is authoritative and returned rows.
+    # Keep the fallback active when db_authoritative is True but the DB
+    # returned nothing (e.g. mirror-lag window on a brand-new project).
+    if db_authoritative and len(rows) > 0:
+        return rows
+
     if page != 1 or len(rows) >= page_size:
         return rows
 
@@ -362,14 +369,15 @@ async def read_recent(
 
     project = context.project or {}
 
-    # Handle n parameter for backward compatibility (using healed values)
-    if page == 1 and page_size == 50 and n is not None:
-        # Legacy mode - use n as page_size (already healed)
-        limit_int = int(n) if n is not None else 50
-        page_size = max(1, min(limit_int, 200))
-    else:
-        # Pagination mode - ignore n (already healed)
-        page_size = max(1, min(page_size, 200))
+    # Resolve effective page_size.  n/limit is always an upper bound when
+    # provided — the old guard `page_size == 50` only fired when page_size
+    # happened to equal the healer default, silently ignoring `limit=1` when
+    # the tool default was 10.  Correct fix: clamp page_size by n whenever n
+    # is present, regardless of what page_size was set to.
+    page_size = max(1, min(page_size, 200))
+    if n is not None:
+        limit_int = max(1, min(int(n), 200))
+        page_size = min(page_size, limit_int)
 
     filters = filter or {}
 
@@ -421,6 +429,7 @@ async def read_recent(
                 page=page,
                 page_size=page_size,
                 filters=filters,
+                db_authoritative=True,
             )
             if len(rows) > total_count:
                 total_count = len(rows)

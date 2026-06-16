@@ -10,6 +10,28 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Furnace-project quality-check O(N^2) elimination + read_recent fixes
+- `entry_id`: 20260616:furnace-quality-check-perf-2-7-2
+- `entry_status`: accepted
+- `title`: Furnace-project quality-check O(N^2) elimination + read_recent fixes
+- `summary`: Bumped the public patch line to `2.7.2`. Eliminated two O(N^2) defects in managed-doc quality analysis that made set_project/prepare_context ~20s on large ("furnace") projects: (1) per-inline-span line-number computation via str.count("\n", 0, offset) replaced with a precomputed line-offset index + bisect in quality/scopes.py; (2) offset_in_scope linear any()-over-scopes replaced with a per-kind sorted interval index + bisect in quality/context.py. Measured: an 18,867-line PHASE_PLAN quality check dropped 18.0s -> 1.15s; furnace set_project ~20.3s -> ~2.1s; warm rebind stays ~70ms. Also in this line: read_recent limit/n now returns exactly the requested row count (was silently using page_size default); progress-log supplementation is gated for DB-authoritative projects; the readiness managed-doc-quality cache key is O(1) via a directory-stat sentinel (was O(#research files)); count_entries() uses the scribe_metrics counter as an O(1) fast path; session-binding lookups are cached; and the research-index rglob is hoisted out of the per-doc loop. No public API/CLI/schema contract changes (PATCH).
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/doc_management/quality/scopes.py
+  - src/scribe_mcp/doc_management/quality/context.py
+  - src/scribe_mcp/readiness.py
+  - src/scribe_mcp/tools/read_recent.py
+  - src/scribe_mcp/storage/sqlite/entries.py
+  - src/scribe_mcp/storage/postgres/__init__.py
+  - src/scribe_mcp/state/manager.py
+  - src/scribe_mcp/doc_management/scaffold_quality.py
+  - src/scribe_mcp/doc_management/quality/rules/research.py
+  - tests/test_quality_scaling_regression.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.7.2
+
 ## Case registry and report closeout patch
 - `entry_id`: 20260616:case-registry-report-closeout-2-7-1
 - `entry_status`: accepted

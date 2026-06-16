@@ -457,7 +457,18 @@ class StateManager:
         session_projects: Dict[str, Dict[str, Any]] = {}
         current_project: Optional[str] = None
 
-        if session_id and hasattr(self._storage_backend, "get_session_project"):
+        # Check in-memory cache first — avoids a DB round-trip on every tool
+        # call for the common case where the session binding is already known.
+        if session_id and session_id in self._session_projects_cache:
+            cached = self._session_projects_cache[session_id]
+            project_name = self._resolve_project_name(cached)
+            if project_name:
+                current_project = project_name
+                session_projects[session_id] = dict(cached)
+
+        # Cache miss: ask the storage backend and populate the cache so
+        # subsequent calls within the same process lifetime skip the DB.
+        if not current_project and session_id and hasattr(self._storage_backend, "get_session_project"):
             try:
                 project_name = await self._storage_backend.get_session_project(session_id)
             except Exception:
@@ -465,17 +476,10 @@ class StateManager:
 
             if project_name:
                 current_project = project_name
-                session_projects[session_id] = (
-                    projects.get(project_name)
-                    or {"name": project_name}
-                )
-
-        if not current_project and session_id in self._session_projects_cache:
-            cached = self._session_projects_cache[session_id]
-            project_name = self._resolve_project_name(cached)
-            if project_name:
-                current_project = project_name
-                session_projects[session_id] = dict(cached)
+                project_data = projects.get(project_name) or {"name": project_name}
+                session_projects[session_id] = project_data
+                # Populate cache so future loads skip the DB round-trip
+                self._session_projects_cache[session_id] = project_data
 
         if not current_project and not session_id and hasattr(self._storage_backend, "get_agent_project"):
             try:

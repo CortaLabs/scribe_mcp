@@ -267,7 +267,12 @@ def _path_signature(path: Path) -> _FileSignature:
     return str(path), int(stat.st_mtime_ns), int(stat.st_size)
 
 
-def _research_dir_signatures(docs_dir: object, doc_paths: Sequence[Path]) -> tuple[_FileSignature, ...]:
+def _collect_research_dirs(docs_dir: object, doc_paths: Sequence[Path]) -> set[Path]:
+    """Collect the set of research directories referenced by docs_dir and managed-doc paths.
+
+    Extracted from the old _research_dir_signatures body so Package B can reuse it
+    without duplicating the directory-discovery logic.
+    """
     research_dirs: set[Path] = set()
     if isinstance(docs_dir, str) and docs_dir.strip():
         research_dirs.add((Path(docs_dir) / "research").expanduser().resolve())
@@ -278,18 +283,55 @@ def _research_dir_signatures(docs_dir: object, doc_paths: Sequence[Path]) -> tup
             resolved = path
         if "research" in {part.lower() for part in resolved.parts}:
             research_dirs.add(resolved.parent)
+    return research_dirs
 
+
+def _dir_signature(directory: Path) -> _FileSignature:
+    """Return a single-stat O(1) signature for a directory.
+
+    Uses (str(dir), mtime_ns, st_nlink) where st_nlink on most POSIX filesystems
+    reflects the number of hard-link entries in the directory (including '.' and
+    subdirectory entries), which advances on both add and remove of child entries.
+    This detects:
+      - Any research file added or removed (directory mtime advances on every
+        such operation; st_nlink also changes on sub-directory creation/removal).
+      - Add+remove races on coarse-mtime (1s resolution) filesystems: the
+        st_nlink child-count sentinel catches a same-second add-then-remove that
+        would leave the mtime unchanged.
+
+    Correctness note: research-doc *content* edits do NOT change the cache key
+    here, and that is intentional.  Research docs are not quality-check targets
+    (verified: readiness.py collect_managed_doc_quality_state only iterates
+    project["docs"], and scaffold_quality.is_managed_doc_quality_target excludes
+    the research subdirectory).  The 4 managed-doc per-file signatures (in the
+    `targets` tuple of _managed_doc_quality_cache_key) handle content-change
+    invalidation for quality-target docs.  Research dirs only need add/remove
+    detection here, which directory mtime + st_nlink provides at O(1) cost.
+    """
+    try:
+        st = directory.stat()
+    except OSError:
+        return str(directory), None, None
+    # st_nlink: cheap child-entry proxy (no per-child stat, no glob)
+    return str(directory), int(st.st_mtime_ns), int(st.st_nlink)
+
+
+def _research_dir_signatures(docs_dir: object, doc_paths: Sequence[Path]) -> tuple[_FileSignature, ...]:
+    """Build O(1) cache-key fragments for research directories.
+
+    Previously this called directory.glob("*.md") and then _path_signature on
+    every matching file, making the cache-key construction O(N) in the number of
+    research files — paid on *every* cache-hit check as well as misses.
+
+    Replacement: one _dir_signature per research directory (a single stat syscall).
+    Directory mtime advances on any child add or remove, so cache correctness is
+    preserved for the only events that matter: a research file appearing or
+    disappearing.  See _dir_signature docstring for the full invalidation argument.
+    """
+    research_dirs = _collect_research_dirs(docs_dir, doc_paths)
     signatures: list[_FileSignature] = []
     for directory in sorted(research_dirs, key=str):
-        if not directory.exists():
-            signatures.append((str(directory), None, None))
-            continue
-        try:
-            markdown_files = sorted(directory.glob("*.md"), key=str)
-        except OSError:
-            signatures.append((str(directory), None, None))
-            continue
-        signatures.extend(_path_signature(path) for path in markdown_files)
+        signatures.append(_dir_signature(directory))
     return tuple(signatures)
 
 
@@ -326,6 +368,31 @@ def _collect_managed_doc_quality_state_uncached(project: Mapping[str, Any]) -> D
     configured_log_paths = configured_log_quality_exclusion_paths(project)
     current_phase = str(project.get("current_phase") or "").strip() or None
 
+    # --- Package B: hoist rglob out of the per-doc loop (O(D×F) -> O(D+F)) ---
+    # Collect the set of research directories referenced by this project once,
+    # then scan each research dir exactly once with rglob.  The result is a
+    # dict keyed by resolved Path so each per-doc call can look up its listing
+    # in O(1) instead of re-running rglob.  When a research dir does not exist
+    # the value is an empty list (safe no-op for the hygiene checker).
+    doc_paths_for_research: list[Path] = [
+        Path(dp) for dp in docs.values() if isinstance(dp, str) and dp.endswith(".md")
+    ]
+    research_dirs = _collect_research_dirs(project.get("docs_dir"), doc_paths_for_research)
+    _research_docs_by_dir: dict[Path, list[Path]] = {}
+    for _rd in research_dirs:
+        try:
+            _rd_resolved = _rd.resolve()
+            if _rd_resolved.is_dir():
+                _research_docs_by_dir[_rd_resolved] = sorted(
+                    p for p in _rd_resolved.rglob("*.md")
+                    if p.name != "INDEX.md" and not p.name.startswith("_")
+                )
+            else:
+                _research_docs_by_dir[_rd_resolved] = []
+        except OSError:
+            _research_docs_by_dir[_rd if not isinstance(_rd, Path) else _rd] = []
+    # -------------------------------------------------------------------------
+
     documents: list[dict[str, Any]] = []
     blocker_count = 0
     frontmatter_mismatch_count = 0
@@ -348,7 +415,35 @@ def _collect_managed_doc_quality_state_uncached(project: Mapping[str, Any]) -> D
         except OSError:
             continue
 
-        warnings = collect_managed_doc_quality_warnings(text=text, doc_name=str(key), path=path, project=project)
+        # Look up the pre-computed research listing for this doc's research dir.
+        # scaffold_quality derives research_dir as ``doc_path.parent`` when
+        # parent.name == "research", otherwise uses the canonical research dir.
+        # We replicate that resolution here so the lookup key matches.
+        docs_dir_value = project.get("docs_dir")
+        _canonical_rd = (
+            (Path(docs_dir_value) / "research").resolve()
+            if isinstance(docs_dir_value, str) and docs_dir_value
+            else None
+        )
+        _doc_parent = path.parent
+        _effective_rd = (
+            _doc_parent.resolve()
+            if _doc_parent.name == "research"
+            else _canonical_rd
+        )
+        _pre_computed_docs: Optional[list[Path]] = (
+            _research_docs_by_dir.get(_effective_rd)
+            if _effective_rd is not None
+            else None
+        )
+
+        warnings = collect_managed_doc_quality_warnings(
+            text=text,
+            doc_name=str(key),
+            path=path,
+            project=project,
+            research_docs=_pre_computed_docs,
+        )
         total_warnings += len(warnings)
         blockers = []
         for warning in warnings:

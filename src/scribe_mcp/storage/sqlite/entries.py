@@ -362,6 +362,23 @@ async def query_entries(
     return results
 
 
+def _metrics_counter_for_filters(filters: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return the scribe_metrics column name that satisfies *filters*, or None.
+
+    Only the empty/None filter case is mapped to ``total_entries``.  All other
+    filters (log_type, agent, priority, category, min_confidence, …) are NOT
+    tracked in scribe_metrics and must fall through to the full COUNT(*) path.
+
+    Q1 resolution: success_count/warn_count/error_count are maintained by
+    emoji (✅/⚠️/❌), NOT by the ``status`` field used in _build_filtered_clauses,
+    so no status→column mapping is safe here.
+    """
+    if not filters:
+        return "total_entries"
+    # Any non-empty filter dict — cannot use fast path
+    return None
+
+
 async def count_entries(
     *,
     initialise_fn: AsyncInitialise,
@@ -370,6 +387,20 @@ async def count_entries(
     filters: Optional[Dict[str, Any]] = None,
 ) -> int:
     await initialise_fn()
+
+    # Fast path: O(1) read from scribe_metrics when no filters are applied.
+    # Falls through to COUNT(*) when (a) filters are present, or (b) no
+    # metrics row exists yet for this project.
+    metric_col = _metrics_counter_for_filters(filters)
+    if metric_col is not None:
+        metrics_row = await fetchone_fn(
+            f"SELECT {metric_col} AS count FROM scribe_metrics WHERE project_id = ?;",
+            (project.id,),
+        )
+        if metrics_row is not None:
+            return int(metrics_row["count"] or 0)
+        # No metrics row yet — fall through to COUNT(*)
+
     clauses, params = _build_filtered_clauses(project_id=project.id, filters=filters or {})
     where_clause = " AND ".join(clauses)
     row = await fetchone_fn(
