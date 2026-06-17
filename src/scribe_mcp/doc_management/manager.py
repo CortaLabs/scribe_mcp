@@ -3268,6 +3268,7 @@ _WORKFLOW_RESERVED_DOC_FIELDS = {"case_id", "doc_name", "doc_type", "project_nam
 _RUNTIME_OWNED_FRONTMATTER_FIELDS = {"created_by", "maintained_by", "edit_trace"}
 _RESERVED_DELETE_FIELDS = _RUNTIME_OWNED_FRONTMATTER_FIELDS | _WORKFLOW_RESERVED_DOC_FIELDS
 _PRESERVED_WORKFLOW_KEYS = {
+    "title",
     "summary",
     "tags",
     "owners",
@@ -3352,7 +3353,14 @@ def _apply_frontmatter_pipeline(
 
     updates: Dict[str, Any] = {}
     delete_keys: set[str] = set()
-    updates["title"] = _extract_title(updated_body, doc_name.replace("_", " ").title())
+    # Only infer the title from the first body heading when the doc has no
+    # explicit frontmatter title yet (i.e. on create, or a doc that never had
+    # one). An existing explicit title must survive managed body edits — see
+    # BUG-2026-06-17-0002. A caller-supplied title via metadata.frontmatter.title
+    # is applied authoritatively later in the override loop.
+    existing_title = (parsed.frontmatter_data or {}).get("title")
+    if not (parsed.has_frontmatter and str(existing_title or "").strip()):
+        updates["title"] = _extract_title(updated_body, doc_name.replace("_", " ").title())
 
     auto_related_docs_disabled = (
         bool(metadata.get("frontmatter_disable_related_docs")) if isinstance(metadata, dict) else False

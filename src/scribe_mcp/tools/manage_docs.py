@@ -57,7 +57,7 @@ _METADATA_ACTION_HINTS = (
 # Generic frontmatter workflow keys accepted under `metadata` (mirrors the
 # manage_docs docstring — the single source the agent already reads).
 _METADATA_FRONTMATTER_KEYS = (
-    "summary, tags, owners, category, status, version, related_docs, "
+    "title, summary, tags, owners, category, status, version, related_docs, "
     "maintained_by, run_id, stage, session_id, work_item_id"
 )
 
@@ -177,6 +177,52 @@ async def manage_docs(
     project: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Apply structured document updates and creation workflows.
+
+    `manage_docs` is the full governed-document engine, not just create/edit. It
+    exposes 28 actions. The 8 PRIMARY write/edit actions are the everyday surface;
+    the remaining 20 (the "governance engine") cover discovery, quality gating,
+    topology/metadata scans, safe maintenance, and reporting — most are
+    undocumented elsewhere, so this docstring is the canonical action catalog.
+
+    PRIMARY — write / edit:
+    - `create` — scaffold a new managed doc (a template, NOT a finished doc; always
+      follow with `replace_section`).
+    - `replace_section` — populate a scaffold section by anchor ID.
+    - `apply_patch` — context-anchored surgical edit (preferred for existing content;
+      survives line drift where `replace_range` does not).
+    - `replace_range` — replace an explicit line span (line numbers; auto-adjusts
+      file-relative numbers to body-relative).
+    - `replace_text` — find/replace via `metadata.find` (+`metadata.replace`,
+      `metadata.match_mode`).
+    - `append` — append content to a doc.
+    - `status_update` — checklist-only: mark a checklist item done with proof.
+    - `frontmatter_update` — narrative-doc frontmatter/status edits via
+      `metadata.frontmatter`.
+
+    GOVERNANCE — discovery, quality, scans, maintenance, reporting:
+    - `list_sections` / `list_checklist_items` — enumerate editable anchors /
+      checklist items before editing.
+    - `search` — search within managed docs.
+    - `quality_check` — primary scaffold-quality proof path; returns structured
+      `SCF_*` warnings (codes, severity, blocking, locations, suggested repairs).
+    - `quality_handoff_check` — readiness/handoff gate built on the same warnings.
+    - `scaffold_quality_check` — scaffold-residue detection.
+    - `project_health` — recent doc-surface health for the active project.
+    - `topology_scan` — typed cross-doc edge / relationship inspection.
+    - `metadata_scan` / `metadata_repair` — audit and safely repair doc metadata.
+    - `stale_cleanup_scan` — surface stale/orphaned doc cleanup recommendations.
+    - `generate_toc` — (re)generate a table of contents.
+    - `normalize_headers` — normalize heading levels.
+    - `validate_crosslinks` — find broken `[[wikilinks]]` / cross-references.
+    - `rehome_doc` — move a managed doc to its canonical location WITHOUT losing
+      Scribe registration (never use shell `mv`/`cp` on managed docs).
+    - `apply_global_changelog` — roll a change into the global changelog.
+    - `preview_reconciliation` — preview physical/logical reconciliation before
+      applying.
+    - `regenerate_intelligence_exports` — rebuild intelligence/topology exports.
+    - `ingestion_manifest_inspect` — inspect the sanitized downstream ingestion
+      manifest.
+    - `batch` — run multiple managed-doc operations in one call.
 
     Generic frontmatter workflow metadata (via `metadata`) supports top-level keys:
     `summary`, `tags`, `owners`, `category`, `status`, `version`, `related_docs`,

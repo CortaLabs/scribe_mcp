@@ -255,6 +255,150 @@ async def test_replace_range_does_not_create_frontmatter_without_explicit_opt_in
 
 
 @pytest.mark.asyncio
+async def test_body_edit_preserves_explicit_title_when_heading_differs(tmp_path: Path) -> None:
+    """Regression for BUG-2026-06-17-0002 (case a).
+
+    A doc whose body's first heading differs from its explicit frontmatter
+    ``title`` must NOT have that title re-inferred/clobbered on a body edit.
+    """
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                "id: arch-doc",
+                "title: RAILS MAP CURRENT STATE",
+                "doc_type: architecture",
+                "---",
+                "## Purpose",
+                "",
+                "Original body",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="## Purpose\n\nBody updated\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={"agent_id": "CoderAgent-Phase1"},
+        dry_run=False,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    # Title must survive the body edit even though the first heading is "Purpose".
+    assert parsed.frontmatter_data.get("title") == "RAILS MAP CURRENT STATE"
+    assert "Body updated" in parsed.body
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_update_sets_title_authoritatively_and_it_persists(tmp_path: Path) -> None:
+    """Regression for BUG-2026-06-17-0002 (case b).
+
+    ``frontmatter_update`` with ``metadata.frontmatter.title`` is the governed
+    path to set/repair a title, and the new title survives a later body edit.
+    """
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                "id: arch-doc",
+                "title: OLD TITLE",
+                "doc_type: architecture",
+                "---",
+                "## Purpose",
+                "",
+                "Original body",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    set_change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={"agent_id": "CoderAgent-Phase1", "frontmatter": {"title": "NEW TITLE"}},
+        dry_run=False,
+    )
+    assert set_change.success
+    parsed_set = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed_set.frontmatter_data.get("title") == "NEW TITLE"
+
+    # A subsequent body edit with no title in metadata must keep the new title.
+    body_change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="replace_range",
+        section=None,
+        content="## Purpose\n\nBody updated again\n",
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={"agent_id": "CoderAgent-Phase1"},
+        dry_run=False,
+    )
+    assert body_change.success
+    parsed_after = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed_after.frontmatter_data.get("title") == "NEW TITLE"
+
+
+@pytest.mark.asyncio
+async def test_doc_without_explicit_title_still_infers_from_heading(tmp_path: Path) -> None:
+    """Regression for BUG-2026-06-17-0002 (case c — back-compat).
+
+    A doc with NO explicit frontmatter title still gets the inferred title from
+    the first heading, preserving the original create-time convenience.
+    """
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    # No frontmatter title at all — only a heading.
+    path.write_text("## Purpose\n\nOriginal body\n", encoding="utf-8")
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={"agent_id": "CoderAgent-Phase1"},
+        dry_run=False,
+    )
+
+    assert change.success
+    parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
+    assert parsed.frontmatter_data.get("title") == "Purpose"
+
+
+@pytest.mark.asyncio
 async def test_frontmatter_update_changes_metadata_without_dummy_body_content(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])

@@ -173,8 +173,8 @@
       "new_project_welcome": {
         "level": "info",
         "emoji": "🎉",
-        "template": "🎉 Welcome to your new project! Here's how to get started with Scribe:",
-        "short_template": "🎉 New project! Quick Scribe guide:",
+        "template": "🎉 Welcome to your new project! Here's how to get started with Scribe — run /scribe-integration for the complete Scribe tool + workflow reference, and /scribe-onboarding to install/connect Scribe.",
+        "short_template": "🎉 New project! Quick Scribe guide — see /scribe-integration (tools+workflow) and /scribe-onboarding (install).",
         "context": "Start with append_entry, use metadata, and check docs",
         "category": "teaching",
         "conditions": {

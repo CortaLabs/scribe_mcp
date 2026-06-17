@@ -2049,7 +2049,37 @@ async def read_file(
     allow_outside_repo: bool = False,  # Allow reads outside repo_root (denylist still enforced)
     include_full_content: bool = False,  # Bypass token limit in mode='full' (for web dashboard/API use)
 ) -> Union[Dict[str, Any], str]:
-    """Read a repository file using scan, page, chunk, line-range, or search modes."""
+    """Read a repository file using scan, page, chunk, line-range, or search modes.
+
+    `read_file` is a context-efficient, repo-safe reader and a lightweight
+    code-intelligence tool. Always start with `mode="scan_only"` to get structure
+    + line numbers cheaply, then read only the lines you need.
+
+    MODES (`mode=`):
+    - `scan_only` (default, cheapest) — file structure (classes/functions with line
+      numbers) + imports, no content.
+    - `line_range` — an exact span (`start_line`/`end_line`); the targeted follow-up
+      to a scan.
+    - `chunk` — fixed-size content chunks by index (`chunk_index`/`start_chunk`/
+      `max_chunks`) for walking a large file in bounded pieces.
+    - `page` — a paginated page of content (`page_number`/`page_size`).
+    - `search` — find content within this one file (`search`/`query` +
+      `search_mode`: regex|literal|smart|fuzzy, with `context_lines`,
+      `case_insensitive`, `max_matches`). When `search_mode` is unset/auto, the mode
+      is inferred (literal vs fuzzy); `fuzzy_threshold` tunes fuzzy matching.
+    - `full_stream` / `full` — whole file; use only when you genuinely need it
+      (`include_full_content=True` bypasses the token cap in `full`).
+
+    ADVANCED SCAN FLAGS (work with `scan_only`):
+    - `include_dependencies=True` — attach the file's import dependency graph,
+      turning a scan into dependency analysis.
+    - `include_impact=True` — attach impact-radius / blast-radius analysis (REQUIRES
+      `include_dependencies=True`; uses a repo-wide reverse-import index).
+    - `structure_filter="<regex>"` — filter the scanned classes/functions by name
+      (paginated via `structure_page`/`structure_page_size`).
+    - `allow_outside_repo=True` — read a file outside the repo root (the security
+      denylist is still enforced); needed for cross-repo reads.
+    """
     exec_context = server_module.get_execution_context()
     if exec_context is None:
         return {

@@ -1243,7 +1243,14 @@ async def append_entry(
     **_kwargs: Any,  # tolerate unknown kwargs (contract: tools never TypeError)
 ) -> Union[Dict[str, Any], str]:
     """
-    Enhanced append_entry with robust multiline handling and bulk mode support.
+    Record a Scribe audit-trail log entry for the active project.
+
+    This is the primary logging tool: call it to record what you did and why —
+    findings, decisions, code changes, test results, bugs, and phase milestones —
+    so progress is traceable across sessions and agents. Log every 2-3 significant
+    actions; if it is not logged here, it did not happen. Pass `items`/`items_list`
+    to record several entries at once (e.g. backfilling), and put reasoning in
+    `meta` (why/what/how) to make the trail auditable.
 
     Args:
         message: Log message (auto-splits multiline if auto_split=True)

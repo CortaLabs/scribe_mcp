@@ -64,6 +64,49 @@ def _all_trigger_strings() -> set[str]:
     return triggers
 
 
+def _en_us_path() -> Path:
+    # config/reminders/en-US.json ships the teaching template copy.
+    return (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "scribe_mcp"
+        / "config"
+        / "reminders"
+        / "en-US.json"
+    )
+
+
+def _new_project_welcome() -> dict:
+    locale = json.loads(_en_us_path().read_text(encoding="utf-8"))
+    return locale["reminders"]["teaching"]["new_project_welcome"]
+
+
+# ---------------------------------------------------------------------------
+# P7.4 (WS7 T3-1) — new_project_welcome hint points at the canonical skills
+# ---------------------------------------------------------------------------
+
+
+def test_new_project_welcome_template_points_at_scribe_integration_skill() -> None:
+    """The first-bind teaching template must name /scribe-integration so agents
+    can discover the canonical Scribe tool+workflow reference, plus
+    /scribe-onboarding for install."""
+    template = _new_project_welcome()
+    assert "/scribe-integration" in template["template"]
+    assert "/scribe-onboarding" in template["template"]
+    # The compact variant carries the pointer too (some hosts use short_template).
+    assert "/scribe-integration" in template["short_template"]
+
+
+def test_new_project_welcome_pointer_stays_on_first_bind_only() -> None:
+    """T3-3 guard: the pointer rides the EXISTING new-project first-bind
+    condition (no new trigger, never wired to the warm-rebind/fire-every-call
+    path). The conditions must remain exactly the new-project set_project gate."""
+    template = _new_project_welcome()
+    assert template["conditions"] == {"new_project": True, "tool": "set_project"}
+    # It rides the existing teaching gate — no per-reminder enable toggle was added.
+    assert template["category"] == "teaching"
+
+
 # ---------------------------------------------------------------------------
 # Finding 1 — every declared trigger has a live handler
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
+from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 
@@ -18,7 +19,7 @@ class _HealthCheckHelper(LoggingToolMixin):
 _HEALTH_CHECK_HELPER = _HealthCheckHelper()
 
 
-@app.tool()
+@app.tool(**read_only_local_tool(title="Health Check", tags=("diagnostics", "read-only")))
 async def health_check(agent: str) -> Dict[str, Any]:
     """
     Perform comprehensive health check of the agent-scoped system.

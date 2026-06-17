@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-council"
-version = "2.4.0"
+version = "2.5.0"
 description = "Optional council template provider for scribe-mcp"
 requires-python = ">=3.11"
 license = { text = "See repository LICENSE" }
