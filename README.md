@@ -2,7 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/scribe-mcp)](https://pypi.org/project/scribe-mcp/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/scribe-mcp/)
-[![License](https://img.shields.io/badge/license-PolyForm--NC-orange)](https://github.com/CortaLabs/scribe_mcp/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-Scribe%20MCP%20Community%201.0-orange)](https://github.com/CortaLabs/scribe_mcp/blob/main/LICENSE)
 
 Scribe MCP is the accountability layer for agent-driven engineering work.
 
