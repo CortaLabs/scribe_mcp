@@ -22,26 +22,13 @@ except Exception:
 
     app = _AppStub()
 from scribe_mcp.tool_contracts import read_only_local_tool
+from scribe_mcp.doc_management import utils as doc_utils
 
-_OPEN_STATUS_VALUES = {
-    "open",
-    "investigating",
-    "triage",
-    "in_progress",
-    "todo",
-    "new",
-}
-_CLOSED_STATUS_VALUES = {
-    "closed",
-    "resolved",
-    "fixed",
-    "done",
-    "wontfix",
-    "won't fix",
-    "duplicate",
-    "false_positive",
-    "mitigated",
-}
+# Canonical lifecycle vocabulary — single source of truth shared with link_fix
+# (sentinel_tools via doc_utils). Keeping these local previously let the two
+# diverge, so a case could read as closed here but still open to link_fix.
+_OPEN_STATUS_VALUES = doc_utils.CASE_OPEN_STATUS_VALUES
+_CLOSED_STATUS_VALUES = doc_utils.CASE_CLOSED_STATUS_VALUES
 _CASE_TYPE_ALIASES = {
     "bug": "bug",
     "bugs": "bug",
@@ -86,9 +73,9 @@ def _normalize_str(value: Optional[str]) -> Optional[str]:
 
 
 def _normalize_status(value: Optional[str]) -> str:
-    if value is None:
-        return ""
-    return value.strip().lower()
+    # Use the canonical normalizer (spaces -> underscores) so multi-word statuses
+    # like "won't fix" / "false positive" match the shared closed-status set.
+    return doc_utils.normalize_case_status(value)
 
 
 def _is_open_case_status(value: Optional[str]) -> bool:

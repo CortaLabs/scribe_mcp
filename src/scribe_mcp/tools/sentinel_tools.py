@@ -634,21 +634,16 @@ async def _register_case_registry_fix_link(
         "authoritative_session_key": getattr(context, "authoritative_session_key", None),
         "stable_session_id": getattr(context, "stable_session_id", None),
     }
-    normalized_landing_status = str(landing_status or "").strip().lower().replace(" ", "_")
-    closes_case = normalized_landing_status in {
-        "closed",
-        "completed",
-        "done",
-        "fixed",
-        "implemented",
-        "landed",
-        "merged",
-        "resolved",
-        "validated",
-    }
+    # Canonical lifecycle vocabulary shared with list_open_cases (doc_utils). A
+    # non-fix terminal status (wontfix/duplicate/false_positive/mitigated) is
+    # preserved as the recorded case status so the closure reason survives; a fix
+    # terminal status collapses to "closed"; a non-terminal status leaves the case
+    # open (close_status is None).
+    close_status = doc_utils.resolved_case_close_status(landing_status)
+    closes_case = close_status is not None
     upsert_kwargs = doc_utils.build_case_registry_upsert_kwargs(
         existing_record=case_record,
-        overrides={"case_id": case_id, "status": "closed" if closes_case else None},
+        overrides={"case_id": case_id, "status": close_status},
         metadata_overrides={
             "execution_provenance": execution_meta,
             "fix_link": {

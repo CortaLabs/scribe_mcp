@@ -42,6 +42,89 @@ VALID_ACTIONS = runtime_shared.VALID_ACTIONS
 ACTION_ROUTER = runtime_shared.ACTION_ROUTER
 
 
+# Per-action `metadata` sub-key hints, sourced from the live runtime handlers
+# (doc_management/manager.py) — keeps the host-facing description truthful instead
+# of inventing keys. Used only to build the `metadata` description string below.
+_METADATA_ACTION_HINTS = (
+    "replace_text -> metadata.find (required), metadata.replace, "
+    "metadata.match_mode (literal|regex|prefix), metadata.replace_all, "
+    "metadata.scope, metadata.allow_no_match; "
+    "replace_range -> metadata.line_reference (file|body); "
+    "frontmatter_update -> metadata.frontmatter (object of frontmatter fields); "
+    "status_update -> metadata.status, metadata.proof (checklist items only)"
+)
+
+# Generic frontmatter workflow keys accepted under `metadata` (mirrors the
+# manage_docs docstring — the single source the agent already reads).
+_METADATA_FRONTMATTER_KEYS = (
+    "summary, tags, owners, category, status, version, related_docs, "
+    "maintained_by, run_id, stage, session_id, work_item_id"
+)
+
+
+def _build_manage_docs_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``manage_docs``.
+
+    Mirrors the ``set_project`` override pattern (``set_project.py`` /
+    ``_SET_PROJECT_INPUT_SCHEMA``): the host uses this schema verbatim and the
+    server's ``_with_runtime_agent_schema`` then injects the required ``agent``
+    field. Two enrichments over the auto-built schema:
+
+    * ``action`` carries an ``enum`` sourced live from
+      ``build_manage_docs_action_manifest()["all_actions"]`` (single source of
+      truth — never hand-copied, so it follows ``VALID_ACTIONS`` automatically).
+    * ``metadata`` carries a ``description`` enumerating the supported
+      frontmatter keys and the per-action sub-keys, so a mistyped action or an
+      unknown metadata key is teachable at the host instead of opaque.
+
+    ``additionalProperties`` stays ``True`` so passthrough kwargs and metadata
+    compatibility aliases (e.g. ``doc``) are not regressed into hard rejections.
+    ``action`` is declared required here to fix the signature/default mismatch:
+    every parameter has a Python default, so the auto-builder marked nothing
+    required even though ``action`` is mandatory.
+    """
+    all_actions = runtime_shared.build_manage_docs_action_manifest()["all_actions"]
+    metadata_description = (
+        "Structured workflow metadata. Generic frontmatter keys: "
+        f"{_METADATA_FRONTMATTER_KEYS}. Per-action sub-keys: {_METADATA_ACTION_HINTS}."
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "action": {
+                "type": "string",
+                "enum": list(all_actions),
+                "description": (
+                    "Document operation to perform. Must be one of the listed "
+                    "actions (sourced live from the action manifest)."
+                ),
+            },
+            "doc_category": {"type": "string"},
+            "section": {"type": "string"},
+            "content": {"type": "string"},
+            "patch": {"type": "string"},
+            "patch_source_hash": {"type": "string"},
+            "edit": {"type": "object"},
+            "patch_mode": {"type": "string"},
+            "start_line": {"type": ["integer", "string"]},
+            "end_line": {"type": ["integer", "string"]},
+            "template": {"type": "string"},
+            "metadata": {"type": "object", "description": metadata_description},
+            "dry_run": {"type": "boolean"},
+            "doc_name": {"type": "string"},
+            "doc": {"type": "string"},
+            "target_dir": {"type": "string"},
+            "project": {"type": "string"},
+        },
+        "required": ["action"],
+        "additionalProperties": True,
+    }
+
+
+_MANAGE_DOCS_INPUT_SCHEMA: Dict[str, Any] = _build_manage_docs_input_schema()
+
+
 def _should_skip_doc_index(doc_key: Optional[str], path: Path) -> bool:
     """Compatibility wrapper for legacy tests/import paths."""
     return indexing_shared.should_skip_doc_index(doc_key, path)
@@ -69,7 +152,10 @@ async def _auto_register_document(project: Dict[str, Any], doc_name: str) -> boo
     )
 
 
-@app.tool(**stateful_local_tool(title="Manage Docs", tags=("docs", "governance", "write")))
+@app.tool(
+    **stateful_local_tool(title="Manage Docs", tags=("docs", "governance", "write")),
+    input_schema=_MANAGE_DOCS_INPUT_SCHEMA,
+)
 async def manage_docs(
     agent: str = "Codex",
     action: str = "",

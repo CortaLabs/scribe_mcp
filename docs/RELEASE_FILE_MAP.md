@@ -1,7 +1,7 @@
 # Release File Map
 
 Baseline date: **2026-06-16**
-Coverage: **v2.7.2 public release line**
+Coverage: **v2.8.0 public release line**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **v2.7.2 public release line**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.7.2` and CLI scripts. 2.7.2 adds furnace-project quality-check performance fix. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.8.0` and CLI scripts. 2.8.0 adds host-facing `manage_docs` input-schema enrichment (additive MCP schema capability). |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |

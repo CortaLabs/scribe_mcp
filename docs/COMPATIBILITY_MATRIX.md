@@ -1,13 +1,13 @@
 # Compatibility Matrix
 
 Baseline date: **2026-06-16**
-Release framing: **v2.7.2 compatibility baseline**
+Release framing: **v2.8.0 compatibility baseline**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.7.2 furnace-project quality-check performance release line (builds on 2.7.1 latency, telemetry, and quality-governance): fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
+This baseline keeps compatibility posture for the 2.8.0 schema-education release line (builds on 2.7.2 furnace-project quality-check performance, 2.7.1 latency, telemetry, and quality-governance): host-facing `manage_docs` input-schema enrichment (live `action` enum sourced from the action manifest plus documented `metadata` sub-keys, `additionalProperties` preserved), fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.7.2`
+- **Core package version:** `scribe-mcp==2.8.0`
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -19,8 +19,9 @@ This baseline keeps compatibility posture for the 2.7.2 furnace-project quality-
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.7.2` | Supported | Public Scribe install for local/core usage with faster repeated project binding, queryable runtime telemetry, deterministic document topology, agent-ready quality checks, write-barrier safety, first-class bug/security report follow-up editing, and furnace-project quality-check O(N^2) elimination for large-project performance. |
-| `2.7.1` | Supported (previous) | Prior patch line; 2.7.2 is a drop-in upgrade with no public API changes. |
+| `2.8.0` | Supported | Public Scribe install for local/core usage; adds host-facing `manage_docs` input-schema enrichment (live `action` enum + documented `metadata` keys, `additionalProperties` preserved) so mistyped actions are teachable at the host instead of opaquely rejected. Backward-compatible additive MCP schema capability. |
+| `2.7.2` | Supported (previous) | Prior patch line with furnace-project quality-check O(N^2) elimination; 2.8.0 is a drop-in upgrade with no breaking public API changes. |
+| `2.7.1` | Supported (previous) | Earlier patch line; superseded by 2.7.2 and 2.8.0. |
 
 ## Not supported by this baseline
 

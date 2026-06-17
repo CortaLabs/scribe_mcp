@@ -22,6 +22,84 @@ CANONICAL_DEV_PLAN_DOCS: Dict[str, str] = {
 }
 
 
+def normalize_case_status(value: Optional[str]) -> str:
+    """Canonical normalization for case-registry status tokens.
+
+    Lower-cased, trimmed, spaces collapsed to underscores so multi-word statuses
+    ("won't fix", "false positive") compare consistently across link_fix and
+    list_open_cases. This is the single normalization both call sites must use.
+    """
+    if not value:
+        return ""
+    return str(value).strip().lower().replace(" ", "_")
+
+
+# Single source of truth for case-registry lifecycle vocabulary. Previously the
+# "what counts as closed" set was duplicated and divergent between link_fix (which
+# statuses close a case) and list_open_cases (which statuses filter a case out),
+# so a case could be closed to one and open to the other. All members are stored
+# in canonical (normalized) form.
+CASE_OPEN_STATUS_VALUES: frozenset[str] = frozenset({
+    "open",
+    "investigating",
+    "triage",
+    "in_progress",
+    "todo",
+    "new",
+})
+
+# Terminal statuses that close a case as a NON-fix outcome. link_fix preserves the
+# specific token as the case status so the closure reason survives (rather than
+# flattening everything to a generic "closed").
+CASE_NONFIX_CLOSED_STATUS_VALUES: frozenset[str] = frozenset({
+    "wontfix",
+    "won't_fix",
+    "won_t_fix",
+    "duplicate",
+    "false_positive",
+    "mitigated",
+})
+
+# Terminal statuses that close a case as a successful fix/landing.
+CASE_FIX_CLOSED_STATUS_VALUES: frozenset[str] = frozenset({
+    "closed",
+    "resolved",
+    "fixed",
+    "done",
+    "completed",
+    "implemented",
+    "landed",
+    "merged",
+    "validated",
+})
+
+# The full closed/terminal vocabulary (fix + non-fix outcomes).
+CASE_CLOSED_STATUS_VALUES: frozenset[str] = (
+    CASE_FIX_CLOSED_STATUS_VALUES | CASE_NONFIX_CLOSED_STATUS_VALUES
+)
+
+
+def case_status_closes(value: Optional[str]) -> bool:
+    """True when *value* is a terminal (closed) case status."""
+    return normalize_case_status(value) in CASE_CLOSED_STATUS_VALUES
+
+
+def resolved_case_close_status(value: Optional[str]) -> Optional[str]:
+    """Return the status a case should be set to for landing status *value*.
+
+    - A non-fix terminal status (wontfix/duplicate/false_positive/...) is preserved
+      verbatim so the closure reason is recorded.
+    - A fix terminal status (merged/resolved/fixed/...) collapses to "closed".
+    - A non-terminal status returns ``None`` (the case stays open).
+    """
+    normalized = normalize_case_status(value)
+    if normalized in CASE_NONFIX_CLOSED_STATUS_VALUES:
+        return normalized
+    if normalized in CASE_FIX_CLOSED_STATUS_VALUES:
+        return "closed"
+    return None
+
+
 @dataclass(frozen=True)
 class ScribeSourceDocument:
     """Canonical source-family classification for a Scribe-managed document."""
@@ -586,6 +664,13 @@ def resolve_custom_doc_path(
             project_root / "docs" / "bugs",
             project_root / "docs" / "security",
         ]
+        # Resolve by EXACT identity, and refuse on ambiguity rather than returning
+        # an arbitrary first glob hit. The previous `doc_name in report_dir_name`
+        # substring match could collapse a case path onto an unrelated report whose
+        # directory merely contained the name. 2.7.1 hardened the registry lookup;
+        # this hardens the filesystem report-resolution path the same way.
+        case_id_matches: list[Path] = []
+        suffix_matches: list[Path] = []
         for case_root in case_roots:
             if not case_root.exists():
                 continue
@@ -596,11 +681,20 @@ def resolve_custom_doc_path(
                 )
                 if classification is None or classification.doc_type != desired_doc_type:
                     continue
-                report_dir_name = report_file.parent.name
-                if report_dir_name.endswith(f"_{doc_name}") or doc_name in report_dir_name:
-                    return report_file
                 if classification.case_id and classification.case_id == doc_name:
-                    return report_file
+                    case_id_matches.append(report_file)
+                    continue
+                report_dir_name = report_file.parent.name
+                if report_dir_name.endswith(f"_{doc_name}"):
+                    suffix_matches.append(report_file)
+        # Exact case_id is the strongest identifier and wins outright when unique.
+        if len(case_id_matches) == 1:
+            return case_id_matches[0]
+        if len(case_id_matches) > 1:
+            return None  # ambiguous case_id collision — refuse
+        # Otherwise accept a unique slug-suffix match only.
+        if len(suffix_matches) == 1:
+            return suffix_matches[0]
         return None
 
     if doc_category == "reviews":
