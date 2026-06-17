@@ -9,7 +9,7 @@ description = "Optional council template provider for scribe-mcp"
 requires-python = ">=3.11"
 license = { text = "See repository LICENSE" }
 authors = [{ name = "Scribe MCP Contributors" }]
-dependencies = ["scribe-mcp==2.4.0"]
+dependencies = ["scribe-mcp==2.8.0"]
 
 [project.entry-points."council.templates"]
 scribe-council = "scribe_council.council_templates:get_council_templates"
