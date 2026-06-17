@@ -28,7 +28,7 @@ Coverage: **v2.8.0 public release line**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.8.0` and CLI scripts. 2.8.0 adds host-facing `manage_docs` input-schema enrichment (additive MCP schema capability). |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.8.0` and CLI scripts. 2.8.0 adds the `manage_docs` host input-schema enrichment, a `postgres` extra (`asyncpg`), and package-data globs that vendor the plugin + onboarding bundles into the wheel. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -51,6 +51,8 @@ Coverage: **v2.8.0 public release line**
 | `src/scribe_mcp/doc_management/**` | Shipped package source | Document management runtime. |
 | `src/scribe_mcp/bridges/**` | Shipped package source | Bridge/plugin runtime framework. |
 | `src/scribe_mcp/config/**` | Shipped package source | Runtime settings and config helpers. |
+| `src/scribe_mcp/plugins_bundle/**` | Shipped package source | Plugin bundles (Claude + Codex, including hidden `.claude-plugin`/`.codex-plugin` manifests) vendored into the wheel via package-data as of 2.8.0. `config/paths.py:resolve_codex_plugin_root()` prefers this packaged bundle so plugin projection works from a plain `pip install scribe-mcp`. |
+| `src/scribe_mcp/onboarding/**` | Shipped package source | Packaged canonical onboarding usage skill (`onboarding/skills/scribe-mcp-usage/SKILL.md`) shipped from the install path, vendored into the wheel via package-data as of 2.8.0. |
 
 ## Versioning contract
 
@@ -75,7 +77,8 @@ Coverage: **v2.8.0 public release line**
 
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `skills/scribe-integration/SKILL.md` | Public support material | Public copy of the generated Scribe integration skill. The template source is not published here. |
+| `skills/scribe-integration/SKILL.md` | Public support material | Public copy of the generated Scribe integration skill. In 2.8.0 this skill was completed to cover the full ~28-tool surface. The template source is not published here. |
+| `src/scribe_mcp/onboarding/skills/scribe-mcp-usage/SKILL.md` | Shipped package source | New in 2.8.0: the canonical onboarding/install usage skill, shipped inside the wheel rather than as a repo-only `skills/` copy. Also authored as a `/scribe-onboarding` council template that downstream councils generate into their own skill surfaces. |
 
 ## Local/operator-only paths
 

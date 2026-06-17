@@ -159,15 +159,23 @@ Depending on runtime and available registry data, this can surface:
 
 #### `manage_docs`
 
-This is the main managed-doc surface.
+This is the main managed-doc surface, and it is far more than create/edit. It is a
+governed-document engine with **28 actions**: 8 primary write/edit actions plus a
+20-action "governance engine" for discovery, quality gating, scans, and safe
+maintenance.
 
-Typical operations:
+**Primary write/edit actions:**
 
-- `create`
-- `list_sections`
-- `replace_section`
-- `apply_patch`
-- `status_update`
+- `create` — scaffold a new doc (a template, *not* a finished doc — always follow
+  with `replace_section`)
+- `replace_section` — fill a scaffold section by its anchor ID
+- `apply_patch` — context-anchored surgical edit (preferred for existing content;
+  survives line drift)
+- `replace_range` — replace an explicit line span
+- `replace_text` — find/replace
+- `append` — append content
+- `status_update` — mark a checklist item done with proof (checklist-only)
+- `frontmatter_update` — narrative-doc frontmatter/status edits
 
 The key idea is that Scribe does not treat project docs as loose markdown blobs. It gives them stable editable structure, including anchor IDs such as:
 
@@ -178,18 +186,52 @@ The key idea is that Scribe does not treat project docs as loose markdown blobs.
 
 That is what makes later updates more reliable than heading-text guesswork.
 
-Scribe also exposes health-oriented managed-doc actions such as `project_health`, which are useful when you want to inspect the recent doc surface for the active project before mutating it.
+**The governance engine (the actions most people never discover):**
+
+- *Discovery* — `list_sections`, `list_checklist_items`, `search`
+- *Quality gating* — `quality_check` (structured `SCF_*` warnings: codes, severity,
+  blocking status, locations, suggested repairs), `quality_handoff_check`,
+  `scaffold_quality_check`. These make "no scaffold residue ships" an enforceable
+  tool call, not just a convention.
+- *Health & topology* — `project_health` (inspect the recent doc surface before
+  mutating), `topology_scan` (typed cross-doc edges), `metadata_scan`
+- *Safe maintenance* — `metadata_repair`, `stale_cleanup_scan`, `generate_toc`,
+  `normalize_headers`, `validate_crosslinks` (find broken cross-references),
+  `rehome_doc` (move a managed doc to its canonical location without losing Scribe
+  registration — never use shell `mv`/`cp` on a managed doc)
+- *Reporting & batch* — `apply_global_changelog`, `preview_reconciliation`,
+  `regenerate_intelligence_exports`, `ingestion_manifest_inspect`, `batch` (run
+  several managed-doc operations in one call)
 
 ### File and search tools
 
 #### `read_file`
 
-Repo-safe file reads with modes such as:
+Repo-safe file reads — and a lightweight code-intelligence tool. Always start with
+`scan_only` (cheapest), then read only the lines you need.
 
-- `scan_only`
-- `line_range`
-- `search`
-- `full_stream`
+**Modes:**
+
+- `scan_only` (default) — structure (classes/functions with line numbers) + imports,
+  no content
+- `line_range` — an exact line span, the targeted follow-up to a scan
+- `chunk` / `page` — walk a large file in bounded pieces
+- `search` — find content within one file, with `search_mode` regex|literal|smart|
+  fuzzy (auto-inferred when unset; `fuzzy_threshold` tunes fuzzy matching) and
+  `context_lines`
+- `full_stream` / `full` — the whole file, only when you genuinely need it
+
+**Advanced scan flags (with `scan_only`):**
+
+- `include_dependencies=True` — attach the file's import dependency graph
+- `include_impact=True` — attach impact-radius / blast-radius analysis (requires
+  `include_dependencies=True`)
+- `structure_filter="<regex>"` — filter the scanned classes/functions by name
+- `allow_outside_repo=True` — read a file outside the repo root (the security
+  denylist still applies) — needed for cross-repo reads
+
+Together these turn `read_file` into a dependency- and impact-analysis tool, not just
+a pager.
 
 #### `search`
 

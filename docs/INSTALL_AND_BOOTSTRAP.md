@@ -1,7 +1,7 @@
 # Install and bootstrap
 
-Release line: `2.7.1`
-Updated: `2026-06-16`
+Release line: `2.8.0`
+Updated: `2026-06-17`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 
@@ -25,6 +25,12 @@ Choose the smallest path that matches what you are trying to do:
 
 ```bash
 pip install scribe-mcp
+```
+
+The Postgres driver (`asyncpg`) is already a core dependency, so the base install is Postgres-capable out of the box. The `[postgres]` extra is available as an explicit alias if you prefer to make the Postgres intent visible in your dependency list:
+
+```bash
+pip install 'scribe-mcp[postgres]'
 ```
 
 Sanity-check the public CLI surface:
@@ -196,7 +202,7 @@ Codex projection is explicit opt-in only and runs after core install commit veri
 
 This is the supported projection flow for this release line.
 
-The package also ships bundled plugin assets under `plugins/` for Codex and Claude-oriented setups.
+As of the 2.8.0 line, the Codex and Claude plugin bundles ship inside the installed package: they are vendored into the wheel via package-data (a byte-identical copy of the repo `plugins/` tree under `plugins_bundle/`). `resolve_codex_plugin_root()` prefers that packaged bundle, so a plain `pip install scribe-mcp` followed by `scribe install --commit --yes --project-codex` projects the assets into your Codex surfaces with no clone required. The repo `plugins/` tree remains the canonical source for development and is used as a fallback when you run the projection command from a cloned checkout.
 
 ## 7. Remote/client posture
 

@@ -10,6 +10,36 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Refinement sweep: schema enrichment, maintainability, read_file perf, reminders, discoverability, onboarding, packaging
+- `entry_id`: 20260617:refinement-audit-sweep-2-8-0
+- `entry_status`: accepted
+- `title`: Refinement sweep (manage_docs schema, case correctness, maintainability, read_file perf, reminders, discoverability, onboarding, packaging)
+- `summary`: Bumped the public release line to `2.8.0` (backward-compatible additive + fix; no breaking public API/CLI/schema contract). Host-facing `manage_docs` MCP input schema now advertises a live `action` enum from the action manifest, documents generic + per-action metadata keys, declares `required: ["action"]`, and preserves `additionalProperties`. WS1 case correctness: unified bug/case status vocabulary so closure states (incl. `wontfix`/`duplicate`) are preserved consistently, and replaced substring case-path resolution with exact matching that refuses ambiguous resolution. Maintainability/honest envelopes: removed the dead cross-project search engine in `query_entries` (15 symbols; 2587 -> 1868 lines) and dead self-healing in `utils/error_handler.py` (-222 lines); `query_entries` non-project `search_scope` now returns an honest `ok:false` teaching error instead of a silent no-op, and emergency/degraded paths return honest `ok:false` envelopes instead of fabricated rows. `read_file` gained real pagination slicing, a single-pass AST structure visitor, and SQL-pushdown of the message predicate on both SQLite and Postgres (headline perf fix) plus pagination. Reminder engine wired live: 16 previously-dead conditions, category-keyed priority sort, warm-rebind refresh, and configurable knobs. Discoverability/onboarding: rewritten `append_entry`/`health_check` tool descriptions, `manage_docs`/`read_file` docstrings surfacing the full governance action set + scan flags, a completed `/scribe-integration` skill, a new `/scribe-onboarding` install skill, and new-project reminder hints pointing to both; the architecture rule corrected to measured god-module sizes (response.py kept as a partial decomposition, not a thin facade; manager.py decomposition deferred). Managed-doc frontmatter `title`-clobber fixed so user-set titles are preserved (BUG-2026-06-17-0002). Packaging: added a `postgres` extra (`asyncpg`), plugin manifests, and vendored the plugin + onboarding bundles into the wheel (`src/scribe_mcp/plugins_bundle/**` + `src/scribe_mcp/onboarding/**` via package-data) with `resolve_codex_plugin_root()` preferring the packaged bundle so `pip install scribe-mcp` works without a clone. Non-goals held: SQLite retained, god modules + `utils/response.py` not decomposed, no federation, no new systems beyond onboarding.
+- `evidence_refs`:
+  - pyproject.toml
+  - MANIFEST.in
+  - src/scribe_mcp/tools/manage_docs.py
+  - src/scribe_mcp/tools/read_file.py
+  - src/scribe_mcp/tools/query_entries.py
+  - src/scribe_mcp/tools/append_entry.py
+  - src/scribe_mcp/tools/health_check.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/utils/error_handler.py
+  - src/scribe_mcp/config/paths.py
+  - src/scribe_mcp/config/reminders/en-US.json
+  - src/scribe_mcp/install_wizard.py
+  - src/scribe_mcp/plugins_bundle/**
+  - src/scribe_mcp/onboarding/**
+  - docs/COMPATIBILITY_MATRIX.md
+  - docs/RELEASE_FILE_MAP.md
+  - skills/scribe-integration/SKILL.md
+  - tests/test_query_entries_dead_engine_honest_envelopes.py
+  - tests/test_tool_discoverability_p7.py
+  - docs/bugs/runtime/2026-06-17_BUG-2026-06-17-0002/report.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.8.0
+
 ## Furnace-project quality-check O(N^2) elimination + read_recent fixes
 - `entry_id`: 20260616:furnace-quality-check-perf-2-7-2
 - `entry_status`: accepted

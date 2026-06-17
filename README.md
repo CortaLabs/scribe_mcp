@@ -335,7 +335,7 @@ Codex-specific guidance lives here:
 - [MCP server guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/mcp_server_guide.md)
 - [Codex projection path](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/INSTALL_AND_BOOTSTRAP.md#codex-projection-path)
 
-The repo also ships bundled plugin assets for Codex and Claude under `plugins/`, so the MCP server surface is not the only integration story.
+The Codex and Claude plugin bundles ship inside the installed package as of the 2.8.0 line, vendored into the wheel via package-data, so the MCP server surface is not the only integration story. Because projection prefers the packaged bundle, a plain `pip install scribe-mcp` followed by `scribe install --commit --yes --project-codex` projects those assets into your Codex surfaces with no clone required. The repo `plugins/` tree stays the canonical source for development and is used as a fallback when you run projection from a cloned checkout.
 
 ## Documentation map
 
