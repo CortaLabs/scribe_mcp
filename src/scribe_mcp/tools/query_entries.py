@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-from scribe_mcp.utils.time import format_utc, utcnow
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -20,10 +17,8 @@ from scribe_mcp.utils.config_manager import ConfigManager, validate_enum_value, 
 from scribe_mcp.utils.logs import parse_log_line, read_all_lines
 from scribe_mcp.utils.search import message_matches
 from scribe_mcp.utils.time import coerce_range_boundary
-from scribe_mcp.utils.response import create_pagination_info, default_formatter
-from scribe_mcp.utils.tokens import token_estimator
+from scribe_mcp.utils.response import default_formatter
 from scribe_mcp.utils.estimator import PaginationCalculator
-from scribe_mcp.utils.bulk_processor import BulkProcessor
 from scribe_mcp.utils.error_handler import ErrorHandler, ExceptionHealer
 from scribe_mcp.utils.parameter_validator import ToolValidator, BulletproofParameterCorrector
 from scribe_mcp.tools.config.query_entries_config import QueryEntriesConfig
@@ -1186,49 +1181,27 @@ async def _execute_search_with_fallbacks(
                 }
 
     except Exception as e:
-        # Apply ultimate exception healing for search execution
-        healed_result = _EXCEPTION_HEALER.heal_emergency_exception(
-            e, {"operation": "search_execution", "project": search_query.get("resolved_project", "unknown")}
-        )
-
-        if healed_result and healed_result.get("success") and "healed_values" in healed_result:
-            # Create emergency search results
-            emergency_params = _FALLBACK_MANAGER.apply_emergency_fallback(
-                "query_entries", healed_result["healed_values"]
-            )
-
-            return {
-                "ok": True,
-                "entries": [{
-                    "id": f"emergency-{uuid.uuid4().hex[:16]}",
-                    "ts": format_utc(utcnow()),
-                    "message": emergency_params.get("message", "Emergency search result after critical error"),
-                    "emoji": emergency_params.get("emoji", "🚨"),
-                    "agent": emergency_params.get("agent", "Scribe"),
-                    "meta": {"emergency_fallback": True, "critical_error": str(e)}
-                }],
-                "pagination": {
-                    "page": 1,
-                    "page_size": 1,
-                    "total_count": 1,
-                    "has_next": False,
-                    "has_prev": False
-                },
-                "validation_warnings": [f"Emergency fallback due to critical error: {str(e)}"],
-                "total_found": 1,
-                "returned": 1,
-                "emergency_fallback": True
-            }
-        else:
-            return {
-                "ok": False,
-                "error": f"Critical search error: {str(e)}",
-                "suggestion": "Check system configuration and try again",
-                "entries": [],
-                "pagination": {},
-                "total_found": 0,
-                "returned": 0
-            }
+        # Honest envelope (WS2 F9): a search execution failure is a FAILURE.
+        # Never fabricate a synthetic 🚨 result row inside an ok:True response —
+        # that lets callers (and downstream agents) mistake an internal error
+        # for a legitimate single-result search. Return ok:False with a clear
+        # error envelope regardless of whether parameter healing "succeeded".
+        return {
+            "ok": False,
+            "error": f"Critical search error: {str(e)}",
+            "suggestion": "Check system configuration and try again",
+            "entries": [],
+            "pagination": {
+                "page": 1,
+                "page_size": search_query.get("search_params", {}).get("page_size", 10),
+                "total_count": 0,
+                "has_next": False,
+                "has_prev": False,
+            },
+            "total_found": 0,
+            "returned": 0,
+            "emergency_fallback": True,
+        }
 
 
 @app.tool(**read_only_local_tool(title="Query Log Entries", tags=("logs", "search", "read-only")))
@@ -1394,6 +1367,65 @@ async def query_entries(
                     },
                 }
 
+        # === CROSS-PROJECT / DOCUMENT-SCOPE TEACHING GATE (WS2 F2/F8) ===
+        # The cross-project search engine (search_scope != "project",
+        # document_types, relevance_threshold) was dead code that silently
+        # returned only the active project's progress log — a no-op that lied
+        # to callers. It has been removed (P6.3). Rather than silently ignore
+        # these parameters, teach the caller they are not implemented so they
+        # get truth instead of wrong results.
+        _unsupported_scope = (
+            final_config.search_scope is not None
+            and str(final_config.search_scope) != "project"
+        )
+        _unsupported_doc_types = bool(final_config.document_types)
+        _unsupported_relevance = (
+            final_config.relevance_threshold is not None
+            and float(final_config.relevance_threshold) > 0.0
+        )
+        if _unsupported_scope or _unsupported_doc_types or _unsupported_relevance:
+            _offending: List[str] = []
+            if _unsupported_scope:
+                _offending.append(
+                    f"search_scope={final_config.search_scope!r}"
+                )
+            if _unsupported_doc_types:
+                _offending.append(
+                    f"document_types={final_config.document_types!r}"
+                )
+            if _unsupported_relevance:
+                _offending.append(
+                    f"relevance_threshold={final_config.relevance_threshold!r}"
+                )
+            return {
+                "ok": False,
+                "error": (
+                    "Cross-project / document-scope search is not implemented. "
+                    f"Unsupported parameter(s): {', '.join(_offending)}. "
+                    "query_entries searches only the active project's progress "
+                    "log."
+                ),
+                "suggestion": (
+                    "Use search_scope=\"project\" (the default), leave "
+                    "document_types unset, and relevance_threshold=0.0. To "
+                    "search another project, set_project to it (or pass "
+                    "project=<name>) and query its progress log directly."
+                ),
+                "search_params": {
+                    "search_scope": final_config.search_scope,
+                    "document_types": final_config.document_types,
+                    "relevance_threshold": final_config.relevance_threshold,
+                },
+                "entries": [],
+                "pagination": {
+                    "page": final_config.page,
+                    "page_size": final_config.page_size,
+                    "total_count": 0,
+                    "has_next": False,
+                    "has_prev": False,
+                },
+            }
+
         # === CONTEXT RESOLUTION WITH ENHANCED ERROR HANDLING ===
         try:
             context = await resolve_logging_context(
@@ -1550,130 +1582,26 @@ async def query_entries(
         )
 
     except Exception as e:
-        # === ULTIMATE EXCEPTION HANDLING AND FALLBACK ===
-        # Apply Phase 2 ExceptionHealer for unexpected errors
-        healed_result = _EXCEPTION_HEALER.heal_emergency_exception(
-            e, {
-                "operation": "query_entries_main",
-                "project": project,
-                "message": message,
-                "tool": "query_entries"
-            }
-        )
-
-        if healed_result and healed_result.get("success") and "healed_values" in healed_result:
-            # Create emergency search with healed parameters
-            emergency_params = _FALLBACK_MANAGER.apply_emergency_fallback(
-                "query_entries", healed_result["healed_values"]
-            )
-
-            # Create minimal emergency search result
-            return {
-                "ok": True,
-                "entries": [{
-                    "id": f"emergency-{uuid.uuid4().hex[:16]}",
-                    "ts": format_utc(utcnow()),
-                    "message": emergency_params.get("message", "Emergency search result after critical error"),
-                    "emoji": emergency_params.get("emoji", "🚨"),
-                    "agent": emergency_params.get("agent", "Scribe"),
-                    "meta": {
-                        "emergency_fallback": True,
-                        "critical_error": str(e),
-                        "healed_exception": True
-                    }
-                }],
-                "pagination": {
-                    "page": 1,
-                    "page_size": 1,
-                    "total_count": 1,
-                    "has_next": False,
-                    "has_prev": False
-                },
-                "emergency_fallback": True,
-                "original_error": str(e)
-            }
-        else:
-            # Return error if even emergency healing fails
-            return {
-                "ok": False,
-                "error": f"Critical error in query_entries: {str(e)}",
-                "emergency_healing_failed": True,
-                "suggestion": "Check system configuration and try again",
-                "entries": [],
-                "pagination": {}
-            }
-
-async def _resolve_cross_project_projects(
-    search_scope: str,
-    document_types: Optional[List[str]],
-) -> List[Dict[str, Any]]:
-    """Resolve projects to search based on search scope and document types."""
-    state = await server_module.state_manager.load()
-    projects: List[Dict[str, Any]] = []
-
-    if search_scope == "all_projects":
-        # Search all configured projects
-        for project_name in state.projects:
-            # Try to get complete project data from state first
-            project_dict = state.get_project(project_name)
-            if project_dict:
-                # If project data is incomplete, load from config
-                if not project_dict.get("progress_log"):
-                    fallback_project = load_project_config(project_name, allow_fallback=False)
-                    if fallback_project:
-                        project_dict = fallback_project
-                        project_dict["name"] = project_name
-                    else:
-                        # Skip projects without valid config
-                        continue
-                else:
-                    # Ensure name is set
-                    project_dict["name"] = project_name
-                projects.append(project_dict)
-
-    elif search_scope == "global":
-        # Search only the global log
-        # Return a special project config for global log
-        global_config = {
-            "name": "global",
-            "progress_log": "docs/GLOBAL_PROGRESS_LOG.md",
-            "docs_dir": "docs",
-            "root": "."
+        # === ULTIMATE EXCEPTION HANDLING (honest failure envelope) ===
+        # Honest envelope (WS2 F9): an unexpected error in query_entries is a
+        # FAILURE, not a search hit. Do not fabricate a synthetic 🚨 row in an
+        # ok:True response — that contradicts the "tools return error dicts"
+        # contract and hides real failures from callers. Always return ok:False.
+        return {
+            "ok": False,
+            "error": f"Critical error in query_entries: {str(e)}",
+            "suggestion": "Check system configuration and try again",
+            "entries": [],
+            "pagination": {
+                "page": 1,
+                "page_size": 10,
+                "total_count": 0,
+                "has_next": False,
+                "has_prev": False,
+            },
+            "emergency_fallback": True,
+            "original_error": str(e),
         }
-        projects.append(global_config)
-
-    elif search_scope in ["research", "bugs", "all"]:
-        # Search specific document types across all projects
-        for project_name in state.projects:
-            # Try to get complete project data from state first
-            project_dict = state.get_project(project_name)
-            if project_dict:
-                # If project data is incomplete, load from config
-                if not project_dict.get("progress_log"):
-                    fallback_project = load_project_config(project_name, allow_fallback=False)
-                    if fallback_project:
-                        project_dict = fallback_project
-                        project_dict["name"] = project_name
-                    else:
-                        # Skip projects without valid config
-                        continue
-                else:
-                    # Ensure name is set
-                    project_dict["name"] = project_name
-                # Check if project has the requested document types
-                if _project_has_document_types(project_dict, document_types, search_scope):
-                    projects.append(project_dict)
-
-        # Always include global log for these scopes
-        global_config = {
-            "name": "global",
-            "progress_log": "docs/GLOBAL_PROGRESS_LOG.md",
-            "docs_dir": "docs",
-            "root": "."
-        }
-        projects.append(global_config)
-
-    return projects
 
 
 async def _collect_observed_context_signals(*, project: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1710,653 +1638,6 @@ async def _collect_observed_context_signals(*, project: Dict[str, Any]) -> List[
             }
         )
     return signals
-
-
-def _project_has_document_types(
-    project: Dict[str, Any],
-    document_types: Optional[List[str]],
-    search_scope: str
-) -> bool:
-    """Check if a project has the requested document types."""
-    if not document_types and search_scope != "all":
-        return True
-
-    docs_dir = Path(project.get("docs_dir", ""))
-
-    # Check for specific document types
-    for doc_type in document_types or []:
-        if doc_type == "research":
-            if (docs_dir / "research").exists():
-                return True
-        elif doc_type == "architecture":
-            if (docs_dir / "ARCHITECTURE_GUIDE.md").exists():
-                return True
-        elif doc_type == "bugs":
-            if (docs_dir / "BUG_LOG.md").exists():
-                return True
-        elif doc_type == "global":
-            # Skip global log for individual projects
-            continue
-        elif doc_type == "progress":
-            # All projects have progress logs
-            return True
-
-    return search_scope == "all"  # For "all" scope, include all projects
-
-
-async def _query_file(
-    project: Dict[str, Any],
-    *,
-    limit: Optional[int],
-    start: Optional[datetime],
-    end: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-) -> List[Dict[str, Any]]:
-    path = Path(project["progress_log"])
-    lines = await read_all_lines(path)
-    results: List[Dict[str, Any]] = []
-
-    def within_bounds(ts_str: Optional[str]) -> bool:
-        if not ts_str:
-            return False
-        parsed = coerce_range_boundary(ts_str, end=False)
-        if not parsed:
-            return False
-        if start and parsed < start:
-            return False
-        if end and parsed > end:
-            return False
-        return True
-
-    agent_set = set(agents or [])
-    emoji_set = set(emojis or [])
-
-    for line in reversed(lines):
-        parsed = parse_log_line(line)
-        if not parsed:
-            continue
-        if (start or end) and not within_bounds(parsed.get("ts")):
-            continue
-        if agent_set and parsed.get("agent") not in agent_set:
-            continue
-        if emoji_set and parsed.get("emoji") not in emoji_set:
-            continue
-        if meta_filters and not _meta_matches(parsed.get("meta") or {}, meta_filters):
-            continue
-        if not message_matches(
-            parsed.get("message"),
-            message,
-            mode=message_mode,
-            case_sensitive=case_sensitive,
-        ):
-            continue
-        results.append(parsed)
-        if limit is not None and len(results) >= limit:
-            break
-    return results
-
-
-async def _handle_cross_project_search(
-    projects: List[Dict[str, Any]],
-    search_scope: str,
-    document_types: Optional[List[str]],
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-    page: int,
-    page_size: int,
-    compact: bool,
-    fields: Optional[List[str]],
-    include_metadata: bool,
-    verify_code_references: bool,
-    relevance_threshold: float,
-    state_snapshot: Dict[str, Any],
-    helper: LoggingToolMixin,
-    context: Optional[LoggingContext],
-) -> Dict[str, Any]:
-    """Handle cross-project search with result aggregation and pagination."""
-    all_results: List[Dict[str, Any]] = []
-    project_context: Dict[str, Dict[str, Any]] = {}
-
-    # Search each project and collect results
-    for project in projects:
-        project_results = await _search_single_project(
-            project=project,
-            document_types=document_types,
-            start_bound=start_bound,
-            end_bound=end_bound,
-            message=message,
-            message_mode=message_mode,
-            case_sensitive=case_sensitive,
-            agents=agents,
-            emojis=emojis,
-            meta_filters=meta_filters,
-            verify_code_references=verify_code_references,
-            relevance_threshold=relevance_threshold,
-        )
-
-        # Add project context to each result
-        for result in project_results:
-            result["project_name"] = project["name"]
-            result["project_root"] = project.get("root", "")
-            if include_metadata:
-                result["project_context"] = {
-                    "docs_dir": project.get("docs_dir", ""),
-                    "progress_log": project.get("progress_log", ""),
-                }
-
-        all_results.extend(project_results)
-        project_context[project["name"]] = project
-
-    # Apply relevance scoring and sorting
-    if relevance_threshold > 0.0:
-        all_results = _apply_relevance_scoring(
-            all_results,
-            message,
-            relevance_threshold
-        )
-
-    # Sort by relevance score (descending) then timestamp (most recent first)
-    all_results.sort(key=lambda x: (
-        x.get("relevance_score", 0.0),
-        x.get("timestamp", "")
-    ), reverse=True)
-
-    # Apply pagination
-    total_count = len(all_results)
-    start_idx, end_idx = _PAGINATION_CALCULATOR.calculate_pagination_indices(page, page_size, total_count)
-    paginated_results = all_results[start_idx:end_idx]
-
-    # Create pagination info
-    pagination_info = create_pagination_info(page, page_size, total_count)
-
-    if context is None:
-        context = await helper.prepare_context(
-            tool_name="query_entries",
-            agent_id=None,
-            explicit_project=None,
-            require_project=False,
-            state_snapshot=state_snapshot,
-        )
-
-    response = helper.success_with_entries(
-        entries=paginated_results,
-        context=context,
-        compact=compact,
-        fields=fields,
-        include_metadata=include_metadata,
-        pagination=pagination_info,
-        extra_data={
-            "search_scope": search_scope,
-            "document_types": document_types,
-            "projects_searched": list(project_context.keys()),
-            "total_results_across_projects": total_count,
-        },
-    )
-
-    # Record token usage
-    if token_estimator:
-        token_estimator.record_operation(
-            operation="query_entries_cross_project",
-            input_data={
-                "search_scope": search_scope,
-                "document_types": document_types,
-                "projects_count": len(projects),
-                "page": page,
-                "page_size": page_size,
-                "compact": compact,
-                "fields": fields,
-                "include_metadata": include_metadata,
-                "verify_code_references": verify_code_references,
-                "relevance_threshold": relevance_threshold,
-            },
-            response=response,
-            compact_mode=compact,
-            page_size=page_size
-        )
-
-    return response
-
-
-async def _search_single_project(
-    project: Dict[str, Any],
-    document_types: Optional[List[str]],
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-    verify_code_references: bool,
-    relevance_threshold: float,
-) -> List[Dict[str, Any]]:
-    """Search a single project including its document types."""
-    results: List[Dict[str, Any]] = []
-
-    # Search main progress log
-    if not document_types or "progress" in document_types:
-        progress_results = await _query_file(
-            project=project,
-            limit=None,  # Get all, we'll paginate later
-            start=start_bound,
-            end=end_bound,
-            message=message,
-            message_mode=message_mode,
-            case_sensitive=case_sensitive,
-            agents=agents,
-            emojis=emojis,
-            meta_filters=meta_filters,
-        )
-        results.extend(progress_results)
-
-    # Search other document types
-    docs_dir = Path(project.get("docs_dir", ""))
-
-    if document_types:
-        if "research" in document_types:
-            research_results = await _search_research_documents(
-                docs_dir, start_bound, end_bound, message, message_mode,
-                case_sensitive, agents, emojis, meta_filters
-            )
-            results.extend(research_results)
-
-        if "architecture" in document_types:
-            arch_results = await _search_architecture_documents(
-                docs_dir, start_bound, end_bound, message, message_mode,
-                case_sensitive, agents, emojis, meta_filters
-            )
-            results.extend(arch_results)
-
-        if "bugs" in document_types:
-            bug_results = await _search_bug_documents(
-                docs_dir, start_bound, end_bound, message, message_mode,
-                case_sensitive, agents, emojis, meta_filters
-            )
-            results.extend(bug_results)
-
-        if "global" in document_types and project["name"] == "global":
-            # Global log already handled as progress log for global project
-            pass
-
-    # Apply code reference verification if requested
-    if verify_code_references:
-        results = _verify_code_references_in_results(results)
-
-    # Add basic relevance scoring
-    results = _calculate_basic_relevance(results, message)
-
-    return results
-
-
-async def _search_research_documents(
-    docs_dir: Path,
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-) -> List[Dict[str, Any]]:
-    """Search research documents in the research/ subdirectory."""
-    results: List[Dict[str, Any]] = []
-    research_dir = docs_dir / "research"
-
-    if not research_dir.exists():
-        return results
-
-    # Find all research markdown files
-    for research_file in research_dir.glob("RESEARCH_*.md"):
-        try:
-            content = await read_all_lines(research_file)
-            # Parse research documents and extract searchable content
-            research_results = _parse_research_document(
-                research_file, content, start_bound, end_bound,
-                message, message_mode, case_sensitive, agents, emojis, meta_filters
-            )
-            results.extend(research_results)
-        except Exception as e:
-            # Log error but continue with other files
-            continue
-
-    return results
-
-
-async def _search_architecture_documents(
-    docs_dir: Path,
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-) -> List[Dict[str, Any]]:
-    """Search architecture guide documents."""
-    results: List[Dict[str, Any]] = []
-    arch_file = docs_dir / "ARCHITECTURE_GUIDE.md"
-
-    if not arch_file.exists():
-        return results
-
-    try:
-        content = await read_all_lines(arch_file)
-        arch_results = _parse_markdown_document(
-            arch_file, content, "architecture", start_bound, end_bound,
-            message, message_mode, case_sensitive, agents, emojis, meta_filters
-        )
-        results.extend(arch_results)
-    except Exception:
-        pass
-
-    return results
-
-
-async def _search_bug_documents(
-    docs_dir: Path,
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-) -> List[Dict[str, Any]]:
-    """Search bug report documents."""
-    results: List[Dict[str, Any]] = []
-    bug_file = docs_dir / "BUG_LOG.md"
-
-    if not bug_file.exists():
-        return results
-
-    try:
-        content = await read_all_lines(bug_file)
-        bug_results = _parse_markdown_document(
-            bug_file, content, "bugs", start_bound, end_bound,
-            message, message_mode, case_sensitive, agents, emojis, meta_filters
-        )
-        results.extend(bug_results)
-    except Exception:
-        pass
-
-    return results
-
-
-def _parse_research_document(
-    file_path: Path,
-    content: List[str],
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-) -> List[Dict[str, Any]]:
-    """Parse research document into searchable entries."""
-    results: List[Dict[str, Any]] = []
-
-    # Extract sections from research document
-    current_section = ""
-    section_content = []
-
-    for line in content:
-        if line.startswith("# "):
-            # New top-level section
-            if current_section and section_content:
-                result = _create_document_entry(
-                    file_path, current_section, section_content,
-                    "research", start_bound, end_bound, message,
-                    message_mode, case_sensitive, agents, emojis, meta_filters
-                )
-                if result:
-                    results.append(result)
-
-            current_section = line.strip()
-            section_content = []
-        elif line.strip():
-            section_content.append(line)
-
-    # Don't forget the last section
-    if current_section and section_content:
-        result = _create_document_entry(
-            file_path, current_section, section_content,
-            "research", start_bound, end_bound, message,
-            message_mode, case_sensitive, agents, emojis, meta_filters
-        )
-        if result:
-            results.append(result)
-
-    return results
-
-
-def _parse_markdown_document(
-    file_path: Path,
-    content: List[str],
-    doc_type: str,
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-) -> List[Dict[str, Any]]:
-    """Parse generic markdown document into searchable entries."""
-    results: List[Dict[str, Any]] = []
-
-    # Split document into sections based on headers
-    current_section = ""
-    section_content = []
-
-    for line in content:
-        if line.startswith("#"):
-            # New section
-            if current_section and section_content:
-                result = _create_document_entry(
-                    file_path, current_section, section_content,
-                    doc_type, start_bound, end_bound, message,
-                    message_mode, case_sensitive, agents, emojis, meta_filters
-                )
-                if result:
-                    results.append(result)
-
-            current_section = line.strip()
-            section_content = []
-        elif line.strip():
-            section_content.append(line)
-
-    # Process final section
-    if current_section and section_content:
-        result = _create_document_entry(
-            file_path, current_section, section_content,
-            doc_type, start_bound, end_bound, message,
-            message_mode, case_sensitive, agents, emojis, meta_filters
-        )
-        if result:
-            results.append(result)
-
-    return results
-
-
-def _create_document_entry(
-    file_path: Path,
-    section: str,
-    content: List[str],
-    doc_type: str,
-    start_bound: Optional[datetime],
-    end_bound: Optional[datetime],
-    message: Optional[str],
-    message_mode: str,
-    case_sensitive: bool,
-    agents: Optional[List[str]],
-    emojis: Optional[List[str]],
-    meta_filters: Optional[Dict[str, str]],
-) -> Optional[Dict[str, Any]]:
-    """Create a searchable entry from document section."""
-    # Combine section and content for searching
-    full_text = section + "\n" + "\n".join(content)
-
-    # Apply message filtering
-    if message and not message_matches(
-        full_text, message, mode=message_mode, case_sensitive=case_sensitive
-    ):
-        return None
-
-    # Extract metadata from content if possible
-    meta = {"document_type": doc_type, "source_file": str(file_path)}
-
-    # Apply other filters (simplified for document entries)
-    if agents and not any(agent in full_text for agent in agents):
-        return None
-
-    if emojis and not any(emoji in full_text for emoji in emojis):
-        return None
-
-    if meta_filters:
-        for key, value in meta_filters.items():
-            if key not in meta or str(meta[key]) != str(value):
-                return None
-
-    # Create entry
-    return {
-        "timestamp": format_utc(),  # Use current time for document entries
-        "message": section.strip(),
-        "agent": "DocumentParser",
-        "emoji": "📄",
-        "status": "info",
-        "meta": meta,
-        "content": full_text,
-        "relevance_score": 0.5,  # Default relevance for document entries
-    }
-
-
-def _verify_code_references_in_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Verify code file references exist and add warnings for broken ones."""
-    updated_results = []
-
-    for result in results:
-        # Look for file path patterns in the message or content
-        text_content = result.get("message", "") + " " + result.get("content", "")
-
-        # Find potential file references
-        import re
-        file_pattern = r'[\w\-/\.]+\.(py|js|ts|md|json|yaml|yml|sql|sh|bash|zsh)$'
-        potential_files = re.findall(file_pattern, text_content, re.IGNORECASE)
-
-        verified_result = result.copy()
-        broken_refs = []
-
-        for file_ref in potential_files:
-            # Try to find the file in the current project
-            if not _verify_file_exists(file_ref):
-                broken_refs.append(file_ref)
-
-        if broken_refs:
-            verified_result["meta"] = verified_result.get("meta", {})
-            verified_result["meta"]["broken_code_references"] = broken_refs
-            verified_result["meta"]["code_reference_verification"] = "failed"
-
-            # Add warning emoji if code references are broken
-            if result.get("emoji") != "⚠️":
-                verified_result["emoji"] = "⚠️"
-        else:
-            verified_result["meta"] = verified_result.get("meta", {})
-            verified_result["meta"]["code_reference_verification"] = "passed"
-
-        updated_results.append(verified_result)
-
-    return updated_results
-
-
-def _verify_file_exists(file_ref: str) -> bool:
-    """Check if a referenced file exists in the current codebase."""
-    from pathlib import Path
-
-    # Try different common locations
-    potential_paths = [
-        Path(file_ref),  # Relative to current
-        Path("scribe_mcp") / file_ref,  # In scribe_mcp
-        Path("scribe_mcp/tools") / file_ref,  # In tools
-        Path("scribe_mcp/storage") / file_ref,  # In storage
-        Path("docs") / file_ref,  # In docs
-        Path("tests") / file_ref,  # In tests
-    ]
-
-    for path in potential_paths:
-        if path.exists():
-            return True
-
-    return False
-
-
-def _calculate_basic_relevance(results: List[Dict[str, Any]], query_message: Optional[str]) -> List[Dict[str, Any]]:
-    """Calculate basic relevance scores for search results."""
-    if not query_message:
-        # Default relevance for non-message queries
-        for result in results:
-            result["relevance_score"] = 0.5
-        return results
-
-    query_terms = query_message.lower().split()
-
-    for result in results:
-        score = 0.0
-        text = (result.get("message", "") + " " + result.get("content", "")).lower()
-
-        # Score based on term frequency
-        for term in query_terms:
-            if term in text:
-                score += 1.0
-
-        # Bonus for exact phrase matches
-        if query_message.lower() in text:
-            score += 2.0
-
-        # Bonus for recent entries (higher score for newer entries)
-        timestamp = result.get("timestamp", "")
-        if timestamp:
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(timestamp.replace(" UTC", ""))
-                days_ago = (datetime.now(dt.tzinfo) - dt).days
-                if isinstance(days_ago, int):
-                    if days_ago <= 7:
-                        score += 0.5
-                    elif days_ago <= 30:
-                        score += 0.25
-            except (TypeError, ValueError) as exc:
-                logger.debug(
-                    "Skipping recency boost for malformed timestamp '%s': %s",
-                    timestamp,
-                    exc,
-                )
-
-        result["relevance_score"] = min(score / len(query_terms) if query_terms else 0.5, 1.0)
-
-    return results
-
-
-def _apply_relevance_scoring(results: List[Dict[str, Any]], query_message: Optional[str], threshold: float) -> List[Dict[str, Any]]:
-    """Apply relevance threshold filtering using BulkProcessor utility."""
-    return BulkProcessor.filter_by_relevance_threshold(results, threshold, "relevance_score")
 
 
 def _resolve_emojis(

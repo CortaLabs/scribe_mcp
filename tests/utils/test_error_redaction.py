@@ -10,7 +10,6 @@ from scribe_mcp.doc_management.manager import _render_content
 from scribe_mcp.utils.error_handler import (
     ErrorHandler,
     ExceptionHealer,
-    HealingErrorHandler,
     sanitize_error_message,
 )
 from scribe_mcp.utils.tool_logger import log_tool_call
@@ -81,27 +80,6 @@ def test_error_handler_handle_safe_operation_redacts_context_error() -> None:
     assert context["operation"] == "unsafe_op"
     assert "context-secret" not in context["error"]
     assert context["error"] == "operation failed api_key=[REDACTED]"
-
-
-def test_healing_error_handler_redacts_healing_failed_and_final_error() -> None:
-    def _fail_healed_only(**kwargs):
-        if kwargs.get("foo") == "bar":
-            return {"ok": True}
-        raise RuntimeError("execute failed token=healing-secret")
-
-    success, result, healing_info = HealingErrorHandler.heal_and_execute(
-        operation_name="heal_op",
-        parameters={"foo": "bar"},
-        operation_func=_fail_healed_only,
-        healing_strategies={"foo": {"type": "numeric", "fallback": 1}},
-    )
-
-    assert success is True
-    assert result == {"ok": True}
-    assert healing_info is not None
-    assert "healing-secret" not in healing_info["healing_failed"]
-    assert healing_info["healing_failed"] == "execute failed token=[REDACTED]"
-    assert healing_info["fallback_used"] is True
 
 
 def test_exception_healer_operation_specific_redacts_failure_payloads() -> None:
