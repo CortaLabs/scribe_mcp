@@ -29,7 +29,9 @@ EXPECTED_REGISTERED_TOOLS = {
     "rotate_log",
     "scribe_doctor",
     "scribe_local_postgres_readiness_roundtrip_preflight",
+    "scribe_owned_write_barrier_acquire_maintained",
     "scribe_owned_write_barrier_acquire_release_proof",
+    "scribe_owned_write_barrier_release_maintained",
     "scribe_private_context_selector_readback",
     "search",
     "set_project",
@@ -125,6 +127,28 @@ def test_describe_registered_tools_returns_json_friendly_metadata():
     assert roundtrip_preflight["execution"]["taskSupport"] == "forbidden"
     assert "bounded-preflight" in roundtrip_preflight["tags"]
 
+    acquire_maintained = details["scribe_owned_write_barrier_acquire_maintained"]
+    assert acquire_maintained["title"] == "Scribe Owned Write Barrier Acquire Maintained"
+    assert acquire_maintained["annotations"]["readOnlyHint"] is False
+    assert acquire_maintained["annotations"]["destructiveHint"] is False
+    assert acquire_maintained["annotations"]["openWorldHint"] is False
+    assert acquire_maintained["meta"]["scribe"]["trustTier"] == 2
+    assert acquire_maintained["meta"]["scribe"]["riskClass"] == "local_stateful_write"
+    assert acquire_maintained["meta"]["scribe"]["surface"] == "operator"
+    assert acquire_maintained["meta"]["scribe"]["locality"] == "local"
+    assert "maintained" in acquire_maintained["tags"]
+
+    release_maintained = details["scribe_owned_write_barrier_release_maintained"]
+    assert release_maintained["title"] == "Scribe Owned Write Barrier Release Maintained"
+    assert release_maintained["annotations"]["readOnlyHint"] is False
+    assert release_maintained["annotations"]["destructiveHint"] is False
+    assert release_maintained["annotations"]["openWorldHint"] is False
+    assert release_maintained["meta"]["scribe"]["trustTier"] == 2
+    assert release_maintained["meta"]["scribe"]["riskClass"] == "local_stateful_write"
+    assert release_maintained["meta"]["scribe"]["surface"] == "operator"
+    assert release_maintained["meta"]["scribe"]["locality"] == "local"
+    assert "release" in release_maintained["tags"]
+
 
 def test_direct_tool_schemas_require_operational_inputs():
     details = server.describe_registered_tools()
@@ -147,6 +171,14 @@ def test_direct_tool_schemas_require_operational_inputs():
             "target_class_label",
             "selected_context_readback_status_label",
             "proof_namespace_label",
+        },
+        "scribe_owned_write_barrier_acquire_maintained": {
+            "owner_label",
+            "reason_label",
+        },
+        "scribe_owned_write_barrier_release_maintained": {
+            "owner_label",
+            "reason_label",
         },
     }
 

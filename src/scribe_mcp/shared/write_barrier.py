@@ -21,6 +21,7 @@ class WriteBarrierEvidence:
     status_label: str
     lock_fingerprint: str | None
     operation_label: str
+    owner_label: str = "unknown"
     private_values_recorded: bool = False
 
 
@@ -51,6 +52,7 @@ def _malformed_evidence(raw_value: str) -> WriteBarrierEvidence:
         status_label=_STATUS_MALFORMED,
         lock_fingerprint=_fingerprint_payload({"malformed": raw_value}),
         operation_label="unknown",
+        owner_label="unknown",
     )
 
 
@@ -73,6 +75,7 @@ def read_write_barrier_state(root: Path) -> WriteBarrierEvidence | None:
     status_label = payload.get("status_label")
     lock_fingerprint = payload.get("lock_fingerprint")
     operation_label = payload.get("operation_label")
+    owner_label = payload.get("owner_label")
     private_values_recorded = payload.get("private_values_recorded", False)
     if (
         status_label != _STATUS_ACQUIRED
@@ -80,6 +83,8 @@ def read_write_barrier_state(root: Path) -> WriteBarrierEvidence | None:
         or not lock_fingerprint
         or not isinstance(operation_label, str)
         or not operation_label
+        or not isinstance(owner_label, str)
+        or not owner_label
         or private_values_recorded is not False
     ):
         return _malformed_evidence(raw_value)
@@ -87,6 +92,7 @@ def read_write_barrier_state(root: Path) -> WriteBarrierEvidence | None:
         status_label=status_label,
         lock_fingerprint=lock_fingerprint,
         operation_label=operation_label,
+        owner_label=owner_label,
         private_values_recorded=False,
     )
 
@@ -104,15 +110,7 @@ def assert_writes_allowed(root: Path, *, operation_label: str) -> None:
     )
 
 
-@contextmanager
-def scribe_owned_write_barrier_lock(
-    root: Path,
-    *,
-    owner_label: str,
-    reason_label: str,
-) -> Iterator[WriteBarrierEvidence]:
-    """Acquire a repo/project-local Scribe write barrier and release it on exit."""
-    path = _lock_path(root)
+def _build_payload(*, owner_label: str, reason_label: str) -> tuple[WriteBarrierEvidence, dict[str, object]]:
     operation_label = _safe_label(reason_label)
     owner = _safe_label(owner_label)
     fingerprint = _fingerprint_payload(
@@ -126,31 +124,94 @@ def scribe_owned_write_barrier_lock(
         status_label=_STATUS_ACQUIRED,
         lock_fingerprint=fingerprint,
         operation_label=operation_label,
+        owner_label=owner,
     )
     payload = {
         "status_label": evidence.status_label,
         "lock_fingerprint": evidence.lock_fingerprint,
         "operation_label": evidence.operation_label,
-        "owner_label": owner,
+        "owner_label": evidence.owner_label,
         "private_values_recorded": False,
     }
+    return evidence, payload
 
+
+def _write_lock(path: Path, payload: dict[str, object]) -> None:
     lock_parent = path.parent
     lock_parent.mkdir(parents=True, exist_ok=True)
     with suppress(OSError):
         lock_parent.chmod(0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    with suppress(OSError):
+        path.chmod(0o600)
+
+
+def scribe_owned_write_barrier_acquire(
+    root: Path,
+    *,
+    owner_label: str,
+    reason_label: str,
+) -> WriteBarrierEvidence:
+    """Acquire and maintain the Scribe write barrier until explicit release."""
+    path = _lock_path(root)
+    owner = _safe_label(owner_label)
+    operation_label = _safe_label(reason_label)
+    current = read_write_barrier_state(root)
+    if current is not None:
+        if current.owner_label == owner and current.operation_label == operation_label:
+            return current
+        raise WriteBarrierError("Scribe write barrier is already active.")
+    evidence, payload = _build_payload(owner_label=owner, reason_label=operation_label)
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        _write_lock(path, payload)
+    except FileExistsError as exc:
+        current = read_write_barrier_state(root)
+        if current is not None and current.owner_label == owner and current.operation_label == operation_label:
+            return current
+        raise WriteBarrierError("Scribe write barrier is already active.") from exc
+    return evidence
+
+
+def scribe_owned_write_barrier_release(
+    root: Path,
+    *,
+    owner_label: str,
+    reason_label: str,
+) -> WriteBarrierEvidence | None:
+    """Release an active maintained barrier only for the matching owner and operation."""
+    path = _lock_path(root)
+    current = read_write_barrier_state(root)
+    if current is None:
+        return None
+    owner = _safe_label(owner_label)
+    operation_label = _safe_label(reason_label)
+    if current.owner_label != owner or current.operation_label != operation_label:
+        raise WriteBarrierError("Scribe write barrier is owned by another operation.")
+    with suppress(FileNotFoundError):
+        path.unlink()
+    return current
+
+
+@contextmanager
+def scribe_owned_write_barrier_lock(
+    root: Path,
+    *,
+    owner_label: str,
+    reason_label: str,
+) -> Iterator[WriteBarrierEvidence]:
+    """Acquire a repo/project-local Scribe write barrier and release it on exit."""
+    path = _lock_path(root)
+    evidence, payload = _build_payload(owner_label=owner_label, reason_label=reason_label)
+    try:
+        _write_lock(path, payload)
     except FileExistsError as exc:
         raise WriteBarrierError("Scribe write barrier is already active.") from exc
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        with suppress(OSError):
-            path.chmod(0o600)
         yield evidence
     finally:
         current = read_write_barrier_state(root)

@@ -15,7 +15,9 @@ from scribe_mcp.shared.write_barrier import (
     WriteBarrierError,
     assert_writes_allowed,
     read_write_barrier_state,
+    scribe_owned_write_barrier_acquire,
     scribe_owned_write_barrier_lock,
+    scribe_owned_write_barrier_release,
 )
 from scribe_mcp.tools import append_entry as append_entry_module
 from scribe_mcp.tools import set_project as set_project_module
@@ -52,6 +54,59 @@ def test_assert_writes_allowed_blocks_other_operations_but_allows_owner(tmp_path
         assert_writes_allowed(tmp_path, operation_label="restore-private-target")
         with pytest.raises(WriteBarrierError):
             assert_writes_allowed(tmp_path, operation_label="append_entry")
+
+
+def test_maintained_barrier_acquires_reads_blocks_and_releases(tmp_path: Path) -> None:
+    evidence = scribe_owned_write_barrier_acquire(
+        tmp_path,
+        owner_label="train-30bn-step-0",
+        reason_label="replace-after-backup",
+    )
+    state = read_write_barrier_state(tmp_path)
+
+    assert state == evidence
+    assert evidence.owner_label == "train-30bn-step-0"
+    assert evidence.operation_label == "replace-after-backup"
+    assert_writes_allowed(tmp_path, operation_label="replace-after-backup")
+    with pytest.raises(WriteBarrierError):
+        assert_writes_allowed(tmp_path, operation_label="append_entry")
+
+    repeated = scribe_owned_write_barrier_acquire(
+        tmp_path,
+        owner_label="train-30bn-step-0",
+        reason_label="replace-after-backup",
+    )
+    assert repeated == evidence
+
+    with pytest.raises(WriteBarrierError):
+        scribe_owned_write_barrier_acquire(
+            tmp_path,
+            owner_label="another-operation",
+            reason_label="replace-after-backup",
+        )
+    with pytest.raises(WriteBarrierError):
+        scribe_owned_write_barrier_release(
+            tmp_path,
+            owner_label="another-operation",
+            reason_label="replace-after-backup",
+        )
+
+    released = scribe_owned_write_barrier_release(
+        tmp_path,
+        owner_label="train-30bn-step-0",
+        reason_label="replace-after-backup",
+    )
+
+    assert released == evidence
+    assert read_write_barrier_state(tmp_path) is None
+    assert (
+        scribe_owned_write_barrier_release(
+            tmp_path,
+            owner_label="train-30bn-step-0",
+            reason_label="replace-after-backup",
+        )
+        is None
+    )
 
 
 def test_malformed_lock_state_fails_closed_without_private_readback(tmp_path: Path) -> None:

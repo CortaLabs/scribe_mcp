@@ -517,7 +517,9 @@ async def drain_background_tasks(*, timeout: float | None = None) -> list[BaseEx
 if _MCP_AVAILABLE:
     from mcp import types as mcp_types
 
-    if not hasattr(app, "tool"):
+    # Always install Scribe's metadata-aware wrapper; upstream Server.tool does
+    # not populate the local registry used by CLI/tool readback contracts.
+    if not getattr(app, "_scribe_metadata_wrapper_installed", False):
         if not hasattr(Server, "_scribe_tool_registry"):
             Server._scribe_tool_registry = {}
             Server._scribe_tool_defs = {}
@@ -717,6 +719,7 @@ if _MCP_AVAILABLE:
             return register
 
         setattr(app, "tool", _tool_decorator)
+        setattr(app, "_scribe_metadata_wrapper_installed", True)
 
         @app.list_tools()
         async def _list_tools() -> list[mcp_types.Tool]:

@@ -63,6 +63,8 @@ _TOOL_NAME_TO_MODULE: Dict[str, str] = {
     "set_project": "set_project",
     "read_write_barrier_state": "write_barrier",
     "scribe_owned_write_barrier_acquire_release_proof": "write_barrier",
+    "scribe_owned_write_barrier_acquire_maintained": "write_barrier",
+    "scribe_owned_write_barrier_release_maintained": "write_barrier",
 }
 
 _LOADED_MODULES: Set[str] = set()
