@@ -783,7 +783,14 @@ async def test_set_project_structured_reuses_same_binding_without_duplicate_writ
         assert "ensure_documents" not in phases
         assert "upsert_project" not in phases
         assert "agent_context_manager" not in phases
-        assert second.get("reminders") == []
+        # WS3 Finding 2: warm rebind must run the targeted reminder refresh (not the
+        # full-write path) instead of hardcoding reminders:[] and returning early.
+        # The refresh ran (mark present) and the reminders key is always a list;
+        # whether it is non-empty depends on engine/context state, so the
+        # non-empty contract is proven in
+        # test_set_project_warm_rebind_surfaces_stale_reminders.
+        assert "targeted_refresh_reused" in phases
+        assert isinstance(second.get("reminders"), list)
 
 
 @pytest.mark.asyncio
@@ -848,7 +855,14 @@ async def test_set_project_structured_reuses_same_binding_without_execution_cont
         assert "ensure_documents" not in phases
         assert "upsert_project" not in phases
         assert "agent_context_manager" not in phases
-        assert second.get("reminders") == []
+        # WS3 Finding 2: warm rebind must run the targeted reminder refresh (not the
+        # full-write path) instead of hardcoding reminders:[] and returning early.
+        # The refresh ran (mark present) and the reminders key is always a list;
+        # whether it is non-empty depends on engine/context state, so the
+        # non-empty contract is proven in
+        # test_set_project_warm_rebind_surfaces_stale_reminders.
+        assert "targeted_refresh_reused" in phases
+        assert isinstance(second.get("reminders"), list)
 
 
 @pytest.mark.asyncio
@@ -960,6 +974,73 @@ async def test_set_project_structured_and_compact_timeout_targeted_reminder_refr
             assert "prepare_context_after" not in phases, f"{output_format} should exclude prepare_context_after"
             budget_status = ((result.get("timing") or {}).get("budget_status") or {})
             assert budget_status.get("schema_version") == "runtime-efficiency-budget.v1"
+
+
+@pytest.mark.asyncio
+async def test_set_project_warm_rebind_surfaces_stale_reminders(monkeypatch: pytest.MonkeyPatch):
+    """WS3 Finding 2: a warm rebind on a project with a blocking/stale condition
+    must surface reminders instead of the old hardcoded ``reminders: []`` early
+    return, and must invoke the targeted refresh exactly once (no double refresh
+    against the cold path)."""
+    stale_reminder = {
+        "category": "context",
+        "level": "urgent",
+        "emoji": "🚨",
+        "message": "Project is stale — log progress before continuing.",
+        "context": "stale_project",
+    }
+    refresh_calls = {"count": 0}
+
+    async def _stale_get_reminders(*_args, **_kwargs):
+        refresh_calls["count"] += 1
+        return [dict(stale_reminder)]
+
+    monkeypatch.setattr(set_project_module.reminders, "get_reminders", _stale_get_reminders)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _disable_live_storage_backend(monkeypatch)
+        fake_backend = _InMemoryProjectBackend()
+        monkeypatch.setattr(set_project_module.server_module, "storage_backend", fake_backend)
+        agent_manager = _FakeAgentContextManager(session_id=f"session-{uuid.uuid4()}")
+        project_root = Path(tmpdir)
+        (project_root / ".git").mkdir()
+        _install_project_context(monkeypatch, agent_manager=agent_manager, repo_root=project_root)
+
+        unique_id = str(uuid.uuid4())[:8]
+        agent_name = f"TestAgent-WarmRebind-{unique_id}"
+        project_name = f"warm_rebind_project_{unique_id}"
+
+        first = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert first.get("ok", False), f"first set_project failed: {first}"
+        # Cold path invokes the targeted refresh exactly once.
+        assert refresh_calls["count"] == 1
+        assert first.get("reminders") == [stale_reminder]
+
+        second = extract_result(await set_project(
+            agent=agent_name,
+            name=project_name,
+            root=str(project_root),
+            format="structured",
+        ))
+        assert second.get("ok", False), f"warm rebind set_project failed: {second}"
+        assert second["side_effects"]["binding_reused"] is True
+
+        # Return-path contract: the warm rebind produced reminders (was []).
+        assert "reminders" in second, "reused branch must always include a reminders key"
+        assert second.get("reminders") == [stale_reminder], (
+            "warm rebind on a stale project must surface reminders, not []"
+        )
+        # The reused branch ran the targeted refresh exactly once — no double refresh.
+        assert refresh_calls["count"] == 2
+        phases = ((second.get("timing") or {}).get("set_project_phase_ms") or {})
+        assert "targeted_refresh_reused" in phases
+        # Cold-path full-write refresh mark must not appear on the warm path.
+        assert "targeted_refresh_after" not in phases
 
 
 @pytest.mark.asyncio

@@ -340,7 +340,16 @@ class ReminderEngine:
         """Resolve effective cooldown minutes for a reminder."""
         cooldown_minutes = reminder.cooldown_minutes
         if cooldown_minutes <= 0 and reminder.category == "teaching":
-            return int(self.config.get("behavior", {}).get("default_teaching_cooldown_minutes", 10))
+            cooldown_minutes = int(self.config.get("behavior", {}).get("default_teaching_cooldown_minutes", 10))
+
+        # Per-project cooldown floor (configure_reminders contract): when an
+        # operator sets cooldown_minutes for a project, it applies as a minimum
+        # so the same reminder is not re-emitted within that window, even for
+        # rules whose own cooldown is 0.
+        project_cooldown = reminder.variables.get("main_reminder_cooldown_minutes")
+        if isinstance(project_cooldown, int) and project_cooldown > 0:
+            cooldown_minutes = max(cooldown_minutes, project_cooldown)
+
         return cooldown_minutes
 
     def _is_in_memory_cooldown(self, reminder_hash: str, cooldown_minutes: int) -> bool:
@@ -425,30 +434,97 @@ class ReminderEngine:
         reminder.message = formatted_message
         return reminder
 
+    # Maps a doc-status condition keyword to the docs_status key it inspects.
+    _DOC_STATUS_CONDITIONS: Dict[str, str] = {
+        "architecture": "architecture",
+        "phase_plan": "phase_plan",
+        "checklist": "checklist",
+    }
+
+    def _resolve_numeric_value(self, name: str, context: ReminderContext) -> Optional[float]:
+        """Resolve the left-hand side of a ``<var> > N`` condition.
+
+        Pulls only from existing ReminderContext data: dedicated fields first,
+        then the free-form ``variables`` dict that tool callers populate.
+        Returns ``None`` when the variable is absent so the comparison fails
+        closed rather than firing on a missing value.
+        """
+        if name == "minutes_since_log":
+            return context.minutes_since_log
+        if name in ("log_entries", "total_entries"):
+            return context.total_entries
+        raw = context.variables.get(name)
+        if isinstance(raw, bool) or raw is None:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_flag_value(self, name: str, context: ReminderContext) -> str:
+        """Resolve a ``key=value`` flag's actual value as a lowercase string.
+
+        Reads only from ``context.variables``. ``no_project`` falls back to the
+        dedicated ``project_name`` field so the "no active project" teaching
+        reminder fires without requiring callers to duplicate the flag.
+        """
+        if name in context.variables:
+            actual = context.variables.get(name)
+        elif name == "no_project":
+            actual = not context.project_name
+        else:
+            return ""
+        if isinstance(actual, bool):
+            return "true" if actual else "false"
+        return str(actual).strip().lower()
+
     def _evaluate_condition(self, condition: str, context: ReminderContext) -> bool:
         """Evaluate a condition string against context."""
         # Simple condition evaluation (can be extended)
         if condition == "no_log_entries":
             return context.total_entries == 0
-        elif condition.startswith("minutes_since_log > "):
-            threshold = int(condition.split()[-1])
-            return (context.minutes_since_log or 0) > threshold
+        elif condition == "always":
+            return True
         elif condition == "docs_missing":
             return any(status == "missing" for status in context.docs_status.values())
+        elif condition == "docs_changed":
+            return len(context.docs_changed) > 0
+        elif condition.endswith("_complete") and condition[:-len("_complete")] in self._DOC_STATUS_CONDITIONS:
+            doc_key = self._DOC_STATUS_CONDITIONS[condition[:-len("_complete")]]
+            return context.docs_status.get(doc_key) == "complete"
+        elif condition.endswith("_incomplete") and condition[:-len("_incomplete")] in self._DOC_STATUS_CONDITIONS:
+            doc_key = self._DOC_STATUS_CONDITIONS[condition[:-len("_incomplete")]]
+            return context.docs_status.get(doc_key) != "complete"
+        elif " > " in condition:
+            name, _, raw_threshold = condition.partition(" > ")
+            try:
+                threshold = float(raw_threshold.strip())
+            except ValueError:
+                return False
+            value = self._resolve_numeric_value(name.strip(), context)
+            return value is not None and value > threshold
         elif condition.startswith("tool="):
-            return context.tool_name == condition.split("=")[1]
+            return context.tool_name == condition.split("=", 1)[1]
         elif condition.startswith("action="):
-            return context.variables.get("action") == condition.split("=")[1]
+            return context.variables.get("action") == condition.split("=", 1)[1]
         elif condition.startswith("scaffold="):
-            expected = condition.split("=")[1].strip().lower()
+            expected = condition.split("=", 1)[1].strip().lower()
             actual = context.variables.get("scaffold")
             if isinstance(actual, bool):
                 actual_value = "true" if actual else "false"
             else:
                 actual_value = str(actual).strip().lower()
             return actual_value == expected
-        elif condition == "always":
-            return True
+        elif "=" in condition:
+            # Generic boolean/string flag resolved from context.variables
+            # (e.g. not_compact=true, has_pagination=false, no_filter=true,
+            # no_project=true, no_meta=true). Fires only when the flag is
+            # present and matches; absent flags fail closed.
+            name, _, raw_expected = condition.partition("=")
+            name = name.strip()
+            if name not in context.variables and name != "no_project":
+                return False
+            return self._resolve_flag_value(name, context) == raw_expected.strip().lower()
 
         return False
 
@@ -514,6 +590,12 @@ class ReminderEngine:
     async def generate_reminders(self, context: ReminderContext) -> List[ReminderInstance]:
         """Generate relevant reminders for the given context."""
         self._cleanup_history()
+
+        # Per-project enabled gate (configure_reminders contract): when an
+        # operator disables reminders for a project, the whole main engine is
+        # silenced — no condition, teaching, or selected reminders are produced.
+        if context.variables.get("main_reminder_enabled", True) is False:
+            return []
 
         candidates = []
 
@@ -638,12 +720,18 @@ class ReminderEngine:
         priority_order = self.config.get("selection", {}).get("priority_order", [])
         category_weights = self.config.get("selection", {}).get("category_weights", {})
 
-        def get_priority(reminder: ReminderInstance) -> int:
-            # Try priority order first
+        def get_priority(reminder: ReminderInstance) -> Tuple[int, float, float]:
+            # Explicit priority_order by reminder key wins (ascending index).
             if reminder.key in priority_order:
-                return priority_order.index(reminder.key)
-            # Fall back to category weight
-            return category_weights.get(reminder.level, 999)
+                return (0, float(priority_order.index(reminder.key)), 0.0)
+            # Fall back to category weight, keyed on the reminder CATEGORY
+            # (the category_weights keys: missing_docs/teaching/context/...).
+            # Higher weight = higher priority, so negate for ascending sort.
+            # level is the secondary tiebreak (urgent/warning/info also appear
+            # in category_weights); unknown categories/levels sort last.
+            category_weight = category_weights.get(reminder.category, 0)
+            level_weight = category_weights.get(reminder.level, 0)
+            return (1, -float(category_weight), -float(level_weight))
 
         filtered.sort(key=get_priority)
 
@@ -656,10 +744,22 @@ class ReminderEngine:
         if allowed_categories != ["all"]:
             filtered = [r for r in filtered if r.category in allowed_categories]
 
+        # Per-project category filter (configure_reminders contract): when an
+        # operator restricts categories for a project, only those categories are
+        # produced. Applied after the tool filter and before the cap so the
+        # whitelist narrows (never widens) the tool-allowed set.
+        project_categories = context.variables.get("main_reminder_categories")
+        if isinstance(project_categories, (list, tuple)) and project_categories:
+            allowed = {str(cat).strip().lower() for cat in project_categories}
+            filtered = [r for r in filtered if r.category.lower() in allowed]
+
         return filtered[:max_total]
 
     def to_dict_list(self, reminders: List[ReminderInstance]) -> List[Dict[str, Any]]:
         """Convert reminder instances to dictionary format for API response."""
+        # Per-project tone (configure_reminders contract): each reminder carries
+        # the project's configured tone in its variables (threaded via
+        # ReminderContext); fall back to "neutral" when unset.
         return [
             {
                 "level": r.level,
@@ -667,7 +767,7 @@ class ReminderEngine:
                 "emoji": r.emoji,
                 "message": r.message,
                 "category": r.category,
-                "tone": "neutral",  # Can be made configurable
+                "tone": str(r.variables.get("main_reminder_tone") or "neutral"),
             } | ({"context": r.context} if r.context else {})
             for r in reminders
         ]

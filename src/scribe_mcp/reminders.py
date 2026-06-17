@@ -515,6 +515,39 @@ async def _build_legacy_context(
 
     combined_cfg = {**global_reminder_cfg, **reminder_cfg}
 
+    # Per-project main-engine reminder knobs (configure_reminders contract).
+    # These are the top-level defaults.reminder keys persisted by
+    # reminder_tools.configure_reminders. Threaded into ReminderContext.variables
+    # so the engine honors enabled / cooldown_minutes / categories / tone.
+    # `enabled` defaults to True when unset (opt-out, not opt-in).
+    main_reminder_enabled = bool(combined_cfg.get("enabled", True))
+
+    raw_main_cooldown = combined_cfg.get("cooldown_minutes")
+    if raw_main_cooldown is None:
+        main_reminder_cooldown_minutes = None
+    else:
+        try:
+            main_reminder_cooldown_minutes = max(0, int(raw_main_cooldown))
+        except (TypeError, ValueError):
+            main_reminder_cooldown_minutes = None
+
+    raw_main_categories = combined_cfg.get("categories")
+    if isinstance(raw_main_categories, (list, tuple)):
+        main_reminder_categories = [
+            str(cat).strip().lower()
+            for cat in raw_main_categories
+            if str(cat).strip()
+        ] or None
+    else:
+        main_reminder_categories = None
+
+    raw_main_tone = combined_cfg.get("tone")
+    main_reminder_tone = (
+        str(raw_main_tone).strip().lower() or None
+        if raw_main_tone is not None
+        else None
+    )
+
     # Get session age information
     session_age_minutes = None
     try:
@@ -561,6 +594,11 @@ async def _build_legacy_context(
                 "release_changelog_coverage": str(combined_cfg.get("release_changelog_coverage_category", "release_changelog_coverage")),
             },
             "quality_reminder_suppress_codes": [str(code) for code in (combined_cfg.get("suppress_warning_codes") or []) if str(code).strip()],
+            # Main-engine reminder knobs (configure_reminders).
+            "main_reminder_enabled": main_reminder_enabled,
+            "main_reminder_cooldown_minutes": main_reminder_cooldown_minutes,
+            "main_reminder_categories": main_reminder_categories,
+            "main_reminder_tone": main_reminder_tone,
         },
         operation_status=operation_status,
     )

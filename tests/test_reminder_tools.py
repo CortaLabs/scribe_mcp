@@ -56,6 +56,16 @@ async def reminder_runtime(tmp_path: Path):
     storage = SQLiteStorage(tmp_path / "reminder_tools.db")
     await storage.setup()
 
+    # Register the transport session before binding a project to it. The
+    # session_projects FK requires a live scribe_sessions row; set_current_project
+    # writes the binding but does not create the parent session, so the fixture
+    # must register it first (mirrors real set_project / set_session_mode flow).
+    await storage.upsert_session(
+        session_id="phase9-session",
+        agent_id="Codex",
+        repo_root=project["root"],
+    )
+
     state_manager = StateManager(path=tmp_path / "state.json", storage_backend=storage)
     await state_manager.set_current_project(
         project["name"],

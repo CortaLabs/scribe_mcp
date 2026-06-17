@@ -1012,6 +1012,20 @@ async def set_project(
             },
             **({"warnings": validation.get("warnings", [])} if validation.get("warnings") else {}),
         }
+        # Warm rebind is the most frequent set_project path; without this the
+        # branch returned reminders:[] unconditionally (WS3 Finding 2). Mirror the
+        # full-write path's targeted refresh so a rebind on a stale project still
+        # surfaces reminders. The helper carries its own timeout + safe fallback,
+        # and the reused branch performs no persistent writes, so this is read-only.
+        reused_targeted_reminders = await _targeted_post_bind_refresh(
+            project=project_data,
+            tool_name="set_project",
+            state_snapshot=state_snapshot,
+            agent_id=agent_id,
+        )
+        _mark("targeted_refresh_reused")
+        if reused_targeted_reminders:
+            response["reminders"] = list(reused_targeted_reminders)
         set_project_phase_ms = _build_timing_breakdown_ms()
         response["timing"]["set_project_phase_ms"] = set_project_phase_ms
         response["timing"]["budget_status"] = build_runtime_efficiency_budget_status(
