@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import tomllib
 from pathlib import Path
 
 from scribe_mcp.cli import main as cli_main
 from scribe_mcp.scripts.project_codex_plugin import project_codex_plugin
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import sync_plugin_skills  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -387,3 +391,115 @@ def test_roster_review_agent_uses_registered_slug_for_scribe_sign_in() -> None:
     roster_text = (REPO_ROOT / ".council" / "roster.yaml").read_text(encoding="utf-8")
     assert "You sign into Scribe as `scribe-review-agent`" in roster_text
     assert "You sign into Scribe as `ReviewAgent`" not in roster_text
+
+
+# --- Plugin skill sync (2.8.0.1): every Scribe-owned generated skill ships ---
+
+# The skills that MUST ship in both plugins and the bundle. This is the
+# Scribe-owned scribe-* set minus the documented knowledge-mcp exclusion.
+EXPECTED_SHIPPED_SKILLS = [
+    "scribe-integration",
+    "scribe-mcp-usage",
+    "scribe-onboarding",
+]
+# scribe-rag-workflow is owned by Knowledge MCP (owner: knowledge-mcp, coupled to
+# knowledge_mcp.operator_cli + .knowledge datasets) and must NOT ship in the
+# standalone Scribe plugin.
+EXCLUDED_FROM_PLUGINS = "scribe-rag-workflow"
+
+
+def _shipped_skill_slugs(skills_dir: Path) -> list[str]:
+    return sorted(
+        path.name
+        for path in skills_dir.glob("scribe-*")
+        if path.is_dir() and (path / "SKILL.md").is_file()
+    )
+
+
+def test_every_scribe_skill_ships_in_both_plugins_and_bundle() -> None:
+    """All Scribe-owned generated skills ship (SKILL.md) in both plugin trees and
+    the wheel-vendored bundle; the knowledge-mcp skill stays excluded."""
+    skill_dirs = [
+        CLAUDE_PLUGIN_ROOT / "skills",
+        CODEX_PLUGIN_ROOT / "skills",
+        PACKAGE_BUNDLE_ROOT / "claude" / "skills",
+        PACKAGE_BUNDLE_ROOT / "codex" / "skills",
+    ]
+    for skills_dir in skill_dirs:
+        shipped = _shipped_skill_slugs(skills_dir)
+        assert shipped == EXPECTED_SHIPPED_SKILLS, f"{skills_dir}: {shipped}"
+        assert EXCLUDED_FROM_PLUGINS not in shipped, f"{skills_dir} must exclude {EXCLUDED_FROM_PLUGINS}"
+        for slug in EXPECTED_SHIPPED_SKILLS:
+            assert (skills_dir / slug / "SKILL.md").is_file()
+
+
+def _skill_tree_fingerprint(skill_dir: Path) -> dict[str, bytes]:
+    """Map every file under a skill dir (relative path -> bytes)."""
+    return {
+        str(path.relative_to(skill_dir)): path.read_bytes()
+        for path in skill_dir.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_shipped_plugin_skills_match_generated_source() -> None:
+    """Each shipped plugin/bundle skill is FULL-TREE byte-identical to the
+    canonical generated source it was synced from (.claude/skills, .codex/skills).
+
+    This is the dead-link guard: scribe-mcp-usage's SKILL.md links references/,
+    scripts/ and assets/ files; shipping SKILL.md alone would leave dead links.
+    Every file in the generated skill tree must ship in both the plugin tree and
+    the wheel-vendored bundle."""
+    generated = {
+        "claude": REPO_ROOT / ".claude" / "skills",
+        "codex": REPO_ROOT / ".codex" / "skills",
+    }
+    targets = {
+        "claude": [CLAUDE_PLUGIN_ROOT / "skills", PACKAGE_BUNDLE_ROOT / "claude" / "skills"],
+        "codex": [CODEX_PLUGIN_ROOT / "skills", PACKAGE_BUNDLE_ROOT / "codex" / "skills"],
+    }
+    for channel, source_dir in generated.items():
+        for slug in EXPECTED_SHIPPED_SKILLS:
+            source_tree = _skill_tree_fingerprint(source_dir / slug)
+            assert source_tree, f"{source_dir / slug}: generated source is empty"
+            for target_dir in targets[channel]:
+                assert _skill_tree_fingerprint(target_dir / slug) == source_tree, (
+                    f"{target_dir / slug} not full-tree byte-identical to "
+                    f"{source_dir / slug}"
+                )
+
+
+def test_scribe_mcp_usage_ships_full_reference_tree_so_skill_links_resolve() -> None:
+    """Regression for the SKILL.md-only ship bug: every references/scripts/assets
+    path linked from the shipped scribe-mcp-usage SKILL.md must exist as a shipped
+    file (or directory) in the plugin tree, on both channels and the bundle."""
+    import re
+
+    link_pattern = re.compile(r"(?:references|scripts|assets)/[A-Za-z0-9_./-]+")
+    skill_dirs = [
+        CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage",
+        CODEX_PLUGIN_ROOT / "skills" / "scribe-mcp-usage",
+        PACKAGE_BUNDLE_ROOT / "claude" / "skills" / "scribe-mcp-usage",
+        PACKAGE_BUNDLE_ROOT / "codex" / "skills" / "scribe-mcp-usage",
+    ]
+    for skill_dir in skill_dirs:
+        skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        linked = {match.rstrip("/") for match in link_pattern.findall(skill_md)}
+        assert linked, "expected scribe-mcp-usage SKILL.md to link reference assets"
+        for rel in sorted(linked):
+            assert (skill_dir / rel).exists(), f"dead link in {skill_dir}: {rel}"
+
+
+def test_plugin_skill_sync_is_clean() -> None:
+    """The durable sync mechanism reports zero drift, proving the committed
+    plugin + bundle skill trees match what the sync rule would produce."""
+    assert sync_plugin_skills.sync(check=True) == 0
+
+
+def test_plugin_skill_sync_rule_excludes_knowledge_mcp_skill() -> None:
+    """The shipped-set rule excludes scribe-rag-workflow on both channels even
+    though it exists in the generated source."""
+    for channel in ("claude", "codex"):
+        names = sync_plugin_skills.shipped_skill_names(channel)
+        assert EXCLUDED_FROM_PLUGINS not in names
+        assert names == EXPECTED_SHIPPED_SKILLS
