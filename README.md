@@ -55,7 +55,7 @@ Scribe turns that into a tighter loop:
 - `read_file` gained real pagination slicing, a single-pass AST structure visitor, and SQL-pushdown of the message predicate on both SQLite and Postgres — the headline performance fix, filtering in the database instead of after the fact.
 - The reminder engine is wired live: 16 previously-dead conditions, category-keyed priority sorting, and warm-rebind refresh with configurable knobs.
 - Managed-doc frontmatter no longer clobbers a user-set `title` (BUG-2026-06-17-0002).
-- Packaging adds a `postgres` extra (`asyncpg`) so the Postgres-first runtime can be installed with `pip install scribe-mcp[postgres]`.
+- A plain `pip install scribe-mcp` is Postgres-ready out of the box: `asyncpg` is a core dependency and Postgres is the default runtime posture. SQLite standalone is the explicit opt-out (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`). The `[postgres]` extra remains only as a harmless no-op alias for anyone who prefers to make the Postgres intent visible in their dependency list.
 - Maintainability: the dead cross-project search engine in `query_entries` (-728 lines) and dead self-healing in the error handler were removed.
 
 This builds on the 2.7.x runtime work — queryable tool-runtime telemetry, `append_entry` phase timing, fast same-binding `set_project` reuse, agent-ready `quality_check` output with ranked `agent_actions`, Scribe-owned write barriers around mutation surfaces, and the furnace-project quality-check O(N^2) elimination from 2.7.2. Release governance still treats missing current-version changelog coverage as blocking quality truth via `SCF_CHANGELOG_CURRENT_VERSION_MISSING`.

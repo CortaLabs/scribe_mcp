@@ -1,7 +1,7 @@
 # Release File Map
 
 Baseline date: **2026-06-16**
-Coverage: **v2.8.0 public release line**
+Coverage: **v2.8.0.x public release line (current: 2.8.0.1)**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **v2.8.0 public release line**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.8.0` and CLI scripts. 2.8.0 adds the `manage_docs` host input-schema enrichment, a `postgres` extra (`asyncpg`), and package-data globs that vendor the plugin + onboarding bundles into the wheel. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.8.0.1` and CLI scripts. The 2.8.0 feature baseline added the `manage_docs` host input-schema enrichment, a redundant no-op `[postgres]` extra (`asyncpg` is already a core dependency), and package-data globs that vendor the plugin + onboarding bundles into the wheel; the 2.8.0.1 packaging patch ships the full Scribe skill set in those bundles and adds a clean-room install check. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
