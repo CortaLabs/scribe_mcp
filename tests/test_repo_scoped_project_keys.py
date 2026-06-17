@@ -243,3 +243,28 @@ def test_state_binding_and_project_fetch_share_project_key(tmp_path: Path) -> No
             await storage.close()
 
     asyncio.run(_run())
+
+
+def test_sqlite_project_identity_preflight_reports_populated_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "preflight_populated_state.db"
+
+    async def _run() -> None:
+        storage = SQLiteStorage(db_path)
+        try:
+            await storage.upsert_project(
+                name="preflight_populated",
+                repo_root=str(tmp_path / "repo_main"),
+                progress_log_path=str(tmp_path / "repo_main" / "PROGRESS_LOG.md"),
+            )
+            report = await storage.preflight_project_identity_repair()
+            payload = report.to_public_dict()
+
+            assert payload["mutation_attempted"] is False
+            assert payload["mutation_authorized"] is False
+            assert payload["missing_identity_rows"] == 0
+            assert payload["partial_identity_rows"] == 0
+            assert payload["already_populated_duplicate_project_key_groups"] == 0
+        finally:
+            await storage.close()
+
+    asyncio.run(_run())

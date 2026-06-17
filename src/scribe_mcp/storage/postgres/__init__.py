@@ -28,6 +28,10 @@ from scribe_mcp.storage.models import (
     compute_repo_id,
     normalize_repo_root,
 )
+from scribe_mcp.storage.project_identity_preflight import (
+    ProjectIdentityPreflightReport,
+    build_project_identity_preflight_report,
+)
 from scribe_mcp.utils.search import (
     message_matches,
     message_predicate_pushable,
@@ -301,6 +305,73 @@ class PostgresStorage(StorageBackend):
             normalized_root,
         )
         return [self._project_from_row(row) for row in rows]
+
+    async def preflight_project_identity_repair(self) -> ProjectIdentityPreflightReport:
+        schema = self._schema_name
+        projects_table = f"{schema}.scribe_projects"
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            legacy_constraint_present = bool(
+                await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_schema = $1
+                          AND table_name = 'scribe_projects'
+                          AND constraint_name = 'scribe_projects_name_key'
+                    );
+                    """,
+                    schema,
+                )
+            )
+            legacy_index_present = bool(
+                await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_indexes
+                        WHERE schemaname = $1
+                          AND indexname = 'scribe_projects_name_key'
+                    );
+                    """,
+                    schema,
+                )
+            )
+            project_rows = await conn.fetch(
+                f"""
+                SELECT id, name, repo_root, repo_id, project_key
+                FROM {projects_table}
+                ORDER BY id;
+                """
+            )
+            dependent_reference_rows = 0
+            for table_name in ("session_projects", "agent_projects", "agent_recent_projects"):
+                table_present = bool(
+                    await conn.fetchval(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM information_schema.tables
+                            WHERE table_schema = $1
+                              AND table_name = $2
+                        );
+                        """,
+                        schema,
+                        table_name,
+                    )
+                )
+                if not table_present:
+                    continue
+                count = await conn.fetchval(f"SELECT COUNT(*) FROM {schema}.{table_name};")
+                dependent_reference_rows += int(count or 0)
+
+        return build_project_identity_preflight_report(
+            project_rows=project_rows,
+            legacy_name_constraint_present=legacy_constraint_present,
+            legacy_name_index_present=legacy_index_present,
+            dependent_reference_rows=dependent_reference_rows,
+        )
 
     async def delete_project(self, name: str) -> bool:
         project = await self.fetch_project(name)

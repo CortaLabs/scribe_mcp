@@ -20,9 +20,23 @@ from scribe_mcp.cli.session_store import (
     save_session_state,
 )
 from scribe_mcp.config.paths import cli_session_state_path
+from scribe_mcp.storage.project_identity_preflight import (
+    DRY_RUN_REQUIRED_LABEL,
+    MUTATION_REJECTED_LABEL,
+)
 
 
-_KNOWN_COMMANDS = {"call", "session", "tools", "bootstrap", "plugins", "templates", "logs", "install"}
+_KNOWN_COMMANDS = {
+    "call",
+    "session",
+    "tools",
+    "bootstrap",
+    "plugins",
+    "templates",
+    "logs",
+    "install",
+    "project-identity",
+}
 _DEFAULT_CALL_TIMEOUT_SECONDS = 6.0
 
 
@@ -315,6 +329,39 @@ def _build_parser() -> argparse.ArgumentParser:
     install_parser.add_argument("--yes", action="store_true", help="Non-interactive confirmation for commit path.")
     install_parser.add_argument("--dangerous-overwrite-secrets", action="store_true", help="Explicitly allow overwriting existing secret env values.")
     install_parser.add_argument("--project-codex", action="store_true", help="Run optional Codex projection after successful commit verification.")
+
+    identity_parser = subparsers.add_parser(
+        "project-identity",
+        help="Inspect project identity readiness without mutating storage.",
+    )
+    identity_subparsers = identity_parser.add_subparsers(dest="project_identity_action", required=True)
+    identity_preflight_parser = identity_subparsers.add_parser(
+        "preflight",
+        help="Run a read-only project identity repair readiness preflight.",
+        allow_abbrev=False,
+    )
+    identity_preflight_parser.add_argument(
+        "--repo-root",
+        dest="repo_root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root or any path inside the target repository.",
+    )
+    identity_preflight_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Required read-only mode for the preflight.",
+    )
+    identity_preflight_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON.",
+    )
+    identity_preflight_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
 
     call_parser = subparsers.add_parser("call", help="Invoke a tool by name", allow_abbrev=False)
     call_parser.add_argument("tool", help="Tool name (for example: read_file)")
@@ -918,6 +965,75 @@ def _run_logs_command(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_project_identity_command(args: argparse.Namespace) -> int:
+    if args.project_identity_action != "preflight":
+        raise ValueError(f"Unsupported project-identity action: {args.project_identity_action}")
+
+    if bool(getattr(args, "apply", False)):
+        payload = {
+            "status_label": "BLOCK",
+            "error_label": MUTATION_REJECTED_LABEL,
+            "mutation_attempted": False,
+            "mutation_authorized": False,
+        }
+        if args.json:
+            _json_print(payload, pretty=True)
+        else:
+            print(f"error: {MUTATION_REJECTED_LABEL}", file=sys.stderr)
+        return 2
+
+    if not bool(getattr(args, "dry_run", False)):
+        payload = {
+            "status_label": "BLOCK",
+            "error_label": DRY_RUN_REQUIRED_LABEL,
+            "mutation_attempted": False,
+            "mutation_authorized": False,
+        }
+        if args.json:
+            _json_print(payload, pretty=True)
+        else:
+            print(f"error: {DRY_RUN_REQUIRED_LABEL}", file=sys.stderr)
+        return 2
+
+    repo_root = _discover_repo_root(args.repo_root)
+    _prepare_environment(repo_root)
+
+    from scribe_mcp.storage import create_storage_backend
+
+    backend = create_storage_backend()
+    if backend is None or not hasattr(backend, "preflight_project_identity_repair"):
+        payload = {
+            "status_label": "BLOCK",
+            "error_label": "PROJECT_IDENTITY_PREFLIGHT_BACKEND_UNAVAILABLE",
+            "mutation_attempted": False,
+            "mutation_authorized": False,
+        }
+        if args.json:
+            _json_print(payload, pretty=True)
+        else:
+            print("error: PROJECT_IDENTITY_PREFLIGHT_BACKEND_UNAVAILABLE", file=sys.stderr)
+        return 2
+
+    try:
+        report = await backend.preflight_project_identity_repair()
+    finally:
+        close = getattr(backend, "close", None)
+        if close is not None:
+            await close()
+
+    payload = report.to_public_dict()
+    if args.json:
+        _json_print(payload, pretty=True)
+        return 0 if payload.get("status_label") == "PASS" else 1
+
+    print(f"status_label={payload['status_label']}")
+    print(f"mutation_attempted={payload['mutation_attempted']}")
+    print(f"mutation_authorized={payload['mutation_authorized']}")
+    print(f"blocked_state_count={payload['blocked_state_count']}")
+    print(f"redaction_status_label={payload['redaction_status_label']}")
+    return 0 if payload.get("status_label") == "PASS" else 1
+
+
 def _run_install_command(args: argparse.Namespace) -> int:
     from scribe_mcp.install_wizard import build_install_plan, execute_install_commit, execute_projection_opt_in
     from scribe_mcp.utils.error_handler import sanitize_error_message
@@ -985,6 +1101,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_logs_command(args)
     if args.command == "install":
         return _run_install_command(args)
+    if args.command == "project-identity":
+        return asyncio.run(_run_project_identity_command(args))
 
     return asyncio.run(_run_call_command(args, passthrough_options))
 

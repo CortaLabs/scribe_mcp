@@ -434,6 +434,82 @@ async def test_ensure_repo_scoped_project_identity_deconflicts_legacy_alias_dupl
 
 
 @pytest.mark.asyncio
+async def test_preflight_project_identity_repair_is_read_only_and_schema_qualified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = PostgresStorage("postgresql://example.invalid/scribe", schema_name="scribe")
+    calls: list[str] = []
+
+    class FakeAcquire:
+        async def __aenter__(self) -> "FakeConn":
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakePool:
+        def acquire(self) -> FakeAcquire:
+            return FakeAcquire()
+
+    class FakeConn:
+        async def fetchval(self, query: str, *params: object) -> object:
+            normalized = " ".join(query.split())
+            calls.append(normalized)
+            forbidden = ("ALTER ", "CREATE ", "DROP ", "UPDATE ", "INSERT ", "DELETE ")
+            assert not any(token in normalized.upper() for token in forbidden)
+            if "information_schema.table_constraints" in normalized:
+                return True
+            if "pg_indexes" in normalized:
+                return False
+            if "information_schema.tables" in normalized:
+                return False
+            raise AssertionError(f"unexpected fetchval query: {normalized} {params!r}")
+
+        async def fetch(self, query: str, *params: object):
+            normalized = " ".join(query.split())
+            calls.append(normalized)
+            assert "FROM scribe.scribe_projects" in normalized
+            assert "ORDER BY id" in normalized
+            forbidden = ("ALTER ", "CREATE ", "DROP ", "UPDATE ", "INSERT ", "DELETE ")
+            assert not any(token in normalized.upper() for token in forbidden)
+            return [
+                {"id": 7, "name": "alias-project", "repo_root": "repo-alpha", "repo_id": None, "project_key": None},
+                {"id": 8, "name": "alias_project", "repo_root": "repo-alpha", "repo_id": None, "project_key": None},
+            ]
+
+    async def fake_ensure_pool() -> FakePool:
+        return FakePool()
+
+    async def fail_ensure_repo_scoped_project_identity() -> None:
+        raise AssertionError("preflight must not call repo identity setup")
+
+    async def fail_backfill_missing_repo_scoped_project_identity() -> None:
+        raise AssertionError("preflight must not call repo identity backfill")
+
+    monkeypatch.setattr(storage, "_ensure_pool", fake_ensure_pool)
+    monkeypatch.setattr(
+        storage,
+        "_ensure_repo_scoped_project_identity",
+        fail_ensure_repo_scoped_project_identity,
+    )
+    monkeypatch.setattr(
+        storage,
+        "_backfill_missing_repo_scoped_project_identity",
+        fail_backfill_missing_repo_scoped_project_identity,
+    )
+
+    report = await storage.preflight_project_identity_repair()
+    payload = report.to_public_dict()
+
+    assert payload["mutation_attempted"] is False
+    assert payload["mutation_authorized"] is False
+    assert payload["legacy_name_constraint_present"] is True
+    assert payload["canonical_retention_candidates"] == 1
+    assert payload["legacy_key_assignment_candidates"] == 1
+    assert calls
+
+
+@pytest.mark.asyncio
 async def test_fetch_project_row_returns_unique_canonical_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

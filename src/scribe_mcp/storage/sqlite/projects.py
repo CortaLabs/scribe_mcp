@@ -16,11 +16,16 @@ from scribe_mcp.storage.models import (
     compute_repo_id,
     normalize_repo_root,
 )
+from scribe_mcp.storage.project_identity_preflight import (
+    ProjectIdentityPreflightReport,
+    build_sqlite_project_identity_preflight,
+)
 from scribe_mcp.utils.slug import normalize_project_input
 
 
 AsyncExecute = Callable[[str, tuple[Any, ...]], Awaitable[Any]]
 AsyncFetchOne = Callable[[str, tuple[Any, ...]], Awaitable[Any]]
+AsyncFetchAll = Callable[[str, tuple[Any, ...]], Awaitable[List[Any]]]
 AsyncInitialise = Callable[[], Awaitable[None]]
 AsyncFetchProject = Callable[[str], Awaitable[Optional[ProjectRecord]]]
 
@@ -230,6 +235,28 @@ async def _ensure_project_identity_schema(
         """,
         (),
     )
+
+
+async def preflight_project_identity_repair(
+    *,
+    db_path: Path,
+) -> ProjectIdentityPreflightReport:
+    uri = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        async def _fetchone(query: str, params: tuple[Any, ...] = ()) -> Any:
+            return conn.execute(query, params).fetchone()
+
+        async def _fetchall(query: str, params: tuple[Any, ...] = ()) -> List[Any]:
+            return list(conn.execute(query, params).fetchall())
+
+        return await build_sqlite_project_identity_preflight(
+            fetchall_fn=_fetchall,
+            fetchone_fn=_fetchone,
+        )
+    finally:
+        conn.close()
 
 
 async def _ensure_repo_scope_grants_schema(

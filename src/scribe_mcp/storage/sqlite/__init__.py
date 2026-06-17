@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from scribe_mcp.storage.base import StorageBackend
 from scribe_mcp.storage.models import CaseRegistryRecord, ProjectRecord, RepoScopeGrantRecord
+from scribe_mcp.storage.project_identity_preflight import ProjectIdentityPreflightReport
 
 from .domain_facade import SQLiteDomainFacadeMixin
 from .internals import SQLiteInternals
@@ -114,6 +115,9 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
             fetchall_fn=self._fetchall,
             repo_root=repo_root,
         )
+
+    async def preflight_project_identity_repair(self) -> ProjectIdentityPreflightReport:
+        return await project_ops.preflight_project_identity_repair(db_path=self._path)
 
     async def delete_project(self, name: str) -> bool:
         return await project_ops.delete_project(
