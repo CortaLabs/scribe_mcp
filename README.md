@@ -41,25 +41,24 @@ Scribe turns that into a tighter loop:
 - MCP tools for reading, searching, editing, and logging without leaving the repo boundary
 - a Postgres-first runtime for shared use, plus explicit standalone SQLite for local-only workflows
 - CLI helpers for bootstrap, MCP server startup, migrations, backups, metrics, and Codex projection
+- host-facing tool discoverability and onboarding skills (`/scribe-integration`, `/scribe-onboarding`) so agents can learn the tool surface in place
 
 ## Current release highlights
 
-`2.7.0` makes Scribe's runtime faster and more observable while keeping the governed-doc and operator-safety improvements from the 2.6 line:
+`2.8.0` is a backward-compatible **additive + fix** release over the 2.7.x line, with no breaking public API, CLI, or schema contract changes. It focuses on tool discoverability, onboarding, install ergonomics, and runtime honesty:
 
-- Repeated same-session `set_project` calls for the same agent, project, and repo root now use a strict no-write reuse path with explicit `binding_reused` metadata instead of repeating project/doc/bootstrap writes; the already-bound structured/compact path also skips mutation-time reminder refresh and keeps success-path timing logs out of warning output.
-- Tool runtime telemetry records positive durations, correlation IDs, measurement scope, and repo root in both file and SQL sinks so after-the-fact audits can query real runtimes.
-- `append_entry` exposes phase timing for file WAL append, DB mirror fetch/insert, state update, reminders, response formatting, and total time.
-- Local probe/runtime scripts drain background telemetry tasks before exit, prefer async telemetry writes when available, and avoid asyncpg shutdown warnings from unobserved background futures.
-- `scribe_probe` can emit machine-readable `--json-output` and same-server root comparisons that separate Scribe MCP time from hook/wrapper time.
-- `scribe_doctor` reports physical/logical reconciliation for fresh Postgres installs against existing file-backed Scribe artifacts.
-- `quality_check` now returns agent-ready summaries, grouped warning families, ranked `agent_actions`, body/file location mapping, nearest-section context, repair kind, edit-action hints, and deterministic provenance.
-- Atlas and orchestration agents can run project or wave-level bulk checks with `metadata={"quality": {"bulk": true}}` or explicit `doc_names`, producing aggregate counts plus per-document results.
-- `quality_handoff_check` now includes quality summaries and direct follow-up actions so agents know which managed docs block handoff.
-- Scribe-owned write barriers now fail closed around Scribe mutation surfaces during maintenance operations, including `append_entry`, `set_project`, `manage_docs`, and Postgres restore/backup paths.
-- Exported remote transport blocks local operator-only tools unless the tool declares itself remote-invokable.
-- `read_recent` supplements sparse Postgres mirrors from the canonical progress log when safe, so context rehydration does not silently hide older file-backed history.
-- Postgres backup/restore helpers enforce owner-only custody and barrier protection before handling dump/restore material.
-- Release governance still treats missing current-version changelog coverage as blocking quality truth: `SCF_CHANGELOG_CURRENT_VERSION_MISSING` is raised through `quality_check`, reminders, and `project_health` until coverage is repaired and reconciliation proof is run.
+- Host-facing `manage_docs` now advertises a live `action` enum and documented `metadata` keys in its MCP input schema (with `additionalProperties` preserved), so an MCP host can teach an agent about a mistyped action instead of failing silently.
+- `append_entry` and `health_check` tool descriptions were rewritten, and the `manage_docs`/`read_file` docstrings now surface the full governance action set plus `read_file` scan flags.
+- A completed `/scribe-integration` skill (the full ~28-tool surface) and a new `/scribe-onboarding` install skill ship in the package; new-project reminders now point to both.
+- The install story no longer requires a clone: the Codex/Claude plugin and onboarding bundles are vendored into the wheel via package-data, and `resolve_codex_plugin_root()` prefers the packaged bundle, so `pip install scribe-mcp` followed by `scribe install --commit --yes --project-codex` projects them with no checkout required. The repo `plugins/` tree remains the canonical development and marketplace fallback.
+- `query_entries` with a non-project `search_scope` now returns an honest `ok: false` teaching error instead of a silent no-op (a non-breaking behavior change — project-scoped behavior is unchanged); emergency and degraded paths likewise return honest `ok: false` envelopes instead of fabricated rows.
+- `read_file` gained real pagination slicing, a single-pass AST structure visitor, and SQL-pushdown of the message predicate on both SQLite and Postgres — the headline performance fix, filtering in the database instead of after the fact.
+- The reminder engine is wired live: 16 previously-dead conditions, category-keyed priority sorting, and warm-rebind refresh with configurable knobs.
+- Managed-doc frontmatter no longer clobbers a user-set `title` (BUG-2026-06-17-0002).
+- Packaging adds a `postgres` extra (`asyncpg`) so the Postgres-first runtime can be installed with `pip install scribe-mcp[postgres]`.
+- Maintainability: the dead cross-project search engine in `query_entries` (-728 lines) and dead self-healing in the error handler were removed.
+
+This builds on the 2.7.x runtime work — queryable tool-runtime telemetry, `append_entry` phase timing, fast same-binding `set_project` reuse, agent-ready `quality_check` output with ranked `agent_actions`, Scribe-owned write barriers around mutation surfaces, and the furnace-project quality-check O(N^2) elimination from 2.7.2. Release governance still treats missing current-version changelog coverage as blocking quality truth via `SCF_CHANGELOG_CURRENT_VERSION_MISSING`.
 
 ## What makes Scribe different
 
@@ -380,11 +379,11 @@ Scribe is a strong fit if you are:
 
 ## What still needs work
 
-There is still one obvious next step:
+As of `2.8.0` the no-clone install path is real: the plugin and onboarding bundles ship inside the wheel, so `pip install scribe-mcp` plus `scribe install --commit --yes --project-codex` projects them without a checkout. What is not yet in place:
 
-- a clean-room walkthrough of the full pip-installed path from bootstrap to first live MCP host integration
+- an automated, clean-room CI proof of that full pip-installed path — from a fresh environment through bootstrap to a first live MCP host integration — so the public install story is continuously verified end-to-end, not just verified once by hand.
 
-That work matters because the public install story should be proven end-to-end, not implied.
+That matters because the install story should stay proven as the package evolves, not re-checked manually each release.
 
 ## License
 
