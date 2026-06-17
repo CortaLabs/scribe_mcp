@@ -28,6 +28,13 @@ def compute_project_key(*, repo_root: str, project_name: str) -> str:
     return f"pk_{digest}"
 
 
+def compute_legacy_project_key(*, repo_root: str, project_name: str, row_id: int) -> str:
+    normalized_root = normalize_repo_root(repo_root)
+    normalized_name = normalize_project_input(project_name) or project_name.strip().lower()
+    digest = sha256(f"{normalized_root}::{normalized_name}::legacy::{row_id}".encode("utf-8")).hexdigest()
+    return f"pk_legacy_{digest}"
+
+
 @dataclass
 class ProjectRecord:
     id: int

@@ -23,6 +23,7 @@ from scribe_mcp.storage.models import (
     PhaseRecord,
     ProjectRecord,
     RepoScopeGrantRecord,
+    compute_legacy_project_key,
     compute_project_key,
     compute_repo_id,
     normalize_repo_root,
@@ -2498,19 +2499,46 @@ class PostgresStorage(StorageBackend):
         )
 
     async def _backfill_missing_repo_scoped_project_identity(self) -> None:
+        assigned_rows = await self._fetch(
+            """
+            SELECT project_key
+            FROM scribe_projects
+            WHERE project_key IS NOT NULL
+              AND project_key != '';
+            """
+        )
         rows = await self._fetch(
             """
             SELECT id, name, repo_root
             FROM scribe_projects
             WHERE (repo_id IS NULL OR project_key IS NULL)
-              AND repo_root IS NOT NULL;
+              AND repo_root IS NOT NULL
+            ORDER BY id;
             """
         )
+        assigned_project_keys: set[str] = {
+            str(row["project_key"])
+            for row in assigned_rows
+            if row.get("project_key")
+        }
         for row in rows:
+            normalized_root = normalize_repo_root(str(row["repo_root"]))
+            project_key = compute_project_key(
+                repo_root=normalized_root,
+                project_name=str(row["name"]),
+            )
+            if project_key in assigned_project_keys:
+                project_key = compute_legacy_project_key(
+                    repo_root=normalized_root,
+                    project_name=str(row["name"]),
+                    row_id=int(row["id"]),
+                )
+            assigned_project_keys.add(project_key)
             await self._backfill_repo_scoped_project_identity_for_row(
                 row_id=int(row["id"]),
                 name=str(row["name"]),
                 repo_root=str(row["repo_root"]),
+                project_key=project_key,
             )
 
     async def _backfill_repo_scoped_project_identity_for_row(
@@ -2519,8 +2547,13 @@ class PostgresStorage(StorageBackend):
         row_id: int,
         name: str,
         repo_root: str,
+        project_key: Optional[str] = None,
     ) -> None:
         normalized_root = normalize_repo_root(repo_root)
+        effective_project_key = project_key or compute_project_key(
+            repo_root=normalized_root,
+            project_name=name,
+        )
         await self._execute(
             """
             UPDATE scribe_projects
@@ -2529,7 +2562,7 @@ class PostgresStorage(StorageBackend):
             """,
             normalized_root,
             compute_repo_id(normalized_root),
-            compute_project_key(repo_root=normalized_root, project_name=name),
+            effective_project_key,
             row_id,
         )
 

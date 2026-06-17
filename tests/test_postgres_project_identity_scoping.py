@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 import scribe_mcp.storage.postgres as postgres_module
+from scribe_mcp.storage.models import compute_project_key
 from scribe_mcp.storage.postgres import PostgresStorage
 
 
@@ -386,6 +387,50 @@ async def test_ensure_repo_scoped_project_identity_backfills_before_unique_index
     assert calls.index("fetch_missing_identity_rows") < calls.index(
         "create_project_key_unique_index"
     )
+
+
+@pytest.mark.asyncio
+async def test_ensure_repo_scoped_project_identity_deconflicts_legacy_alias_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = PostgresStorage("postgresql://example.invalid/scribe")
+    repo_root = "/repo/a"
+    canonical_key = compute_project_key(repo_root=repo_root, project_name="alias-project")
+    updated_keys: dict[int, str] = {}
+
+    async def fake_ensure_column(table: str, column: str, definition: str) -> None:
+        return None
+
+    async def fake_fetch(query: str, *params: object):
+        normalized = " ".join(query.split())
+        if "SELECT project_key" in normalized:
+            return []
+        if "SELECT id, name, repo_root FROM scribe_projects" in normalized:
+            assert "ORDER BY id" in normalized
+            return [
+                {"id": 7, "name": "alias-project", "repo_root": repo_root},
+                {"id": 8, "name": "alias_project", "repo_root": repo_root},
+            ]
+        return []
+
+    async def fake_execute(query: str, *params: object) -> str:
+        normalized = " ".join(query.split())
+        if normalized.startswith("UPDATE scribe_projects"):
+            row_id = int(params[3])
+            project_key = str(params[2])
+            assert project_key not in updated_keys.values()
+            updated_keys[row_id] = project_key
+        return "OK"
+
+    monkeypatch.setattr(storage, "_ensure_column", fake_ensure_column)
+    monkeypatch.setattr(storage, "_fetch", fake_fetch)
+    monkeypatch.setattr(storage, "_execute", fake_execute)
+
+    await storage._ensure_repo_scoped_project_identity()
+
+    assert updated_keys[7] == canonical_key
+    assert updated_keys[8].startswith("pk_legacy_")
+    assert updated_keys[8] != canonical_key
 
 
 @pytest.mark.asyncio

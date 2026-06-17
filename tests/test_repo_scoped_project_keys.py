@@ -144,6 +144,74 @@ def test_same_name_in_two_repos_persists_as_two_records(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_sqlite_migration_deconflicts_legacy_canonical_alias_duplicates(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy_alias_duplicates.db"
+    repo_root = tmp_path / "repo_a"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE scribe_projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            repo_root TEXT NOT NULL,
+            progress_log_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            docs_json TEXT
+        );
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO scribe_projects (name, repo_root, progress_log_path)
+        VALUES (?, ?, ?);
+        """,
+        [
+            ("alias-project", str(repo_root), str(repo_root / "alias-project" / "PROGRESS_LOG.md")),
+            ("alias_project", str(repo_root), str(repo_root / "alias_project" / "PROGRESS_LOG.md")),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    async def _run() -> None:
+        storage = SQLiteStorage(db_path)
+        try:
+            await storage.upsert_project(
+                name="new_project",
+                repo_root=str(tmp_path / "repo_b"),
+                progress_log_path=str(tmp_path / "repo_b" / "PROGRESS_LOG.md"),
+            )
+
+            canonical = await storage.fetch_project("alias-project", repo_root=str(repo_root))
+            assert canonical is not None
+            assert canonical.name == "alias-project"
+            assert canonical.project_key == compute_project_key(
+                repo_root=str(repo_root),
+                project_name="alias-project",
+            )
+
+            with sqlite3.connect(str(db_path)) as verify_conn:
+                rows = verify_conn.execute(
+                    """
+                    SELECT project_key
+                    FROM scribe_projects
+                    WHERE name IN ('alias-project', 'alias_project')
+                    ORDER BY id;
+                    """
+                ).fetchall()
+
+            project_keys = [str(row[0]) for row in rows]
+            assert len(project_keys) == 2
+            assert len(set(project_keys)) == 2
+            assert project_keys[0].startswith("pk_")
+            assert project_keys[1].startswith("pk_legacy_")
+        finally:
+            await storage.close()
+
+    asyncio.run(_run())
+
+
 def test_state_binding_and_project_fetch_share_project_key(tmp_path: Path) -> None:
     db_path = tmp_path / "state_scope.db"
 

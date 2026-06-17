@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, List, Optional
 from scribe_mcp.storage.models import (
     ProjectRecord,
     RepoScopeGrantRecord,
+    compute_legacy_project_key,
     compute_project_key,
     compute_repo_id,
     normalize_repo_root,
@@ -164,6 +165,57 @@ async def _ensure_project_identity_schema(
         )
         await execute_fn("DROP TABLE scribe_projects_legacy;", ())
 
+    assigned_project_keys: set[str] = set()
+    while True:
+        row = await fetchone_fn(
+            """
+            SELECT id, name, repo_root
+            FROM scribe_projects
+            WHERE repo_id IS NULL
+               OR repo_id = ''
+               OR project_key IS NULL
+               OR project_key = ''
+            ORDER BY id
+            LIMIT 1;
+            """,
+            (),
+        )
+        if not row:
+            break
+        repo_root = normalize_repo_root(str(row["repo_root"]))
+        name = str(row["name"])
+        project_key = compute_project_key(repo_root=repo_root, project_name=name)
+        existing_project_key_row = await fetchone_fn(
+            """
+            SELECT id
+            FROM scribe_projects
+            WHERE project_key = ?
+              AND id != ?
+            LIMIT 1;
+            """,
+            (project_key, int(row["id"])),
+        )
+        if project_key in assigned_project_keys or existing_project_key_row:
+            project_key = compute_legacy_project_key(
+                repo_root=repo_root,
+                project_name=name,
+                row_id=int(row["id"]),
+            )
+        assigned_project_keys.add(project_key)
+        await execute_fn(
+            """
+            UPDATE scribe_projects
+            SET repo_root = ?, repo_id = ?, project_key = ?
+            WHERE id = ?;
+            """,
+            (
+                repo_root,
+                compute_repo_id(repo_root),
+                project_key,
+                int(row["id"]),
+            ),
+        )
+
     await execute_fn(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_projects_project_key_unique
@@ -178,37 +230,6 @@ async def _ensure_project_identity_schema(
         """,
         (),
     )
-
-    while True:
-        row = await fetchone_fn(
-            """
-            SELECT id, name, repo_root
-            FROM scribe_projects
-            WHERE repo_id IS NULL
-               OR repo_id = ''
-               OR project_key IS NULL
-               OR project_key = ''
-            LIMIT 1;
-            """,
-            (),
-        )
-        if not row:
-            break
-        repo_root = normalize_repo_root(str(row["repo_root"]))
-        name = str(row["name"])
-        await execute_fn(
-            """
-            UPDATE scribe_projects
-            SET repo_root = ?, repo_id = ?, project_key = ?
-            WHERE id = ?;
-            """,
-            (
-                repo_root,
-                compute_repo_id(repo_root),
-                compute_project_key(repo_root=repo_root, project_name=name),
-                int(row["id"]),
-            ),
-        )
 
 
 async def _ensure_repo_scope_grants_schema(
