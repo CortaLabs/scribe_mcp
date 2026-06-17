@@ -7,7 +7,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from scribe_mcp.storage.models import ProjectRecord
-from scribe_mcp.utils.search import message_matches
+from scribe_mcp.utils.search import (
+    message_matches,
+    message_predicate_pushable,
+    sqlite_message_clause,
+)
 from scribe_mcp.utils.time import format_utc, utcnow
 
 
@@ -15,6 +19,12 @@ AsyncExecute = Callable[[str, tuple[Any, ...]], Awaitable[Any]]
 AsyncFetchOne = Callable[[str, tuple[Any, ...]], Awaitable[Any]]
 AsyncFetchAll = Callable[[str, tuple[Any, ...] | tuple], Awaitable[List[Any]]]
 AsyncInitialise = Callable[[], Awaitable[None]]
+
+# Upper bound on rows scanned when a message predicate cannot be pushed into SQL
+# (regex mode only). substring/exact are exhaustive via SQL and never hit this.
+# This is the single, shared cap for both the page fetch and the count path so
+# their regex windows are identical (F5 parity).
+_MESSAGE_POSTFILTER_SCAN_CAP = 10000
 
 
 def _build_filtered_clauses(
@@ -297,7 +307,6 @@ async def query_entries(
 ) -> List[Dict[str, Any]]:
     await initialise_fn()
     limit = max(1, min(limit, 500))
-    fetch_limit = min(max(limit * 3, limit), 1000)
 
     clauses = ["project_id = ?"]
     params: List[Any] = [project.id]
@@ -325,38 +334,89 @@ async def query_entries(
             params.append(f"$.{key}")
             params.append(value)
 
+    # F1/F5 fix: push substring/exact message predicate INTO SQL so the match is
+    # exhaustive (not limited to a recent ~1000-row window) and so the page fetch
+    # shares the SAME predicate + ordering as count_query_entries. ``regex`` is
+    # not portably expressible in SQL, so it stays a bounded Python post-filter.
+    pushable = message_predicate_pushable(message, message_mode)
+    if pushable:
+        clause, clause_params = sqlite_message_clause(
+            message, mode=message_mode, case_sensitive=case_sensitive
+        )
+        clauses.append(clause)
+        params.extend(clause_params)
+
     where_clause = " AND ".join(clauses)
+
+    if pushable or not message:
+        # SQL is authoritative: apply the real limit/offset directly. No window,
+        # no Python re-filter — the page is exact and exhaustive over all rows.
+        rows = await fetchall_fn(
+            f"""
+            SELECT id, ts, ts_iso, emoji, agent, message, meta, raw_line
+            FROM scribe_entries
+            WHERE {where_clause}
+            ORDER BY ts_iso DESC
+            LIMIT ? OFFSET ?;
+            """,
+            (*params, limit, offset),
+        )
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            meta_value = json.loads(row["meta"]) if row["meta"] else {}
+            results.append(
+                {
+                    "id": row["id"],
+                    "ts": row["ts"],
+                    "emoji": row["emoji"],
+                    "agent": row["agent"],
+                    "message": row["message"],
+                    "meta": meta_value,
+                    "raw_line": row["raw_line"],
+                }
+            )
+        return results
+
+    # regex post-filter path: predicate cannot be pushed to SQL. Stream rows in
+    # newest-first order, applying offset/limit AFTER the Python match so the
+    # page is consistent with count_query_entries' regex path. Bounded by
+    # _MESSAGE_POSTFILTER_SCAN_CAP to keep the scan finite (documented caveat).
     rows = await fetchall_fn(
         f"""
         SELECT id, ts, ts_iso, emoji, agent, message, meta, raw_line
         FROM scribe_entries
         WHERE {where_clause}
         ORDER BY ts_iso DESC
-        LIMIT ? OFFSET ?;
+        LIMIT ?;
         """,
-        (*params, fetch_limit, offset),
+        (*params, _MESSAGE_POSTFILTER_SCAN_CAP),
     )
 
-    results: List[Dict[str, Any]] = []
+    results = []
+    skipped = 0
     for row in rows:
-        meta_value = json.loads(row["meta"]) if row["meta"] else {}
-        entry = {
-            "id": row["id"],
-            "ts": row["ts"],
-            "emoji": row["emoji"],
-            "agent": row["agent"],
-            "message": row["message"],
-            "meta": meta_value,
-            "raw_line": row["raw_line"],
-        }
         if not message_matches(
-            entry["message"],
+            row["message"],
             message,
             mode=message_mode,
             case_sensitive=case_sensitive,
         ):
             continue
-        results.append(entry)
+        if skipped < offset:
+            skipped += 1
+            continue
+        meta_value = json.loads(row["meta"]) if row["meta"] else {}
+        results.append(
+            {
+                "id": row["id"],
+                "ts": row["ts"],
+                "emoji": row["emoji"],
+                "agent": row["agent"],
+                "message": row["message"],
+                "meta": meta_value,
+                "raw_line": row["raw_line"],
+            }
+        )
         if len(results) >= limit:
             break
     return results
@@ -456,40 +516,53 @@ async def count_query_entries(
             params.append(f"$.{key}")
             params.append(value)
 
-    where_clause = " AND ".join(clauses)
-    row = await fetchone_fn(
-        f"""
-        SELECT COUNT(*) as count
-        FROM scribe_entries
-        WHERE {where_clause};
-        """,
-        tuple(params),
-    )
-    count = row["count"] if row else 0
-
-    if message:
-        fetch_limit = min(count, 10000)
-        rows = await fetchall_fn(
-            f"""
-            SELECT message
-            FROM scribe_entries
-            WHERE {where_clause}
-            LIMIT ?;
-            """,
-            (*params, fetch_limit),
+    # F5 fix: count shares the EXACT same predicate + ordering as query_entries.
+    # For substring/exact the message clause is pushed into the COUNT(*) so the
+    # total is exhaustive and matches what the page fetch can surface. ``regex``
+    # uses the same bounded, newest-first scan window as the fetch path.
+    pushable = message_predicate_pushable(message, message_mode)
+    if pushable:
+        clause, clause_params = sqlite_message_clause(
+            message, mode=message_mode, case_sensitive=case_sensitive
         )
-        matching_count = 0
-        for row in rows:
-            if message_matches(
-                row["message"],
-                message,
-                mode=message_mode,
-                case_sensitive=case_sensitive,
-            ):
-                matching_count += 1
-        return matching_count
+        clauses.append(clause)
+        params.extend(clause_params)
 
-    return count
+    where_clause = " AND ".join(clauses)
+
+    if pushable or not message:
+        row = await fetchone_fn(
+            f"""
+            SELECT COUNT(*) as count
+            FROM scribe_entries
+            WHERE {where_clause};
+            """,
+            tuple(params),
+        )
+        return row["count"] if row else 0
+
+    # regex post-filter path: same scan cap + ordering as query_entries so the
+    # count agrees with what pagination can actually surface.
+    rows = await fetchall_fn(
+        f"""
+        SELECT message
+        FROM scribe_entries
+        WHERE {where_clause}
+        ORDER BY ts_iso DESC
+        LIMIT ?;
+        """,
+        (*params, _MESSAGE_POSTFILTER_SCAN_CAP),
+    )
+    matching_count = 0
+    for row in rows:
+        if message_matches(
+            row["message"],
+            message,
+            mode=message_mode,
+            case_sensitive=case_sensitive,
+        ):
+            matching_count += 1
+    return matching_count
 
 
 async def cleanup_old_entries(

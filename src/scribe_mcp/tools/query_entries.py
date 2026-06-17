@@ -262,6 +262,13 @@ def _validate_search_parameters(
         final_time_range = healed_params.get("time_range", time_range)
         final_relevance_threshold = healed_params.get("relevance_threshold", relevance_threshold)
         final_max_results = healed_params.get("max_results", max_results)
+        # P4.2: priority/category/min_confidence/priority_sort were never threaded
+        # into the config, so search_params always saw them as None/False and the
+        # filters silently did nothing. Thread them through here.
+        final_priority = priority
+        final_category = category
+        final_min_confidence = min_confidence
+        final_priority_sort = priority_sort
 
         # Create configuration using dual parameter support
         if config is not None:
@@ -289,7 +296,11 @@ def _validate_search_parameters(
                 verify_code_references=final_verify_code_references,
                 time_range=final_time_range,
                 relevance_threshold=final_relevance_threshold,
-                max_results=final_max_results
+                max_results=final_max_results,
+                priority=final_priority,
+                category=final_category,
+                min_confidence=final_min_confidence,
+                priority_sort=final_priority_sort,
             )
 
             # Merge with provided config (legacy parameters take precedence)
@@ -325,7 +336,11 @@ def _validate_search_parameters(
                 verify_code_references=final_verify_code_references,
                 time_range=final_time_range,
                 relevance_threshold=final_relevance_threshold,
-                max_results=final_max_results
+                max_results=final_max_results,
+                priority=final_priority,
+                category=final_category,
+                min_confidence=final_min_confidence,
+                priority_sort=final_priority_sort,
             )
 
         return final_config, {"healing_applied": healing_applied, "healed_params": healed_params}
@@ -643,81 +658,149 @@ async def _execute_search_with_fallbacks(
                     )
                     
                     if project_record and hasattr(backend, 'query_entries_paginated'):
-                        # Map search_params to backend method signature
-                        page = search_params.get("page", 1)
-                        page_size = search_params.get("page_size", 50)
-                        
-                        # Call database query method
-                        db_rows, total_count = await backend.query_entries_paginated(
-                            project=project_record,
-                            page=page,
-                            page_size=page_size,
-                            start=search_params.get("start"),
-                            end=search_params.get("end"),
-                            agents=search_params.get("agents"),
-                            emojis=search_params.get("emoji"),  # Note: search_params uses "emoji", backend expects "emojis"
-                            message=search_params.get("message"),
-                            message_mode=search_params.get("message_mode", "substring"),
-                            case_sensitive=search_params.get("case_sensitive", False),
-                            meta_filters=search_params.get("meta_filters")
-                        )
-                        
-                        # Convert DB rows to entry dict format (matching flat-file format)
-                        filtered_entries = []
-                        for row in db_rows:
-                            entry = {
-                                "id": row.get("id", ""),
-                                "ts": row.get("ts", ""),
-                                "ts_iso": row.get("ts_iso", row.get("ts", "")),
-                                "emoji": row.get("emoji", ""),
-                                "agent": row.get("agent", ""),
-                                "message": row.get("message", ""),
-                                "meta": row.get("meta", {}),
-                                "raw_line": row.get("raw_line", "")
-                            }
-                            
-                            # Apply additional filters not handled by backend
-                            # (priority, category, min_confidence, relevance_threshold)
-                            
-                            # Apply priority filter
-                            if search_params.get("priority"):
-                                entry_priority = entry.get("meta", {}).get("priority", "medium")
-                                if entry_priority not in search_params["priority"]:
-                                    continue
-                            
-                            # Apply category filter
-                            if search_params.get("category"):
-                                entry_category = entry.get("meta", {}).get("category")
-                                if entry_category not in search_params["category"]:
-                                    continue
-                            
-                            # Apply confidence filter
-                            if search_params.get("min_confidence") is not None:
-                                entry_confidence = float(entry.get("meta", {}).get("confidence", 1.0))
-                                if entry_confidence < search_params["min_confidence"]:
-                                    continue
-                            
-                            # Apply relevance threshold (simplified implementation)
-                            if search_params.get("relevance_threshold", 0.0) > 0.0:
-                                message = entry.get("message", "")
-                                relevance_score = len(message) / 1000.0
-                                if relevance_score < search_params["relevance_threshold"]:
-                                    continue
-                            
-                            filtered_entries.append(entry)
-                        
-                        # Apply priority sorting if requested
-                        if search_params.get("priority_sort", False):
-                            from scribe_mcp.shared.log_enums import get_priority_sort_key
-                            filtered_entries.sort(
-                                key=lambda e: (
-                                    get_priority_sort_key(e.get("meta", {}).get("priority", "medium")),
-                                    e.get("ts_iso", "")
-                                ),
-                                reverse=False
+                        # P4.2: ONE pagination/limit/filter contract, identical to
+                        # the flat-file path. ``status`` (dropped before P4.2) is
+                        # translated to emojis and unioned with any explicit
+                        # ``emoji`` filter so it is pushed into the backend WHERE
+                        # clause; the priority/category/confidence/relevance/status
+                        # filters the backend cannot evaluate are applied in-tool
+                        # over the MATCHED set BEFORE pagination so pages never
+                        # under-fill and ``total_count`` is the true post-filter
+                        # count (F7). ``limit``/``max_results`` are honored via the
+                        # shared resolver (F6).
+                        page, page_size, effective_limit = _resolve_pagination(search_params)
+
+                        # Push status -> emojis into the backend filter (union with
+                        # any explicit emoji filter). This removes the DB/flat-file
+                        # status asymmetry (status was previously never forwarded).
+                        backend_emojis = list(search_params.get("emoji") or [])
+                        status_emojis = _status_to_emojis(search_params.get("status"))
+                        for emoji_char in status_emojis:
+                            if emoji_char not in backend_emojis:
+                                backend_emojis.append(emoji_char)
+                        backend_emojis = backend_emojis or None
+
+                        python_filters_active = _has_python_only_filters(search_params)
+
+                        truncated = False
+                        if not python_filters_active:
+                            # Fast path: no in-Python filter is active, so the
+                            # backend's own (post-P4.1 exhaustive) pagination is
+                            # authoritative. Fetch the natural page, then apply the
+                            # unified limit/max_results cap to BOTH the reported
+                            # total and the (possibly partial) last page so the
+                            # contract holds identically to the flat-file path.
+                            db_rows, total_count = await backend.query_entries_paginated(
+                                project=project_record,
+                                page=page,
+                                page_size=page_size,
+                                start=search_params.get("start"),
+                                end=search_params.get("end"),
+                                agents=search_params.get("agents"),
+                                emojis=backend_emojis,
+                                message=search_params.get("message"),
+                                message_mode=search_params.get("message_mode", "substring"),
+                                case_sensitive=search_params.get("case_sensitive", False),
+                                meta_filters=search_params.get("meta_filters"),
                             )
-                        
-                        # Format response - DB query already handled pagination
+                            effective_total = min(total_count, effective_limit)
+                            page_rows = [
+                                {
+                                    "id": row.get("id", ""),
+                                    "ts": row.get("ts", ""),
+                                    "ts_iso": row.get("ts_iso", row.get("ts", "")),
+                                    "emoji": row.get("emoji", ""),
+                                    "agent": row.get("agent", ""),
+                                    "message": row.get("message", ""),
+                                    "meta": row.get("meta", {}),
+                                    "raw_line": row.get("raw_line", ""),
+                                }
+                                for row in db_rows
+                            ]
+                            # Trim a partial last page that runs past the cap so the
+                            # window never exceeds effective_total (F6 limit cap).
+                            allowed_on_page = max(0, effective_total - (page - 1) * page_size)
+                            page_entries = page_rows[:allowed_on_page]
+                            pagination_info = {
+                                "page": page,
+                                "page_size": page_size,
+                                "total_count": effective_total,
+                                "has_next": (page * page_size) < effective_total,
+                                "has_prev": page > 1,
+                                "limit": effective_limit,
+                            }
+                        else:
+                            # Filter-then-paginate path: gather the matched set in
+                            # newest-first order (bounded by _QUERY_MATCH_SCAN_CAP),
+                            # apply the in-Python filters, then window in-tool so the
+                            # page fills correctly and the count is honest.
+                            matched: List[Dict[str, Any]] = []
+                            chunk_size = 500  # backends clamp a single fetch to 500
+                            chunk_page = 1
+                            backend_total = 0
+                            while len(matched) < _QUERY_MATCH_SCAN_CAP:
+                                db_rows, backend_total = await backend.query_entries_paginated(
+                                    project=project_record,
+                                    page=chunk_page,
+                                    page_size=chunk_size,
+                                    start=search_params.get("start"),
+                                    end=search_params.get("end"),
+                                    agents=search_params.get("agents"),
+                                    emojis=backend_emojis,
+                                    message=search_params.get("message"),
+                                    message_mode=search_params.get("message_mode", "substring"),
+                                    case_sensitive=search_params.get("case_sensitive", False),
+                                    meta_filters=search_params.get("meta_filters"),
+                                )
+                                if not db_rows:
+                                    break
+                                for row in db_rows:
+                                    matched.append({
+                                        "id": row.get("id", ""),
+                                        "ts": row.get("ts", ""),
+                                        "ts_iso": row.get("ts_iso", row.get("ts", "")),
+                                        "emoji": row.get("emoji", ""),
+                                        "agent": row.get("agent", ""),
+                                        "message": row.get("message", ""),
+                                        "meta": row.get("meta", {}),
+                                        "raw_line": row.get("raw_line", ""),
+                                    })
+                                if len(db_rows) < chunk_size or len(matched) >= backend_total:
+                                    break
+                                chunk_page += 1
+                            if backend_total > _QUERY_MATCH_SCAN_CAP and len(matched) >= _QUERY_MATCH_SCAN_CAP:
+                                truncated = True
+
+                            filtered_entries = [
+                                entry for entry in matched
+                                if _entry_passes_python_filters(entry, search_params)
+                            ]
+
+                            # Apply priority sorting if requested
+                            if search_params.get("priority_sort", False):
+                                from scribe_mcp.shared.log_enums import get_priority_sort_key
+                                filtered_entries.sort(
+                                    key=lambda e: (
+                                        get_priority_sort_key(e.get("meta", {}).get("priority", "medium")),
+                                        e.get("ts_iso", "")
+                                    ),
+                                    reverse=False
+                                )
+
+                            page_entries, pagination_info = _paginate_filtered(
+                                filtered_entries, search_params
+                            )
+
+                        if truncated:
+                            validation_warnings.append(
+                                f"Matched set exceeded scan cap ({_QUERY_MATCH_SCAN_CAP}); "
+                                "counts/pages reflect the capped window. Narrow the query "
+                                "(time range, message, agents) for exhaustive results."
+                            )
+
+                        filtered_entries = page_entries
+
+                        # Format response - pagination already applied above
                         compact = search_params.get("compact", False)
                         fields = search_params.get("fields")
                         include_metadata = search_params.get("include_metadata", True)
@@ -750,15 +833,8 @@ async def _execute_search_with_fallbacks(
                                         del formatted_entry["meta"]
                                     formatted_entries.append(formatted_entry)
                         
-                        # Create pagination info
-                        pagination_info = {
-                            "page": page,
-                            "page_size": page_size,
-                            "total_count": total_count,
-                            "has_next": (page * page_size) < total_count,
-                            "has_prev": page > 1
-                        }
-                        
+                        # pagination_info was built above under the unified
+                        # contract (honest total_count; limit/max_results applied).
                         # Return successful DB query results
                         return {
                             "ok": True,
@@ -766,7 +842,7 @@ async def _execute_search_with_fallbacks(
                             "pagination": pagination_info,
                             "search_params": search_params,
                             "validation_warnings": validation_warnings,
-                            "total_found": total_count,
+                            "total_found": pagination_info["total_count"],
                             "returned": len(formatted_entries),
                             "source": "database"  # Indicator that DB was used
                         }
@@ -954,33 +1030,19 @@ async def _execute_search_with_fallbacks(
                     reverse=False  # Lower priority numbers first (critical=0), timestamp DESC maintained
                 )
 
-            # Apply pagination with error handling
+            # Apply pagination with error handling. P4.2: use the SAME unified
+            # contract as the DB path (page/page_size window, limit total cap,
+            # max_results deprecated alias) so the two paths return identical
+            # results for the same call. filtered_entries is already the full
+            # post-filter set in final order, so its length is the true total.
             try:
                 page = search_params.get("page", 1)
                 page_size = search_params.get("page_size", 50)
                 limit = search_params.get("limit")
-                if limit is None:
-                    limit = page_size
 
-                # Calculate pagination
-                total_entries = len(filtered_entries)
-                start_idx = (page - 1) * page_size
-                end_idx = start_idx + page_size
-
-                # Apply limit
-                if limit < page_size:
-                    end_idx = start_idx + limit
-
-                paginated_entries = filtered_entries[start_idx:end_idx]
-
-                # Create pagination info (use total_count for formatter compatibility)
-                pagination_info = {
-                    "page": page,
-                    "page_size": page_size,
-                    "total_count": total_entries,  # Key must be total_count for formatter
-                    "has_next": end_idx < total_entries,
-                    "has_prev": page > 1
-                }
+                paginated_entries, pagination_info = _paginate_filtered(
+                    filtered_entries, search_params
+                )
 
             except Exception as pagination_error:
                 # Try to heal pagination error
@@ -1195,7 +1257,7 @@ async def query_entries(
     verify_code_references: bool = False,  # Check if mentioned code still exists
     time_range: Optional[str] = None,  # "last_30d", "last_7d", "today", etc.
     relevance_threshold: float = 0.0,  # 0.0-1.0 relevance scoring threshold
-    max_results: Optional[int] = None,  # Override for limit (deprecated but kept for compatibility)
+    max_results: Optional[int] = None,  # Deprecated alias for limit (wired via _resolve_pagination)
     config: Optional[QueryEntriesConfig] = None,  # Configuration object for dual parameter support
     format: str = "structured",  # Output format: readable, structured (default), compact
     # Phase 5 Priority/Category Filter Parameters
@@ -1219,9 +1281,11 @@ async def query_entries(
         status: Filter by status(es) (mapped to emojis)
         agents: Filter by agent name(s)
         meta_filters: Filter by metadata key/value pairs
-        limit: Maximum results to return (legacy, for backward compatibility)
+        limit: Optional total cap on matched+filtered results before windowing
+               (default 50). page/page_size select the window within that cap;
+               identical on the DB and flat-file paths.
         page: Page number for pagination (1-based)
-        page_size: Number of results per page
+        page_size: Number of results per page (window size)
         compact: Use compact response format with short field names
         fields: Specific fields to include in response
         include_metadata: Include metadata field in entries
@@ -1232,7 +1296,8 @@ async def query_entries(
         verify_code_references: Check if mentioned code still exists
         time_range: Time range filter - "last_30d", "last_7d", "today", etc.
         relevance_threshold: Minimum relevance score (0.0-1.0) for results
-        max_results: Override maximum results (deprecated, use limit/page_size instead)
+        max_results: Deprecated alias for ``limit``. Honored as the total cap when
+                     set and ``limit`` is left at its default; prefer ``limit``.
         config: Configuration object for dual parameter support. If provided, legacy parameters
                take precedence when both are specified.
         format: Output format - "readable" (human-friendly, default), "structured" (full JSON), "compact" (minimal)
@@ -2338,3 +2403,185 @@ def _meta_matches(
         if entry_meta.get(key) != expected:
             return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# P4.2 — one pagination/limit/filter contract shared by the DB and flat-file
+# execution paths. Before P4.2 the two paths diverged: the DB path paginated
+# THEN post-filtered (under-filled pages, lied in total_count, silently dropped
+# ``status``) while the flat-file path filtered-then-paginated but honored
+# ``limit`` only when it was smaller than ``page_size`` and never consulted the
+# documented ``max_results`` override. These helpers are the single source of
+# truth so both paths behave identically.
+# ---------------------------------------------------------------------------
+
+# Upper bound on the matched set the tool will hold in memory before applying
+# the in-Python filters (priority/category/min_confidence/status/relevance) and
+# paginating. Mirrors P4.1's bounded-scan discipline so a pathological query
+# stays finite; if the matched set hits this cap a truncation warning is
+# surfaced so the count is never silently wrong.
+_QUERY_MATCH_SCAN_CAP = 10000
+
+
+def _status_to_emojis(statuses: Optional[List[str]]) -> List[str]:
+    """Translate status names (info/success/warn/error/bug/plan) to emoji chars.
+
+    ``STATUS_EMOJI`` maps each status to a single emoji string. Returns a flat,
+    de-duplicated list suitable for both an ``emoji IN (...)`` SQL push and an
+    in-Python membership test. Unknown statuses contribute nothing (the entry
+    simply will not match), which is the same fail-closed behavior as before.
+    """
+    if not statuses:
+        return []
+    emojis: List[str] = []
+    for status in statuses:
+        if not isinstance(status, str):
+            continue
+        emoji = STATUS_EMOJI.get(status.lower())
+        if emoji and emoji not in emojis:
+            emojis.append(emoji)
+    return emojis
+
+
+def _entry_passes_python_filters(
+    entry: Dict[str, Any],
+    search_params: Dict[str, Any],
+) -> bool:
+    """Apply the filters that are NOT pushed into the backend WHERE clause.
+
+    These (priority, category, min_confidence, status, relevance_threshold) must
+    be evaluated identically on the DB and flat-file paths so a page never
+    under-fills and ``total_count`` always equals the true post-filter match
+    count. ``message``/``emoji``/``agents``/``meta_filters``/time-range are
+    handled upstream (SQL on the DB path, the line loop on the flat-file path).
+    """
+    meta = entry.get("meta") or {}
+
+    requested_priority = search_params.get("priority")
+    if requested_priority:
+        if meta.get("priority", "medium") not in requested_priority:
+            return False
+
+    requested_category = search_params.get("category")
+    if requested_category:
+        if meta.get("category") not in requested_category:
+            return False
+
+    min_confidence = search_params.get("min_confidence")
+    if min_confidence is not None:
+        try:
+            entry_confidence = float(meta.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            entry_confidence = 1.0
+        if entry_confidence < min_confidence:
+            return False
+
+    requested_status = search_params.get("status")
+    if requested_status:
+        status_emojis = _status_to_emojis(requested_status)
+        if entry.get("emoji", "") not in status_emojis:
+            return False
+
+    relevance_threshold = search_params.get("relevance_threshold", 0.0) or 0.0
+    if relevance_threshold > 0.0:
+        relevance_score = len(entry.get("message", "")) / 1000.0
+        if relevance_score < relevance_threshold:
+            return False
+
+    return True
+
+
+def _has_python_only_filters(search_params: Dict[str, Any]) -> bool:
+    """True when a filter the backend cannot evaluate is active.
+
+    When any of these is set the DB path must fetch the matched set and
+    filter-then-paginate in the tool (like the flat-file path) instead of
+    trusting the backend's own pagination — otherwise pages under-fill and the
+    count lies (F7). ``status`` is pushed to the backend as emojis when it is the
+    ONLY python-side filter, but is still listed here because it is enforced
+    per-entry by ``_entry_passes_python_filters`` for full parity.
+    """
+    return bool(
+        search_params.get("priority")
+        or search_params.get("category")
+        or search_params.get("min_confidence") is not None
+        or search_params.get("status")
+        or (search_params.get("relevance_threshold", 0.0) or 0.0) > 0.0
+    )
+
+
+def _resolve_pagination(search_params: Dict[str, Any]) -> Tuple[int, int, int]:
+    """Resolve the ONE pagination contract from page/page_size/limit/max_results.
+
+    Contract (identical on both paths):
+      * ``page``/``page_size`` define the window (which slice is returned).
+      * ``limit`` is an optional cap on the TOTAL number of matched+filtered
+        results considered before windowing. It defaults to the signature
+        default (50) and acts as a ceiling, never silently shrinking a page.
+      * ``max_results`` is a deprecated alias for ``limit``: when it is set and
+        ``limit`` is still at its default, ``max_results`` wins, so the
+        documented override is honored instead of being dead (F6).
+
+    Returns ``(page, page_size, effective_limit)`` with sane lower bounds.
+    """
+    try:
+        page = int(search_params.get("page", 1) or 1)
+    except (TypeError, ValueError):
+        page = 1
+    page = max(1, page)
+
+    try:
+        page_size = int(search_params.get("page_size", 50) or 50)
+    except (TypeError, ValueError):
+        page_size = 50
+    page_size = max(1, page_size)
+
+    raw_limit = search_params.get("limit")
+    raw_max_results = search_params.get("max_results")
+    # max_results is the deprecated alias: honor it only when the caller left
+    # limit at (or below) its default so an explicit limit always wins.
+    effective_limit: Optional[int] = None
+    if raw_limit is not None:
+        try:
+            effective_limit = int(raw_limit)
+        except (TypeError, ValueError):
+            effective_limit = None
+    if raw_max_results is not None and (effective_limit is None or effective_limit == 50):
+        try:
+            effective_limit = int(raw_max_results)
+        except (TypeError, ValueError):
+            pass
+    if effective_limit is None or effective_limit < 1:
+        effective_limit = 50
+
+    return page, page_size, effective_limit
+
+
+def _paginate_filtered(
+    matched_entries: List[Dict[str, Any]],
+    search_params: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Window a fully-filtered, fully-ordered list under the unified contract.
+
+    ``matched_entries`` must already be post-filter (so its length is the true
+    total) and in final sort order. Caps the total at ``effective_limit`` then
+    returns the requested ``page`` slice plus honest pagination metadata.
+    """
+    page, page_size, effective_limit = _resolve_pagination(search_params)
+
+    capped = matched_entries[:effective_limit] if effective_limit < len(matched_entries) else matched_entries
+    total = len(capped)
+
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    page_entries = capped[start_idx:end_idx]
+
+    pagination_info = {
+        "page": page,
+        "page_size": page_size,
+        "total_count": total,
+        "has_next": end_idx < total,
+        "has_prev": page > 1,
+        "limit": effective_limit,
+    }
+    return page_entries, pagination_info

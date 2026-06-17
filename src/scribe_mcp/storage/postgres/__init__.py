@@ -27,7 +27,11 @@ from scribe_mcp.storage.models import (
     compute_repo_id,
     normalize_repo_root,
 )
-from scribe_mcp.utils.search import message_matches
+from scribe_mcp.utils.search import (
+    message_matches,
+    message_predicate_pushable,
+    postgres_message_clause,
+)
 from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.time import format_utc, utcnow
 from . import documents as document_ops
@@ -113,6 +117,13 @@ def _append_values(params: List[Any], values: Sequence[Any]) -> str:
     start_idx = len(params) + 1
     params.extend(values)
     return ", ".join(f"${idx}" for idx in range(start_idx, start_idx + len(values)))
+
+
+# Upper bound on rows scanned when a message predicate cannot be pushed into SQL
+# (regex mode only). substring/exact are exhaustive via SQL and never hit this.
+# Shared by the page fetch and the count path so their regex windows are
+# identical (F5 parity).
+_MESSAGE_POSTFILTER_SCAN_CAP = 10000
 
 
 def _command_count(tag: str) -> int:
@@ -874,7 +885,6 @@ class PostgresStorage(StorageBackend):
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         safe_limit = max(1, min(limit, 500))
-        fetch_limit = min(max(safe_limit * 3, safe_limit), 1000)
 
         clauses = ["project_id = $1"]
         params: List[Any] = [project.id]
@@ -903,46 +913,86 @@ class PostgresStorage(StorageBackend):
                 params.append(json.dumps({key: value}, sort_keys=True))
                 clauses.append(f"meta @> ${len(params)}::jsonb")
 
+        # F1/F5 fix: push substring/exact message predicate INTO SQL so the match
+        # is exhaustive (not limited to a recent ~1000-row window) and the page
+        # fetch shares the SAME predicate + ordering as count_query_entries.
+        # ``regex`` is not portably expressible in SQL → bounded Python post-filter.
+        pushable = message_predicate_pushable(message, message_mode)
+        if pushable:
+            params.append(message)
+            clause, _ = postgres_message_clause(
+                message,
+                f"${len(params)}",
+                mode=message_mode,
+                case_sensitive=case_sensitive,
+            )
+            clauses.append(clause)
+
         where_clause = " AND ".join(clauses)
 
+        if pushable or not message:
+            # SQL is authoritative: apply the real limit/offset directly. No
+            # window, no Python re-filter — exact and exhaustive over all rows.
+            rows = await self._fetch(
+                f"""
+                SELECT id, ts, ts_iso, emoji, agent, message, meta, raw_line, priority, category, confidence
+                FROM scribe_entries
+                WHERE {where_clause}
+                ORDER BY ts_iso DESC
+                LIMIT ${len(params) + 1} OFFSET ${len(params) + 2};
+                """,
+                *params,
+                safe_limit,
+                offset,
+            )
+            return [self._row_to_entry(row) for row in rows]
+
+        # regex post-filter path: stream newest-first within a bounded scan cap,
+        # apply offset/limit AFTER the Python match so the page is consistent
+        # with count_query_entries' regex path.
         rows = await self._fetch(
             f"""
             SELECT id, ts, ts_iso, emoji, agent, message, meta, raw_line, priority, category, confidence
             FROM scribe_entries
             WHERE {where_clause}
             ORDER BY ts_iso DESC
-            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2};
+            LIMIT ${len(params) + 1};
             """,
             *params,
-            fetch_limit,
-            offset,
+            _MESSAGE_POSTFILTER_SCAN_CAP,
         )
 
         results: List[Dict[str, Any]] = []
+        skipped = 0
         for row in rows:
-            entry = {
-                "id": row["id"],
-                "ts": self._format_ts(row["ts"]),
-                "emoji": row["emoji"],
-                "agent": row["agent"],
-                "message": row["message"],
-                "meta": _coerce_json(row["meta"]),
-                "raw_line": row["raw_line"],
-                "priority": row.get("priority", "medium"),
-                "category": row.get("category"),
-                "confidence": row.get("confidence", 1.0),
-            }
             if not message_matches(
-                entry["message"],
+                row["message"],
                 message,
                 mode=message_mode,
                 case_sensitive=case_sensitive,
             ):
                 continue
-            results.append(entry)
+            if skipped < offset:
+                skipped += 1
+                continue
+            results.append(self._row_to_entry(row))
             if len(results) >= safe_limit:
                 break
         return results
+
+    def _row_to_entry(self, row: Any) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "ts": self._format_ts(row["ts"]),
+            "emoji": row["emoji"],
+            "agent": row["agent"],
+            "message": row["message"],
+            "meta": _coerce_json(row["meta"]),
+            "raw_line": row["raw_line"],
+            "priority": row.get("priority", "medium"),
+            "category": row.get("category"),
+            "confidence": row.get("confidence", 1.0),
+        }
 
     @staticmethod
     def _metrics_counter_for_filters(filters: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -1033,30 +1083,46 @@ class PostgresStorage(StorageBackend):
                 params.append(json.dumps({key: value}, sort_keys=True))
                 clauses.append(f"meta @> ${len(params)}::jsonb")
 
+        # F5 fix: count shares the EXACT same predicate + ordering as
+        # query_entries. substring/exact push the message clause into COUNT(*)
+        # so the total is exhaustive and matches what pagination can surface;
+        # ``regex`` uses the same bounded, newest-first scan window as the fetch.
+        pushable = message_predicate_pushable(message, message_mode)
+        if pushable:
+            params.append(message)
+            clause, _ = postgres_message_clause(
+                message,
+                f"${len(params)}",
+                mode=message_mode,
+                case_sensitive=case_sensitive,
+            )
+            clauses.append(clause)
+
         where_clause = " AND ".join(clauses)
-        value = await self._fetchval(
-            f"""
-            SELECT COUNT(*)
-            FROM scribe_entries
-            WHERE {where_clause};
-            """,
-            *params,
-        )
-        total = int(value or 0)
 
-        if not message:
-            return total
+        if pushable or not message:
+            value = await self._fetchval(
+                f"""
+                SELECT COUNT(*)
+                FROM scribe_entries
+                WHERE {where_clause};
+                """,
+                *params,
+            )
+            return int(value or 0)
 
-        fetch_limit = min(total, 10000)
+        # regex post-filter path: same scan cap + ordering as query_entries so
+        # the count agrees with what pagination can actually surface.
         rows = await self._fetch(
             f"""
             SELECT message
             FROM scribe_entries
             WHERE {where_clause}
+            ORDER BY ts_iso DESC
             LIMIT ${len(params) + 1};
             """,
             *params,
-            fetch_limit,
+            _MESSAGE_POSTFILTER_SCAN_CAP,
         )
         matching_count = 0
         for row in rows:
