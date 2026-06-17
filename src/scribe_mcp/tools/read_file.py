@@ -48,6 +48,106 @@ _SECTION_ID_PATTERN = re.compile(r"^<!--\s*ID:\s*(?P<section>[^>]+?)\s*-->$")
 _tiktoken_encoder = None
 logger = logging.getLogger(__name__)
 
+
+# Canonical declaration of the read modes ``read_file`` actually dispatches on
+# (see the ``if mode == "..."`` branches in the tool body). This tuple is the
+# SINGLE SOURCE for the host-facing ``mode`` enum so the schema can never drift
+# silently from a guessed literal. Each entry carries a WHEN-to-use description
+# because the schema-education research found agents do not know cheap modes
+# like ``scan_only`` exist and default to expensive full reads. The anti-drift
+# contract test asserts these keys equal the modes the dispatch really handles.
+_READ_FILE_MODES: Dict[str, str] = {
+    "scan_only": (
+        "DEFAULT and cheapest. Returns file structure (classes/functions with "
+        "line numbers) + imports without file content. ALWAYS start here to "
+        "learn where things are, then read only the lines you need."
+    ),
+    "line_range": (
+        "Return an exact span of lines (use start_line/end_line). The targeted "
+        "follow-up to scan_only once you know which lines matter."
+    ),
+    "chunk": (
+        "Return fixed-size content chunks by index (use chunk_index/start_chunk/"
+        "max_chunks). Use to walk a large file in bounded pieces."
+    ),
+    "page": (
+        "Return a page of content by page_number/page_size. Use for paginated "
+        "sequential reading of a large file."
+    ),
+    "search": (
+        "Find content within this one file (use search/query + search_mode: "
+        "regex|literal|smart|fuzzy, context_lines). Locate text without reading "
+        "the whole file."
+    ),
+    "full_stream": (
+        "Stream the entire file content. Use only when you genuinely need the "
+        "whole file and it is too large for a single 'full' read."
+    ),
+    "full": (
+        "Return the entire file content in one response (token-limited unless "
+        "include_full_content=True). Prefer scan_only + line_range for large "
+        "files to save context."
+    ),
+}
+
+
+def _build_read_file_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``read_file``.
+
+    Mirrors the proven ``set_project`` / ``manage_docs`` ``input_schema=``
+    override pattern: the host uses this schema verbatim and the server's
+    runtime-agent wrapper then injects the required ``agent`` field. The single
+    enrichment over the auto-built schema is the ``mode`` property, which now
+    carries an ``enum`` (sourced from ``_READ_FILE_MODES`` — the same modes the
+    tool body dispatches on) and a ``description`` that teaches WHEN to use each
+    mode. ``additionalProperties`` stays ``True`` so the many passthrough kwargs
+    are not regressed into hard host rejections.
+    """
+    mode_description = "Read strategy. One of: " + "; ".join(
+        f"{name} = {desc}" for name, desc in _READ_FILE_MODES.items()
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "path": {"type": "string"},
+            "mode": {
+                "type": "string",
+                "enum": list(_READ_FILE_MODES),
+                "default": "scan_only",
+                "description": mode_description,
+            },
+            "chunk_index": {"type": "array"},
+            "start_chunk": {"type": ["integer", "string"]},
+            "max_chunks": {"type": ["integer", "string"]},
+            "start_line": {"type": ["integer", "string"]},
+            "end_line": {"type": ["integer", "string"]},
+            "page_number": {"type": ["integer", "string"]},
+            "page_size": {"type": ["integer", "string"]},
+            "search": {"type": "string"},
+            "query": {"type": "string"},
+            "search_mode": {"type": "string"},
+            "case_insensitive": {"type": "boolean"},
+            "context_lines": {"type": ["integer", "string"]},
+            "max_matches": {"type": ["integer", "string"]},
+            "fuzzy_threshold": {"type": ["number", "string"]},
+            "format": {"type": "string"},
+            "include_dependencies": {"type": "boolean"},
+            "include_impact": {"type": "boolean"},
+            "structure_filter": {"type": "string"},
+            "structure_page": {"type": ["integer", "string"]},
+            "structure_page_size": {"type": ["integer", "string"]},
+            "allow_outside_repo": {"type": "boolean"},
+            "include_full_content": {"type": "boolean"},
+        },
+        "required": ["path"],
+        "additionalProperties": True,
+    }
+
+
+_READ_FILE_INPUT_SCHEMA: Dict[str, Any] = _build_read_file_input_schema()
+
+
 def _get_tiktoken_encoder():
     """Get or create tiktoken encoder (lazy loaded)."""
     global _tiktoken_encoder
@@ -1778,7 +1878,10 @@ async def _log_project_read(context: ExecutionContext, message: str, meta: Dict[
     return  # Do nothing - tool events go to TOOL_LOG.jsonl, not PROGRESS_LOG
 
 
-@app.tool(**read_only_local_tool(title="Read File", tags=("files", "inspection", "read-only")))
+@app.tool(
+    **read_only_local_tool(title="Read File", tags=("files", "inspection", "read-only")),
+    input_schema=_READ_FILE_INPUT_SCHEMA,
+)
 async def read_file(
     agent: str,
     path: str,

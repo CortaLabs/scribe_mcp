@@ -5,6 +5,7 @@ import tempfile
 import asyncio
 
 import pytest
+from scribe_mcp import server as server_module
 from scribe_mcp.tools.read_file import read_file
 from scribe_mcp.tools.search import search
 from scribe_mcp.server import app
@@ -63,13 +64,17 @@ def execution_context(tmp_path):
         affected_dev_projects=[]
     )
 
-    # Store context in server
+    # Bind the request-local execution context via the canonical contextvar.
+    # The runtime resolves context through get_execution_context() -> the
+    # contextvar (fail-closed); app.state is legacy bootstrap-only fallback.
     app.state.execution_context = context
+    token = server_module.router_context_manager.set_current(context)
 
-    yield tmp_path
-
-    # Cleanup
-    app.state.execution_context = None
+    try:
+        yield tmp_path
+    finally:
+        server_module.router_context_manager.reset(token)
+        app.state.execution_context = None
 
 
 # ============================================================================

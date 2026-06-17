@@ -14,6 +14,7 @@ from scribe_mcp.doc_management import utils as doc_utils
 from scribe_mcp.shared.reference_resolution import build_reference_scope, resolve_reference
 from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
 from scribe_mcp.server import app
+from scribe_mcp.shared.log_enums import LogPriority
 from scribe_mcp.tool_contracts import additive_local_tool
 from scribe_mcp.utils.sentinel_logs import append_case_event, append_sentinel_event
 
@@ -66,6 +67,164 @@ _SECURITY_FIELD_SECTION_ANCHORS = {
     "customer_impact": "security_overview",
     "affected_areas": "affected_systems",
 }
+
+
+# ---------------------------------------------------------------------------
+# Host input-schema enrichment (P2.2)
+#
+# Mirrors the proven ``set_project`` / ``manage_docs`` (P1.2) ``input_schema=``
+# override pattern: each ``@app.tool`` passes a hand-authored schema that the
+# host uses verbatim, and the server's ``_with_runtime_agent_schema`` then
+# injects the required ``agent`` field. ``additionalProperties`` stays ``True``
+# so the rich optional-kwarg surface (component, environment, preview, ...) is
+# never regressed into a hard host rejection.
+#
+# Enum values are sourced LIVE from their real accepted-value sources so they
+# cannot drift from runtime behavior:
+#   * ``severity`` -> ``LogPriority`` (critical/high/medium/low), the same
+#     severity vocabulary the docstrings advertise.
+#   * ``landing_status`` -> the unified case-status vocabulary in
+#     ``doc_management/utils.py`` (the exact tokens ``resolved_case_close_status``
+#     understands: open + fix-terminal + non-fix-terminal). A non-terminal token
+#     legitimately leaves the case open, which is why the open set is included.
+# ``category`` is intentionally NOT enumerated: it is a free-form organizational
+# label ("auth"/"api"/"injection"/...) validated only as non-empty at runtime.
+# There is no canonical accepted-value source for it, so it carries teaching
+# guidance via ``description`` rather than a fabricated enum that would falsely
+# reject valid free-form categories.
+
+# Severity values, live from the canonical priority vocabulary (single source of
+# truth — derived, never hand-copied).
+_SEVERITY_ENUM: list[str] = [member.value for member in LogPriority]
+
+# The case-category guidance (free-form; teach, do not constrain).
+_BUG_CATEGORY_DESCRIPTION = (
+    "Free-form organizational label for the bug (e.g. 'auth', 'api', 'ui', "
+    "'runtime', 'startup'). Required and non-empty; not constrained to a fixed "
+    "vocabulary."
+)
+_SECURITY_CATEGORY_DESCRIPTION = (
+    "Free-form organizational label for the security issue (e.g. 'auth', "
+    "'injection', 'xss', 'secrets'). Required and non-empty; not constrained to "
+    "a fixed vocabulary."
+)
+_CASE_ID_FORMAT_HINT = (
+    "Stable per-day case identifier. Format: 'BUG-YYYYMMDD-NNNN' for bug cases "
+    "or 'SEC-YYYYMMDD-NNNN' for security cases."
+)
+
+
+def _landing_status_enum() -> list[str]:
+    """Live accepted-value list for ``link_fix`` ``landing_status``.
+
+    Sourced from the unified case-status vocabulary (P1.1) so it tracks exactly
+    the tokens ``doc_utils.resolved_case_close_status`` recognizes:
+    open (non-terminal, leaves the case open), fix-terminal (collapses to
+    "closed"), and non-fix-terminal (preserved as the closure reason). Sorted
+    for stable host presentation; derived, never frozen.
+    """
+    return sorted(
+        doc_utils.CASE_OPEN_STATUS_VALUES | doc_utils.CASE_CLOSED_STATUS_VALUES
+    )
+
+
+def _build_open_bug_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``open_bug`` (severity enum)."""
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "title": {"type": "string"},
+            "symptoms": {"type": "string"},
+            "category": {"type": "string", "description": _BUG_CATEGORY_DESCRIPTION},
+            "affected_paths": {"type": "array"},
+            "expected_behaviour": {"type": "string"},
+            "steps_to_reproduce": {"type": "array"},
+            "root_cause": {"type": "string"},
+            "resolution_notes": {"type": "string"},
+            "severity": {
+                "type": "string",
+                "enum": list(_SEVERITY_ENUM),
+                "description": (
+                    "Bug severity level (sourced from the canonical priority "
+                    "vocabulary). Defaults to 'medium' when omitted."
+                ),
+            },
+            "component": {"type": "string"},
+            "environment": {"type": "string"},
+            "customer_impact": {"type": "string"},
+            "preview": {"type": "boolean"},
+        },
+        "required": ["title", "symptoms", "category"],
+        "additionalProperties": True,
+    }
+
+
+def _build_open_security_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``open_security`` (severity enum)."""
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "title": {"type": "string"},
+            "symptoms": {"type": "string"},
+            "category": {
+                "type": "string",
+                "description": _SECURITY_CATEGORY_DESCRIPTION,
+            },
+            "affected_paths": {"type": "array"},
+            "expected_behaviour": {"type": "string"},
+            "steps_to_reproduce": {"type": "array"},
+            "root_cause": {"type": "string"},
+            "resolution_notes": {"type": "string"},
+            "severity": {
+                "type": "string",
+                "enum": list(_SEVERITY_ENUM),
+                "description": (
+                    "Security severity level (sourced from the canonical "
+                    "priority vocabulary). Defaults to 'high' when omitted."
+                ),
+            },
+            "component": {"type": "string"},
+            "environment": {"type": "string"},
+            "customer_impact": {"type": "string"},
+            "preview": {"type": "boolean"},
+        },
+        "required": ["title", "symptoms", "category"],
+        "additionalProperties": True,
+    }
+
+
+def _build_link_fix_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``link_fix`` (landing_status enum)."""
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "case_id": {"type": "string", "description": _CASE_ID_FORMAT_HINT},
+            "execution_id": {"type": "string"},
+            "artifact_ref": {"type": "string"},
+            "landing_status": {
+                "type": "string",
+                "enum": _landing_status_enum(),
+                "description": (
+                    "Landing/lifecycle status for the linked fix (sourced from "
+                    "the unified case-status vocabulary). Fix-terminal values "
+                    "(e.g. 'merged', 'resolved') close the case; non-fix-terminal "
+                    "values (e.g. 'wontfix', 'duplicate') close it with the "
+                    "reason preserved; open values (e.g. 'in_progress') leave the "
+                    "case open."
+                ),
+            },
+        },
+        "required": ["case_id", "artifact_ref", "landing_status"],
+        "additionalProperties": True,
+    }
+
+
+_OPEN_BUG_INPUT_SCHEMA: Dict[str, Any] = _build_open_bug_input_schema()
+_OPEN_SECURITY_INPUT_SCHEMA: Dict[str, Any] = _build_open_security_input_schema()
+_LINK_FIX_INPUT_SCHEMA: Dict[str, Any] = _build_link_fix_input_schema()
 
 
 def _format_unfilled_guidance(
@@ -822,7 +981,10 @@ async def append_event(
     return {"ok": True, "event_type": status or "info", "written_count": written}
 
 
-@app.tool(**additive_local_tool(title="Open Bug Case", tags=("bugs", "sentinel", "write")))
+@app.tool(
+    **additive_local_tool(title="Open Bug Case", tags=("bugs", "sentinel", "write")),
+    input_schema=_OPEN_BUG_INPUT_SCHEMA,
+)
 async def open_bug(
     agent: str,
     title: str,
@@ -1136,7 +1298,10 @@ async def open_bug(
     )
 
 
-@app.tool(**additive_local_tool(title="Open Security Case", tags=("security", "sentinel", "write")))
+@app.tool(
+    **additive_local_tool(title="Open Security Case", tags=("security", "sentinel", "write")),
+    input_schema=_OPEN_SECURITY_INPUT_SCHEMA,
+)
 async def open_security(
     agent: str,
     title: str,
@@ -1450,7 +1615,10 @@ async def open_security(
     )
 
 
-@app.tool(**additive_local_tool(title="Link Fix Artifact", tags=("bugs", "security", "traceability", "write")))
+@app.tool(
+    **additive_local_tool(title="Link Fix Artifact", tags=("bugs", "security", "traceability", "write")),
+    input_schema=_LINK_FIX_INPUT_SCHEMA,
+)
 async def link_fix(
     agent: str,
     case_id: str,
