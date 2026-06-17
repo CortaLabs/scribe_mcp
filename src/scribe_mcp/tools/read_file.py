@@ -1564,15 +1564,48 @@ def _extract_python_structure(path: Path, max_items: int = 50, structure_filter:
     except (SyntaxError, UnicodeDecodeError) as e:
         return {"ok": False, "error": str(e), "type": "python"}
 
-    functions = []
-    classes = []
+    # Single-pass extraction (F5/F4). A NodeVisitor walks the tree exactly once,
+    # maintaining a class stack so we can classify each def by its lexical
+    # context without re-walking the tree per node (the old triple-`ast.walk`
+    # was O(functions × tree_nodes × subtree)). Both `FunctionDef` AND
+    # `AsyncFunctionDef` are matched — `AsyncFunctionDef` is a sibling class, not
+    # a subclass of `FunctionDef`, so the old `isinstance(node, ast.FunctionDef)`
+    # gate structurally dropped every top-level `async def`.
+    _func_types = (ast.FunctionDef, ast.AsyncFunctionDef)
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
-            # Get full signature
+    class _StructureVisitor(ast.NodeVisitor):
+        """Collect top-level functions and classes (with direct-body methods).
+
+        Classification matches the prior behavior exactly:
+        - A def reached while the class stack is empty is a top-level function.
+        - A def reached as a direct child of a class body is a method of that
+          class. Defs nested deeper (closures inside methods, etc.) belong to
+          neither bucket — the same as the old code, which excluded them.
+        """
+
+        def __init__(self) -> None:
+            self.functions: list = []
+            self.classes: list = []
+            self._class_stack: list = []  # class dicts currently open
+
+        def _function_node(self, node) -> None:
             sig = _get_full_signature(node)
-
-            func_info = {
+            if self._class_stack:
+                # Direct child of the innermost open class body -> method.
+                self._class_stack[-1]["methods"].append({
+                    "name": node.name,
+                    "line": node.lineno,
+                    "end_line": getattr(node, 'end_lineno', node.lineno),  # Python 3.8+
+                    "is_async": isinstance(node, ast.AsyncFunctionDef),
+                    "params": sig["params"],
+                    "return_type": sig["return_type"],
+                    # Keep legacy args for backwards compat
+                    "args": [arg.arg for arg in node.args.args],
+                })
+                # Do not descend into method bodies: nested defs inside a method
+                # are neither top-level functions nor direct-body methods.
+                return
+            self.functions.append({
                 "name": node.name,
                 "line": node.lineno,
                 "end_line": getattr(node, 'end_lineno', node.lineno),  # Python 3.8+
@@ -1581,40 +1614,40 @@ def _extract_python_structure(path: Path, max_items: int = 50, structure_filter:
                 "return_type": sig["return_type"],
                 # Keep legacy args for backwards compat
                 "args": [arg.arg for arg in node.args.args],
-            }
-            # Determine if it's a method (inside a class)
-            for parent in ast.walk(tree):
-                if isinstance(parent, ast.ClassDef):
-                    if node in ast.walk(parent):
-                        func_info["type"] = "method"
-                        break
-            if func_info["type"] != "method":
-                functions.append(func_info)
+            })
+            # Descend so nested top-level defs (closures at module scope) are
+            # still surfaced as functions, matching the prior walk-everything
+            # behavior outside of classes.
+            self.generic_visit(node)
 
-        elif isinstance(node, ast.ClassDef):
-            methods = []
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # Get full signature for methods
-                    sig = _get_full_signature(item)
+        def visit_FunctionDef(self, node) -> None:  # noqa: N802 (ast API)
+            self._function_node(node)
 
-                    methods.append({
-                        "name": item.name,
-                        "line": item.lineno,
-                        "end_line": getattr(item, 'end_lineno', item.lineno),  # Python 3.8+
-                        "is_async": isinstance(item, ast.AsyncFunctionDef),
-                        "params": sig["params"],
-                        "return_type": sig["return_type"],
-                        # Keep legacy args for backwards compat
-                        "args": [arg.arg for arg in item.args.args],
-                    })
-            classes.append({
+        def visit_AsyncFunctionDef(self, node) -> None:  # noqa: N802 (ast API)
+            self._function_node(node)
+
+        def visit_ClassDef(self, node) -> None:  # noqa: N802 (ast API)
+            class_info = {
                 "name": node.name,
                 "line": node.lineno,
                 "end_line": getattr(node, 'end_lineno', node.lineno),  # Python 3.8+
-                "methods": methods,  # Store all methods (pagination handles display limits)
-                "method_count": len(methods),
-            })
+                "methods": [],  # filled as we visit direct-body defs
+                "method_count": 0,
+            }
+            self._class_stack.append(class_info)
+            # Visit only the direct body so methods are the class's own defs;
+            # this mirrors the old `for item in node.body` scan while still
+            # descending into nested classes for their own method extraction.
+            for child in node.body:
+                self.visit(child)
+            self._class_stack.pop()
+            class_info["method_count"] = len(class_info["methods"])
+            self.classes.append(class_info)
+
+    visitor = _StructureVisitor()
+    visitor.visit(tree)
+    functions = visitor.functions
+    classes = visitor.classes
 
     total_functions = len(functions)
     total_classes = len(classes)
@@ -1653,6 +1686,67 @@ def _extract_python_structure(path: Path, max_items: int = 50, structure_filter:
         "filtered_function_count": len(functions) if structure_filter else None,
         "filtered_class_count": len(classes) if structure_filter else None,
     }
+
+
+# Structure categories that participate in structure_page slicing, keyed by the
+# list field and its companion total field. Markdown headings/anchors and
+# python/js functions/classes are all paginated uniformly.
+_STRUCTURE_PAGE_FIELDS: Dict[str, str] = {
+    "functions": "total_functions",
+    "classes": "total_classes",
+    "headings": "total_headings",
+    "section_anchors": "total_section_anchors",
+}
+
+
+def _paginate_structure(
+    structure: Dict[str, Any],
+    page: int,
+    page_size: int,
+) -> Dict[str, Any]:
+    """Slice a structure result's symbol lists by page and report accurate pagination.
+
+    Operates on whichever of `functions`/`classes`/`headings`/`section_anchors`
+    are present. Each sliced list's companion ``total_*`` field is rewritten to
+    the *true* total (pre-slice) so the caller can see the full count even when
+    only a page is returned. Returns a pagination metadata block with real
+    ``has_next``/``total_pages`` derived from the largest category.
+
+    The structure dict is mutated in place and also returned for convenience.
+    """
+    page = max(1, int(page))
+    page_size = max(1, int(page_size))
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    max_total = 0
+    for list_field, total_field in _STRUCTURE_PAGE_FIELDS.items():
+        items = structure.get(list_field)
+        if not isinstance(items, list):
+            continue
+        # The extractors are now called with a very high item ceiling, so the
+        # incoming list is the full, untruncated set — len(items) is the truth.
+        # (For filtered python scans the list is already the filtered matches.)
+        total = len(items)
+        structure[list_field] = items[start:end]
+        structure[total_field] = total
+        if total > max_total:
+            max_total = total
+
+    total_pages = max(1, (max_total + page_size - 1) // page_size)
+    structure["pagination"] = {
+        "page": page,
+        "page_size": page_size,
+        "total_items": max_total,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1,
+    }
+    # The structure was sliced to a page; the legacy ``truncated`` flag (which
+    # meant "more than max_items exist") is superseded by ``has_next``.
+    if max_total > end:
+        structure["truncated"] = True
+    return structure
 
 
 def _extract_markdown_structure(path: Path, max_headings: int = 100) -> Dict[str, Any]:
@@ -1807,52 +1901,98 @@ def _search_file(
             matcher = re.compile(pattern, flags)
         except re.error as exc:
             raise ValueError(f"invalid regex: {exc}") from exc
-    buffer: List[str] = []
-    buffer_start = 1
+    # Pre-context buffer holds the most recent `context_lines` lines seen so far
+    # (lines strictly before the current line). Post-context is collected by
+    # deferred emission: matches stay "pending" until their trailing context
+    # lines have been read, then get finalized.
+    pre_buffer: List[str] = []
+    pending: List[Dict[str, Any]] = []  # matches still accumulating post-context
     current_line = 0
+    limit_reached = False
     pattern_value = pattern.lower() if case_insensitive else pattern
+
+    def _finalize(entry: Dict[str, Any], last_line: int) -> None:
+        """Clamp context_end to the truth — the last line actually delivered."""
+        delivered_end = entry["context_start"] + len(entry["context"]) - 1
+        # delivered_end is what we actually have; never claim past it or past EOF.
+        entry["context_end"] = min(entry["context_end"], delivered_end, last_line)
+        matches.append(entry)
 
     with path.open("rb") as handle:
         for raw_line in handle:
             current_line += 1
             line = raw_line.decode(encoding, errors="replace")
-            buffer.append(line)
-            if len(buffer) > context_lines * 2 + 1:
-                buffer.pop(0)
-                buffer_start += 1
 
-            is_match = False
-            score = None
-            candidate = line.lower() if case_insensitive else line
-            if regex:
-                if matcher and matcher.search(line):
-                    is_match = True
-            elif fuzzy_threshold > 0:
-                base = line.strip()
-                candidate_text = base.lower() if case_insensitive else base
-                score = difflib.SequenceMatcher(None, pattern_value, candidate_text).ratio()
-                if score >= fuzzy_threshold:
-                    is_match = True
-            else:
-                if pattern_value in candidate:
-                    is_match = True
+            # Feed this line into any pending matches' post-context, finalizing
+            # those whose trailing window is now complete.
+            if pending:
+                still_pending: List[Dict[str, Any]] = []
+                for entry in pending:
+                    entry["context"].append(line)
+                    entry["_remaining"] -= 1
+                    if entry["_remaining"] <= 0:
+                        entry.pop("_remaining", None)
+                        _finalize(entry, current_line)
+                    else:
+                        still_pending.append(entry)
+                pending = still_pending
 
-            if is_match:
-                context_start = max(1, current_line - context_lines)
-                context_end = current_line + context_lines
-                snippet = buffer[-(context_lines * 2 + 1):]
-                match_payload = {
-                    "line_number": current_line,
-                    "line": line,
-                    "context_start": context_start,
-                    "context_end": context_end,
-                    "context": snippet,
-                }
-                if score is not None:
-                    match_payload["match_score"] = score
-                matches.append(match_payload)
-                if max_matches is not None and len(matches) >= max_matches:
-                    break
+            if not limit_reached:
+                is_match = False
+                score = None
+                candidate = line.lower() if case_insensitive else line
+                if regex:
+                    if matcher and matcher.search(line):
+                        is_match = True
+                elif fuzzy_threshold > 0:
+                    base = line.strip()
+                    candidate_text = base.lower() if case_insensitive else base
+                    score = difflib.SequenceMatcher(None, pattern_value, candidate_text).ratio()
+                    if score >= fuzzy_threshold:
+                        is_match = True
+                else:
+                    if pattern_value in candidate:
+                        is_match = True
+
+                if is_match:
+                    context_start = max(1, current_line - context_lines)
+                    # pre_buffer holds up to context_lines preceding lines.
+                    pre = pre_buffer[-context_lines:] if context_lines > 0 else []
+                    entry: Dict[str, Any] = {
+                        "line_number": current_line,
+                        "line": line,
+                        "context_start": context_start,
+                        # Optimistic end; clamped on finalize to truth.
+                        "context_end": current_line + context_lines,
+                        "context": pre + [line],
+                        "_remaining": context_lines,
+                    }
+                    if score is not None:
+                        entry["match_score"] = score
+                    if context_lines > 0:
+                        pending.append(entry)
+                    else:
+                        entry.pop("_remaining", None)
+                        _finalize(entry, current_line)
+                    if max_matches is not None and len(matches) + len(pending) >= max_matches:
+                        # Stop searching for new matches, but keep reading so the
+                        # already-queued matches can finish collecting post-context.
+                        limit_reached = True
+
+            # Maintain pre-context window (lines before the next line).
+            if context_lines > 0:
+                pre_buffer.append(line)
+                if len(pre_buffer) > context_lines:
+                    pre_buffer.pop(0)
+
+            if limit_reached and not pending:
+                break
+
+    # File ended while matches were still accumulating post-context: finalize
+    # them with whatever was collected (context_end clamped to EOF).
+    for entry in pending:
+        entry.pop("_remaining", None)
+        _finalize(entry, current_line)
 
     return matches
 
@@ -2182,7 +2322,9 @@ async def read_file(
         structure = None
 
         if file_type == "python":
-            structure = _extract_python_structure(target, max_items=50, structure_filter=structure_filter)
+            # Extract the full structure (high ceiling) so structure_page can
+            # page through all symbols; _paginate_structure does the slicing.
+            structure = _extract_python_structure(target, max_items=100000, structure_filter=structure_filter)
 
             # Phase 1: Dependency analysis (opt-in)
             # When include_dependencies=False, this block is skipped (zero overhead)
@@ -2325,17 +2467,22 @@ async def read_file(
                         "unresolved": []
                     }
         elif file_type == "markdown":
-            structure = _extract_markdown_structure(target, max_headings=100)
+            structure = _extract_markdown_structure(target, max_headings=100000)
         elif file_type in {"javascript", "typescript"}:
-            structure = _extract_javascript_structure(target, file_type, max_items=50)
+            structure = _extract_javascript_structure(target, file_type, max_items=100000)
 
         if structure:
+            # Apply real structure pagination: slice the symbol lists to the
+            # requested page and report accurate totals + has_next. Only paginate
+            # successful extractions (an error dict has no symbol lists).
+            if structure.get("ok"):
+                _paginate_structure(structure, structure_page, structure_page_size)
             response["structure"] = structure
-            # Add pagination info for structure browsing
-            response["structure_pagination"] = {
-                "page": structure_page,
-                "page_size": structure_page_size,
-            }
+            # Echo the resolved pagination state (sourced from the real slice).
+            response["structure_pagination"] = structure.get(
+                "pagination",
+                {"page": structure_page, "page_size": structure_page_size},
+            )
 
         # Add navigation hints for chunk/page reading
         line_count = scan.get("line_count", 0)
@@ -2348,7 +2495,20 @@ async def read_file(
                 "read_chunk": f"read_file(path='{rel_path or target}', mode='chunk', chunk_index=[0])",
                 "read_page": f"read_file(path='{rel_path or target}', mode='page', page_number=1, page_size=50)",
                 "read_range": f"read_file(path='{rel_path or target}', mode='line_range', start_line=1, end_line=50)",
-            }
+                # F4: the `search` mode was advertised in modes_available but had
+                # no worked example — agents fell back to reading whole files
+                # instead of jumping to the symbol they wanted.
+                "search": f"read_file(path='{rel_path or target}', mode='search', search='def my_func', context_lines=2)",
+            },
+            # F6: a prominent call-to-action so agents do the right follow-up
+            # after a scan instead of dumping the entire file. Scan first, then
+            # target the symbol/lines you actually need.
+            "next_step": (
+                "You scanned the structure. Now read ONLY what you need: use "
+                "mode='line_range' with a symbol's line/end_line from the structure "
+                "above, or mode='search' to jump to a name. Avoid full_stream on "
+                "large files."
+            ),
         }
 
         # Add hint for advanced analysis (dependencies, impact, boundaries)
