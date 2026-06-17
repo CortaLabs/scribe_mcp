@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+from scribe_mcp.config.paths import resolve_codex_plugin_root
 from scribe_mcp.config.settings import Settings, settings
 from scribe_mcp.scripts.bootstrap_postgres import BootstrapConfig, _bootstrap
 from scribe_mcp.scripts.project_codex_plugin import project_codex_plugin, render_codex_projection_error
@@ -223,8 +224,14 @@ def _build_post_install_next_steps(*, repo_root: Path) -> Dict[str, str]:
 
 
 def execute_projection_opt_in(*, repo_root: Path, codex_home: Optional[Path] = None) -> Dict[str, Any]:
-    """Explicit, optional Codex projection step run only by user selection."""
-    plugin_root = repo_root / "plugins" / "codex"
+    """Explicit, optional Codex projection step run only by user selection.
+
+    The projection source resolves to the wheel-shipped package bundle so that a
+    plain ``pip install scribe-mcp`` (no git clone) still delivers the governed
+    Codex agents/skill. The caller's ``repo_root`` is used only as a clone/dev
+    fallback when the packaged bundle is unavailable.
+    """
+    plugin_root = resolve_codex_plugin_root(repo_root)
     try:
         result = project_codex_plugin(plugin_root=plugin_root, codex_home=codex_home, config_path=None)
     except (FileNotFoundError, OSError, TypeError, ValueError) as exc:

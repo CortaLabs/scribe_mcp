@@ -108,6 +108,54 @@ def templates_dir() -> Path:
     return package_root() / "templates"
 
 
+def plugins_bundle_dir() -> Path:
+    """Directory containing the wheel-shipped Claude/Codex plugin bundles.
+
+    The bundle is a byte-identical copy of the canonical repo ``plugins/`` tree
+    that ships inside the importable package so ``pip install scribe-mcp``
+    carries the governed agents/skills. Resolves from the installed package
+    location (via :func:`package_root`), not the caller's CWD/repo clone.
+    """
+    return package_root() / "plugins_bundle"
+
+
+def codex_plugin_bundle_dir() -> Path:
+    """Path to the packaged Codex plugin bundle (projection source)."""
+    return plugins_bundle_dir() / "codex"
+
+
+def claude_plugin_bundle_dir() -> Path:
+    """Path to the packaged Claude plugin bundle."""
+    return plugins_bundle_dir() / "claude"
+
+
+def onboarding_skill_path() -> Path:
+    """Path to the packaged canonical onboarding usage skill (SKILL.md)."""
+    return package_root() / "onboarding" / "skills" / "scribe-mcp-usage" / "SKILL.md"
+
+
+def resolve_codex_plugin_root(repo_root_hint: Optional[Path] = None) -> Path:
+    """Resolve the Codex plugin projection source for ``scribe install``.
+
+    Prefers the wheel-shipped package bundle (works after a plain
+    ``pip install scribe-mcp``). Falls back to the canonical repo
+    ``plugins/codex`` tree for the git-clone/dev case so a developer running
+    from a checkout still projects the live source of truth.
+    """
+    packaged = codex_plugin_bundle_dir()
+    if (packaged / ".codex-plugin" / "plugin.json").exists():
+        return packaged
+
+    hint = repo_root_hint or repo_root()
+    repo_bundle = hint / "plugins" / "codex"
+    if (repo_bundle / ".codex-plugin" / "plugin.json").exists():
+        return repo_bundle
+
+    # No valid bundle found anywhere; return the packaged path so the caller's
+    # downstream FileNotFoundError points at the canonical install location.
+    return packaged
+
+
 def db_init_sql() -> Path:
     """Path to bootstrap SQL script."""
     return package_root() / "db" / "init.sql"
@@ -259,17 +307,22 @@ def map_client_root(
 __all__ = [
     "cli_session_dir",
     "cli_session_state_path",
+    "claude_plugin_bundle_dir",
+    "codex_plugin_bundle_dir",
     "config_home_dir",
     "config_data_dir",
     "db_init_sql",
     "downstream_seed_manifest_path",
     "map_client_root",
+    "onboarding_skill_path",
     "packaged_config_asset",
     "packaged_template_asset",
+    "plugins_bundle_dir",
     "postgres_migrations_dir",
     "default_db_path",
     "package_root",
     "repo_root",
+    "resolve_codex_plugin_root",
     "scribe_dir",
     "templates_dir",
     "user_data_dir",

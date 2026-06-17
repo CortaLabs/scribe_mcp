@@ -13,6 +13,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_PLUGIN_ROOT = REPO_ROOT / "plugins" / "claude"
 CODEX_PLUGIN_ROOT = REPO_ROOT / "plugins" / "codex"
 MARKETPLACE_PATH = CODEX_PLUGIN_ROOT / "marketplace.json"
+PACKAGE_BUNDLE_ROOT = REPO_ROOT / "src" / "scribe_mcp" / "plugins_bundle"
+PACKAGE_ONBOARDING_SKILL = (
+    REPO_ROOT / "src" / "scribe_mcp" / "onboarding" / "skills" / "scribe-mcp-usage" / "SKILL.md"
+)
 ALLOWED_PUBLIC_AGENTS = [
     "scribe-architect",
     "scribe-bug-hunter",
@@ -332,6 +336,51 @@ def test_scribe_cli_projects_codex_plugin_rejects_private_catalog_content(tmp_pa
     assert exit_code == 1
     assert "error: invalid Codex plugin catalog:" in captured.err
     assert "private/council-only content" in captured.err
+
+
+def _tree_fingerprint(directory: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(directory)): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_package_bundle_is_byte_identical_to_canonical_repo_plugins() -> None:
+    """P6.6 drift guard: the wheel-shipped src/scribe_mcp/plugins_bundle/{claude,codex}
+    bundle MUST stay byte-identical to the canonical repo plugins/ source so the
+    copy cannot silently rot into a parallel system. If you edit the repo bundle,
+    re-copy it into the package tree (and vice versa)."""
+    assert _tree_fingerprint(PACKAGE_BUNDLE_ROOT / "claude") == _tree_fingerprint(CLAUDE_PLUGIN_ROOT)
+    assert _tree_fingerprint(PACKAGE_BUNDLE_ROOT / "codex") == _tree_fingerprint(CODEX_PLUGIN_ROOT)
+
+
+def test_packaged_onboarding_skill_matches_bundle_usage_skill() -> None:
+    """The standalone packaged onboarding skill is the canonical usage SKILL.md."""
+    canonical = (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage" / "SKILL.md").read_bytes()
+    assert PACKAGE_ONBOARDING_SKILL.read_bytes() == canonical
+
+
+def test_resolve_codex_plugin_root_prefers_packaged_bundle() -> None:
+    """install_wizard projection must resolve to the installed package bundle
+    (post-`pip install`), not the caller's CWD/repo clone."""
+    from scribe_mcp.config.paths import codex_plugin_bundle_dir, resolve_codex_plugin_root
+
+    resolved = resolve_codex_plugin_root(REPO_ROOT)
+    assert resolved == codex_plugin_bundle_dir()
+    assert (resolved / ".codex-plugin" / "plugin.json").exists()
+    assert (resolved / "skills" / "scribe-mcp-usage" / "SKILL.md").exists()
+
+
+def test_resolve_codex_plugin_root_falls_back_to_repo_when_bundle_absent(monkeypatch) -> None:
+    """Clone/dev fallback: if the packaged bundle is unavailable, resolution
+    falls back to the canonical repo plugins/codex tree."""
+    from scribe_mcp.config import paths
+
+    monkeypatch.setattr(paths, "codex_plugin_bundle_dir", lambda: REPO_ROOT / "no-such-bundle")
+    resolved = paths.resolve_codex_plugin_root(REPO_ROOT)
+    assert resolved == REPO_ROOT / "plugins" / "codex"
+    assert (resolved / ".codex-plugin" / "plugin.json").exists()
 
 
 def test_roster_review_agent_uses_registered_slug_for_scribe_sign_in() -> None:

@@ -39,6 +39,10 @@ dev = [
   "pytest-asyncio~=0.23",
 ]
 s3 = ["boto3>=1.28"]
+# asyncpg is already a core dependency (see [project].dependencies); this extra
+# exists so that `pip install 'scribe-mcp[postgres]'` resolves cleanly and the
+# Postgres install path advertised by install.sh / docs is truthful.
+postgres = ["asyncpg~=0.29"]
 
 [project.urls]
 Homepage = "https://github.com/CortaLabs/scribe_mcp"
@@ -78,6 +82,16 @@ include = ["scribe_mcp*"]
   "plugins/*.json",
   "templates/*",
   "templates/**/*",
+  # Wheel-shipped Claude/Codex plugin bundles (byte-identical to repo plugins/).
+  # Explicit dotfile/dotdir globs because setuptools '**/*' does not reliably
+  # match hidden paths like .codex-plugin/, .claude-plugin/, .mcp.json, .app.json.
+  "plugins_bundle/**/*",
+  "plugins_bundle/*/.*",
+  "plugins_bundle/*/.*/*",
+  "plugins_bundle/claude/.claude-plugin/*",
+  "plugins_bundle/codex/.codex-plugin/*",
+  # Packaged canonical onboarding usage skill shipped from the install path.
+  "onboarding/**/*",
 ]
 
 [tool.setuptools.data-files]
