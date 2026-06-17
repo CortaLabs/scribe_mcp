@@ -334,9 +334,32 @@ def _validate_and_prepare_parameters(
                 final_category = None
 
         # Validate confidence
+        # Heal toward truth, never toward MAX: clamp out-of-range numerics into
+        # [0.0, 1.0] and omit non-numeric values entirely. Promoting a bad value
+        # to 1.0 (the previous behavior) hid exactly the low-confidence signal the
+        # reminder engine relies on. Surface every correction via parameter_healing.
         if final_confidence is not None:
-            if not isinstance(final_confidence, (int, float)) or not (0.0 <= final_confidence <= 1.0):
-                final_confidence = 1.0  # Out of range → default
+            if isinstance(final_confidence, bool):
+                # bool is an int subclass; a True/False confidence is non-numeric intent.
+                healed_params["confidence_healing"] = (
+                    f"non-numeric confidence {final_confidence!r} omitted"
+                )
+                final_confidence = None
+                healing_applied = True
+            elif isinstance(final_confidence, (int, float)):
+                clamped = max(0.0, min(1.0, float(final_confidence)))
+                if clamped != final_confidence:
+                    healed_params["confidence_healing"] = (
+                        f"confidence {final_confidence!r} clamped to {clamped}"
+                    )
+                    healing_applied = True
+                final_confidence = clamped
+            else:
+                healed_params["confidence_healing"] = (
+                    f"non-numeric confidence {final_confidence!r} omitted"
+                )
+                final_confidence = None
+                healing_applied = True
 
         # Create configuration using dual parameter support
         if config is not None:

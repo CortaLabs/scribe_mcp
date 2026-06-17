@@ -934,8 +934,13 @@ async def test_link_fix_uses_registry_doc_name_for_report_updates() -> None:
     backend.seed_case(case_id="BUG-2026-03-15-0001", doc_name="bug-report-custom")
     captured_doc_names: list[str] = []
 
+    captured_actions: list[str] = []
+
     async def _capture_manage_docs(**kwargs: Any) -> Dict[str, Any]:
         captured_doc_names.append(str(kwargs.get("doc_name", "")))
+        captured_actions.append(str(kwargs.get("action", "")))
+        # quality_check (F5 gate) gets a soft/inconclusive result so the close
+        # proceeds; report-body updates return ok.
         return {"ok": True}
 
     with patch("scribe_mcp.tools.sentinel_tools._get_context", return_value=ctx), \
@@ -952,7 +957,13 @@ async def test_link_fix_uses_registry_doc_name_for_report_updates() -> None:
 
     assert result["ok"] is True
     assert result.get("partial") is not True
-    assert captured_doc_names == ["bug-report-custom", "bug-report-custom"]
+    # Every manage_docs call (F5 completeness gate + both report-body updates)
+    # must target the registry doc_name, never the case_id.
+    assert set(captured_doc_names) == {"bug-report-custom"}
+    # The two report-body updates still run...
+    assert captured_actions.count("replace_section") == 2
+    # ...and the F5 gate consulted the same registry doc on this fix-terminal close.
+    assert "quality_check" in captured_actions
 
 
 @pytest.mark.asyncio

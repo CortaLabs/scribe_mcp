@@ -68,6 +68,13 @@ _SECURITY_FIELD_SECTION_ANCHORS = {
     "affected_areas": "affected_systems",
 }
 
+# Completeness scoring must use a per-case-type field set so a future
+# security-only field (CVSS, exposure, blast-radius) is scored against the
+# security contract rather than the bug field set (F4). Currently equal to the
+# bug set, but kept as a distinct binding so the scoring source is explicit and
+# can diverge without touching the shared scoring loop.
+_SECURITY_TEMPLATE_FIELDS = list(_BUG_TEMPLATE_FIELDS)
+
 
 # ---------------------------------------------------------------------------
 # Host input-schema enrichment (P2.2)
@@ -332,6 +339,34 @@ def _unwrap_result(result: Any) -> Dict[str, Any]:
     return {"ok": False, "error": "Could not unwrap result"}
 
 
+def _case_id_directory_exists(repo_root: Path, candidate_case_id: str, suffix: str) -> bool:
+    """Return True if a report directory already owns ``candidate_case_id``.
+
+    Report directories are named ``{date}_{slug}`` where ``slug`` is the case ID,
+    so collision detection is an EXACT directory-name suffix match (F8). This
+    reads directory NAMES only — never report bodies — so the per-allocation cost
+    is bounded by the number of report directories and independent of report file
+    size. A bare exact-name match (``slug`` only) is also honoured for resilience
+    against any non-date-prefixed layout.
+    """
+    docs_root = repo_root / "docs"
+    for section in (docs_root / "bugs", docs_root / "security"):
+        if not section.exists():
+            continue
+        # ``*/*`` mirrors the report layout ``{category}/{date}_{slug}`` without
+        # touching ``report.md`` contents.
+        for report_dir in section.glob("*/*"):
+            try:
+                if not report_dir.is_dir():
+                    continue
+            except OSError:
+                continue
+            name = report_dir.name
+            if name.endswith(suffix) or name == candidate_case_id:
+                return True
+    return False
+
+
 def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
     """Generate a case ID for project mode using a repo-scoped atomic counter.
 
@@ -435,27 +470,19 @@ def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
                 "case-id allocation failed: persisted counter state is malformed "
                 f"(expected non-negative integer at date bucket '{today}' for kind '{kind}')"
             )
+        # Uniqueness check (F8): the atomic counter is the allocator. Report
+        # directories are named ``{date}_{slug}`` where ``slug == case_id``, so a
+        # collision is an EXACT directory-name suffix match — never full-text body
+        # content. The previous implementation read every report body under this
+        # lock (O(reports x filesize) per allocation) and false-positived when a
+        # case ID was quoted in another report (e.g. a cross-reference). Comparing
+        # directory names only keeps the per-allocation cost bounded by the report
+        # count and independent of report file size.
         next_seq = persisted_seq + 1
         while True:
             candidate_case_id = f"{prefix}{next_seq:04d}"
-            duplicate_found = False
-            docs_root = repo_root / "docs"
-            for candidate in (
-                docs_root / "bugs",
-                docs_root / "security",
-            ):
-                if not candidate.exists():
-                    continue
-                for report_path in candidate.glob("*/*/report.md"):
-                    try:
-                        if candidate_case_id in report_path.read_text(encoding="utf-8"):
-                            duplicate_found = True
-                            break
-                    except OSError:
-                        continue
-                if duplicate_found:
-                    break
-            if not duplicate_found:
+            suffix = f"_{candidate_case_id}"
+            if not _case_id_directory_exists(repo_root, candidate_case_id, suffix):
                 break
             next_seq += 1
 
@@ -772,6 +799,88 @@ async def _register_case_registry_ownership(
     }
 
 
+async def _completeness_gate_blockers(
+    *,
+    manage_docs_tool: Any,
+    agent: str,
+    doc_name: str,
+    landing_status: str,
+) -> Optional[list[str]]:
+    """Return blocking-warning messages if a fix-terminal close is incomplete.
+
+    F5 enforcement: closing a case (fix-terminal ``landing_status``) is only
+    legitimate once the report has real content in its required sections. The
+    completeness signal is read from the canonical content-quality reader —
+    ``manage_docs(action="quality_check")`` — not a parallel parser. An
+    incomplete/scaffold report (``[UNFILLED]`` placeholders in
+    symptoms/root_cause/fix) surfaces as ``quality_status == "fail"`` with
+    ``readiness_blockers`` (e.g. ``SCF_PLACEHOLDER_BRACKET``).
+
+    Returns:
+        - ``None`` when the close is allowed: the transition is not fix-terminal,
+          the report doc is unknown, the quality reader is inconclusive (soft
+          gate — fail open so a transient/unavailable reader never traps a real
+          close), or the report passes.
+        - a non-empty ``list[str]`` of teaching messages when the close must be
+          refused because the quality reader affirmatively reports blockers.
+    """
+    # Only fix-terminal closes are gated. Non-fix terminal statuses
+    # (wontfix/duplicate/false_positive/mitigated) and non-terminal statuses
+    # (proposed/open/...) leave a case in a state that does not assert "this was
+    # fixed", so a complete fix narrative is not required.
+    if doc_utils.resolved_case_close_status(landing_status) != "closed":
+        return None
+
+    target_doc = str(doc_name or "").strip()
+    if not target_doc:
+        # Without a resolvable report doc there is nothing to read; do not trap
+        # the close on a missing reference (soft gate).
+        return None
+
+    try:
+        quality_result = await manage_docs_tool(
+            agent=agent,
+            action="quality_check",
+            doc_name=target_doc,
+            dry_run=True,
+        )
+    except Exception:
+        # The quality reader is advisory at this boundary; an exception inside it
+        # must not raise out of link_fix (MCP tools return error dicts, never
+        # raise) and must not block a legitimate close.
+        return None
+
+    if not isinstance(quality_result, dict):
+        return None
+
+    # Affirmative-failure only: block when the reader explicitly reports a failing
+    # quality status with readiness blockers. Anything inconclusive (no
+    # quality_status, ok=False, pass/warn) falls open.
+    if str(quality_result.get("quality_status") or "").lower() != "fail":
+        return None
+
+    blockers = quality_result.get("readiness_blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return None
+
+    messages: list[str] = []
+    for blocker in blockers[:5]:
+        if not isinstance(blocker, dict):
+            continue
+        code = str(blocker.get("code") or "").strip()
+        detail = str(blocker.get("message") or blocker.get("suggested_repair") or "").strip()
+        if code and detail:
+            messages.append(f"{code}: {detail}")
+        elif code:
+            messages.append(code)
+        elif detail:
+            messages.append(detail)
+    if not messages:
+        # quality_status=="fail" with opaque blockers — still a real failure.
+        messages.append("Report has unresolved scaffold/placeholder content in required sections.")
+    return messages
+
+
 async def _register_case_registry_fix_link(
     *,
     case_record: Any,
@@ -981,6 +1090,332 @@ async def append_event(
     return {"ok": True, "event_type": status or "info", "written_count": written}
 
 
+# ---------------------------------------------------------------------------
+# Shared case-opening implementation (F4)
+#
+# ``open_bug`` and ``open_security`` were ~290 lines of near-duplicate logic
+# differing only in a handful of literals (case kind, status strings, default
+# severity, security flag, doc_type, anchor map, template field set). The
+# duplication doubled maintenance surface and, worse, ``open_security`` scored
+# completeness against the BUG field set — so any security-only field would be
+# silently mis-scored. ``_open_case`` is the single implementation both tools
+# call with their constants; completeness is scored against ``template_fields``
+# so the source is per-case-type.
+# ---------------------------------------------------------------------------
+async def _open_case(
+    *,
+    kind: str,
+    case_type: str,
+    doc_type: str,
+    doc_category: str,
+    report_artifact_type: str,
+    report_key: str,
+    label: str,
+    message_prefix: str,
+    append_status: str,
+    default_severity: str,
+    security_event: bool,
+    template_fields: list[str],
+    anchor_map: dict[str, str],
+    sentinel_event_type: str,
+    preview_tool_name: str,
+    open_tool_name: str,
+    agent: str,
+    title: str,
+    symptoms: str,
+    category: str,
+    affected_paths: Optional[list[str]] = None,
+    expected_behaviour: Optional[str] = None,
+    steps_to_reproduce: Optional[list[str]] = None,
+    root_cause: Optional[str] = None,
+    resolution_notes: Optional[str] = None,
+    severity: Optional[str] = None,
+    component: Optional[str] = None,
+    environment: Optional[str] = None,
+    customer_impact: Optional[str] = None,
+    preview: bool = False,
+) -> Dict[str, Any]:
+    """Open a BUG or SECURITY case. See ``open_bug``/``open_security`` for the
+    public contracts; this is their shared body keyed on ``kind`` constants."""
+    context = _get_context()
+    if not category or not category.strip():
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            warnings=["category is required"],
+            next_step=f"Provide a non-empty 'category' value and retry {open_tool_name}.",
+            error="category is required",
+        )
+
+    # Project mode: route through append_entry AND create a report doc.
+    if context.mode == "project":
+        if preview:
+            try:
+                case_id = _preview_case_id_for_project(kind, context)
+            except Exception as exc:
+                message = f"Failed to preview {kind} case ID: {exc}"
+                return _operator_envelope(
+                    ok=False,
+                    mode="project",
+                    warnings=[message],
+                    next_step="Verify execution context repo binding (repo_root/project scope) and retry preview.",
+                    error=message,
+                )
+            return _operator_envelope(
+                ok=True,
+                mode="project",
+                case_id=case_id,
+                next_step=f"Preview only. Run {open_tool_name} with preview=False to register and create docs.",
+                preview=True,
+            )
+
+        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
+
+        message = f"{message_prefix} {title}: {symptoms}"
+        meta: Dict[str, Any] = {
+            "case_type": case_type,
+            "title": title,
+            "symptoms": symptoms,
+            "affected_paths": affected_paths or [],
+            "landing_status": "proposed",
+        }
+        if security_event:
+            meta["security_event"] = "1"  # Triggers auto-tee to security log
+
+        result = await append_entry_tool(
+            message=message,
+            status=append_status,
+            agent=agent,
+            meta=meta,
+            format="structured",  # Returns plain dict, not MCP-wrapped
+        )
+
+        if not result.get("ok"):
+            message = str(result.get("error", "append_entry failed"))
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                warnings=[message],
+                next_step=f"Resolve append_entry failure and retry {open_tool_name}.",
+                error=message,
+            )
+
+        # Generate case ID after entry is written (so paths are resolvable).
+        try:
+            case_id = _next_case_id_for_project(kind, result)
+        except Exception as exc:
+            message = f"Failed to allocate {kind} case ID: {exc}"
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                warnings=[message],
+                next_step=f"Validate repo docs/counter state and retry {open_tool_name}.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        # Ensure fresh case IDs are immediately queryable by bare ID.
+        registration_meta: Dict[str, Any] = {
+            "case_type": case_type,
+            "case_id": case_id,
+            "registration_event": "case_opened",
+            "title": title,
+        }
+        if security_event:
+            registration_meta["security_event"] = "1"
+        registration_result = await append_entry_tool(
+            message=f"[CASE REGISTERED] {case_id}",
+            status=append_status,
+            agent=agent,
+            meta=registration_meta,
+            format="structured",
+        )
+        if not registration_result.get("ok"):
+            message = str(registration_result.get("error", "case registration append_entry failed"))
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step="Fix registration append failure so case_id is queryable, then retry.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        # Build metadata (used for both doc creation and completeness scoring).
+        case_metadata = {
+            "doc_type": doc_type,
+            "category": category,
+            "slug": case_id,
+            "title": title,
+            "case_id": case_id,
+            "symptoms": symptoms,
+            "summary_long": symptoms,  # Map to template field
+            "actual_behavior": symptoms,  # Map to template field
+            "affected_paths": affected_paths or [],
+            "affected_areas": affected_paths or [],  # Map to template field
+            "reporter": agent,  # Map to template field
+            "status": "INVESTIGATING",  # Default status
+            "severity": severity if severity is not None else default_severity,
+            # NEW parameter mappings (use [UNFILLED] for missing values):
+            "expected_behavior": expected_behaviour if expected_behaviour is not None else "[UNFILLED]",
+            "reproduction_steps": steps_to_reproduce if steps_to_reproduce is not None else ["[UNFILLED]"],
+            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
+            "immediate_actions": resolution_notes if resolution_notes is not None else "[UNFILLED]",
+            "component": component if component is not None else "[UNFILLED]",
+            "environment": environment if environment is not None else "[UNFILLED]",
+            "customer_impact": customer_impact if customer_impact is not None else "[UNFILLED]",
+        }
+
+        doc_result = await manage_docs_tool(
+            agent=agent,
+            action="create",
+            metadata=case_metadata,
+        )
+
+        # Check if document creation succeeded
+        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
+            error_msg = doc_result.get("error", "Unknown error") if isinstance(doc_result, dict) else "manage_docs returned non-dict"
+            message = f"{label} report document creation failed: {error_msg}"
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step=f"Fix manage_docs(create) failure and retry {open_tool_name} for this case.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        registry_result = await _register_case_registry_ownership(
+            context=context,
+            case_id=case_id,
+            case_type=case_type,
+            project_name=str(result.get("project_name", "")),
+            doc_type=doc_type,
+            doc_name=case_id,
+            doc_path=str(doc_result.get("path", "")),
+            title=title,
+            status="open",
+            severity=case_metadata.get("severity"),
+            source_tool=open_tool_name,
+        )
+        registry_ok = registry_result[0]
+        registry_error = registry_result[1]
+        case_registry_summary = registry_result[2] if len(registry_result) > 2 else None
+        if not registry_ok:
+            message = f"Case registry ownership registration failed: {registry_error}"
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step="Ensure project ownership context is bound and shared registry backend is available.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        # Calculate completeness score against the case-type-specific field set.
+        filled_sections = []
+        unfilled_sections = []
+        for field in template_fields:
+            value = case_metadata.get(field)
+            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
+                filled_sections.append(field)
+            else:
+                unfilled_sections.append(field)
+
+        total_fields = len(template_fields)
+        filled_count = len(filled_sections)
+        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
+
+        report_path = str(doc_result.get("path", ""))
+        return _operator_envelope(
+            ok=True,
+            mode="project",
+            case_id=str(case_id),
+            artifacts=[{"type": report_artifact_type, "ref": report_path}],
+            next_step=(
+                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, anchor_map, 3)}."
+            ),
+            entry_id=str(result.get("id", "")),
+            path=str(result.get("path", "")),
+            project_name=str(result.get("project_name", "")),
+            doc_name=str(case_id),
+            doc_path=report_path,
+            doc_category=doc_category,
+            case_registry=case_registry_summary
+            or {
+                "case_id": str(case_id),
+                "case_type": case_type,
+                "doc_name": str(case_id),
+                "doc_path": report_path,
+                "project_name": str(result.get("project_name", "")),
+            },
+            completeness={
+                "score": f"{filled_count}/{total_fields}",
+                "percentage": percentage,
+                "filled_sections": filled_sections,
+                "unfilled_sections": unfilled_sections,
+                "field_section_anchors": {
+                    field: anchor_map.get(field, "description")
+                    for field in unfilled_sections
+                },
+            },
+            action_required=(
+                f"{label} report {percentage}% complete. "
+                f"Use manage_docs(agent='{agent}', action='replace_section', "
+                f"doc_name='{case_id}', section='<section_anchor>', content='...') "
+                f"(doc_path '{report_path}' is also a governed alias) "
+                f"to fill remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, anchor_map, 5)}"
+            ),
+            **{report_key: report_path},
+        )
+
+    # Sentinel mode: original behavior
+    if preview:
+        sentinel_day = getattr(context, "sentinel_day", None)
+        if not isinstance(sentinel_day, str) or not sentinel_day.strip():
+            sentinel_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return _operator_envelope(
+            ok=True,
+            mode="sentinel",
+            case_id=f"{kind}-{sentinel_day}-PREVIEW",
+            next_step=f"Preview only. Run {open_tool_name} with preview=False to append sentinel case event.",
+            preview=True,
+        )
+
+    case_id = append_case_event(
+        context,
+        kind=kind,
+        event_type=sentinel_event_type,
+        data={
+            "title": title,
+            "symptoms": symptoms,
+            "affected_paths": affected_paths or [],
+            "landing_status": "proposed",
+        },
+        include_md=True,
+    )
+    return _operator_envelope(
+        ok=True,
+        mode="sentinel",
+        case_id=case_id,
+        next_step="Case opened in sentinel mode. Run link_fix when a fix artifact is ready.",
+    )
+
+
 @app.tool(
     **additive_local_tool(title="Open Bug Case", tags=("bugs", "sentinel", "write")),
     input_schema=_OPEN_BUG_INPUT_SCHEMA,
@@ -1019,282 +1454,37 @@ async def open_bug(
         environment: Environment where bug occurs (local/staging/production)
         customer_impact: Description of impact on users/customers
     """
-    context = _get_context()
-    if not category or not category.strip():
-        return _operator_envelope(
-            ok=False,
-            mode=str(getattr(context, "mode", "") or "unknown"),
-            warnings=["category is required"],
-            next_step="Provide a non-empty 'category' value and retry open_bug.",
-            error="category is required",
-        )
-
-    # Project mode: route through append_entry with bug status AND create bug report doc
-    if context.mode == "project":
-        if preview:
-            try:
-                case_id = _preview_case_id_for_project("BUG", context)
-            except Exception as exc:
-                message = f"Failed to preview BUG case ID: {exc}"
-                return _operator_envelope(
-                    ok=False,
-                    mode="project",
-                    warnings=[message],
-                    next_step="Verify execution context repo binding (repo_root/project scope) and retry preview.",
-                    error=message,
-                )
-            return _operator_envelope(
-                ok=True,
-                mode="project",
-                case_id=case_id,
-                next_step="Preview only. Run open_bug with preview=False to register and create docs.",
-                preview=True,
-            )
-
-        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
-        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
-
-        message = f"[BUG] {title}: {symptoms}"
-        meta = {
-            "case_type": "bug",
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        }
-
-        result = await append_entry_tool(
-            message=message,
-            status="bug",
-            agent=agent,
-            meta=meta,
-            format="structured",  # Returns plain dict, not MCP-wrapped
-        )
-
-        if not result.get("ok"):
-            message = str(result.get("error", "append_entry failed"))
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                warnings=[message],
-                next_step="Resolve append_entry failure and retry open_bug.",
-                error=message,
-            )
-
-        # Generate case ID after entry is written (so we can scan for existing IDs)
-        try:
-            case_id = _next_case_id_for_project("BUG", result)
-        except Exception as exc:
-            message = f"Failed to allocate BUG case ID: {exc}"
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                warnings=[message],
-                next_step="Validate repo docs/counter state and retry open_bug.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        # Ensure fresh case IDs are immediately queryable by bare ID.
-        # The initial append_entry is written before case-id allocation, so we emit
-        # a scoped registration entry containing case_id in both message and metadata.
-        registration_result = await append_entry_tool(
-            message=f"[CASE REGISTERED] {case_id}",
-            status="bug",
-            agent=agent,
-            meta={
-                "case_type": "bug",
-                "case_id": case_id,
-                "registration_event": "case_opened",
-                "title": title,
-            },
-            format="structured",
-        )
-        if not registration_result.get("ok"):
-            message = str(registration_result.get("error", "case registration append_entry failed"))
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                case_id=str(case_id),
-                warnings=[message],
-                next_step="Fix registration append failure so case_id is queryable, then retry.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        # Create detailed bug report document
-        # Build metadata dict (used for both doc creation and completeness scoring)
-        bug_metadata = {
-            "doc_type": "bug",
-            "category": category,
-            "slug": case_id,
-            "title": title,
-            "case_id": case_id,
-            "symptoms": symptoms,
-            "summary_long": symptoms,  # Map to template field
-            "actual_behavior": symptoms,  # Map to template field
-            "affected_paths": affected_paths or [],
-            "affected_areas": affected_paths or [],  # Map to template field
-            "reporter": agent,  # Map to template field
-            "status": "INVESTIGATING",  # Default status
-            "severity": severity if severity is not None else "medium",  # Default severity
-            # NEW parameter mappings (use [UNFILLED] for missing values):
-            "expected_behavior": expected_behaviour if expected_behaviour is not None else "[UNFILLED]",
-            "reproduction_steps": steps_to_reproduce if steps_to_reproduce is not None else ["[UNFILLED]"],
-            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
-            "immediate_actions": resolution_notes if resolution_notes is not None else "[UNFILLED]",
-            "component": component if component is not None else "[UNFILLED]",
-            "environment": environment if environment is not None else "[UNFILLED]",
-            "customer_impact": customer_impact if customer_impact is not None else "[UNFILLED]",
-        }
-        
-        doc_result = await manage_docs_tool(
-            agent=agent,
-            action="create",
-            metadata=bug_metadata,
-        )
-
-        # Check if document creation succeeded
-        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
-            error_msg = doc_result.get("error", "Unknown error") if isinstance(doc_result, dict) else "manage_docs returned non-dict"
-            message = f"Bug report document creation failed: {error_msg}"
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                case_id=str(case_id),
-                warnings=[message],
-                next_step="Fix manage_docs(create) failure and retry open_bug for this case.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        registry_result = await _register_case_registry_ownership(
-            context=context,
-            case_id=case_id,
-            case_type="bug",
-            project_name=str(result.get("project_name", "")),
-            doc_type="bug",
-            doc_name=case_id,
-            doc_path=str(doc_result.get("path", "")),
-            title=title,
-            status="open",
-            severity=bug_metadata.get("severity"),
-            source_tool="open_bug",
-        )
-        registry_ok = registry_result[0]
-        registry_error = registry_result[1]
-        case_registry_summary = registry_result[2] if len(registry_result) > 2 else None
-        if not registry_ok:
-            message = f"Case registry ownership registration failed: {registry_error}"
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                case_id=str(case_id),
-                warnings=[message],
-                next_step="Ensure project ownership context is bound and shared registry backend is available.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        # Calculate completeness score
-        filled_sections = []
-        unfilled_sections = []
-        
-        for field in _BUG_TEMPLATE_FIELDS:
-            value = bug_metadata.get(field)
-            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
-                filled_sections.append(field)
-            else:
-                unfilled_sections.append(field)
-        
-        total_fields = len(_BUG_TEMPLATE_FIELDS)
-        filled_count = len(filled_sections)
-        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
-
-        return _operator_envelope(
-            ok=True,
-            mode="project",
-            case_id=str(case_id),
-            artifacts=[{"type": "bug_report", "ref": str(doc_result.get("path", ""))}],
-            next_step=(
-                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining fields: "
-                f"{_format_unfilled_guidance(unfilled_sections, _BUG_FIELD_SECTION_ANCHORS, 3)}."
-            ),
-            entry_id=str(result.get("id", "")),
-            path=str(result.get("path", "")),
-            project_name=str(result.get("project_name", "")),
-            bug_report=str(doc_result.get("path", "")),
-            doc_name=str(case_id),
-            doc_path=str(doc_result.get("path", "")),
-            doc_category="bugs",
-            case_registry=case_registry_summary
-            or {
-                "case_id": str(case_id),
-                "case_type": "bug",
-                "doc_name": str(case_id),
-                "doc_path": str(doc_result.get("path", "")),
-                "project_name": str(result.get("project_name", "")),
-            },
-            # NEW completeness metadata:
-            completeness={
-                "score": f"{filled_count}/{total_fields}",
-                "percentage": percentage,
-                "filled_sections": filled_sections,
-                "unfilled_sections": unfilled_sections,
-                "field_section_anchors": {
-                    field: _BUG_FIELD_SECTION_ANCHORS.get(field, "description")
-                    for field in unfilled_sections
-                },
-            },
-            # UPDATED action_required with specific guidance:
-            action_required=(
-                f"Bug report {percentage}% complete. "
-                f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_anchor>', content='...') "
-                f"(doc_path '{doc_result.get('path', '')}' is also a governed alias) "
-                f"to fill remaining fields: "
-                f"{_format_unfilled_guidance(unfilled_sections, _BUG_FIELD_SECTION_ANCHORS, 5)}"
-            ),
-        )
-
-    # Sentinel mode: original behavior
-    if preview:
-        sentinel_day = getattr(context, "sentinel_day", None)
-        if not isinstance(sentinel_day, str) or not sentinel_day.strip():
-            sentinel_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        return _operator_envelope(
-            ok=True,
-            mode="sentinel",
-            case_id=f"BUG-{sentinel_day}-PREVIEW",
-            next_step="Preview only. Run open_bug with preview=False to append sentinel case event.",
-            preview=True,
-        )
-
-    case_id = append_case_event(
-        context,
+    return await _open_case(
         kind="BUG",
-        event_type="bug_opened",
-        data={
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        },
-        include_md=True,
-    )
-    return _operator_envelope(
-        ok=True,
-        mode="sentinel",
-        case_id=case_id,
-        next_step="Case opened in sentinel mode. Run link_fix when a fix artifact is ready.",
+        case_type="bug",
+        doc_type="bug",
+        doc_category="bugs",
+        report_artifact_type="bug_report",
+        report_key="bug_report",
+        label="Bug",
+        message_prefix="[BUG]",
+        append_status="bug",
+        default_severity="medium",
+        security_event=False,
+        template_fields=_BUG_TEMPLATE_FIELDS,
+        anchor_map=_BUG_FIELD_SECTION_ANCHORS,
+        sentinel_event_type="bug_opened",
+        preview_tool_name="open_bug",
+        open_tool_name="open_bug",
+        agent=agent,
+        title=title,
+        symptoms=symptoms,
+        category=category,
+        affected_paths=affected_paths,
+        expected_behaviour=expected_behaviour,
+        steps_to_reproduce=steps_to_reproduce,
+        root_cause=root_cause,
+        resolution_notes=resolution_notes,
+        severity=severity,
+        component=component,
+        environment=environment,
+        customer_impact=customer_impact,
+        preview=preview,
     )
 
 
@@ -1336,282 +1526,37 @@ async def open_security(
         environment: Environment where issue occurs (local/staging/production)
         customer_impact: Description of impact on users/customers
     """
-    context = _get_context()
-    if not category or not category.strip():
-        return _operator_envelope(
-            ok=False,
-            mode=str(getattr(context, "mode", "") or "unknown"),
-            warnings=["category is required"],
-            next_step="Provide a non-empty 'category' value and retry open_security.",
-            error="category is required",
-        )
-
-    # Project mode: route through append_entry with security flag AND create security report doc
-    if context.mode == "project":
-        if preview:
-            try:
-                case_id = _preview_case_id_for_project("SEC", context)
-            except Exception as exc:
-                message = f"Failed to preview SEC case ID: {exc}"
-                return _operator_envelope(
-                    ok=False,
-                    mode="project",
-                    warnings=[message],
-                    next_step="Verify execution context repo binding (repo_root/project scope) and retry preview.",
-                    error=message,
-                )
-            return _operator_envelope(
-                ok=True,
-                mode="project",
-                case_id=case_id,
-                next_step="Preview only. Run open_security with preview=False to register and create docs.",
-                preview=True,
-            )
-
-        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
-        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
-
-        message = f"[SECURITY] {title}: {symptoms}"
-        meta = {
-            "case_type": "security",
-            "security_event": "1",  # Triggers auto-tee to security log
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        }
-
-        result = await append_entry_tool(
-            message=message,
-            status="warn",  # Security issues are warnings
-            agent=agent,
-            meta=meta,
-            format="structured",  # Returns plain dict, not MCP-wrapped
-        )
-
-        if not result.get("ok"):
-            message = str(result.get("error", "append_entry failed"))
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                warnings=[message],
-                next_step="Resolve append_entry failure and retry open_security.",
-                error=message,
-            )
-
-        # Generate case ID after entry is written (so we can scan for existing IDs)
-        try:
-            case_id = _next_case_id_for_project("SEC", result)
-        except Exception as exc:
-            message = f"Failed to allocate SEC case ID: {exc}"
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                warnings=[message],
-                next_step="Validate repo docs/counter state and retry open_security.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        # Ensure fresh case IDs are immediately queryable by bare ID.
-        registration_result = await append_entry_tool(
-            message=f"[CASE REGISTERED] {case_id}",
-            status="warn",
-            agent=agent,
-            meta={
-                "case_type": "security",
-                "security_event": "1",
-                "case_id": case_id,
-                "registration_event": "case_opened",
-                "title": title,
-            },
-            format="structured",
-        )
-        if not registration_result.get("ok"):
-            message = str(registration_result.get("error", "case registration append_entry failed"))
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                case_id=str(case_id),
-                warnings=[message],
-                next_step="Fix registration append failure so case_id is queryable, then retry.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        # Create detailed security report document
-        # Build metadata dict (used for both doc creation and completeness scoring)
-        security_metadata = {
-            "doc_type": "security",  # Use dedicated security template
-            "category": category,
-            "slug": case_id,
-            "title": title,
-            "case_id": case_id,
-            "symptoms": symptoms,
-            "summary_long": symptoms,  # Map to template field
-            "actual_behavior": symptoms,  # Map to template field
-            "affected_paths": affected_paths or [],
-            "affected_areas": affected_paths or [],  # Map to template field
-            "reporter": agent,  # Map to template field
-            "status": "INVESTIGATING",  # Default status
-            "severity": severity if severity is not None else "high",  # Default severity for security issues
-            # NEW parameter mappings (use [UNFILLED] for missing values):
-            "expected_behavior": expected_behaviour if expected_behaviour is not None else "[UNFILLED]",
-            "reproduction_steps": steps_to_reproduce if steps_to_reproduce is not None else ["[UNFILLED]"],
-            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
-            "immediate_actions": resolution_notes if resolution_notes is not None else "[UNFILLED]",
-            "component": component if component is not None else "[UNFILLED]",
-            "environment": environment if environment is not None else "[UNFILLED]",
-            "customer_impact": customer_impact if customer_impact is not None else "[UNFILLED]",
-        }
-        
-        doc_result = await manage_docs_tool(
-            agent=agent,
-            action="create",
-            metadata=security_metadata,
-        )
-
-        # Check if document creation succeeded
-        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
-            error_msg = doc_result.get("error", "Unknown error") if isinstance(doc_result, dict) else "manage_docs returned non-dict"
-            message = f"Security report document creation failed: {error_msg}"
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                case_id=str(case_id),
-                warnings=[message],
-                next_step="Fix manage_docs(create) failure and retry open_security for this case.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        registry_result = await _register_case_registry_ownership(
-            context=context,
-            case_id=case_id,
-            case_type="security",
-            project_name=str(result.get("project_name", "")),
-            doc_type="security",
-            doc_name=case_id,
-            doc_path=str(doc_result.get("path", "")),
-            title=title,
-            status="open",
-            severity=security_metadata.get("severity"),
-            source_tool="open_security",
-        )
-        registry_ok = registry_result[0]
-        registry_error = registry_result[1]
-        case_registry_summary = registry_result[2] if len(registry_result) > 2 else None
-        if not registry_ok:
-            message = f"Case registry ownership registration failed: {registry_error}"
-            return _operator_envelope(
-                ok=False,
-                mode="project",
-                case_id=str(case_id),
-                warnings=[message],
-                next_step="Ensure project ownership context is bound and shared registry backend is available.",
-                error=message,
-                entry_id=str(result.get("id", "")),
-                path=str(result.get("path", "")),
-                project_name=str(result.get("project_name", "")),
-            )
-
-        # Calculate completeness score
-        filled_sections = []
-        unfilled_sections = []
-        
-        for field in _BUG_TEMPLATE_FIELDS:
-            value = security_metadata.get(field)
-            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
-                filled_sections.append(field)
-            else:
-                unfilled_sections.append(field)
-        
-        total_fields = len(_BUG_TEMPLATE_FIELDS)
-        filled_count = len(filled_sections)
-        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
-
-        return _operator_envelope(
-            ok=True,
-            mode="project",
-            case_id=str(case_id),
-            artifacts=[{"type": "security_report", "ref": str(doc_result.get("path", ""))}],
-            next_step=(
-                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining fields: "
-                f"{_format_unfilled_guidance(unfilled_sections, _SECURITY_FIELD_SECTION_ANCHORS, 3)}."
-            ),
-            entry_id=str(result.get("id", "")),
-            path=str(result.get("path", "")),
-            project_name=str(result.get("project_name", "")),
-            security_report=str(doc_result.get("path", "")),
-            doc_name=str(case_id),
-            doc_path=str(doc_result.get("path", "")),
-            doc_category="security",
-            case_registry=case_registry_summary
-            or {
-                "case_id": str(case_id),
-                "case_type": "security",
-                "doc_name": str(case_id),
-                "doc_path": str(doc_result.get("path", "")),
-                "project_name": str(result.get("project_name", "")),
-            },
-            # NEW completeness metadata:
-            completeness={
-                "score": f"{filled_count}/{total_fields}",
-                "percentage": percentage,
-                "filled_sections": filled_sections,
-                "unfilled_sections": unfilled_sections,
-                "field_section_anchors": {
-                    field: _SECURITY_FIELD_SECTION_ANCHORS.get(field, "description")
-                    for field in unfilled_sections
-                },
-            },
-            # UPDATED action_required with specific guidance:
-            action_required=(
-                f"Security report {percentage}% complete. "
-                f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_anchor>', content='...') "
-                f"(doc_path '{doc_result.get('path', '')}' is also a governed alias) "
-                f"to fill remaining fields: "
-                f"{_format_unfilled_guidance(unfilled_sections, _SECURITY_FIELD_SECTION_ANCHORS, 5)}"
-            ),
-        )
-
-    # Sentinel mode: original behavior
-    if preview:
-        sentinel_day = getattr(context, "sentinel_day", None)
-        if not isinstance(sentinel_day, str) or not sentinel_day.strip():
-            sentinel_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        return _operator_envelope(
-            ok=True,
-            mode="sentinel",
-            case_id=f"SEC-{sentinel_day}-PREVIEW",
-            next_step="Preview only. Run open_security with preview=False to append sentinel case event.",
-            preview=True,
-        )
-
-    case_id = append_case_event(
-        context,
+    return await _open_case(
         kind="SEC",
-        event_type="security_opened",
-        data={
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        },
-        include_md=True,
-    )
-    return _operator_envelope(
-        ok=True,
-        mode="sentinel",
-        case_id=case_id,
-        next_step="Case opened in sentinel mode. Run link_fix when a fix artifact is ready.",
+        case_type="security",
+        doc_type="security",
+        doc_category="security",
+        report_artifact_type="security_report",
+        report_key="security_report",
+        label="Security",
+        message_prefix="[SECURITY]",
+        append_status="warn",
+        default_severity="high",
+        security_event=True,
+        template_fields=_SECURITY_TEMPLATE_FIELDS,
+        anchor_map=_SECURITY_FIELD_SECTION_ANCHORS,
+        sentinel_event_type="security_opened",
+        preview_tool_name="open_security",
+        open_tool_name="open_security",
+        agent=agent,
+        title=title,
+        symptoms=symptoms,
+        category=category,
+        affected_paths=affected_paths,
+        expected_behaviour=expected_behaviour,
+        steps_to_reproduce=steps_to_reproduce,
+        root_cause=root_cause,
+        resolution_notes=resolution_notes,
+        severity=severity,
+        component=component,
+        environment=environment,
+        customer_impact=customer_impact,
+        preview=preview,
     )
 
 
@@ -1708,6 +1653,43 @@ async def link_fix(
         from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
         import logging as _logging
         _logger = _logging.getLogger(__name__)
+
+        # F5 completeness gate: refuse a fix-terminal close while the report still
+        # has scaffold/[UNFILLED] content in its required sections. The case stays
+        # OPEN (no registry close, no report mutation) and the operator gets a
+        # teaching envelope. Non-fix-terminal/non-terminal landing statuses pass
+        # straight through (gate returns None).
+        completeness_blockers = await _completeness_gate_blockers(
+            manage_docs_tool=manage_docs_tool,
+            agent=agent,
+            doc_name=str(getattr(case_record, "doc_name", "") or case_id),
+            landing_status=landing_status,
+        )
+        if completeness_blockers:
+            block_warning = (
+                f"Case {case_id} cannot be closed with landing_status='{landing_status}': "
+                "the report is missing required content (symptoms/root_cause/fix). "
+                "It remains OPEN."
+            )
+            gate_response = _operator_envelope(
+                ok=True,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[block_warning, *completeness_blockers],
+                next_step=(
+                    f"Fill the required sections via manage_docs(action='replace_section', doc_name='{case_id}', ...) "
+                    "for symptoms/root_cause/fix, then retry link_fix. To close without a fix, use a non-fix "
+                    "landing_status (e.g. wontfix/duplicate/false_positive)."
+                ),
+            )
+            gate_response["partial"] = True
+            gate_response["completeness_gate"] = {
+                "blocked": True,
+                "landing_status": landing_status,
+                "blockers": list(completeness_blockers),
+            }
+            gate_response["case_event"] = {"event": "fix_link_blocked_incomplete"}
+            return gate_response
 
         resolved_execution_value = str((resolved_execution or {}).get("value") or execution_id)
         message = f"[FIX LINKED] {case_id}: {artifact_ref} ({landing_status})"

@@ -1292,6 +1292,43 @@ async def query_entries(
             config=config
         )
 
+        # === REGEX PRE-VALIDATION (boundary) ===
+        # Compile the user's pattern ONCE here so a malformed regex teaches the
+        # caller at the boundary instead of silently matching nothing (the inner
+        # message_matches fast path swallows re.error per-entry). Leaves the
+        # per-entry fast path in utils/search.py unchanged.
+        if (
+            final_config.message_mode == "regex"
+            and final_config.message is not None
+            and str(final_config.message).strip()
+        ):
+            regex_flags = 0 if final_config.case_sensitive else re.IGNORECASE
+            try:
+                re.compile(str(final_config.message), regex_flags)
+            except re.error as regex_error:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Invalid regex pattern {final_config.message!r}: {regex_error}"
+                    ),
+                    "suggestion": (
+                        "Fix the regex, or use message_mode=\"substring\" for a "
+                        "literal text match."
+                    ),
+                    "search_params": {
+                        "message": final_config.message,
+                        "message_mode": final_config.message_mode,
+                    },
+                    "entries": [],
+                    "pagination": {
+                        "page": final_config.page,
+                        "page_size": final_config.page_size,
+                        "total_count": 0,
+                        "has_next": False,
+                        "has_prev": False,
+                    },
+                }
+
         # === CONTEXT RESOLUTION WITH ENHANCED ERROR HANDLING ===
         try:
             context = await resolve_logging_context(
