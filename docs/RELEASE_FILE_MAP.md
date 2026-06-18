@@ -1,7 +1,7 @@
 # Release File Map
 
 Baseline date: **2026-06-18**
-Coverage: **v2.8.x public release line (current: 2.8.1)**
+Coverage: **v2.9.x public release line (current: 2.9.0)**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **v2.8.x public release line (current: 2.8.1)**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.8.1` and CLI scripts. The 2.8.0 feature baseline added the `manage_docs` host input-schema enrichment and a redundant no-op `[postgres]` extra (`asyncpg` is already a core dependency); the 2.8.1 patch keeps package-data scoped to the lean Scribe plugin bundle, repairs clean-checkout plugin sync, and adds/keeps clean-room install projection proof. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.9.0` and CLI scripts. The 2.9.0 line adds the read-only affected-row referential inventory preflight while keeping the 2.8.x host input-schema enrichment, lean plugin bundle, clean-checkout plugin sync, and clean-room install projection proof. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |

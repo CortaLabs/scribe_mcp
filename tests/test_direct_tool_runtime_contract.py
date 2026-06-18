@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from scribe_mcp import server
+from scribe_mcp.storage.affected_row_referential_inventory import BLOCKED_STORAGE_BACKEND_UNAVAILABLE
 from scribe_mcp.readiness import (
     ACCEPTED_LOCAL_POSTGRES_TARGET_CLASS_LABEL,
     ACCEPTED_SELECTOR_READBACK_STATUS_LABEL,
@@ -78,6 +79,7 @@ async def _execute_direct_tool(name: str, arguments: dict[str, Any]) -> Any:
         sentinel_allowed={
             "scribe_private_context_selector_readback",
             "scribe_local_postgres_readiness_roundtrip_preflight",
+            "scribe_affected_row_referential_inventory_readonly_public_safe",
         },
         log_scope_violation_cb=lambda *_args, **_kwargs: None,
     )
@@ -105,7 +107,16 @@ def _readiness_arguments() -> dict[str, str]:
     }
 
 
-def _assert_public_only_payload(payload: dict[str, str | bool]) -> None:
+def _inventory_arguments() -> dict[str, str]:
+    return {
+        "agent": "forge",
+        "target_binding_status_label": "PASS",
+        "selected_context_readback_status_label": "PASS",
+        "inventory_scope_label": "SOURCE_BACKED_SCRIBE_AFFECTED_ROW_REFERENTIAL_INVENTORY_READONLY_PUBLIC_SAFE",
+    }
+
+
+def _assert_public_only_payload(payload: dict[str, Any]) -> None:
     sensitive_fragments = (
         "dsn",
         "postgresql://",
@@ -123,10 +134,9 @@ def _assert_public_only_payload(payload: dict[str, str | bool]) -> None:
         PUBLIC_SAFE_NAMESPACE,
     )
     for value in payload.values():
-        assert isinstance(value, (str, bool))
-        if isinstance(value, str):
-            lowered = value.lower()
-            assert all(fragment not in lowered for fragment in sensitive_fragments)
+        assert isinstance(value, (str, bool, int, list, dict))
+        lowered = str(value).lower()
+        assert all(fragment not in lowered for fragment in sensitive_fragments)
 
 
 @pytest.mark.asyncio
@@ -159,6 +169,22 @@ async def test_readiness_preflight_accepts_agent_through_runtime_dispatch_withou
     assert payload["train_local_db_g_technical_pass_candidate_label"] is False
     assert payload["train_local_db_g_technical_pass_earned"] is False
     assert payload["train_02g2_b_routing_authorized"] is False
+    _assert_public_only_payload(payload)
+
+
+@pytest.mark.asyncio
+async def test_affected_row_inventory_dispatch_fails_closed_without_storage_backend(monkeypatch) -> None:
+    monkeypatch.setattr(server, "storage_backend", None)
+
+    payload = await _execute_direct_tool(
+        "scribe_affected_row_referential_inventory_readonly_public_safe",
+        _inventory_arguments(),
+    )
+
+    assert payload["status_label"] == "BLOCK"
+    assert payload["storage_backend_status_label"] == BLOCKED_STORAGE_BACKEND_UNAVAILABLE
+    assert payload["mutation_attempted"] is False
+    assert payload["mutation_authorized"] is False
     _assert_public_only_payload(payload)
 
 

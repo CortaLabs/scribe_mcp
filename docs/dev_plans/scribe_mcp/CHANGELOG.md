@@ -10,6 +10,33 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Affected-row referential inventory preflight (2.9.0)
+- `entry_id`: 20260618:affected-row-referential-inventory-2-9-0
+- `entry_status`: accepted
+- `title`: Affected-row referential inventory preflight (2.9.0)
+- `summary`: Bumped the public release line to `2.9.0`, a backward-compatible minor release over the 2.8.x baseline. The release adds a read-only affected-row referential inventory primitive for governed project-row repair planning. It is exposed as MCP tool `scribe_affected_row_referential_inventory_readonly_public_safe` and CLI command `scribe affected-row-inventory preflight --dry-run`; both surfaces emit only public-safe labels, booleans, and aggregate buckets, fail closed on unproven target binding, ambiguous selected context, incomplete reference inventory, low-cardinality/private-output risk, missing storage backend, or mutation-shaped invocation, and do not authorize target contact mutation, repair, schema/migration, backup/export/restore/import, runtime lifecycle action, generated refresh, or Council exposure.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/storage/affected_row_referential_inventory.py
+  - src/scribe_mcp/storage/sqlite/projects.py
+  - src/scribe_mcp/storage/sqlite/__init__.py
+  - src/scribe_mcp/storage/postgres/__init__.py
+  - src/scribe_mcp/cli/main.py
+  - src/scribe_mcp/server.py
+  - tests/test_affected_row_referential_inventory.py
+  - tests/test_tool_metadata_contract.py
+  - tests/test_direct_tool_runtime_contract.py
+  - README.md
+  - docs/COMPATIBILITY_MATRIX.md
+  - docs/RELEASE_FILE_MAP.md
+  - docs/INSTALL_AND_BOOTSTRAP.md
+  - docs/TOUR.md
+  - docs/Scribe_Usage.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.9.0
+
 ## Managed-doc registration, lean plugin shipping, and clean-room publish repair (2.8.1)
 - `entry_id`: 20260618:registration-lean-plugin-cleanbuild-2-8-1
 - `entry_status`: accepted

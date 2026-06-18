@@ -15,6 +15,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import asyncpg
 
 from scribe_mcp.storage.base import ConflictError, StorageBackend
+from scribe_mcp.storage.affected_row_referential_inventory import (
+    AffectedRowReferentialInventoryReport,
+    build_affected_row_referential_inventory_report,
+)
 from scribe_mcp.storage.models import (
     BenchmarkRecord,
     CaseRegistryRecord,
@@ -371,6 +375,56 @@ class PostgresStorage(StorageBackend):
             legacy_name_constraint_present=legacy_constraint_present,
             legacy_name_index_present=legacy_index_present,
             dependent_reference_rows=dependent_reference_rows,
+        )
+
+    async def affected_row_referential_inventory_readonly(
+        self,
+        *,
+        target_binding_status_label: str,
+        selected_context_readback_status_label: str,
+    ) -> AffectedRowReferentialInventoryReport:
+        schema = self._schema_name
+        projects_table = f"{schema}.scribe_projects"
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            project_rows = await conn.fetch(
+                f"""
+                SELECT repo_id, project_key
+                FROM {projects_table}
+                WHERE repo_id IS NULL
+                   OR repo_id = ''
+                   OR project_key IS NULL
+                   OR project_key = ''
+                ORDER BY id;
+                """
+            )
+            reference_counts: dict[str, int] = {}
+            for table_name in ("session_projects", "agent_projects", "agent_recent_projects"):
+                table_present = bool(
+                    await conn.fetchval(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM information_schema.tables
+                            WHERE table_schema = $1
+                              AND table_name = $2
+                        );
+                        """,
+                        schema,
+                        table_name,
+                    )
+                )
+                if not table_present:
+                    reference_counts[table_name] = 0
+                    continue
+                count = await conn.fetchval(f"SELECT COUNT(*) FROM {schema}.{table_name};")
+                reference_counts[table_name] = int(count or 0)
+
+        return build_affected_row_referential_inventory_report(
+            project_rows=project_rows,
+            reference_counts=reference_counts,
+            target_binding_status_label=target_binding_status_label,
+            selected_context_readback_status_label=selected_context_readback_status_label,
         )
 
     async def delete_project(self, name: str) -> bool:

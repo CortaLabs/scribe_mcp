@@ -16,6 +16,10 @@ from scribe_mcp.storage.models import (
     compute_repo_id,
     normalize_repo_root,
 )
+from scribe_mcp.storage.affected_row_referential_inventory import (
+    AffectedRowReferentialInventoryReport,
+    build_affected_row_referential_inventory_report,
+)
 from scribe_mcp.storage.project_identity_preflight import (
     ProjectIdentityPreflightReport,
     build_sqlite_project_identity_preflight,
@@ -254,6 +258,55 @@ async def preflight_project_identity_repair(
         return await build_sqlite_project_identity_preflight(
             fetchall_fn=_fetchall,
             fetchone_fn=_fetchone,
+        )
+    finally:
+        conn.close()
+
+
+async def affected_row_referential_inventory_readonly(
+    *,
+    db_path: Path,
+    target_binding_status_label: str,
+    selected_context_readback_status_label: str,
+) -> AffectedRowReferentialInventoryReport:
+    uri = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        project_rows = list(
+            conn.execute(
+                """
+                SELECT repo_id, project_key
+                FROM scribe_projects
+                WHERE repo_id IS NULL
+                   OR repo_id = ''
+                   OR project_key IS NULL
+                   OR project_key = ''
+                ORDER BY id;
+                """
+            ).fetchall()
+        )
+        reference_counts: dict[str, int] = {}
+        for table_name in ("session_projects", "agent_projects", "agent_recent_projects"):
+            table_row = conn.execute(
+                """
+                SELECT 1 AS present
+                FROM sqlite_master
+                WHERE type = 'table' AND name = ?
+                LIMIT 1;
+                """,
+                (table_name,),
+            ).fetchone()
+            if not table_row:
+                reference_counts[table_name] = 0
+                continue
+            count_row = conn.execute(f"SELECT COUNT(*) AS count FROM {table_name};").fetchone()
+            reference_counts[table_name] = int(count_row["count"] or 0)
+        return build_affected_row_referential_inventory_report(
+            project_rows=project_rows,
+            reference_counts=reference_counts,
+            target_binding_status_label=target_binding_status_label,
+            selected_context_readback_status_label=selected_context_readback_status_label,
         )
     finally:
         conn.close()

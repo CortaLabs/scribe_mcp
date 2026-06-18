@@ -45,8 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.8.1` is a backward-compatible **patch** release over the 2.8.0 feature line, with no breaking public API, CLI, or schema contract changes. It keeps the 2.8.0 tool-discoverability, onboarding, install-ergonomics, and runtime-honesty work, and adds the registration and cleanbuild repairs needed for a cleaner public package:
+`2.9.0` is a backward-compatible **minor** release over the 2.8.x line, with no breaking public API, CLI, protocol, or schema contract changes. It keeps the 2.8.1 tool-discoverability, onboarding, install-ergonomics, runtime-honesty, registration, lean-plugin, and cleanbuild repairs, and adds the public-safe affected-row inventory primitive needed for governed repair planning:
 
+- A new read-only affected-row referential inventory preflight is available through MCP as `scribe_affected_row_referential_inventory_readonly_public_safe` and through the CLI as `scribe affected-row-inventory preflight --dry-run`. It inspects SQLite/Postgres project-row repair readiness using public-safe labels, booleans, and aggregate buckets only; it fails closed on unproven target binding, ambiguous selected context, incomplete reference inventory, low-cardinality/private-output risk, missing storage backend, and mutation-shaped invocations.
 - `manage_docs` now auto-registers existing physical managed docs for targeted actions instead of rejecting them as `DOC_NOT_FOUND` when the registry is stale; path-like registration also preserves existing basename aliases.
 - Clean-room plugin sync now works from a checkout that does not have ignored generated `.claude/skills` or `.codex/skills` trees, which fixes the GitHub cleanbuild/publish blocker.
 - The shipped plugin/wheel surface is intentionally lean: only `/scribe-integration` and `/scribe-onboarding` ship in the Claude/Codex plugin bundles. Legacy broad-form `scribe-mcp-usage` content is not shipped; `scribe-integration`, `scribe-onboarding`, and repo docs cover the supported usage surface.

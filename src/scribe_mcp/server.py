@@ -98,6 +98,10 @@ from scribe_mcp.config.mode_detection import detect_operating_mode, OperatingMod
 from scribe_mcp.readiness import BLOCKED_STORAGE_SETUP_REQUIRED
 from scribe_mcp.readiness import scribe_local_postgres_readiness_roundtrip_preflight as _roundtrip_preflight
 from scribe_mcp.selector_readback import scribe_private_context_selector_readback as _selector_readback
+from scribe_mcp.storage.affected_row_referential_inventory import (
+    readonly_authority_missing_report,
+    storage_backend_unavailable_report,
+)
 from scribe_mcp.tool_contracts import read_only_local_tool
 
 if TYPE_CHECKING:
@@ -829,6 +833,33 @@ async def scribe_local_postgres_readiness_roundtrip_preflight(
         proof_namespace_label=proof_namespace_label,
         runner=_NoTargetContactRoundtripRunner(),
     )
+
+
+@app.tool(
+    **read_only_local_tool(
+        title="Scribe Affected Row Referential Inventory Readonly Public Safe",
+        tags=("affected-row", "referential-inventory", "preflight", "read-only"),
+        task_support="forbidden",
+    )
+)
+async def scribe_affected_row_referential_inventory_readonly_public_safe(
+    agent: str,
+    target_binding_status_label: str,
+    selected_context_readback_status_label: str,
+    inventory_scope_label: str,
+) -> dict[str, object]:
+    """Emit public-safe affected-row referential inventory labels without mutation."""
+    _ = agent
+    if inventory_scope_label != "SOURCE_BACKED_SCRIBE_AFFECTED_ROW_REFERENTIAL_INVENTORY_READONLY_PUBLIC_SAFE":
+        return readonly_authority_missing_report().to_public_dict()
+    backend = storage_backend
+    if backend is None or not hasattr(backend, "affected_row_referential_inventory_readonly"):
+        return storage_backend_unavailable_report().to_public_dict()
+    report = await backend.affected_row_referential_inventory_readonly(
+        target_binding_status_label=target_binding_status_label,
+        selected_context_readback_status_label=selected_context_readback_status_label,
+    )
+    return report.to_public_dict()
 
 
 _HAS_LIFECYCLE_HOOKS = hasattr(app, "on_startup") and hasattr(app, "on_shutdown")

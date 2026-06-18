@@ -20,6 +20,10 @@ from scribe_mcp.cli.session_store import (
     save_session_state,
 )
 from scribe_mcp.config.paths import cli_session_state_path
+from scribe_mcp.storage.affected_row_referential_inventory import (
+    mutation_rejected_report,
+    storage_backend_unavailable_report,
+)
 from scribe_mcp.storage.project_identity_preflight import (
     DRY_RUN_REQUIRED_LABEL,
     MUTATION_REJECTED_LABEL,
@@ -36,6 +40,7 @@ _KNOWN_COMMANDS = {
     "logs",
     "install",
     "project-identity",
+    "affected-row-inventory",
 }
 _DEFAULT_CALL_TIMEOUT_SECONDS = 6.0
 
@@ -358,6 +363,49 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON.",
     )
     identity_preflight_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+
+    inventory_parser = subparsers.add_parser(
+        "affected-row-inventory",
+        help="Inspect affected-row referential inventory readiness without mutating storage.",
+    )
+    inventory_subparsers = inventory_parser.add_subparsers(dest="affected_row_inventory_action", required=True)
+    inventory_preflight_parser = inventory_subparsers.add_parser(
+        "preflight",
+        help="Run a read-only affected-row referential inventory preflight.",
+        allow_abbrev=False,
+    )
+    inventory_preflight_parser.add_argument(
+        "--repo-root",
+        dest="repo_root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root or any path inside the target repository.",
+    )
+    inventory_preflight_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Required read-only mode for the preflight.",
+    )
+    inventory_preflight_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON.",
+    )
+    inventory_preflight_parser.add_argument(
+        "--target-binding-status-label",
+        default="PASS",
+        help="Public target-binding proof label.",
+    )
+    inventory_preflight_parser.add_argument(
+        "--selected-context-readback-status-label",
+        default="PASS",
+        help="Public selected-context readback proof label.",
+    )
+    inventory_preflight_parser.add_argument(
         "--apply",
         action="store_true",
         help=argparse.SUPPRESS,
@@ -1034,6 +1082,60 @@ async def _run_project_identity_command(args: argparse.Namespace) -> int:
     return 0 if payload.get("status_label") == "PASS" else 1
 
 
+async def _run_affected_row_inventory_command(args: argparse.Namespace) -> int:
+    if args.affected_row_inventory_action != "preflight":
+        raise ValueError(f"Unsupported affected-row-inventory action: {args.affected_row_inventory_action}")
+
+    if getattr(args, "apply", False) or not getattr(args, "dry_run", False):
+        payload = mutation_rejected_report().to_public_dict()
+        if args.json:
+            _json_print(payload, pretty=True)
+        else:
+            print(f"error: {payload['labels'][0]}", file=sys.stderr)
+        return 2
+
+    repo_root = _discover_repo_root(args.repo_root)
+    _prepare_environment(repo_root)
+
+    from scribe_mcp.storage import create_storage_backend
+
+    backend = create_storage_backend()
+    if backend is None or not hasattr(backend, "affected_row_referential_inventory_readonly"):
+        payload = storage_backend_unavailable_report().to_public_dict()
+        if args.json:
+            _json_print(payload, pretty=True)
+        else:
+            print("error: BLOCKED_STORAGE_BACKEND_UNAVAILABLE", file=sys.stderr)
+        return 2
+
+    try:
+        report = await backend.affected_row_referential_inventory_readonly(
+            target_binding_status_label=args.target_binding_status_label,
+            selected_context_readback_status_label=args.selected_context_readback_status_label,
+        )
+    finally:
+        close = getattr(backend, "close", None)
+        if close is not None:
+            await close()
+
+    payload = report.to_public_dict()
+    pass_labels = {
+        "INVENTORY_NO_AFFECTED_ROWS",
+        "INVENTORY_REPAIR_NOT_REQUIRED",
+        "INVENTORY_MUTATION_CANDIDATE_REQUIRES_CUSTODY_AND_REHEARSAL",
+    }
+    if args.json:
+        _json_print(payload, pretty=True)
+        return 0 if payload.get("status_label") in pass_labels else 1
+
+    print(f"status_label={payload['status_label']}")
+    print(f"mutation_attempted={payload['mutation_attempted']}")
+    print(f"mutation_authorized={payload['mutation_authorized']}")
+    print(f"blocked_state_count={payload['blocked_state_count']}")
+    print(f"redaction_status_label={payload['redaction_status_label']}")
+    return 0 if payload.get("status_label") in pass_labels else 1
+
+
 def _run_install_command(args: argparse.Namespace) -> int:
     from scribe_mcp.install_wizard import build_install_plan, execute_install_commit, execute_projection_opt_in
     from scribe_mcp.utils.error_handler import sanitize_error_message
@@ -1103,6 +1205,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_install_command(args)
     if args.command == "project-identity":
         return asyncio.run(_run_project_identity_command(args))
+    if args.command == "affected-row-inventory":
+        return asyncio.run(_run_affected_row_inventory_command(args))
 
     return asyncio.run(_run_call_command(args, passthrough_options))
 

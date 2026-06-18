@@ -28,6 +28,7 @@ EXPECTED_REGISTERED_TOOLS = {
     "reset_reminders",
     "rotate_log",
     "scribe_doctor",
+    "scribe_affected_row_referential_inventory_readonly_public_safe",
     "scribe_local_postgres_readiness_roundtrip_preflight",
     "scribe_owned_write_barrier_acquire_maintained",
     "scribe_owned_write_barrier_acquire_release_proof",
@@ -127,6 +128,17 @@ def test_describe_registered_tools_returns_json_friendly_metadata():
     assert roundtrip_preflight["execution"]["taskSupport"] == "forbidden"
     assert "bounded-preflight" in roundtrip_preflight["tags"]
 
+    affected_inventory = details["scribe_affected_row_referential_inventory_readonly_public_safe"]
+    assert affected_inventory["title"] == "Scribe Affected Row Referential Inventory Readonly Public Safe"
+    assert affected_inventory["annotations"]["readOnlyHint"] is True
+    assert affected_inventory["annotations"]["destructiveHint"] is False
+    assert affected_inventory["annotations"]["openWorldHint"] is False
+    assert affected_inventory["meta"]["scribe"]["trustTier"] == 0
+    assert affected_inventory["meta"]["scribe"]["riskClass"] == "local_read_only"
+    assert affected_inventory["meta"]["scribe"]["surface"] == "operator"
+    assert affected_inventory["execution"]["taskSupport"] == "forbidden"
+    assert "referential-inventory" in affected_inventory["tags"]
+
     acquire_maintained = details["scribe_owned_write_barrier_acquire_maintained"]
     assert acquire_maintained["title"] == "Scribe Owned Write Barrier Acquire Maintained"
     assert acquire_maintained["annotations"]["readOnlyHint"] is False
@@ -171,6 +183,11 @@ def test_direct_tool_schemas_require_operational_inputs():
             "target_class_label",
             "selected_context_readback_status_label",
             "proof_namespace_label",
+        },
+        "scribe_affected_row_referential_inventory_readonly_public_safe": {
+            "target_binding_status_label",
+            "selected_context_readback_status_label",
+            "inventory_scope_label",
         },
         "scribe_owned_write_barrier_acquire_maintained": {
             "owner_label",

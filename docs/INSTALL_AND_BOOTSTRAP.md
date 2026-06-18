@@ -1,13 +1,13 @@
 # Install and bootstrap
 
-Release line: `2.8.1`
+Release line: `2.9.0`
 Updated: `2026-06-18`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 
 If you want the short product tour first, read [TOUR.md](TOUR.md). If you want the MCP-host setup details, read [mcp_server_guide.md](mcp_server_guide.md).
 
-This release line includes faster repeated project binding, queryable runtime telemetry, append-entry phase timing, physical/logical reconciliation diagnostics, JSON probe output, same-server root comparison tooling, and background telemetry cleanup for local probes. It also includes the document topology foundation plus agent-ready quality governance: managed docs carry canonical lifecycle metadata, typed deterministic edges, quality-gated ready/complete transitions, topology/metadata scan actions, safe repair modes, stale cleanup recommendations, handoff checks, Atlas bulk quality checks, and sanitized downstream export manifests.
+This release line includes a public-safe read-only affected-row referential inventory preflight for governed project-row repair planning, faster repeated project binding, queryable runtime telemetry, append-entry phase timing, physical/logical reconciliation diagnostics, JSON probe output, same-server root comparison tooling, and background telemetry cleanup for local probes. It also includes the document topology foundation plus agent-ready quality governance: managed docs carry canonical lifecycle metadata, typed deterministic edges, quality-gated ready/complete transitions, topology/metadata scan actions, safe repair modes, stale cleanup recommendations, handoff checks, Atlas bulk quality checks, and sanitized downstream export manifests.
 It also includes release-governance and operator-safety enforcement: missing accepted changelog coverage for the active `pyproject.toml` version raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` through `quality_check`, reminders, and managed-doc `project_health`; Scribe-owned write barriers and remote operator-tool blocking protect mutation and transport boundaries.
 
 ## Which path should you use?
