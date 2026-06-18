@@ -2,7 +2,7 @@
 name: scribe-coder
 description: "Code implementation, refactoring, and feature development for Scribe MCP. Stage 4 of the PROTOCOL pipeline. Executes task packages created by the Architect. Writes clean, tested code following established patterns. Full tool access including file editing and shell execution. Deploy after Architecture is complete — never with only Research output."
 model: sonnet
-skills: ["scribe-mcp-usage"]
+skills: ["scribe-integration"]
 color: "#2ECC71"
 ---
 

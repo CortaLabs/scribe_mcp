@@ -1,7 +1,7 @@
 # Tour: Scribe as an MCP product
 
-Release line: `2.8.0.1`
-Updated: `2026-06-16`
+Release line: `2.8.1`
+Updated: `2026-06-18`
 
 This tour is about the **MCP tools**. The CLI exists to help you run them locally, but the product is the MCP surface.
 
@@ -14,7 +14,7 @@ Install posture for this release line:
 - mutation requires explicit `--commit` (and `--yes` for non-interactive commit)
 - Codex projection is explicit opt-in with `--project-codex` after successful commit
 
-The current `2.8.0` release line focuses on tool discoverability, onboarding, install ergonomics, and runtime honesty (see COMPATIBILITY_MATRIX.md), and its `2.8.0.1` packaging patch ships the full Scribe skill set inside the plugin bundles, clarifies the no-op `[postgres]` extra messaging, and adds a clean-room install check. This builds on `2.7.2` furnace-project quality-check O(N^2) elimination and several O(1) fast paths, and on `2.7.1`, which made Scribe's runtime faster to operate and easier to audit while keeping managed docs topology-aware, quality-check output agent-actionable, and operator-only mutation safer:
+The current `2.8.1` release line focuses on tool discoverability, onboarding, install ergonomics, and runtime honesty (see COMPATIBILITY_MATRIX.md). It also repairs stale managed-doc registration, fixes clean-checkout plugin sync, ships only the lean Scribe plugin skills (`scribe-integration` and `scribe-onboarding`), and verifies clean-room wheel install/projection. This builds on `2.7.2` furnace-project quality-check O(N^2) elimination and several O(1) fast paths, and on `2.7.1`, which made Scribe's runtime faster to operate and easier to audit while keeping managed docs topology-aware, quality-check output agent-actionable, and operator-only mutation safer:
 
 - Repeated same-session `set_project` calls for the same agent, project, and repo root return `side_effects.binding_reused=true` on the cheap path instead of repeating persistent binding writes or mutation-time reminder refresh.
 - Runtime telemetry now persists tool durations, correlation IDs, measurement scope, and repo root for later audit.

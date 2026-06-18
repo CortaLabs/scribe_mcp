@@ -139,7 +139,7 @@ async def _setup_project(tmp_path: Path) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_read_only_actions_do_not_auto_register_missing_docs(tmp_path: Path) -> None:
+async def test_read_only_actions_auto_register_existing_physical_docs(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     backend = _FakeBackend()
@@ -148,40 +148,40 @@ async def test_read_only_actions_do_not_auto_register_missing_docs(tmp_path: Pat
     await state_manager.set_session_mode("test-session", "project")
 
     docs_dir = Path(project["docs_dir"])
-    missing_name = "UNREGISTERED_READONLY"
-    (docs_dir / f"{missing_name}.md").write_text("# Detached\n", encoding="utf-8")
+    detached_name = "UNREGISTERED_READONLY"
+    target_doc = docs_dir / f"{detached_name}.md"
+    target_doc.write_text("# Detached\n\n- [ ] Detached task\n", encoding="utf-8")
 
     with _isolated_server(state_manager, backend, project_root=project["root"]):
         list_sections = await manage_docs(
             action="list_sections",
-            doc=missing_name,
+            doc=detached_name,
             project=project["name"],
         )
-        assert list_sections["ok"] is False
-        assert "DOC_NOT_FOUND" in list_sections["error"]
+        assert list_sections["ok"] is True
+        assert list_sections["path"] == str(target_doc)
 
         list_checklist = await manage_docs(
             action="list_checklist_items",
-            doc=missing_name,
+            doc=detached_name,
             project=project["name"],
         )
         assert list_checklist["ok"] is False
-        assert "DOC_NOT_FOUND" in list_checklist["error"]
+        assert "DOC_NOT_FOUND" not in list_checklist["error"]
 
         search_result = await manage_docs(
             action="search",
-            doc=missing_name,
+            doc=detached_name,
             metadata={"query": "Detached"},
             project=project["name"],
         )
-        assert search_result["ok"] is False
-        assert "DOC_NOT_FOUND" in search_result["error"]
+        assert search_result["ok"] is True
 
         state = await state_manager.load()
         stored_project = state.get_project(project["name"])
         assert stored_project is not None
-        assert missing_name not in stored_project.get("docs", {})
-        assert project["name"] not in backend.docs_by_project
+        assert stored_project.get("docs", {}).get(detached_name) == str(target_doc)
+        assert backend.docs_by_project[project["name"]][detached_name] == str(target_doc)
 
 
 @pytest.mark.asyncio

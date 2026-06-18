@@ -1,7 +1,7 @@
 # Install and bootstrap
 
-Release line: `2.8.0.1`
-Updated: `2026-06-17`
+Release line: `2.8.1`
+Updated: `2026-06-18`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 

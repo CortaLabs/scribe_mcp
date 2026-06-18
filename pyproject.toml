@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.8.0.1"
+version = "2.8.1"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -90,8 +90,6 @@ include = ["scribe_mcp*"]
   "plugins_bundle/*/.*/*",
   "plugins_bundle/claude/.claude-plugin/*",
   "plugins_bundle/codex/.codex-plugin/*",
-  # Packaged canonical onboarding usage skill shipped from the install path.
-  "onboarding/**/*",
 ]
 
 [tool.setuptools.data-files]

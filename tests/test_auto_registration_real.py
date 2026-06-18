@@ -164,6 +164,64 @@ async def test_mutation_auto_registers_unregistered_root_doc(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_list_sections_auto_registers_unregistered_physical_doc(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    backend = _FakeBackend()
+    _seed_backend_project(backend, project)
+    await state_manager.set_current_project(project["name"], project)
+    await state_manager.set_session_mode("test-session", "project")
+
+    docs_dir = Path(project["docs_dir"])
+    target_doc = docs_dir / "RAILS_MAP_CURRENT_STATE.md"
+    target_doc.write_text(
+        "---\n"
+        "title: Rails Map Current State\n"
+        "doc_type: custom\n"
+        "---\n"
+        "# Rails Map\n\n"
+        "## Current State\n\n"
+        "Ready.\n",
+        encoding="utf-8",
+    )
+
+    with _isolated_server(state_manager, backend, project_root=project["root"]):
+        result = await manage_docs(
+            action="list_sections",
+            doc="RAILS_MAP_CURRENT_STATE",
+            project=project["name"],
+        )
+        assert result["ok"] is True
+        assert result["doc_name"] == "RAILS_MAP_CURRENT_STATE"
+        assert [section["id"] for section in result["sections"]] == [
+            "rails_map",
+            "current_state",
+        ]
+
+        lower_result = await manage_docs(
+            action="list_sections",
+            doc="rails_map_current_state",
+            project=project["name"],
+        )
+        assert lower_result["ok"] is True
+        assert lower_result["path"] == str(target_doc)
+
+        relative_result = await manage_docs(
+            action="list_sections",
+            doc=str(target_doc.relative_to(Path(project["root"]))),
+            project=project["name"],
+        )
+        assert relative_result["ok"] is True
+        assert relative_result["path"] == str(target_doc)
+
+        state = await state_manager.load()
+        stored_project = state.get_project(project["name"])
+        assert stored_project is not None
+        assert stored_project.get("docs", {}).get("RAILS_MAP_CURRENT_STATE") == str(target_doc)
+        assert backend.docs_by_project[project["name"]]["RAILS_MAP_CURRENT_STATE"] == str(target_doc)
+
+
+@pytest.mark.asyncio
 async def test_mutation_auto_registers_custom_doc_with_persistent_mapping(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
@@ -199,3 +257,44 @@ async def test_mutation_auto_registers_custom_doc_with_persistent_mapping(tmp_pa
         assert backend.docs_by_project[project["name"]][doc_name] == str(target_doc)
         assert backend.docs_by_project[project["name"]]["research"] == str(target_doc)
         assert "Status: active" in target_doc.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_path_like_auto_registration_preserves_existing_stem_alias(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    backend = _FakeBackend()
+
+    docs_dir = Path(project["docs_dir"])
+    root_doc = docs_dir / "COLLISION.md"
+    root_doc.write_text("# Root Collision\n", encoding="utf-8")
+    project["docs"]["COLLISION"] = str(root_doc)
+    backend.docs_by_project[project["name"]] = dict(project["docs"])
+    _seed_backend_project(backend, project)
+
+    await state_manager.set_current_project(project["name"], project)
+    await state_manager.set_session_mode("test-session", "project")
+
+    research_dir = docs_dir / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    target_doc = research_dir / "COLLISION.md"
+    target_doc.write_text("# Research Collision\n", encoding="utf-8")
+    path_like_doc = str(target_doc.relative_to(Path(project["root"])))
+
+    with _isolated_server(state_manager, backend, project_root=project["root"]):
+        result = await manage_docs(
+            action="list_sections",
+            doc=path_like_doc,
+            project=project["name"],
+        )
+        assert result["ok"] is True
+        assert result["path"] == str(target_doc)
+
+        state = await state_manager.load()
+        stored_project = state.get_project(project["name"])
+        assert stored_project is not None
+        docs = stored_project.get("docs", {})
+        assert docs["COLLISION"] == str(root_doc)
+        assert docs[path_like_doc] == str(target_doc)
+        assert backend.docs_by_project[project["name"]]["COLLISION"] == str(root_doc)
+        assert backend.docs_by_project[project["name"]][path_like_doc] == str(target_doc)

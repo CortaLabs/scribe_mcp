@@ -1242,6 +1242,22 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
                 resolved_path = alt_path
                 break
 
+    if not resolved_path.exists():
+        search_roots = [docs_dir] + [docs_dir / subfolder for subfolder in ["research", "architecture", "bugs"]]
+        target_stem = Path(filename).stem.lower()
+        target_name = Path(filename).name.lower()
+        for search_root in search_roots:
+            if not search_root.exists() or not search_root.is_dir():
+                continue
+            for child in search_root.iterdir():
+                if not child.is_file():
+                    continue
+                if child.name.lower() == target_name or child.stem.lower() == target_stem:
+                    resolved_path = child.resolve()
+                    break
+            if resolved_path.exists():
+                break
+
     # CRITICAL: Ensure fallback path is within project sandbox
     try:
         resolved_path.relative_to(project_root)

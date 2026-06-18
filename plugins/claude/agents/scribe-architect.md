@@ -5,7 +5,7 @@ disallowedTools:
   - Edit
   - Bash
 model: opus
-skills: ["scribe-mcp-usage"]
+skills: ["scribe-integration"]
 color: "#9B59B6"
 ---
 

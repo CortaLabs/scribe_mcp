@@ -10,26 +10,36 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
-## Plugin skill shipping, postgres-extra messaging, clean-room install (2.8.0.1 packaging patch)
-- `entry_id`: 20260617:plugin-skill-shipping-postgres-messaging-cleanroom-2-8-0-1
+## Managed-doc registration, lean plugin shipping, and clean-room publish repair (2.8.1)
+- `entry_id`: 20260618:registration-lean-plugin-cleanbuild-2-8-1
 - `entry_status`: accepted
-- `title`: Plugin full-skill-set shipping, postgres-extra messaging clarity, clean-room install CI (2.8.0.1)
-- `summary`: Bumped the public release line to `2.8.0.1`, a 4-segment PEP 440 packaging patch on top of the `2.8.0` feature baseline (sorts after `2.8.0`, before `2.8.1`; the leading-zero `2.8.01` form normalizes to `2.8.1`, so `2.8.0.1` is the deliberate spelling to slow patch cadence toward `3.0`). No feature, public API, CLI, or schema/data contract changes over `2.8.0`. Packaging only: (1) Plugin bundles now ship the FULL Scribe skill set instead of just `scribe-mcp-usage`'s `SKILL.md`. A durable `scripts/sync_plugin_skills.py` mirrors each shipped skill's entire generated subtree (glob `scribe-*`, minus `EXCLUDED_SKILLS={scribe-rag-workflow}`) into `plugins/{claude,codex}/skills/<name>/**` and the byte-identical `src/scribe_mcp/plugins_bundle/{claude,codex}` mirror; it is idempotent, supports `--check` (CI gate), copies (does not move), and prunes stale files. This ships `scribe-mcp-usage`'s full reference tree (67 files: `SKILL.md` + `references/`, `assets/templates/`, `scripts/`) so the SKILL.md's ~20 reference/script/asset links resolve in the installed plugin, plus `scribe-onboarding` and `scribe-integration` (`SKILL.md`-only, which is all their generated source contains). `scribe-rag-workflow` is excluded because its frontmatter owner is `knowledge-mcp` and it is hard-coupled to `knowledge_mcp.operator_cli` + `.knowledge/` datasets + `KNOWLEDGE_*` env, making it unfit for the standalone Scribe plugin. (2) Postgres-extra messaging clarified across shipped docs: `asyncpg` is already a core dependency, so a plain `pip install scribe-mcp` is Postgres-ready and matches the default Postgres runtime posture; the `[postgres]` extra is a redundant no-op alias kept only for explicit-intent convenience, and SQLite standalone (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`) is the opt-out. (3) Added a clean-room install check (`scripts/cleanroom_install_check.py` + a non-blocking GitHub Actions job): build the wheel via `scripts/build_release_dists.sh`, `pip install` the built artifact into a fresh stdlib venv, assert `python -m scribe_mcp --version` matches the pyproject version, and verify packaged asset projection (package_root resolves to site-packages, onboarding skill present, codex plugin root resolves from the package, the expected plugin skill set ships in both channels and the excluded rag skill does not leak).
+- `title`: Managed-doc registration repair, lean plugin shipping, clean-room publish CI (2.8.1)
+- `summary`: Bumped the public release line to `2.8.1`, a backward-compatible patch on top of the `2.8.0` feature baseline. No public API, CLI, protocol, or schema contract is broken. This release fixes repeated managed-doc registration friction by auto-registering existing physical managed docs for targeted `manage_docs` actions such as `list_sections`, preserving persisted registry state, collapsing path-like registration keys safely, and preventing path-like registration from overwriting an existing basename alias. It fixes the GitHub cleanbuild/publish blocker by making `scripts/sync_plugin_skills.py --check` work in a clean checkout that lacks ignored generated `.claude/skills` and `.codex/skills` trees. The shipped plugin/wheel surface is intentionally lean: Claude and Codex plugin bundles ship only `scribe-integration` and `scribe-onboarding`; legacy broad-form `scribe-mcp-usage` content and the old packaged onboarding copy are not shipped because repo docs, onboarding, and integration docs cover the supported Scribe usage surface. Codex plugin projection now projects every shipped skill from the packaged bundle and clean-room install proof verifies the built wheel, runtime version, bundled skill set, and projection output. The shared case-status vocabulary also treats managed-doc status `complete` as terminal, so completed bug/security reports no longer remain visible through open-case filtering after runtime reload.
 - `evidence_refs`:
   - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/utils.py
   - scripts/sync_plugin_skills.py
   - scripts/cleanroom_install_check.py
-  - scripts/build_release_dists.sh
+  - src/scribe_mcp/scripts/project_codex_plugin.py
   - src/scribe_mcp/plugins_bundle/**
   - plugins/claude/skills/**
   - plugins/codex/skills/**
+  - tests/test_auto_registration_real.py
+  - tests/test_auto_registration_production.py
   - tests/test_plugin_bundles.py
+  - tests/test_case_status_vocab.py
   - README.md
   - docs/COMPATIBILITY_MATRIX.md
   - docs/INSTALL_AND_BOOTSTRAP.md
+  - docs/TOUR.md
+  - docs/Scribe_Usage.md
+  - docs/RELEASE_FILE_MAP.md
 - `observed_context`:
   - `source`: pyproject
-  - `value`: 2.8.0.1
+  - `value`: 2.8.1
 
 ## Refinement sweep: schema enrichment, maintainability, read_file perf, reminders, discoverability, onboarding, packaging
 - `entry_id`: 20260617:refinement-audit-sweep-2-8-0

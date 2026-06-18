@@ -130,8 +130,8 @@ def claude_plugin_bundle_dir() -> Path:
 
 
 def onboarding_skill_path() -> Path:
-    """Path to the packaged canonical onboarding usage skill (SKILL.md)."""
-    return package_root() / "onboarding" / "skills" / "scribe-mcp-usage" / "SKILL.md"
+    """Path to the packaged Scribe onboarding skill (SKILL.md)."""
+    return plugins_bundle_dir() / "codex" / "skills" / "scribe-onboarding" / "SKILL.md"
 
 
 def resolve_codex_plugin_root(repo_root_hint: Optional[Path] = None) -> Path:

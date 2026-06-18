@@ -1,11 +1,11 @@
 # Compatibility Matrix
 
-Baseline date: **2026-06-16**
-Release framing: **v2.8.0.x compatibility baseline (current: 2.8.0.1)**
+Baseline date: **2026-06-18**
+Release framing: **v2.8.x compatibility baseline (current: 2.8.1)**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.8.0.x refinement-sweep release line — currently `2.8.0.1`, a packaging patch on top of the 2.8.0 feature baseline (builds on 2.7.2 furnace-project quality-check performance, 2.7.1 latency, telemetry, and quality-governance). The 2.8.0.x line is a backward-compatible **additive + fix** line over 2.7.2 with **no breaking public API, CLI, or schema/data contract changes**. The 2.8.0 feature baseline bundles the completed `scribe_refinement_audit` sweep:
+This baseline keeps compatibility posture for the 2.8.x refinement-sweep release line — currently `2.8.1`, a patch on top of the 2.8.0 feature baseline (builds on 2.7.2 furnace-project quality-check performance, 2.7.1 latency, telemetry, and quality-governance). The 2.8.x line is a backward-compatible **additive + fix** line over 2.7.2 with **no breaking public API, CLI, or schema/data contract changes**. The 2.8.0 feature baseline bundles the completed `scribe_refinement_audit` sweep:
 
 - **Host schema + case correctness:** host-facing `manage_docs` input-schema enrichment (live `action` enum sourced from the action manifest plus documented `metadata` sub-keys, `additionalProperties` preserved); unified bug/case status vocabulary (closure states such as `wontfix`/`duplicate` preserved consistently); exact (non-substring) case-path resolution that refuses to act on ambiguous matches.
 - **Maintainability / honest envelopes:** removal of the dead cross-project search engine in `query_entries` (15 symbols; the file dropped from ~2,587 to ~1,868 lines) and dead self-healing paths in `utils/error_handler.py`. As part of this, `query_entries` now returns honest result envelopes on paths that were previously dead or silently misleading — see the named behavior change below.
@@ -13,11 +13,11 @@ This baseline keeps compatibility posture for the 2.8.0.x refinement-sweep relea
 - **Reminder engine:** previously-dead reminder conditions wired live with category-keyed priority sorting, warm-rebind refresh, and configurable knobs.
 - **Discoverability + onboarding:** rewritten `append_entry`/`health_check` tool descriptions; `manage_docs`/`read_file` docstrings that surface the full governance action set and `read_file` scan flags; a completed `/scribe-integration` skill and a new `/scribe-onboarding` install skill; new-project reminder hints that point to both skills.
 - **Frontmatter preservation fix:** user-set managed-doc `title` is now preserved instead of being clobbered (tracked as BUG-2026-06-17-0002).
-- **Packaging:** `asyncpg` is a core dependency, so a plain `pip install scribe-mcp` is Postgres-ready and matches the default Postgres runtime posture (the `[postgres]` extra is a redundant no-op alias kept only for explicit-intent convenience); plus plugin manifests; and the plugin + onboarding bundles **vendored into the wheel** (`src/scribe_mcp/plugins_bundle/**` and `src/scribe_mcp/onboarding/**` via package-data, with `resolve_codex_plugin_root()` preferring the packaged bundle) so `pip install scribe-mcp` works with no clone.
+- **Packaging:** `asyncpg` is a core dependency, so a plain `pip install scribe-mcp` is Postgres-ready and matches the default Postgres runtime posture (the `[postgres]` extra is a redundant no-op alias kept only for explicit-intent convenience); plus plugin manifests; and the lean Claude/Codex plugin bundles **vendored into the wheel** (`src/scribe_mcp/plugins_bundle/**` via package-data, with `resolve_codex_plugin_root()` preferring the packaged bundle) so `pip install scribe-mcp` works with no clone.
 
 It continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.8.0.1` (packaging patch on the 2.8.0 feature baseline)
+- **Core package version:** `scribe-mcp==2.8.1` (patch on the 2.8.0 feature baseline)
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
@@ -29,9 +29,9 @@ It continues to carry the prior in-line capabilities: fast same-binding `set_pro
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.8.0.1` | Supported (current) | Current public Scribe install. Packaging patch on the 2.8.0 feature baseline: plugin bundles now ship the full Scribe skill set (not just `scribe-mcp-usage`'s `SKILL.md`), the no-op `[postgres]` extra messaging is clarified (`asyncpg` is already a core dependency), and a clean-room wheel install check is added. No feature, API, CLI, or schema changes over 2.8.0. |
-| `2.8.0` | Supported (feature baseline) | Feature baseline for the 2.8.0.x line. Bundles the `scribe_refinement_audit` sweep: host-facing `manage_docs` input-schema enrichment, unified case-status vocabulary + exact case-path resolution, dead-code/honest-envelope maintainability cleanup, `read_file` pagination + single-pass AST + SQL-pushdown message filtering, a wired reminder engine, tool discoverability + onboarding skills, a managed-doc `title`-preservation fix, and packaging that vendors the plugin/onboarding bundles into the wheel. Backward-compatible additive + fix release; no breaking public API/CLI/schema contract. |
-| `2.7.2` | Supported (previous) | Prior patch line with furnace-project quality-check O(N^2) elimination; 2.8.0.x is a drop-in upgrade with no breaking public API changes. |
+| `2.8.1` | Supported (current) | Current public Scribe install. Patch on the 2.8.0 feature baseline: existing physical managed docs are auto-registered for targeted `manage_docs` actions, path-like registration preserves existing aliases, plugin sync works in clean checkout CI, shipped plugin bundles contain only `scribe-integration` and `scribe-onboarding`, the packaged Codex projection writes every shipped skill, and `complete` is terminal for case filtering. |
+| `2.8.0` | Supported (feature baseline) | Feature baseline for the 2.8.x line. Bundles the `scribe_refinement_audit` sweep: host-facing `manage_docs` input-schema enrichment, unified case-status vocabulary + exact case-path resolution, dead-code/honest-envelope maintainability cleanup, `read_file` pagination + single-pass AST + SQL-pushdown message filtering, a wired reminder engine, tool discoverability + onboarding skills, a managed-doc `title`-preservation fix, and packaged plugin projection. Backward-compatible additive + fix release; no breaking public API/CLI/schema contract. |
+| `2.7.2` | Supported (previous) | Prior patch line with furnace-project quality-check O(N^2) elimination; 2.8.x is a drop-in upgrade with no breaking public API changes. |
 | `2.7.1` | Supported (previous) | Earlier patch line; superseded by 2.7.2 and 2.8.0. |
 
 ## Notable behavior change in 2.8.0 (non-breaking)

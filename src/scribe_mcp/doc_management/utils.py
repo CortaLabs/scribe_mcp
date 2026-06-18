@@ -66,6 +66,7 @@ CASE_FIX_CLOSED_STATUS_VALUES: frozenset[str] = frozenset({
     "resolved",
     "fixed",
     "done",
+    "complete",
     "completed",
     "implemented",
     "landed",

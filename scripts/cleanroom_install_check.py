@@ -16,8 +16,9 @@ What it does (in a fresh, isolated environment):
 3. Assert the runtime version surface (``python -m scribe_mcp --version``)
    matches the package metadata version.
 4. Assert the vendored assets resolve from the INSTALLED package (site-packages),
-   via :func:`scribe_mcp.config.paths` helpers — the plugin bundles + onboarding
-   skill — and that the EXPECTED SKILL SET ships in both plugin channels.
+   via :func:`scribe_mcp.config.paths` helpers — the plugin bundles and the
+   packaged onboarding skill — and that the EXPECTED SKILL SET ships in both
+   plugin channels.
 5. Assert ``scribe install --commit --yes --project-codex`` projects the Codex
    plugin into a temp ``CODEX_HOME`` and lands the expected agent/skill files
    on disk.
@@ -55,20 +56,20 @@ BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_release_dists.sh"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 # ---------------------------------------------------------------------------
-# Expected shipped skill set — KEEP IN SYNC with the package-1 sync rule
-# (scripts/sync_plugin_skills.py: glob ``scribe-*`` minus ``scribe-rag-workflow``,
-# which is owned by Knowledge MCP). Editing this single list is how the contract
-# is kept truthful when the shipped skills change.
+# Expected shipped skill set — KEEP IN SYNC with the plugin sync rule. The
+# package ships the lean Scribe plugin surface only; broad usage documentation
+# lives in repo docs/source docs instead of the installed plugin bundle.
 # ---------------------------------------------------------------------------
 EXPECTED_PLUGIN_SKILLS: frozenset[str] = frozenset(
     {
-        "scribe-mcp-usage",
         "scribe-onboarding",
         "scribe-integration",
     }
 )
-# Explicitly NOT shipped in the Scribe plugin bundles (owner: knowledge-mcp).
-EXCLUDED_PLUGIN_SKILLS: frozenset[str] = frozenset({"scribe-rag-workflow"})
+# Explicitly NOT shipped in the Scribe plugin bundles.
+EXCLUDED_PLUGIN_SKILLS: frozenset[str] = frozenset(
+    {"scribe-mcp-usage", "scribe-rag-workflow"}
+)
 
 PLUGIN_CHANNELS: tuple[str, ...] = ("claude", "codex")
 
@@ -322,11 +323,14 @@ def assert_codex_projection(py: Path, workdir: Path) -> None:
         env=env,
     )
 
-    projected_skill = codex_home / "skills" / "scribe-mcp-usage" / "SKILL.md"
-    if not projected_skill.is_file():
-        raise CleanRoomError(
-            f"codex projection did not land the expected skill on disk: {projected_skill}"
-        )
+    projected_skill_paths = []
+    for skill in sorted(EXPECTED_PLUGIN_SKILLS):
+        projected_skill = codex_home / "skills" / skill / "SKILL.md"
+        if not projected_skill.is_file():
+            raise CleanRoomError(
+                f"codex projection did not land the expected skill on disk: {projected_skill}"
+            )
+        projected_skill_paths.append(projected_skill)
     config_toml = codex_home / "config.toml"
     if not config_toml.is_file():
         raise CleanRoomError(f"codex projection did not write config: {config_toml}")
@@ -335,7 +339,7 @@ def assert_codex_projection(py: Path, workdir: Path) -> None:
     if not projected_agents:
         raise CleanRoomError(f"codex projection wrote no agent configs under {agents_dir}")
     _log(
-        f"codex projection landed: skill={projected_skill.name}, "
+        f"codex projection landed: skills={[p.parent.name for p in projected_skill_paths]}, "
         f"agents={[p.stem for p in projected_agents]}, config=config.toml"
     )
 

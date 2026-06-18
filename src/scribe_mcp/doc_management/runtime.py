@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from scribe_mcp.log_intelligence import build_report_from_path
-from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key
+from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key, _resolve_doc_path
 from scribe_mcp.doc_management.scaffold_quality import (
     collect_managed_doc_quality_warnings,
     configured_log_quality_exclusion_paths,
@@ -181,6 +181,11 @@ _READ_ONLY_REGISTRATION_GATED_ACTIONS = {
     "preview_reconciliation",
     "search",
 }
+_DOC_TARGETED_REGISTRATION_ACTIONS = (
+    _MUTATION_ACTIONS
+    | _READ_ONLY_REGISTRATION_GATED_ACTIONS
+    | {"quality_check", "scaffold_quality_check"}
+)
 
 
 _SPECIAL_DOC_TYPES = {"research", "bug", "security", "review", "agent_card"}
@@ -278,6 +283,58 @@ def _is_manage_docs_write_intent(action: str) -> bool:
 
 def _looks_like_path(value: str) -> bool:
     return "/" in value or "\\" in value or value.endswith(".md")
+
+
+def _path_registration_key(project: Dict[str, Any], doc_name: str, doc_path: Path, docs: Dict[str, str]) -> str:
+    stem_key = doc_path.stem
+    existing_target = docs.get(stem_key)
+    if existing_target:
+        try:
+            if Path(existing_target).expanduser().resolve() == doc_path.resolve():
+                return stem_key
+        except Exception:
+            if str(existing_target) == str(doc_path):
+                return stem_key
+        project_root = Path(str(project.get("root") or "")).expanduser().resolve()
+        try:
+            return str(doc_path.resolve().relative_to(project_root)).replace("\\", "/")
+        except Exception:
+            return str(doc_name).replace("\\", "/").lstrip("./")
+    return stem_key
+
+
+async def _merged_registered_docs(
+    *,
+    backend: Any,
+    project: Dict[str, Any],
+    project_name: str,
+) -> Dict[str, str]:
+    current_docs = dict(project.get("docs", {}) or {})
+    fetch_project = getattr(backend, "fetch_project", None)
+    if not callable(fetch_project):
+        return current_docs
+
+    try:
+        record = fetch_project(project_name, repo_root=project.get("root"))
+        if inspect.isawaitable(record):
+            record = await record
+    except Exception:
+        return current_docs
+
+    docs_json = getattr(record, "docs_json", None)
+    if not isinstance(docs_json, str) or not docs_json.strip():
+        return current_docs
+
+    try:
+        persisted_docs = json.loads(docs_json)
+    except json.JSONDecodeError:
+        return current_docs
+    if not isinstance(persisted_docs, dict):
+        return current_docs
+
+    merged_docs = {str(key): str(value) for key, value in persisted_docs.items()}
+    merged_docs.update({str(key): str(value) for key, value in current_docs.items()})
+    return merged_docs
 
 
 def _default_rehome_relative_path(source_path: Path, project_root: Path) -> Path:
@@ -1958,8 +2015,17 @@ async def auto_register_document(
                 "Cannot establish authoritative session binding for manage_docs auto-registration."
             )
 
-        current_docs = dict(project.get("docs", {}) or {})
-        current_docs[doc_name] = str(doc_path)
+        current_docs = await _merged_registered_docs(
+            backend=backend,
+            project=project,
+            project_name=project_name,
+        )
+        registration_key = (
+            _path_registration_key(project, str(doc_name), doc_path, current_docs)
+            if _looks_like_path(str(doc_name))
+            else doc_name
+        )
+        current_docs[registration_key] = str(doc_path)
         project["docs"] = current_docs
         docs_json = json.dumps(current_docs)
         await backend.update_project_docs(project_name, docs_json, repo_root=project.get("root"))
@@ -1985,7 +2051,7 @@ async def auto_register_document(
     try:
         registry_call = project_registry.record_doc_update(
             project_name=project_name,
-            doc=doc_name,
+            doc=registration_key,
             action="auto_register",
             after_hash=doc_hash,
         )
@@ -1996,13 +2062,13 @@ async def auto_register_document(
 
     try:
         await append_entry(
-            message=f"Auto-registered document: {doc_name} ({doc_path.name})",
+            message=f"Auto-registered document: {registration_key} ({doc_path.name})",
             status="info",
             agent="manage_docs",
             meta={
                 "action": "auto_register",
-                "doc": doc_name,
-                "doc_name": doc_name,
+                "doc": registration_key,
+                "doc_name": registration_key,
                 "path": str(doc_path),
                 "hash": doc_hash[:8],
             },
@@ -2052,7 +2118,11 @@ async def register_document_path(
     if not authoritative_session_id:
         raise ValueError("Cannot establish authoritative session binding for manage_docs registration.")
 
-    current_docs = dict(project.get("docs", {}) or {})
+    current_docs = await _merged_registered_docs(
+        backend=backend,
+        project=project,
+        project_name=project_name,
+    )
     current_docs[doc_name] = str(doc_path)
     project["docs"] = current_docs
     docs_json = json.dumps(current_docs)
@@ -2483,6 +2553,55 @@ async def handle_manage_docs_request(
         )
         return helper.apply_context_payload(authority_error, context)
 
+    if doc_name and action in _DOC_TARGETED_REGISTRATION_ACTIONS:
+        docs = active_project.get("docs", {}) if isinstance(active_project.get("docs"), dict) else {}
+        if doc_name not in docs:
+            logger.info("Document '%s' not registered, attempting safe registration for action '%s'...", doc_name, action)
+            try:
+                if dry_run:
+                    resolved_path = _resolve_doc_path(active_project, str(doc_name))
+                    if not resolved_path.exists():
+                        raise ValueError(f"File {resolved_path} does not exist.")
+                    active_project = dict(active_project)
+                    staged_docs = dict(active_project.get("docs", {}) or {})
+                    staged_docs[str(doc_name)] = str(resolved_path)
+                    active_project["docs"] = staged_docs
+                    runtime_warnings.append(
+                        f"dry_run: would auto-register '{doc_name}' before executing action '{action}'."
+                    )
+                else:
+                    await auto_register_document(active_project, str(doc_name))
+                    try:
+                        context = await helper.prepare_context(
+                            tool_name="manage_docs",
+                            agent_id=None,
+                            require_project=True,
+                            state_snapshot=state_snapshot,
+                            reminder_variables={"action": action, "scaffold": scaffold_flag},
+                        )
+                        active_project = context.project or active_project
+                        logger.info(
+                            "Successfully registered and reloaded project context for '%s'",
+                            doc_name,
+                        )
+                    except Exception as reload_error:
+                        warning = (
+                            "Auto-registration succeeded but context reload failed: "
+                            f"{reload_error}"
+                        )
+                        runtime_warnings.append(warning)
+                        logger.warning(warning)
+            except Exception as exc:
+                error_payload = helper.error_response(
+                    f"Auto-registration failed for document '{doc_name}'",
+                    suggestion=(
+                        "Ensure the file exists inside the active project's managed docs tree. "
+                        f"Error: {str(exc)}"
+                    ),
+                    extra={"doc_name": doc_name, "auto_registration_error": str(exc)},
+                )
+                return helper.apply_context_payload(error_payload, context)
+
     if action == "project_health":
         response = await _handle_project_health(
             active_project=active_project,
@@ -2556,9 +2675,6 @@ async def handle_manage_docs_request(
             agent_id=str(agent_id),
         )
         return _attach_manage_docs_project_context(response, context=context)
-
-    if action in _READ_ONLY_REGISTRATION_GATED_ACTIONS and doc_name:
-        logger.debug("Skipping auto-registration for read-only action '%s' on '%s'", action, doc_name)
 
     if action in _MUTATION_ACTIONS and doc_category in _CUSTOM_DOC_TYPES and doc_name:
         resolved_path = utils_shared.resolve_custom_doc_path(

@@ -5,7 +5,7 @@ disallowedTools:
   - Write
   - Edit
 model: opus
-skills: ["scribe-mcp-usage"]
+skills: ["scribe-integration"]
 color: "#8E44AD"
 ---
 

@@ -187,5 +187,5 @@ After this skill you have: an installed `scribe-mcp` CLI + server, a provisioned
 ## References
 
 - `/scribe-integration` — how to use the Scribe tools once installed.
-- `/scribe-mcp-usage` — the bundled usage skill (tool contracts and document rules).
+- `/scribe-integration` — tool contracts, document rules, and day-to-day Scribe workflow.
 - `docs/INSTALL_AND_BOOTSTRAP.md` — the canonical, full install-and-bootstrap guide.

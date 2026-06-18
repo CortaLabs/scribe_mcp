@@ -2,7 +2,6 @@
 """Test script for read_file enhancements."""
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -66,19 +65,19 @@ async def test_python_ast(exec_context_token):
         print(f"Truncated: {structure.get('truncated')}")
 
         functions = structure.get('functions', [])
-        print(f"\nFirst 5 Functions:")
+        print("\nFirst 5 Functions:")
         for func in functions[:5]:
             print(f"  - {func['name']}() at line {func['line']} [{func['type']}]")
 
         classes = structure.get('classes', [])
         if classes:
-            print(f"\nFirst 2 Classes:")
+            print("\nFirst 2 Classes:")
             for cls in classes[:2]:
                 print(f"  - {cls['name']} at line {cls['line']} ({cls['method_count']} methods)")
 
     nav_hints = result.get('navigation_hints', {})
     if nav_hints:
-        print(f"\nNavigation Hints:")
+        print("\nNavigation Hints:")
         print(f"  Total Chunks: {nav_hints.get('total_chunks')}")
         print(f"  Suggested Chunk Size: {nav_hints.get('suggested_chunk_size')}")
 
@@ -108,7 +107,7 @@ async def test_markdown_headings(exec_context_token):
         print(f"Truncated: {structure.get('truncated')}")
 
         headings = structure.get('headings', [])
-        print(f"\nFirst 10 Headings:")
+        print("\nFirst 10 Headings:")
         for heading in headings[:10]:
             indent = "  " * (heading['level'] - 1)
             print(f"{indent}{'#'*heading['level']} {heading['text']} (line {heading['line']})")
@@ -124,7 +123,7 @@ async def test_skill_detection(exec_context_token):
 
     result = await read_file(
         agent="test_agent",
-        path=".codex/skills/scribe-mcp-usage/SKILL.md",
+        path="skills/scribe-integration/SKILL.md",
         mode="scan_only",
         format="structured"
     )
@@ -134,7 +133,7 @@ async def test_skill_detection(exec_context_token):
 
     special = result.get('special_file', {})
     if special:
-        print(f"\n🚨 SPECIAL FILE DETECTED 🚨")
+        print("\n🚨 SPECIAL FILE DETECTED 🚨")
         print(f"  Type: {special.get('type')}")
         print(f"  Urgency: {special.get('urgency')}")
         print(f"  Requires Full Read: {special.get('requires_full_read')}")
@@ -164,13 +163,13 @@ async def test_regex_search(exec_context_token):
     )
 
     print(f"\nOK: {result.get('ok')}")
-    print(f"Search Pattern: async\\s+def\\s+\\w+")
+    print("Search Pattern: async\\s+def\\s+\\w+")
 
     matches = result.get('matches', [])
     print(f"Matches Found: {len(matches)}")
 
     if matches:
-        print(f"\nFirst 5 Matches:")
+        print("\nFirst 5 Matches:")
         for match in matches[:5]:
             line_num = match['line_number']
             line_text = match['line'].strip()
@@ -194,14 +193,14 @@ async def test_navigation_hints(exec_context_token):
 
     nav_hints = result.get('navigation_hints', {})
     if nav_hints:
-        print(f"\n✓ Navigation Hints Present")
+        print("\n✓ Navigation Hints Present")
         print(f"  Total Chunks: {nav_hints.get('total_chunks')}")
         print(f"  Suggested Chunk Size: {nav_hints.get('suggested_chunk_size')}")
         print(f"  Modes Available: {', '.join(nav_hints.get('modes_available', []))}")
 
         examples = nav_hints.get('examples', {})
         if examples:
-            print(f"\n  Example Calls:")
+            print("\n  Example Calls:")
             for mode_name, example in examples.items():
                 print(f"    {mode_name}: {example[:100]}...")
     else:

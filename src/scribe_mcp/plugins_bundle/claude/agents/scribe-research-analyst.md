@@ -5,7 +5,7 @@ disallowedTools:
   - Write
   - Edit
 model: sonnet
-skills: ["scribe-mcp-usage"]
+skills: ["scribe-integration"]
 color: "#4A90D9"
 ---
 

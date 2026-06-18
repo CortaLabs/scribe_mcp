@@ -19,7 +19,7 @@ CODEX_PLUGIN_ROOT = REPO_ROOT / "plugins" / "codex"
 MARKETPLACE_PATH = CODEX_PLUGIN_ROOT / "marketplace.json"
 PACKAGE_BUNDLE_ROOT = REPO_ROOT / "src" / "scribe_mcp" / "plugins_bundle"
 PACKAGE_ONBOARDING_SKILL = (
-    REPO_ROOT / "src" / "scribe_mcp" / "onboarding" / "skills" / "scribe-mcp-usage" / "SKILL.md"
+    PACKAGE_BUNDLE_ROOT / "codex" / "skills" / "scribe-onboarding" / "SKILL.md"
 )
 ALLOWED_PUBLIC_AGENTS = [
     "scribe-architect",
@@ -111,7 +111,7 @@ def test_claude_bundle_keeps_manifest_only_directory_shape_and_public_assets() -
     hook_command = hooks_config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert hook_command == "${CLAUDE_PLUGIN_ROOT}/bin/protect-managed-docs.sh"
 
-    assert (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage" / "SKILL.md").exists()
+    assert (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-integration" / "SKILL.md").exists()
     _assert_public_safe_markdown_dir(CLAUDE_PLUGIN_ROOT / "agents")
 
 
@@ -150,7 +150,7 @@ def test_project_codex_plugin_preserves_existing_user_files_and_is_idempotent(tm
     codex_home = tmp_path / "codex-home"
     agents_dir = codex_home / "agents"
     agents_dir.mkdir(parents=True)
-    skill_dir = codex_home / "skills" / "scribe-mcp-usage"
+    skill_dir = codex_home / "skills" / "scribe-integration"
     skill_dir.mkdir(parents=True)
 
     config_path = codex_home / "config.toml"
@@ -359,10 +359,10 @@ def test_package_bundle_is_byte_identical_to_canonical_repo_plugins() -> None:
     assert _tree_fingerprint(PACKAGE_BUNDLE_ROOT / "codex") == _tree_fingerprint(CODEX_PLUGIN_ROOT)
 
 
-def test_packaged_onboarding_skill_matches_bundle_usage_skill() -> None:
-    """The standalone packaged onboarding skill is the canonical usage SKILL.md."""
-    canonical = (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage" / "SKILL.md").read_bytes()
-    assert PACKAGE_ONBOARDING_SKILL.read_bytes() == canonical
+def test_packaged_onboarding_skill_stays_outside_shipped_plugin_surface() -> None:
+    """The packaged onboarding helper is the lean shipped plugin skill."""
+    assert PACKAGE_ONBOARDING_SKILL.is_file()
+    assert not (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage").exists()
 
 
 def test_resolve_codex_plugin_root_prefers_packaged_bundle() -> None:
@@ -373,7 +373,7 @@ def test_resolve_codex_plugin_root_prefers_packaged_bundle() -> None:
     resolved = resolve_codex_plugin_root(REPO_ROOT)
     assert resolved == codex_plugin_bundle_dir()
     assert (resolved / ".codex-plugin" / "plugin.json").exists()
-    assert (resolved / "skills" / "scribe-mcp-usage" / "SKILL.md").exists()
+    assert (resolved / "skills" / "scribe-integration" / "SKILL.md").exists()
 
 
 def test_resolve_codex_plugin_root_falls_back_to_repo_when_bundle_absent(monkeypatch) -> None:
@@ -393,19 +393,22 @@ def test_roster_review_agent_uses_registered_slug_for_scribe_sign_in() -> None:
     assert "You sign into Scribe as `ReviewAgent`" not in roster_text
 
 
-# --- Plugin skill sync (2.8.0.1): every Scribe-owned generated skill ships ---
+# --- Plugin skill sync (2.8.1): lean Scribe plugin surface ships ---
 
 # The skills that MUST ship in both plugins and the bundle. This is the
-# Scribe-owned scribe-* set minus the documented knowledge-mcp exclusion.
+# intentionally lean Scribe plugin surface; broader usage docs stay in repo docs.
 EXPECTED_SHIPPED_SKILLS = [
     "scribe-integration",
-    "scribe-mcp-usage",
     "scribe-onboarding",
 ]
-# scribe-rag-workflow is owned by Knowledge MCP (owner: knowledge-mcp, coupled to
-# knowledge_mcp.operator_cli + .knowledge datasets) and must NOT ship in the
-# standalone Scribe plugin.
-EXCLUDED_FROM_PLUGINS = "scribe-rag-workflow"
+EXCLUDED_FROM_PLUGINS = {
+    # Legacy broad-form usage docs are too large/stale for the installed plugin
+    # surface; scribe-integration, scribe-onboarding, and repo docs cover it.
+    "scribe-mcp-usage",
+    # Owned by Knowledge MCP (owner: knowledge-mcp, coupled to
+    # knowledge_mcp.operator_cli + .knowledge datasets).
+    "scribe-rag-workflow",
+}
 
 
 def _shipped_skill_slugs(skills_dir: Path) -> list[str]:
@@ -428,7 +431,8 @@ def test_every_scribe_skill_ships_in_both_plugins_and_bundle() -> None:
     for skills_dir in skill_dirs:
         shipped = _shipped_skill_slugs(skills_dir)
         assert shipped == EXPECTED_SHIPPED_SKILLS, f"{skills_dir}: {shipped}"
-        assert EXCLUDED_FROM_PLUGINS not in shipped, f"{skills_dir} must exclude {EXCLUDED_FROM_PLUGINS}"
+        for excluded in EXCLUDED_FROM_PLUGINS:
+            assert excluded not in shipped, f"{skills_dir} must exclude {excluded}"
         for slug in EXPECTED_SHIPPED_SKILLS:
             assert (skills_dir / slug / "SKILL.md").is_file()
 
@@ -446,8 +450,6 @@ def test_shipped_plugin_skills_match_generated_source() -> None:
     """Each shipped plugin/bundle skill is FULL-TREE byte-identical to the
     canonical generated source it was synced from (.claude/skills, .codex/skills).
 
-    This is the dead-link guard: scribe-mcp-usage's SKILL.md links references/,
-    scripts/ and assets/ files; shipping SKILL.md alone would leave dead links.
     Every file in the generated skill tree must ship in both the plugin tree and
     the wheel-vendored bundle."""
     generated = {
@@ -469,13 +471,9 @@ def test_shipped_plugin_skills_match_generated_source() -> None:
                 )
 
 
-def test_scribe_mcp_usage_ships_full_reference_tree_so_skill_links_resolve() -> None:
-    """Regression for the SKILL.md-only ship bug: every references/scripts/assets
-    path linked from the shipped scribe-mcp-usage SKILL.md must exist as a shipped
-    file (or directory) in the plugin tree, on both channels and the bundle."""
-    import re
+def test_scribe_mcp_usage_is_not_shipped_in_plugins_or_bundle() -> None:
+    """The broad legacy usage skill stays out of the installed plugin surface."""
 
-    link_pattern = re.compile(r"(?:references|scripts|assets)/[A-Za-z0-9_./-]+")
     skill_dirs = [
         CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage",
         CODEX_PLUGIN_ROOT / "skills" / "scribe-mcp-usage",
@@ -483,11 +481,7 @@ def test_scribe_mcp_usage_ships_full_reference_tree_so_skill_links_resolve() -> 
         PACKAGE_BUNDLE_ROOT / "codex" / "skills" / "scribe-mcp-usage",
     ]
     for skill_dir in skill_dirs:
-        skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-        linked = {match.rstrip("/") for match in link_pattern.findall(skill_md)}
-        assert linked, "expected scribe-mcp-usage SKILL.md to link reference assets"
-        for rel in sorted(linked):
-            assert (skill_dir / rel).exists(), f"dead link in {skill_dir}: {rel}"
+        assert not skill_dir.exists(), f"{skill_dir} should not ship"
 
 
 def test_plugin_skill_sync_is_clean() -> None:
@@ -501,5 +495,52 @@ def test_plugin_skill_sync_rule_excludes_knowledge_mcp_skill() -> None:
     though it exists in the generated source."""
     for channel in ("claude", "codex"):
         names = sync_plugin_skills.shipped_skill_names(channel)
-        assert EXCLUDED_FROM_PLUGINS not in names
+        for excluded in EXCLUDED_FROM_PLUGINS:
+            assert excluded not in names
         assert names == EXPECTED_SHIPPED_SKILLS
+
+
+def test_plugin_skill_sync_uses_tracked_plugin_tree_when_generated_sources_are_absent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Clean CI checkouts do not track .claude/.codex generated skill sources.
+
+    The sync check must not treat absent generated dirs as an empty shipped set;
+    it should use the tracked plugin tree as the source for bundle parity.
+    """
+
+    generated_dirs = {
+        "claude": tmp_path / "missing-generated" / "claude",
+        "codex": tmp_path / "missing-generated" / "codex",
+    }
+    plugin_dirs = {
+        "claude": tmp_path / "plugins" / "claude" / "skills",
+        "codex": tmp_path / "plugins" / "codex" / "skills",
+    }
+    bundle_dirs = {
+        "claude": tmp_path / "bundle" / "claude" / "skills",
+        "codex": tmp_path / "bundle" / "codex" / "skills",
+    }
+
+    for channel in ("claude", "codex"):
+        plugin_skill = plugin_dirs[channel] / "scribe-integration" / "SKILL.md"
+        bundle_skill = bundle_dirs[channel] / "scribe-integration" / "SKILL.md"
+        plugin_skill.parent.mkdir(parents=True)
+        bundle_skill.parent.mkdir(parents=True)
+        plugin_skill.write_text(f"# {channel} integration\n", encoding="utf-8")
+        bundle_skill.write_text(f"# {channel} integration\n", encoding="utf-8")
+
+    monkeypatch.setattr(sync_plugin_skills, "GENERATED_SKILL_DIRS", generated_dirs)
+    monkeypatch.setattr(sync_plugin_skills, "PLUGIN_SKILL_DIRS", plugin_dirs)
+    monkeypatch.setattr(sync_plugin_skills, "BUNDLE_SKILL_DIRS", bundle_dirs)
+
+    assert sync_plugin_skills.shipped_skill_names("claude") == ["scribe-integration"]
+    assert sync_plugin_skills.sync(check=True) == 0
+
+    stale_bundle = bundle_dirs["codex"] / "scribe-integration" / "SKILL.md"
+    stale_bundle.write_text("# stale\n", encoding="utf-8")
+    assert sync_plugin_skills.sync(check=True) == 1
+    assert sync_plugin_skills.sync(check=False) == 1
+    assert stale_bundle.read_text(encoding="utf-8") == "# codex integration\n"
+    assert sync_plugin_skills.sync(check=True) == 0

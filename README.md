@@ -45,8 +45,13 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.8.0` is a backward-compatible **additive + fix** release over the 2.7.x line, with no breaking public API, CLI, or schema contract changes. It focuses on tool discoverability, onboarding, install ergonomics, and runtime honesty:
+`2.8.1` is a backward-compatible **patch** release over the 2.8.0 feature line, with no breaking public API, CLI, or schema contract changes. It keeps the 2.8.0 tool-discoverability, onboarding, install-ergonomics, and runtime-honesty work, and adds the registration and cleanbuild repairs needed for a cleaner public package:
 
+- `manage_docs` now auto-registers existing physical managed docs for targeted actions instead of rejecting them as `DOC_NOT_FOUND` when the registry is stale; path-like registration also preserves existing basename aliases.
+- Clean-room plugin sync now works from a checkout that does not have ignored generated `.claude/skills` or `.codex/skills` trees, which fixes the GitHub cleanbuild/publish blocker.
+- The shipped plugin/wheel surface is intentionally lean: only `/scribe-integration` and `/scribe-onboarding` ship in the Claude/Codex plugin bundles. Legacy broad-form `scribe-mcp-usage` content is not shipped; `scribe-integration`, `scribe-onboarding`, and repo docs cover the supported usage surface.
+- Codex projection now projects every shipped Codex skill from the packaged plugin bundle, and clean-room install proof verifies the wheel install, runtime version, bundled skills, and projection output.
+- Completed bug/security reports whose managed frontmatter status is `complete` are treated as terminal by the shared case-status filter.
 - Host-facing `manage_docs` now advertises a live `action` enum and documented `metadata` keys in its MCP input schema (with `additionalProperties` preserved), so an MCP host can teach an agent about a mistyped action instead of failing silently.
 - `append_entry` and `health_check` tool descriptions were rewritten, and the `manage_docs`/`read_file` docstrings now surface the full governance action set plus `read_file` scan flags.
 - A completed `/scribe-integration` skill (the full ~28-tool surface) and a new `/scribe-onboarding` install skill ship in the package; new-project reminders now point to both.
@@ -379,7 +384,7 @@ Scribe is a strong fit if you are:
 
 ## What still needs work
 
-As of `2.8.0` the no-clone install path is real: the plugin and onboarding bundles ship inside the wheel, so `pip install scribe-mcp` plus `scribe install --commit --yes --project-codex` projects them without a checkout. What is not yet in place:
+As of `2.8.1` the no-clone install path is real: the lean Scribe plugin bundle ships inside the wheel, so `pip install scribe-mcp` plus `scribe install --commit --yes --project-codex` projects it without a checkout. What is not yet in place:
 
 - an automated, clean-room CI proof of that full pip-installed path — from a fresh environment through bootstrap to a first live MCP host integration — so the public install story is continuously verified end-to-end, not just verified once by hand.
 

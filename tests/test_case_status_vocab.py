@@ -111,7 +111,7 @@ def test_link_fix_and_list_open_cases_share_one_closed_vocab():
 
 def test_previously_divergent_statuses_now_agree():
     # These were in exactly one of the two old sets — they must agree now.
-    for status in ("merged", "implemented", "landed", "validated", "completed"):
+    for status in ("merged", "implemented", "landed", "validated", "complete", "completed"):
         assert doc_utils.case_status_closes(status), f"{status} should close"
         assert not loc._is_open_case_status(status), f"{status} should not be open"
     for status in ("wontfix", "won't fix", "duplicate", "false_positive", "mitigated"):

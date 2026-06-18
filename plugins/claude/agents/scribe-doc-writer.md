@@ -2,7 +2,7 @@
 name: scribe-doc-writer
 description: "Public-facing documentation for Scribe MCP — READMEs, API references, user guides, whitepapers, wiki pages, and developer onboarding docs. Creates documentation that external developers consume to understand and adopt Scribe MCP. Ensures all published docs are accurate, current, and verified against actual code. Works extensively with manage_docs for governed document workflows. Deploy when documentation needs creation, major updates, quality review, or when a new feature needs external-facing documentation."
 model: sonnet
-skills: ["scribe-mcp-usage"]
+skills: ["scribe-integration"]
 color: "#1ABC9C"
 ---
 
