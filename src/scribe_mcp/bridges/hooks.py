@@ -192,6 +192,91 @@ class BridgeHookManager:
             except Exception as e:
                 logger.error(f"Bridge {bridge_id} post_rotate failed: {e}")
 
+    async def execute_pre_read(self, path: str, context: Dict[str, Any]) -> None:
+        """
+        Execute pre_read hooks on all active bridges (generic, content-agnostic).
+
+        Non-critical by default; failures are isolated and do not affect the
+        read unless the hook is configured as critical.
+
+        Args:
+            path: Path being read
+            context: Generic read context
+        """
+        for bridge_id, bridge in self._bridges.items():
+            if bridge.state != BridgeState.ACTIVE:
+                continue
+
+            # Get hook config
+            hook_config = bridge.manifest.hooks.get("pre_read")
+            if not hook_config:
+                continue
+
+            timeout_ms = hook_config.timeout_ms
+            is_critical = hook_config.critical
+
+            try:
+                await asyncio.wait_for(
+                    bridge.pre_read(path, context),
+                    timeout=timeout_ms / 1000.0
+                )
+                logger.debug(f"Bridge {bridge_id} pre_read hook executed successfully")
+            except asyncio.TimeoutError:
+                error_msg = f"Bridge {bridge_id} pre_read timed out after {timeout_ms}ms"
+                logger.error(error_msg)
+                if is_critical:
+                    raise RuntimeError(f"Critical hook {bridge_id}.pre_read timed out")
+            except Exception as e:
+                error_msg = f"Bridge {bridge_id} pre_read failed: {e}"
+                logger.error(error_msg)
+                if is_critical:
+                    raise RuntimeError(f"Critical hook {bridge_id}.pre_read failed: {e}")
+
+    async def execute_post_read(
+        self, path: str, result: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Execute post_read hooks on all active bridges (generic, content-agnostic).
+
+        Fire-and-forget - errors are logged but don't affect the read. Each
+        bridge's non-None ``post_read`` return is collected into a generic
+        ``result["read_annotations"]`` list. Scribe never inspects the payload
+        shape; consumers own its content and rendering.
+
+        Args:
+            path: Path that was read
+            result: Read result
+            context: Generic read context
+
+        Returns:
+            The read result, possibly enriched with collected annotations
+        """
+        for bridge_id, bridge in self._bridges.items():
+            if bridge.state != BridgeState.ACTIVE:
+                continue
+
+            # Get hook config
+            hook_config = bridge.manifest.hooks.get("post_read")
+            if not hook_config:
+                continue
+
+            timeout_ms = hook_config.timeout_ms
+
+            try:
+                annotation = await asyncio.wait_for(
+                    bridge.post_read(path, result, context),
+                    timeout=timeout_ms / 1000.0
+                )
+                if annotation is not None:
+                    result.setdefault("read_annotations", []).append(annotation)
+                logger.debug(f"Bridge {bridge_id} post_read hook executed successfully")
+            except asyncio.TimeoutError:
+                logger.error(f"Bridge {bridge_id} post_read timed out after {timeout_ms}ms")
+            except Exception as e:
+                logger.error(f"Bridge {bridge_id} post_read failed: {e}")
+
+        return result
+
 
 # Global hook manager instance
 _hook_manager: Optional[BridgeHookManager] = None

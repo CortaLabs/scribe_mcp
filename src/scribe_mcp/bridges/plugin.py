@@ -152,6 +152,44 @@ class BridgePlugin(ABC):
         """
         pass
 
+    # read-hook-event: generic, content-agnostic read hooks (async). Mirror
+    # pre_append/post_append above. Scribe never inspects the returned payload;
+    # any non-None post_read return is collected by the hook manager into a
+    # generic ``result["read_annotations"]`` list.
+
+    async def pre_read(self, path: str, context: Dict[str, Any]) -> None:
+        """
+        Called before a read result is produced.
+
+        This is non-critical by default; failures are isolated and do not
+        affect the read unless the hook is configured as critical.
+
+        Args:
+            path: Path being read
+            context: Generic read context
+        """
+        pass
+
+    async def post_read(
+        self, path: str, result: Dict[str, Any], context: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Called after a read result is produced.
+
+        This is fire-and-forget - exceptions are logged but don't affect the
+        read operation. Return an optional generic annotation payload (opaque
+        to Scribe) or ``None`` for no annotation.
+
+        Args:
+            path: Path that was read
+            result: Read result
+            context: Generic read context
+
+        Returns:
+            Optional generic annotation payload, or None
+        """
+        return None
+
     async def pre_project_create(self, project_name: str, project_config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Called before project is created.

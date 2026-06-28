@@ -32,6 +32,12 @@ _UNTRUSTED_CALLER_SESSION_KEYS = (
     "transport_session_id",
 )
 _UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor", "list_projects"}
+# read-hook-dispatch: GENERIC read-event tool gate. The single dispatch
+# chokepoint fires the SCRIBEHOOK.1 pre_read/post_read vocabulary only for tool
+# names listed here. Keyed strictly on the tool name — content-agnostic, with no
+# plugin/bridge/RI special-casing. Extend the frozenset to onboard future read
+# tools; never add council/RI concepts.
+_READ_TOOLS = frozenset({"read_file"})
 
 
 def _normalize_configured_repo_root(value: Any) -> Optional[str]:
@@ -496,6 +502,65 @@ async def _resolve_mode(
         if project_hint:
             affected = [str(project_hint)]
     context_payload["affected_dev_projects"] = affected
+
+
+def _build_read_hook_context(name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
+    """Build a minimal GENERIC read-hook context.
+
+    Content-agnostic: carries only the calling ``agent`` (if any) and the tool
+    ``name``. No council/RI/codebase-intelligence fields ever appear here.
+    """
+    return {"agent": arguments.get("agent"), "tool": name}
+
+
+async def _dispatch_pre_read_hooks(path: Optional[str], context: Dict[str, Any]) -> None:
+    """Fire the generic pre_read event fail-open.
+
+    Both the sync plugin registry and the async bridge manager are invoked. Any
+    error is logged and swallowed — a read MUST NEVER fail because of a
+    read-hook. The dispatch methods already iterate only loaded (trusted /
+    allowlisted) plugins, so the existing trust-gate is preserved.
+    """
+    path_str = str(path) if path is not None else ""
+    try:
+        from scribe_mcp.plugins.registry import get_plugin_registry
+
+        get_plugin_registry().execute_hook_pre_read(path_str, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic pre_read plugin hooks failed (fail-open): %s", exc)
+    try:
+        from scribe_mcp.bridges.hooks import get_hook_manager
+
+        await get_hook_manager().execute_pre_read(path_str, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic pre_read bridge hooks failed (fail-open): %s", exc)
+
+
+async def _dispatch_post_read_hooks(
+    path: Optional[str], result: Dict[str, Any], context: Dict[str, Any]
+) -> None:
+    """Fire the generic post_read event fail-open, enriching ``result`` in place.
+
+    Plugin/bridge annotations land ONLY in the dedicated, generic
+    ``result["read_annotations"]`` list (the dispatch methods use
+    ``setdefault``); core result fields are never overwritten by hook output.
+    Any error is logged and swallowed — a read MUST NEVER fail because of a
+    read-hook. The existing per-plugin trust-gate is preserved (the dispatch
+    methods iterate only loaded plugins / ACTIVE bridges).
+    """
+    path_str = str(path) if path is not None else ""
+    try:
+        from scribe_mcp.plugins.registry import get_plugin_registry
+
+        get_plugin_registry().execute_hook_post_read(path_str, result, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic post_read plugin hooks failed (fail-open): %s", exc)
+    try:
+        from scribe_mcp.bridges.hooks import get_hook_manager
+
+        await get_hook_manager().execute_post_read(path_str, result, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic post_read bridge hooks failed (fail-open): %s", exc)
 
 
 async def execute_tool_call(
@@ -981,6 +1046,17 @@ async def execute_tool_call(
     # The schema was widened to accept both types; here we normalize before dispatch.
     call_arguments = _coerce_int_params(func, call_arguments)
 
+    # read-hook-dispatch: generic, fail-open read-event wiring. Fires the
+    # SCRIBEHOOK.1 pre_read/post_read vocabulary around the read result when
+    # (and only when) the tool name is a generic read tool. Keyed strictly on
+    # the tool name — no plugin/bridge/RI special-casing. Purely additive: all
+    # existing dispatch behavior and the return value are preserved exactly.
+    is_read_tool = name in _READ_TOOLS
+    read_hook_context: Optional[Dict[str, Any]] = None
+    if is_read_tool:
+        read_hook_context = _build_read_hook_context(name, arguments)
+        await _dispatch_pre_read_hooks(arguments.get("path"), read_hook_context)
+
     try:
         result = func(**call_arguments)
     except TypeError as exc:
@@ -988,10 +1064,19 @@ async def execute_tool_call(
 
     if inspect.isawaitable(result):
         try:
-            return await cast(Awaitable[Any], result)
+            result = await cast(Awaitable[Any], result)
+            if is_read_tool and isinstance(result, dict) and read_hook_context is not None:
+                await _dispatch_post_read_hooks(
+                    arguments.get("path"), result, read_hook_context
+                )
+            return result
         finally:
             router_context_manager.reset(token)
     try:
+        if is_read_tool and isinstance(result, dict) and read_hook_context is not None:
+            await _dispatch_post_read_hooks(
+                arguments.get("path"), result, read_hook_context
+            )
         return result
     finally:
         router_context_manager.reset(token)

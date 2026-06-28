@@ -139,6 +139,22 @@ class HookPlugin(ScribePlugin):
         """Called after log rotation."""
         pass
 
+    # read-hook-event: generic, content-agnostic read hooks. Mirror the
+    # append/rotate vocabulary above. Scribe never inspects the returned
+    # payload shape; any non-None post_read return is collected by the
+    # registry into a generic ``result["read_annotations"]`` list.
+    def pre_read(self, path: str, context: Dict[str, Any]) -> None:
+        """Called before a read result is produced."""
+        pass
+
+    def post_read(self, path: str, result: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Called after a read result is produced.
+
+        Return an optional generic annotation payload (opaque to Scribe) or
+        ``None`` for no annotation.
+        """
+        return None
+
 
 class PluginRegistry:
     """Registry for managing Scribe plugins with security hardening."""
@@ -461,6 +477,33 @@ class PluginRegistry:
                 plugin.post_rotate(project_name, archive_info)
             except Exception as e:
                 plugin_logger.warning(f"Post-rotate hook failed in {plugin.name}: {e}")
+
+    # read-hook-event: generic read dispatch, fail-open, mirrors append/rotate.
+    def execute_hook_pre_read(self, path: str, context: Dict[str, Any]) -> None:
+        """Execute pre-read hooks (fail-open, generic)."""
+        for plugin in self.hook_plugins:
+            try:
+                plugin.pre_read(path, context)
+            except Exception as e:
+                plugin_logger.warning(f"Pre-read hook failed in {plugin.name}: {e}")
+
+    def execute_hook_post_read(
+        self, path: str, result: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Execute post-read hooks (fail-open, generic).
+
+        Collects each plugin's non-None ``post_read`` return into a generic
+        ``result["read_annotations"]`` list. Scribe never inspects the payload
+        shape; consumers own its content and rendering.
+        """
+        for plugin in self.hook_plugins:
+            try:
+                annotation = plugin.post_read(path, result, context)
+                if annotation is not None:
+                    result.setdefault("read_annotations", []).append(annotation)
+            except Exception as e:
+                plugin_logger.warning(f"Post-read hook failed in {plugin.name}: {e}")
+        return result
 
     def cleanup(self) -> None:
         """Cleanup all registered plugins."""
