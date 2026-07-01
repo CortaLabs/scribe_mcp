@@ -104,6 +104,18 @@ def _heading_title(line: str) -> str | None:
     return match.group(2).strip().strip('#').strip() or None
 
 
+def _heading_before_anchor(lines: List[str], anchor_line: int) -> tuple[int, str] | None:
+    previous = anchor_line - 1
+    while previous >= 0 and not lines[previous].strip():
+        previous -= 1
+    if previous < 0:
+        return None
+    title = _heading_title(lines[previous])
+    if not title:
+        return None
+    return previous, title
+
+
 def _anchored_sections(*, body: str, fallback_title: str) -> List[Dict[str, Any]]:
     lines = body.splitlines()
     anchors: List[tuple[int, str]] = []
@@ -117,17 +129,26 @@ def _anchored_sections(*, body: str, fallback_title: str) -> List[Dict[str, Any]
     sections: List[Dict[str, Any]] = []
     for section_index, (anchor_line, anchor_id) in enumerate(anchors):
         next_anchor_line = anchors[section_index + 1][0] if section_index + 1 < len(anchors) else len(lines)
-        section_lines = lines[anchor_line + 1:next_anchor_line]
+        heading_before = _heading_before_anchor(lines, anchor_line)
+        next_heading_before = _heading_before_anchor(lines, next_anchor_line) if section_index + 1 < len(anchors) else None
+        start_line = heading_before[0] if heading_before else anchor_line + 1
+        end_line = next_heading_before[0] if next_heading_before else next_anchor_line
+        section_lines = [
+            line
+            for index, line in enumerate(lines[start_line:end_line], start=start_line)
+            if index != anchor_line
+        ]
         content = '\n'.join(section_lines).strip()
         if not content:
             continue
 
-        title = None
-        for line in section_lines:
-            if not line.strip():
-                continue
-            title = _heading_title(line)
-            break
+        title = heading_before[1] if heading_before else None
+        if not title:
+            for line in section_lines:
+                if not line.strip():
+                    continue
+                title = _heading_title(line)
+                break
 
         sections.append({
             'section_id': anchor_id,

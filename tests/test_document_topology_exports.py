@@ -149,8 +149,8 @@ def test_anchored_docs_export_one_row_per_stable_section_anchor(tmp_path: Path) 
             "## Findings",
             "Evidence belongs here.",
             "",
-            "<!-- ID: recommendations -->",
             "## Recommendations",
+            "<!-- ID: recommendations -->",
             "Next steps belong here.",
         ]),
     )
@@ -175,6 +175,9 @@ def test_anchored_docs_export_one_row_per_stable_section_anchor(tmp_path: Path) 
     ]
     assert "Evidence belongs here." in a_rows[0]["content"]
     assert "Next steps belong here." in a_rows[1]["content"]
+    assert "## Recommendations" not in a_rows[0]["content"]
+    assert "<!-- ID:" not in a_rows[0]["content"]
+    assert a_rows[1]["content"].startswith("## Recommendations\nNext steps")
 
 
 def test_scaffold_quality_docs_are_rejected_and_not_exported(tmp_path: Path) -> None:
