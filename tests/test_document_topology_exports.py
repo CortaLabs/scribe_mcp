@@ -52,6 +52,8 @@ def _project(tmp_path: Path) -> dict:
 def test_export_artifacts_are_deterministic(tmp_path: Path) -> None:
     project = _project(tmp_path)
     out1 = ie.write_export_artifacts(active_project=project)
+    assert set(out1) == {"doc_topology", "work_topology", "downstream_ingestion_manifest", "knowledge_scribe_export"}
+    assert Path(out1["knowledge_scribe_export"]).as_posix().endswith(".knowledge/scribe_exports/p.jsonl")
     snap1 = {k: Path(v).read_bytes() for k, v in out1.items()}
     out2 = ie.write_export_artifacts(active_project=project)
     snap2 = {k: Path(v).read_bytes() for k, v in out2.items()}
@@ -82,6 +84,167 @@ def test_manifest_rejects_scaffolded_and_missing_quality_and_sanitizes_path(tmp_
     assert not c_record["path"].startswith("/")
 
 
+def test_eligible_docs_export_safe_knowledge_jsonl_rows(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    out = ie.write_export_artifacts(active_project=project)
+    rows = [
+        json.loads(line)
+        for line in Path(out["knowledge_scribe_export"]).read_text(encoding="utf-8").splitlines()
+    ]
+    assert {row["doc_name"] for row in rows} == {"A", "B"}
+    row = next(item for item in rows if item["doc_name"] == "A")
+    assert set(row) == {
+        "chunk_id",
+        "content",
+        "title",
+        "domain",
+        "confidence",
+        "project",
+        "project_slug",
+        "doc_id",
+        "doc_name",
+        "doc_type",
+        "source_type",
+        "path",
+        "source_refs",
+        "status",
+        "lifecycle",
+        "quality_status",
+        "section_id",
+        "section_title",
+        "section_index",
+        "citation_ref",
+    }
+    assert row["source_type"] == "scribe"
+    assert row["project"] == "p"
+    assert row["project_slug"] == "p"
+    assert row["quality_status"] == "pass"
+    assert row["path"] == ".scribe/docs/dev_plans/p/A.md"
+    assert row["citation_ref"] == ".scribe/docs/dev_plans/p/A.md#document"
+    assert row["source_refs"] == [".scribe/docs/dev_plans/p/A.md#document"]
+    assert "Body" in row["content"]
+    forbidden = {"repo_origin", "frontmatter", "actor", "grants", "bridge_token", "provider", "model"}
+    assert forbidden.isdisjoint(row)
+    assert all(str(value).startswith("/") is False for item in rows for value in item.values() if isinstance(value, str))
+
+
+def test_anchored_docs_export_one_row_per_stable_section_anchor(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    a = Path(project["docs"]["A"])
+    _mk_doc(
+        a,
+        "\n".join([
+            "id: doc-a",
+            "doc_name: A",
+            "doc_type: spec",
+            "summary: Alpha",
+            "status: ready",
+            "quality_status: pass",
+            "topology:",
+            "  depends_on:",
+            "    - B",
+        ]),
+        body="\n".join([
+            "<!-- ID: findings -->",
+            "## Findings",
+            "Evidence belongs here.",
+            "",
+            "<!-- ID: recommendations -->",
+            "## Recommendations",
+            "Next steps belong here.",
+        ]),
+    )
+
+    out = ie.write_export_artifacts(active_project=project)
+    rows = [
+        json.loads(line)
+        for line in Path(out["knowledge_scribe_export"]).read_text(encoding="utf-8").splitlines()
+    ]
+    a_rows = [row for row in rows if row["doc_name"] == "A"]
+
+    assert [row["section_id"] for row in a_rows] == ["findings", "recommendations"]
+    assert [row["section_title"] for row in a_rows] == ["Findings", "Recommendations"]
+    assert [row["section_index"] for row in a_rows] == [0, 1]
+    assert [row["citation_ref"] for row in a_rows] == [
+        ".scribe/docs/dev_plans/p/A.md#findings",
+        ".scribe/docs/dev_plans/p/A.md#recommendations",
+    ]
+    assert [row["source_refs"] for row in a_rows] == [
+        [".scribe/docs/dev_plans/p/A.md#findings"],
+        [".scribe/docs/dev_plans/p/A.md#recommendations"],
+    ]
+    assert "Evidence belongs here." in a_rows[0]["content"]
+    assert "Next steps belong here." in a_rows[1]["content"]
+
+
+def test_scaffold_quality_docs_are_rejected_and_not_exported(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    c = Path(project["docs_dir"]) / "C.md"
+    _mk_doc(
+        c,
+        "\n".join([
+            "id: doc-c",
+            "doc_name: C",
+            "doc_type: note",
+            "summary: Gamma",
+            "status: ready",
+        ]),
+        body="Replace this with real findings.",
+    )
+    project["docs"]["C"] = str(c)
+
+    out = ie.write_export_artifacts(active_project=project)
+    manifest = json.loads(Path(out["downstream_ingestion_manifest"]).read_text(encoding="utf-8"))
+    c_record = next(r for r in manifest["records"] if r["doc_name"] == "C")
+    exported = Path(out["knowledge_scribe_export"]).read_text(encoding="utf-8")
+    assert c_record["eligible"] is False
+    assert c_record["quality_status"] == "fail"
+    assert "SCF_TEMPLATE_PROSE" in c_record["quality_summary"]["warning_codes"]
+    assert "REJECTED_QUALITY_FAIL" in c_record["rejection_codes"]
+    assert "doc-c" not in exported
+
+
+def test_raw_progress_log_rejected_unless_curated_rollup(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    raw = Path(project["docs_dir"]) / "PROGRESS_LOG.md"
+    _mk_doc(
+        raw,
+        "\n".join([
+            "id: progress-raw",
+            "doc_name: progress_log",
+            "doc_type: progress_log",
+            "summary: Raw log",
+            "status: complete",
+        ]),
+        body="[INFO] [2026-07-01 UTC] [Agent: forge] raw progress line",
+    )
+    curated = Path(project["docs_dir"]) / "PROGRESS_ROLLUP.md"
+    _mk_doc(
+        curated,
+        "\n".join([
+            "id: progress-rollup",
+            "doc_name: PROGRESS_ROLLUP",
+            "doc_type: progress_log",
+            "summary: Curated rollup",
+            "status: complete",
+            "curated_rollup: true",
+        ]),
+        body="Curated summary of project outcomes.",
+    )
+    project["docs"]["progress_log"] = str(raw)
+    project["docs"]["PROGRESS_ROLLUP"] = str(curated)
+
+    out = ie.write_export_artifacts(active_project=project)
+    manifest = json.loads(Path(out["downstream_ingestion_manifest"]).read_text(encoding="utf-8"))
+    export_text = Path(out["knowledge_scribe_export"]).read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in export_text.splitlines()]
+    raw_record = next(r for r in manifest["records"] if r["doc_name"] == "progress_log")
+    assert raw_record["eligible"] is False
+    assert "REJECTED_RAW_PROGRESS_LOG" in raw_record["rejection_codes"]
+    assert "raw progress line" not in export_text
+    assert any(row["doc_name"] == "PROGRESS_ROLLUP" for row in rows)
+
+
 def test_inspect_preview_shape_matches_manifest_builder(tmp_path: Path) -> None:
     project = _project(tmp_path)
     payload = ie.build_export_payload(active_project=project)
@@ -89,6 +252,8 @@ def test_inspect_preview_shape_matches_manifest_builder(tmp_path: Path) -> None:
     assert manifest["schema_version"] == "v1"
     assert isinstance(manifest["records"], list)
     assert "eligible_count" in manifest
+    assert "knowledge_scribe_export_count" in manifest
+    assert "knowledge_scribe_export_path" in manifest
 
 
 def test_dangling_edge_rejection(tmp_path: Path) -> None:
