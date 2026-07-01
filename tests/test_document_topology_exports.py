@@ -128,6 +128,47 @@ def test_eligible_docs_export_safe_knowledge_jsonl_rows(tmp_path: Path) -> None:
     assert all(str(value).startswith("/") is False for item in rows for value in item.values() if isinstance(value, str))
 
 
+def test_eligible_doc_content_sanitizes_local_absolute_path_evidence(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    a = Path(project["docs"]["A"])
+    _mk_doc(
+        a,
+        "\n".join([
+            "id: doc-a",
+            "doc_name: A",
+            "doc_type: spec",
+            "summary: Alpha",
+            "status: ready",
+            "quality_status: pass",
+            "topology:",
+            "  depends_on:",
+            "    - B",
+        ]),
+        body="\n".join([
+            "Evidence includes /home/austin/projects/MCP_SPINE/knowledge_mcp/.scribe/docs/dev_plans/p/A.md.",
+            "Report lives at /Users/austin/work/knowledge_mcp/docs/security/exposure/report.md;",
+            r"Implementation reference C:\Users\Austin\repo\scribe_mcp\src\scribe_mcp\doc_management\intelligence_exports.py",
+            "Scratch path /home/austin/private/token.txt should not leak its local parent.",
+        ]),
+    )
+
+    out = ie.write_export_artifacts(active_project=project)
+    rows = [
+        json.loads(line)
+        for line in Path(out["knowledge_scribe_export"]).read_text(encoding="utf-8").splitlines()
+    ]
+    content = next(row["content"] for row in rows if row["doc_name"] == "A")
+
+    assert "/home/austin" not in content
+    assert "/Users/austin" not in content
+    assert "C:\\Users\\Austin" not in content
+    assert "C:/Users/Austin" not in content
+    assert ".scribe/docs/dev_plans/p/A.md" in content
+    assert "docs/security/exposure/report.md" in content
+    assert "src/scribe_mcp/doc_management/intelligence_exports.py" in content
+    assert "token.txt" in content
+
+
 def test_anchored_docs_export_one_row_per_stable_section_anchor(tmp_path: Path) -> None:
     project = _project(tmp_path)
     a = Path(project["docs"]["A"])

@@ -13,6 +13,15 @@ from scribe_mcp.doc_management.topology import detect_hard_dependency_cycles, no
 
 INDEX_DIR = Path('.scribe/indexes')
 KNOWLEDGE_EXPORT_DIR = Path('.knowledge/scribe_exports')
+LOCAL_ABSOLUTE_PATH_RE = re.compile(r'(?<![\w./-])(?:/(?:home|Users)/[^\s`"\'<>)\]]+|[A-Za-z]:\\[^\s`"\'<>)\]]+)')
+RELATIVE_EVIDENCE_ANCHORS = (
+    '.scribe/',
+    '.knowledge/',
+    '.council/',
+    'docs/',
+    'src/',
+    'tests/',
+)
 
 REJECTION_CODES = {
     'outside_repo': 'REJECTED_OUTSIDE_REPO',
@@ -56,6 +65,24 @@ def _section_slug(value: str) -> str:
 
 def _body(path: Path) -> str:
     return parse_frontmatter(path.read_text(encoding='utf-8')).body.strip()
+
+
+def _sanitize_local_absolute_path(match: re.Match[str]) -> str:
+    value = match.group(0)
+    path_value = value.rstrip('.,;:')
+    trailing = value[len(path_value):]
+    normalized = path_value.replace('\\', '/')
+    for anchor in RELATIVE_EVIDENCE_ANCHORS:
+        marker = f'/{anchor}'
+        index = normalized.find(marker)
+        if index >= 0:
+            return f'{normalized[index + 1:]}{trailing}'
+    fallback = normalized.rsplit('/', 1)[-1]
+    return f'{fallback or "[local path removed]"}{trailing}'
+
+
+def _sanitize_knowledge_content(content: str) -> str:
+    return LOCAL_ABSOLUTE_PATH_RE.sub(_sanitize_local_absolute_path, content)
 
 
 def _quality_summary(*, path: Path, doc_name: str, project: Mapping[str, Any], metadata: Mapping[str, Any]) -> Dict[str, Any]:
@@ -196,7 +223,7 @@ def _knowledge_rows(
         citation_ref = f"{node['path']}#{section['section_id']}"
         rows.append({
             'chunk_id': f"{project_slug}:{node['doc_id']}:{section['section_id']}",
-            'content': section['content'],
+            'content': _sanitize_knowledge_content(section['content']),
             'title': str(meta.get('title') or node['doc_name']),
             'domain': str(meta.get('domain') or node['canonical_doc_type']),
             'confidence': 1.0,
