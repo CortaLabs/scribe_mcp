@@ -301,8 +301,6 @@ def _validate_inputs(
 
     if action == "apply_patch":
         if patch or content:
-            if not patch_mode:
-                raise DocumentValidationError("patch_mode is required when providing a patch")
             if isinstance(patch_mode, str) and patch_mode not in {"structured", "unified"}:
                 raise DocumentValidationError("patch_mode must be 'structured' or 'unified'")
         else:

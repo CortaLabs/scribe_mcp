@@ -35,7 +35,10 @@ async def test_mcp_call_tool_handler_returns_dispatch_result(
     result = await handler(
         CallToolRequest(
             method="tools/call",
-            params={"name": "set_project", "arguments": {"agent": "test-agent"}},
+            params={
+                "name": "set_project",
+                "arguments": {"agent": "test-agent", "name": "demo", "root": "/tmp/demo"},
+            },
         )
     )
 

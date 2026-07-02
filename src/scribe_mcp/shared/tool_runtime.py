@@ -280,6 +280,29 @@ def _derive_transport_session_id(
     return f"process:{fallback_process_id}"
 
 
+_ACTOR_SCOPE_SEPARATOR = "::actor="
+
+
+def _actor_scoped_transport_session_id(transport_session_id: str, agent: Any) -> str:
+    """Namespace a connection-level transport id by the calling actor.
+
+    Multiple actors can multiplex one MCP connection (one transport session,
+    e.g. a pooled client shared by several agents). The session->project
+    binding is keyed by the session derived from this id, so without actor
+    scoping the last set_project on the connection silently rebinds every
+    actor on it. Folding the required ``agent`` argument into the transport
+    identity gives each (connection, actor) pair its own session row and its
+    own project binding while keeping single-actor flows on one stable
+    session. Idempotent: an already-scoped id is returned unchanged.
+    """
+    actor = str(agent or "").strip()
+    if not transport_session_id or not actor:
+        return transport_session_id
+    if _ACTOR_SCOPE_SEPARATOR in transport_session_id:
+        return transport_session_id
+    return f"{transport_session_id}{_ACTOR_SCOPE_SEPARATOR}{actor}"
+
+
 def _collect_public_release_session_claims(
     *,
     context_payload: Mapping[str, Any],
@@ -688,12 +711,15 @@ async def execute_tool_call(
 
     session_id_claimed = bool(context_payload.get("session_id"))
 
-    runtime_transport_session_id = _derive_transport_session_id(
-        app=app,
-        fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
-        kwargs={},
-        allow_untrusted_sources=False,
-        allow_process_fallback=False,
+    runtime_transport_session_id = _actor_scoped_transport_session_id(
+        _derive_transport_session_id(
+            app=app,
+            fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
+            kwargs={},
+            allow_untrusted_sources=False,
+            allow_process_fallback=False,
+        ),
+        arguments.get("agent"),
     )
     has_runtime_transport_identity = bool(runtime_transport_session_id) and not str(
         runtime_transport_session_id
@@ -740,12 +766,21 @@ async def execute_tool_call(
             context_payload.pop("session_id", None)
             session_id_claimed = False
     elif not context_payload.get("transport_session_id"):
-        context_payload["transport_session_id"] = _derive_transport_session_id(
-            app=app,
-            fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
-            kwargs=kwargs,
-            allow_untrusted_sources=not public_release,
-            allow_process_fallback=not public_release,
+        context_payload["transport_session_id"] = _actor_scoped_transport_session_id(
+            _derive_transport_session_id(
+                app=app,
+                fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
+                kwargs=kwargs,
+                allow_untrusted_sources=not public_release,
+                allow_process_fallback=not public_release,
+            ),
+            arguments.get("agent"),
+        )
+
+    if context_payload.get("transport_session_id"):
+        context_payload["transport_session_id"] = _actor_scoped_transport_session_id(
+            str(context_payload["transport_session_id"]),
+            arguments.get("agent"),
         )
 
     if (

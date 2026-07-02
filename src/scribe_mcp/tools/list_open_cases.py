@@ -22,6 +22,11 @@ except Exception:
 
     app = _AppStub()
 from scribe_mcp.tool_contracts import read_only_local_tool
+from scribe_mcp.case_lifecycle import (
+    build_canonical_doc_binding,
+    case_status_snapshot,
+    doc_binding_from_metadata,
+)
 from scribe_mcp.doc_management import utils as doc_utils
 
 # Canonical lifecycle vocabulary — single source of truth shared with link_fix
@@ -136,6 +141,9 @@ def _record_to_operator_case(record: Any) -> Dict[str, Any]:
         if isinstance(raw_category, str) and raw_category.strip():
             category = raw_category.strip()
 
+    doc_binding = _doc_binding_for_record(record)
+    lifecycle = case_status_snapshot(record, doc_binding=doc_binding)
+
     return {
         "case_id": getattr(record, "case_id", ""),
         "case_type": getattr(record, "case_type", ""),
@@ -148,9 +156,32 @@ def _record_to_operator_case(record: Any) -> Dict[str, Any]:
         "doc_type": getattr(record, "doc_type", ""),
         "doc_name": getattr(record, "doc_name", ""),
         "doc_path": getattr(record, "doc_path", ""),
+        "doc_binding": lifecycle.doc_binding.to_dict() if lifecycle.doc_binding else None,
+        "case_closed": lifecycle.case_closed,
         "updated_at": _format_timestamp(getattr(record, "updated_at", None)),
         "created_at": _format_timestamp(getattr(record, "created_at", None)),
     }
+
+
+def _doc_binding_for_record(record: Any) -> Any:
+    metadata = getattr(record, "metadata", None)
+    case_id = str(getattr(record, "case_id", "") or "")
+    doc_path = str(getattr(record, "doc_path", "") or "")
+    binding = doc_binding_from_metadata(
+        metadata if isinstance(metadata, dict) else None,
+        fallback_case_id=case_id or None,
+        fallback_doc_path=doc_path or None,
+    )
+    if binding is not None:
+        return binding
+    if not case_id or not doc_path:
+        return None
+    return build_canonical_doc_binding(
+        case_id,
+        doc_path,
+        {},
+        preferred_doc_name=str(getattr(record, "doc_name", "") or case_id),
+    )
 
 
 @app.tool(
@@ -207,6 +238,24 @@ async def list_open_cases(
 
     default_repo_root, default_project = _context_repo_project_defaults()
     query_project = normalized_project or default_project
+    if not default_repo_root:
+        return _operator_envelope(
+            ok=False,
+            mode=context_mode,
+            warnings=["unable to resolve authoritative repo_root for case registry scope"],
+            next_step="Bind Scribe to an active repo/project scope, then retry list_open_cases.",
+            cases=[],
+            count=0,
+            filters={
+                "case_type": normalized_case_type,
+                "project": query_project,
+                "repo_id": normalized_repo_id,
+                "category": normalized_category,
+                "severity": normalized_severity,
+                "open_only": True,
+                "limit": normalized_limit,
+            },
+        )
 
     try:
         raw_records = await backend.query_case_registry_records(

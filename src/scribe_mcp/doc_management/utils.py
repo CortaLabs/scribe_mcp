@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -734,6 +735,74 @@ def _derive_case_id_from_path(report_path: Path) -> Optional[str]:
     return _normalize_metadata_value(report_dir.split("_", 1)[1])
 
 
+def _normalize_doc_binding_path(value: str) -> str:
+    return str(Path(value).expanduser().resolve())
+
+
+def _case_doc_alias_kind(
+    alias: str,
+    *,
+    case_id: str,
+    primary_key: Optional[str],
+    canonical_doc_path: str,
+) -> str:
+    if alias == case_id:
+        return "primary"
+    if alias == canonical_doc_path or "/" in alias or "\\" in alias:
+        return "path_alias"
+    if alias.startswith(("bug_report_", "security_report_")):
+        return "legacy_compat"
+    if primary_key and alias == primary_key:
+        return "caller_alias"
+    return "caller_alias"
+
+
+def build_case_doc_binding_metadata(
+    case_id: str,
+    doc_path: str,
+    docs_mapping: Mapping[str, str],
+    *,
+    primary_key: str | None = None,
+) -> dict[str, object]:
+    """Build canonical case-report doc binding metadata from registered aliases."""
+    normalized_case_id = str(case_id or "").strip()
+    canonical_doc_path = _normalize_doc_binding_path(doc_path)
+    canonical_doc_name = normalized_case_id or str(primary_key or "").strip() or Path(canonical_doc_path).stem
+
+    aliases: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def _append_alias(alias: str) -> None:
+        alias_key = str(alias or "").strip()
+        if not alias_key or alias_key in seen:
+            return
+        seen.add(alias_key)
+        aliases.append(
+            {
+                "alias": alias_key,
+                "alias_kind": _case_doc_alias_kind(
+                    alias_key,
+                    case_id=canonical_doc_name,
+                    primary_key=primary_key,
+                    canonical_doc_path=canonical_doc_path,
+                ),
+                "doc_path": canonical_doc_path,
+            }
+        )
+
+    _append_alias(canonical_doc_name)
+    for alias, candidate_path in docs_mapping.items():
+        if _normalize_doc_binding_path(str(candidate_path)) == canonical_doc_path:
+            _append_alias(str(alias))
+    _append_alias(canonical_doc_path)
+
+    return {
+        "canonical_doc_name": canonical_doc_name,
+        "canonical_doc_path": canonical_doc_path,
+        "aliases": aliases,
+    }
+
+
 def extract_case_registry_metadata_from_report(
     report_path: Path,
     *,
@@ -778,6 +847,19 @@ def extract_case_registry_metadata_from_report(
     if repo_root is None and report_root is not None:
         repo_root = str(report_root)
 
+    doc_binding = payload_metadata.get("doc_binding")
+    if not isinstance(doc_binding, dict) and project and isinstance(project.get("docs"), Mapping):
+        doc_binding = build_case_doc_binding_metadata(
+            case_id,
+            str(resolved_path),
+            project.get("docs", {}) or {},
+            primary_key=_normalize_metadata_value(payload_metadata.get("doc_name")),
+        )
+
+    registry_metadata: Dict[str, Any] = dict(payload_metadata)
+    if isinstance(doc_binding, dict):
+        registry_metadata["doc_binding"] = doc_binding
+
     return {
         "case_id": case_id,
         "case_type": case_type,
@@ -799,6 +881,7 @@ def extract_case_registry_metadata_from_report(
             "source": "governed_report_doc",
             "doc_path": str(resolved_path),
         },
+        "metadata": registry_metadata,
     }
 
 
@@ -912,6 +995,7 @@ def build_case_registry_backfill_records(
     project_root: Path,
     *,
     reports: Optional[List[Path]] = None,
+    project: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Enumerate existing governed bug/security reports into normalized registry rows."""
     resolved_root = project_root.resolve()
@@ -920,16 +1004,26 @@ def build_case_registry_backfill_records(
         candidates = sorted(path.resolve() for path in reports)
     else:
         candidates = []
-        for case_root in (resolved_root / "docs" / "bugs", resolved_root / "docs" / "security"):
-            if not case_root.exists():
-                continue
-            candidates.extend(sorted(path.resolve() for path in case_root.glob("*/*/report.md")))
+        for source_root in (resolved_root, resolved_root / ".scribe"):
+            for case_root in (source_root / "docs" / "bugs", source_root / "docs" / "security"):
+                if not case_root.exists():
+                    continue
+                candidates.extend(sorted(path.resolve() for path in case_root.glob("*/*/report.md")))
 
     records: List[Dict[str, Any]] = []
     for candidate in candidates:
+        extraction_root = resolved_root
+        for source_root in (resolved_root, resolved_root / ".scribe"):
+            try:
+                candidate.relative_to(source_root / "docs")
+            except ValueError:
+                continue
+            extraction_root = source_root
+            break
         extracted = extract_case_registry_metadata_from_report(
             candidate,
-            project_root=resolved_root,
+            project_root=extraction_root,
+            project=project,
         )
         if extracted is not None:
             records.append(extracted)

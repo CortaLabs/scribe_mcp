@@ -52,6 +52,10 @@ async def test_sqlite_session_linkage_invariants(sqlite_storage: SQLiteStorage) 
             mode="project",
         )
 
+    # get_session_by_transport only resolves sessions with a live
+    # agent_sessions linkage (hardened contract), so create it first.
+    await sqlite_storage.upsert_agent_session("sia", session_primary, None)
+
     resolved = await sqlite_storage.get_session_by_transport(transport)
     assert resolved is not None
     assert resolved["session_id"] == session_primary

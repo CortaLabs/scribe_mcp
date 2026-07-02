@@ -193,6 +193,8 @@ async def query_reminders(
             "project_name": project_name,
             "history_count": len(history),
             "active_count": len(active_reminders),
+            "active_reminders": active_reminders,
+            "reminder_guidance": response.get("reminder_guidance", []),
             "category": normalized_category or "all",
         }
     if format == "readable":

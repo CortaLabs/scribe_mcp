@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
+import difflib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from jinja2 import (
     Environment,
@@ -237,6 +237,29 @@ class Jinja2TemplateEngine:
 
         return template_dirs
 
+    def _template_resolution_diagnostics(self, template_name: str) -> Dict[str, Any]:
+        available: Set[str] = set()
+        for template_dir in self.template_dirs:
+            for candidate in template_dir.glob("*.md"):
+                available.add(candidate.name)
+        close_matches = difflib.get_close_matches(
+            template_name,
+            sorted(available),
+            n=5,
+            cutoff=0.45,
+        )
+        return {
+            "failure_kind": "template_resolution",
+            "requested_template": template_name,
+            "searched_template_roots": [str(path) for path in self.template_dirs],
+            "available_templates": sorted(available),
+            "nearest_alternatives": close_matches,
+            "recommended_action": (
+                "Choose one of available_templates, or for manage_docs create use "
+                "metadata.doc_type='custom' with content/body when no bundled template is needed."
+            ),
+        }
+
     def _create_jinja2_environment(self) -> Environment:
         """Create Jinja2 environment with appropriate security settings."""
         # Common environment configuration
@@ -450,8 +473,14 @@ class Jinja2TemplateEngine:
             template_logger.debug(f"Successfully rendered template '{template_name}' ({len(result)} chars)")
             return result
 
-        except TemplateNotFound as e:
-            raise TemplateNotFoundError(f"Template '{template_name}' not found in template directories: {self.template_dirs}")
+        except TemplateNotFound:
+            diagnostics = self._template_resolution_diagnostics(template_name)
+            raise TemplateNotFoundError(
+                f"Template resolution failed for '{template_name}'. "
+                f"Searched roots: {diagnostics['searched_template_roots']}. "
+                f"Nearest alternatives: {diagnostics['nearest_alternatives']}. "
+                f"Recommended action: {diagnostics['recommended_action']}"
+            )
         except (TemplateSyntaxError, TemplateRuntimeError) as e:
             # In strict mode, bypass legacy fallback and raise immediately.
             use_fallback = fallback and not strict

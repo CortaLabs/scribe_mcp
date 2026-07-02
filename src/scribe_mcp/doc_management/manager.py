@@ -50,6 +50,8 @@ PATCH_MODE_STRUCTURED = "structured"
 PATCH_MODE_UNIFIED = "unified"
 PATCH_MODE_ALIASES = {"diff": PATCH_MODE_UNIFIED}
 PATCH_MODE_ALLOWED = {PATCH_MODE_STRUCTURED, PATCH_MODE_UNIFIED}
+_CODEX_PATCH_SUPPORTED_PATHS = ["single_doc_update_file", "unified_diff", "structured_edit"]
+_CODEX_PATCH_UNSUPPORTED_OPERATIONS = ["add_file", "delete_file", "multi_doc"]
 
 
 def _log_operation(
@@ -105,6 +107,44 @@ def _redact_error_payload(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_redact_error_payload(item) for item in value)
     return value
+
+
+def _looks_like_codex_patch_text(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    stripped = value.lstrip()
+    return stripped.startswith("*** Begin Patch") or stripped.startswith("*** Update File:")
+
+
+def _codex_patch_boundary_extra(
+    *,
+    failure_kind: str,
+    target: Optional[str] = None,
+    operation: Optional[str] = None,
+    targets: Optional[list[str]] = None,
+    message: Optional[str] = None,
+) -> Dict[str, Any]:
+    diagnostics: Dict[str, Any] = {
+        "failure_kind": failure_kind,
+        "supported_paths": _CODEX_PATCH_SUPPORTED_PATHS,
+        "supported_codex_operation": "update_file_single_managed_doc",
+        "unsupported_operations": _CODEX_PATCH_UNSUPPORTED_OPERATIONS,
+        "guidance": (
+            "manage_docs apply_patch accepts one Codex-style *** Update File block only "
+            "when it targets the selected managed doc. Split multi-doc changes into one "
+            "manage_docs call per registered doc; use manage_docs(action='create') for new "
+            "managed docs; deletion is not supported by apply_patch."
+        ),
+    }
+    if target:
+        diagnostics["target"] = target
+    if operation:
+        diagnostics["operation"] = operation
+    if targets:
+        diagnostics["targets"] = targets
+    if message:
+        diagnostics["message"] = message
+    return {"patch_diagnostics": diagnostics}
 
 
 @dataclass
@@ -502,6 +542,17 @@ async def apply_doc_change(
                         "PATCH_MODE_UNIFIED_REQUIRES_PATCH: provide patch content"
                     )
 
+                if _looks_like_codex_patch_text(patch_used):
+                    patch_used, codex_patch_extra = _translate_codex_update_patch(
+                        original_body=original_body,
+                        patch_text=str(patch_used),
+                        doc_name=doc_name,
+                        doc_path=doc_path,
+                        repo_root=repo_root,
+                    )
+                    extra.update(codex_patch_extra)
+                patch_context_extra = dict(extra)
+
                 if patch_source_hash and current_hash != patch_source_hash:
                     raise DocumentOperationError(
                         "PATCH_STALE_SOURCE: patch_source_hash does not match current file content",
@@ -525,6 +576,7 @@ async def apply_doc_change(
                         original_body, patch_used, frontmatter_lines
                     )
                     extra = {
+                        **patch_context_extra,
                         "hunks_applied": hunks_applied,
                         "patch_source_hash": current_hash,
                         "patch_source_hash_source": patch_hash_source,
@@ -555,6 +607,7 @@ async def apply_doc_change(
                                 )
                                 smart_rebase_extra = {}
                             extra = {
+                                **patch_context_extra,
                                 "hunks_applied": hunks_applied,
                                 "patch_source_hash": current_hash,
                                 "patch_source_hash_source": "auto",
@@ -2162,6 +2215,213 @@ def _compute_patch_ranges(patch_text: str) -> list[Dict[str, int]]:
         end_line = old_start + max(old_count - 1, 0)
         ranges.append({"start_line": old_start, "end_line": end_line})
     return ranges
+
+
+def _codex_target_matches_doc(
+    target: str,
+    *,
+    doc_name: str,
+    doc_path: Path,
+    repo_root: Path,
+) -> bool:
+    normalized = target.strip()
+    if not normalized:
+        return False
+    if normalized == doc_name or normalized == doc_path.name or normalized == str(doc_path):
+        return True
+    try:
+        if normalized == str(doc_path.resolve().relative_to(repo_root.resolve())):
+            return True
+    except ValueError:
+        pass
+    try:
+        target_path = (repo_root / normalized).resolve() if not Path(normalized).is_absolute() else Path(normalized).resolve()
+        return target_path == doc_path.resolve()
+    except OSError:
+        return False
+
+
+def _find_codex_hunk_start(original_lines: list[str], old_lines: list[str]) -> Optional[int]:
+    if not old_lines:
+        return None
+    max_start = len(original_lines) - len(old_lines)
+    for start in range(max_start + 1):
+        if original_lines[start:start + len(old_lines)] == old_lines:
+            return start
+    return None
+
+
+def _compile_codex_update_hunk(original_body: str, hunk_lines: list[str]) -> list[str]:
+    if not hunk_lines:
+        raise DocumentOperationError(
+            "CODEX_PATCH_INVALID_FORMAT: update block contains an empty hunk",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_invalid_format",
+                message="Each Codex update hunk must include context, deleted, or added lines.",
+            ),
+        )
+
+    old_lines: list[str] = []
+    new_lines: list[str] = []
+    for line in hunk_lines:
+        if line.startswith("\\"):
+            continue
+        if not line:
+            raise DocumentOperationError(
+                "CODEX_PATCH_INVALID_FORMAT: hunk lines must start with space, '+', or '-'",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Blank hunk lines must keep their leading diff prefix.",
+                ),
+            )
+        prefix = line[0]
+        text = line[1:]
+        if prefix == " ":
+            old_lines.append(text)
+            new_lines.append(text)
+        elif prefix == "-":
+            old_lines.append(text)
+        elif prefix == "+":
+            new_lines.append(text)
+        else:
+            raise DocumentOperationError(
+                f"CODEX_PATCH_INVALID_FORMAT: unsupported hunk line prefix {prefix!r}",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Codex update hunks support only context, deletion, and addition lines.",
+                ),
+            )
+
+    original_lines = original_body.splitlines()
+    start_index = _find_codex_hunk_start(original_lines, old_lines)
+    if start_index is None:
+        raise DocumentOperationError(
+            "PATCH_CONTEXT_NOT_FOUND: Codex update hunk context was not found in managed doc",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_context_not_found",
+                message="Re-read the managed doc and regenerate the Codex update block from current content.",
+            ),
+        )
+
+    old_count = len(old_lines)
+    new_count = len(new_lines)
+    return [f"@@ -{start_index + 1},{old_count} +{start_index + 1},{new_count} @@", *hunk_lines]
+
+
+def _translate_codex_update_patch(
+    *,
+    original_body: str,
+    patch_text: str,
+    doc_name: str,
+    doc_path: Path,
+    repo_root: Path,
+) -> tuple[str, Dict[str, Any]]:
+    lines = patch_text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[0].strip() == "*** Begin Patch":
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "*** End Patch":
+        lines = lines[:-1]
+
+    operations: list[tuple[str, str, list[str]]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith("*** "):
+            raise DocumentOperationError(
+                f"CODEX_PATCH_INVALID_FORMAT: expected operation header, got {line!r}",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Use one *** Update File: <managed-doc-path> block per manage_docs call.",
+                ),
+            )
+        if line.startswith("*** Update File:"):
+            operation = "update_file"
+            target = line.split(":", 1)[1].strip()
+        elif line.startswith("*** Add File:"):
+            operation = "add_file"
+            target = line.split(":", 1)[1].strip()
+        elif line.startswith("*** Delete File:"):
+            operation = "delete_file"
+            target = line.split(":", 1)[1].strip()
+        else:
+            raise DocumentOperationError(
+                f"CODEX_PATCH_INVALID_FORMAT: unsupported operation header {line!r}",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Only *** Update File is accepted for managed-doc patch compatibility.",
+                ),
+            )
+        index += 1
+        block: list[str] = []
+        while index < len(lines) and not lines[index].startswith("*** "):
+            block.append(lines[index])
+            index += 1
+        operations.append((operation, target, block))
+
+    if len(operations) != 1:
+        raise DocumentOperationError(
+            "CODEX_PATCH_MULTI_DOC_UNSUPPORTED: provide one managed-doc update per call",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_multi_doc_unsupported",
+                targets=[target for _, target, _ in operations],
+                message="Split the Codex patch into one manage_docs apply_patch call per registered doc.",
+            ),
+        )
+
+    operation, target, block = operations[0]
+    if operation != "update_file":
+        raise DocumentOperationError(
+            f"CODEX_PATCH_OPERATION_UNSUPPORTED: {operation} is outside manage_docs apply_patch scope",
+            extra=_codex_patch_boundary_extra(
+                failure_kind=f"codex_patch_{operation}_unsupported",
+                target=target,
+                operation=operation,
+            ),
+        )
+    if not _codex_target_matches_doc(target, doc_name=doc_name, doc_path=doc_path, repo_root=repo_root):
+        raise DocumentOperationError(
+            "CODEX_PATCH_TARGET_MISMATCH: update target does not match selected managed doc",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_target_mismatch",
+                target=target,
+                message=f"Selected managed doc is {doc_name!r} at {doc_path}.",
+            ),
+        )
+
+    unified_lines = [f"--- {target}", f"+++ {target}"]
+    current_hunk: list[str] = []
+    for line in block:
+        if line.startswith("@@"):
+            if current_hunk:
+                unified_lines.extend(_compile_codex_update_hunk(original_body, current_hunk))
+                current_hunk = []
+            continue
+        current_hunk.append(line)
+    if current_hunk:
+        unified_lines.extend(_compile_codex_update_hunk(original_body, current_hunk))
+    if len(unified_lines) == 2:
+        raise DocumentOperationError(
+            "CODEX_PATCH_INVALID_FORMAT: update block contains no hunks",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_invalid_format",
+                target=target,
+                message="Add at least one @@ hunk with context/deletion/addition lines.",
+            ),
+        )
+
+    return "\n".join(unified_lines), {
+        "codex_patch_adapter": {
+            "translated": True,
+            "operation": operation,
+            "target": target,
+            "managed_doc": doc_name,
+            "translated_patch_mode": PATCH_MODE_UNIFIED,
+        }
+    }
 
 
 def _build_bounded_preview(

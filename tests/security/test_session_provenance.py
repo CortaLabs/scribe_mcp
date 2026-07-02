@@ -159,8 +159,9 @@ async def test_public_release_ignores_single_untrusted_identifier_and_uses_runti
 
     assert result == "security-tester"
     # The runtime-derived transport ID (from request_context.meta) is used,
-    # not the untrusted caller-supplied session_id.
-    assert observed["transport_session_id"] == trusted_transport_id
+    # not the untrusted caller-supplied session_id. The runtime id is
+    # actor-scoped so concurrent actors on one connection stay isolated.
+    assert observed["transport_session_id"] == f"{trusted_transport_id}::actor=security-tester"
     assert observed["session_id"]
 
 

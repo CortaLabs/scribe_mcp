@@ -55,6 +55,28 @@ class _FakeBackend:
         return None
 
 
+def test_plugin_diagnostics_names_trust_opt_in_action(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    plugins_dir = tmp_path / ".scribe" / "plugins"
+    plugins_dir.mkdir(parents=True)
+    (plugins_dir / "repo_intel.py").write_text("# local plugin\n", encoding="utf-8")
+    config = SimpleNamespace(
+        plugin_config={"enabled": True, "allowlist": ["repo_intel"], "blocklist": ["legacy"]},
+        plugins_dir=plugins_dir,
+        plugin_loading_requested=lambda: True,
+    )
+    monkeypatch.delenv("SCRIBE_TRUST_REPO_PLUGINS", raising=False)
+    monkeypatch.delenv("SCRIBE_ENABLE_EXTERNAL_PLUGINS", raising=False)
+
+    diagnostics = doctor_module._build_plugin_diagnostics(config, [])
+
+    assert diagnostics["plugin_loading_requested"] is True
+    assert diagnostics["repo_plugin_trust_enabled"] is False
+    assert diagnostics["blocked_reason"] == "repo_plugin_trust_not_enabled"
+    assert diagnostics["discovered_repo_local_stems"] == ["repo_intel"]
+    assert "SCRIBE_TRUST_REPO_PLUGINS=1" in diagnostics["guidance"]["available_action"]
+    assert diagnostics["guidance"]["restart_required"] is True
+
+
 @pytest.mark.asyncio
 async def test_scribe_doctor_surfaces_authority_and_case_telemetry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"

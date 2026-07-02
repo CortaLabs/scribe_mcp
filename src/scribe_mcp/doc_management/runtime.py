@@ -473,9 +473,30 @@ async def _refresh_case_registry_for_mutation(
         project_root=Path(str(project.get("root", ""))),
         project=project,
     )
+    existing_record = None
+    fetch_record = getattr(storage_backend, "fetch_case_registry_record", None)
+    if callable(fetch_record) and isinstance(extracted, dict) and extracted.get("case_id"):
+        try:
+            existing_record = await fetch_record(
+                case_id=str(extracted["case_id"]),
+                repo_root=str(project.get("root") or ""),
+                project_name=str(project.get("name") or ""),
+            )
+        except Exception:
+            existing_record = None
+    status_override = None
+    existing_status = getattr(existing_record, "status", None)
+    if isinstance(existing_record, dict):
+        existing_status = existing_record.get("status")
+    if utils_shared.case_status_closes(existing_status):
+        status_override = utils_shared.normalize_case_status(existing_status)
     upsert_kwargs = utils_shared.build_case_registry_upsert_kwargs(
         extracted=extracted,
-        overrides={"source_tool": "manage_docs.mutation"},
+        existing_record=existing_record,
+        overrides={
+            "source_tool": "manage_docs.mutation",
+            "status": status_override,
+        },
     )
     if upsert_kwargs is None:
         return None
@@ -485,6 +506,49 @@ async def _refresh_case_registry_for_mutation(
     except Exception as exc:
         return f"Case registry refresh failed after mutation: {exc}"
     return None
+
+
+def _attach_case_doc_binding_readback(
+    response: Dict[str, Any],
+    *,
+    project: Dict[str, Any],
+    doc_name: Optional[str],
+    doc_category: str,
+) -> Dict[str, Any]:
+    canonical_category = utils_shared.normalize_case_report_category(
+        doc_category,
+        case_reference=doc_name,
+    )
+    if canonical_category is None and not utils_shared.looks_like_case_report_reference(doc_name):
+        return response
+
+    target_path = _resolve_mutated_doc_path(
+        response=response,
+        project=project,
+        doc_name=doc_name,
+        doc_category=canonical_category or doc_category,
+    )
+    if target_path is None or not target_path.exists():
+        return response
+
+    extracted = utils_shared.extract_case_registry_metadata_from_report(
+        target_path,
+        project_root=Path(str(project.get("root", ""))),
+        project=project,
+    )
+    if not isinstance(extracted, dict) or not extracted.get("case_id"):
+        return response
+
+    binding = utils_shared.build_case_doc_binding_metadata(
+        str(extracted["case_id"]),
+        str(target_path),
+        project.get("docs", {}) if isinstance(project.get("docs"), dict) else {},
+        primary_key=doc_name,
+    )
+    response["canonical_doc_name"] = binding["canonical_doc_name"]
+    response["canonical_doc_path"] = binding["canonical_doc_path"]
+    response["aliases"] = binding["aliases"]
+    return response
 
 
 async def _resolve_manage_docs_actor_id(
@@ -818,6 +882,34 @@ async def _handle_project_health(
         and not _is_system_managed_index(path_value)
         and not _is_indexed_research_doc(path_value)
     )
+    discovered_entry_by_path = {
+        str(Path(entry.get("path") or "").expanduser()): entry
+        for entry in entries
+        if entry.get("project_slug") == active_slug and entry.get("path")
+    }
+    registration_drift: list[Dict[str, Any]] = []
+    for path_value in unregistered_active_docs:
+        entry = discovered_entry_by_path.get(path_value, {})
+        registration_drift.append(
+            {
+                "code": "DOC_REGISTRY_DRIFT",
+                "kind": "filesystem_only",
+                "path": path_value,
+                "doc_type": entry.get("doc_type"),
+                "source_family": entry.get("source_family"),
+                "available_action": "Register this file through manage_docs(action='create') or manage_docs(action='rehome_doc'), then rerun manage_docs(action='project_health').",
+            }
+        )
+    for alias in sorted(missing_registered_paths):
+        registration_drift.append(
+            {
+                "code": "DOC_REGISTRY_DRIFT",
+                "kind": "docs_json_missing_file",
+                "alias": alias,
+                "path": registered_doc_paths.get(alias),
+                "available_action": "Repair the docs_json mapping by recreating/rehome_doc-ing the document, or remove the stale alias through a governed metadata repair.",
+            }
+        )
 
     modern_dev_plans_root = project_root / ".scribe" / "docs" / "dev_plans"
     legacy_dev_plans_root = project_root / "docs" / "dev_plans"
@@ -906,19 +998,21 @@ async def _handle_project_health(
             ],
         },
         "artifact_claims": {
-            "status": "needs_attention" if missing_registered_paths or duplicate_claimed_paths or unregistered_active_docs else "ok",
+            "status": "needs_attention" if missing_registered_paths or duplicate_claimed_paths or unregistered_active_docs or registration_drift else "ok",
             "truth_label": "derived_signal",
             "summary": (
                 f"Registered docs: {len(registered_doc_paths)}; missing paths: {len(missing_registered_paths)}; "
-                f"duplicate path claims: {len(duplicate_claimed_paths)}; unregistered active docs: {len(unregistered_active_docs)}."
+                f"duplicate path claims: {len(duplicate_claimed_paths)}; unregistered active docs: {len(unregistered_active_docs)}; "
+                f"registration drift records: {len(registration_drift)}."
             ),
-            "next_safe_action": "Repair missing doc registrations and deduplicate alias-to-path claims."
-            if missing_registered_paths or duplicate_claimed_paths or unregistered_active_docs
+            "next_safe_action": "Repair missing doc registrations, register disk-only docs through manage_docs, and deduplicate alias-to-path claims."
+            if missing_registered_paths or duplicate_claimed_paths or unregistered_active_docs or registration_drift
             else "Artifact claims align for registered paths; monitor unregistered active docs as needed.",
             "details": {
                 "missing_registered_paths": sorted(missing_registered_paths),
                 "duplicate_claimed_paths": duplicate_claimed_paths,
                 "unregistered_active_docs": unregistered_active_docs,
+                "registration_drift": registration_drift,
             },
         },
         "ownership": {
@@ -2510,7 +2604,20 @@ async def handle_manage_docs_request(
         )
         if canonical_category is not None and doc_category != canonical_category:
             doc_category = canonical_category
-        if action in _MUTATION_ACTIONS and doc_name not in docs_mapping:
+        normalized_doc_reference = str(doc_name).strip().replace("\\", "/")
+        doc_name_is_direct_case_reference = normalized_doc_reference.upper().startswith(("BUG-", "SEC-"))
+        doc_name_is_governed_case_report_path = (
+            normalized_doc_reference.endswith("/report.md")
+            and (
+                "/docs/bugs/" in normalized_doc_reference
+                or "/docs/security/" in normalized_doc_reference
+            )
+        )
+        if (
+            action in _DOC_TARGETED_REGISTRATION_ACTIONS
+            and doc_name not in docs_mapping
+            and (doc_name_is_direct_case_reference or doc_name_is_governed_case_report_path)
+        ):
             resolved_case_key, resolved_case_category, case_resolution_warning = (
                 await _resolve_case_report_registered_key(
                     active_project=active_project,
@@ -2676,7 +2783,13 @@ async def handle_manage_docs_request(
         )
         return _attach_manage_docs_project_context(response, context=context)
 
-    if action in _MUTATION_ACTIONS and doc_category in _CUSTOM_DOC_TYPES and doc_name:
+    docs_for_target = active_project.get("docs", {}) if isinstance(active_project.get("docs"), dict) else {}
+    registered_case_alias = (
+        bool(doc_name)
+        and doc_name in docs_for_target
+        and utils_shared.normalize_case_report_category(doc_category, case_reference=doc_name) is not None
+    )
+    if action in _MUTATION_ACTIONS and doc_category in _CUSTOM_DOC_TYPES and doc_name and not registered_case_alias:
         resolved_path = utils_shared.resolve_custom_doc_path(
             project=active_project,
             doc_category=doc_category,
@@ -2933,6 +3046,13 @@ async def handle_manage_docs_request(
             response = _attach_manage_docs_project_context(response, context=context)
             if response.get("ok") and action in {"create", "create_doc"}:
                 response = await _attach_create_section_inventory(response)
+            if response.get("ok") and action in _MUTATION_ACTIONS:
+                response = _attach_case_doc_binding_readback(
+                    response,
+                    project=active_project,
+                    doc_name=doc_name,
+                    doc_category=doc_category,
+                )
             if response.get("ok") and not dry_run and action in _MUTATION_ACTIONS:
                 case_registry_warning = await _refresh_case_registry_for_mutation(
                     storage_backend=backend,

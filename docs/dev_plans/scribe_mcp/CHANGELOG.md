@@ -10,6 +10,38 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## read_recent compact rendering, managed-doc usability, reminders, and internal plugin diagnostics (2.10.1)
+- `entry_id`: 20260629:read-recent-compact-plugin-diagnostics-2-10-1
+- `entry_status`: accepted
+- `title`: read_recent compact rendering, managed-doc usability, reminders, and internal plugin diagnostics (2.10.1)
+- `summary`: Bumped the public release line to `2.10.1`, a backward-compatible patch on top of `2.10.0`. This release fixes `read_recent(compact=True)` in default readable output so the human-readable renderer keeps full entry fields instead of receiving compacted entry payloads. It also ships managed-doc usability and diagnostics improvements: `manage_docs` now reports registration status and drift diagnostics for special docs/bug logs plus docs_json, state, index, and project registry surfaces; reminder-enabled tools expose advisory `recommended_action`, `available_actions`, `suggested_tool`, `blocker_codes`, `source`, and top-level `reminder_guidance`; and `manage_docs(apply_patch)` accepts bounded Codex-style `*** Begin Patch` / single `*** Update File` patches for one selected managed doc while rejecting add/delete, multi-doc, and target-mismatch input with guidance. Repo-local plugin usability remains internal diagnostics/probe-only: `.scribe/plugins` loaders require explicit trusted local opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus runtime restart/reinitialization, with no automatic trust widening and no production default enablement. Hook/context injection for reminders remains security-blocked future work. No public API, CLI, protocol, schema, or data contract is broken.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+   - src/scribe_mcp/tools/read_recent.py
+   - src/scribe_mcp/tools/doctor.py
+   - src/scribe_mcp/tools/manage_docs.py
+   - src/scribe_mcp/tools/reminder_tools.py
+   - src/scribe_mcp/plugins/registry.py
+   - tests/test_read_recent_limit.py
+   - tests/test_entry_formatter.py
+   - tests/test_manage_docs_reminders.py
+   - tests/test_reminder_tools.py
+   - tests/test_reminder_time_variables.py
+   - tests/test_manage_docs_patch_range.py
+   - tests/test_manage_docs_cli.py
+   - tests/test_doctor_telemetry.py
+   - tests/test_repo_plugin_probe_script.py
+   - docs/COMPATIBILITY_MATRIX.md
+  - docs/RELEASE_FILE_MAP.md
+  - docs/INSTALL_AND_BOOTSTRAP.md
+  - docs/TOUR.md
+  - docs/Scribe_Usage.md
+  - README.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.10.1
+
 ## Affected-row referential inventory preflight (2.9.0)
 - `entry_id`: 20260618:affected-row-referential-inventory-2-9-0
 - `entry_status`: accepted

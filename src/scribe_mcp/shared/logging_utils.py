@@ -336,28 +336,6 @@ async def resolve_logging_context(
         allow_set_project_rebind = tool_name == "set_project"
         allow_cross_project_read = tool_name in {"read_recent"}
         session_project_root = str(project.get("root", "")).strip() if isinstance(project, dict) else ""
-        if (
-            not allow_set_project_rebind
-            and not allow_cross_project_read
-            and exec_context
-            and getattr(exec_context, "mode", None) == "project"
-            and authorized_project_names
-        ):
-            if explicit_name not in authorized_project_names and (
-                not explicit_alias or explicit_alias not in authorized_project_names
-            ):
-                raise ProjectResolutionError(
-                    f"Explicit project override '{explicit_project}' does not match the session-bound active project.",
-                    recent_projects,
-                )
-        elif public_release and not allow_set_project_rebind and not allow_cross_project_read:
-            if explicit_name not in authorized_project_names and (
-                not explicit_alias or explicit_alias not in authorized_project_names
-            ):
-                raise ProjectResolutionError(
-                    f"Explicit project override '{explicit_project}' is not authorized for this session.",
-                    recent_projects,
-                )
         explicit_candidates = [explicit_name]
         if explicit_alias and explicit_alias not in explicit_candidates:
             explicit_candidates.append(explicit_alias)
@@ -404,6 +382,53 @@ async def resolve_logging_context(
                         record = alias_matches[0]
                 except Exception:
                     record = None
+
+        # Actor-authoritative override: an explicit project that resolves to a
+        # record inside the VERIFIED execution repo root carries the same
+        # authority as a set_project rebind for that repo (set_project's
+        # verified_binding_root / verified_request_root check). Cross-project
+        # writes within the verified repo are therefore honored instead of
+        # rejected against another actor's session binding. Projects outside
+        # the verified root, or requests without a verified root, keep the
+        # session-binding authorization below.
+        verified_root_override = False
+        if record is not None and execution_repo_root:
+            record_root_raw = str(getattr(record, "repo_root", "") or "").strip()
+            if record_root_raw:
+                try:
+                    record_root = str(Path(record_root_raw).expanduser().resolve())
+                except Exception:
+                    record_root = record_root_raw
+                verified_root_override = record_root == execution_repo_root
+
+        if (
+            not allow_set_project_rebind
+            and not allow_cross_project_read
+            and not verified_root_override
+            and exec_context
+            and getattr(exec_context, "mode", None) == "project"
+            and authorized_project_names
+        ):
+            if explicit_name not in authorized_project_names and (
+                not explicit_alias or explicit_alias not in authorized_project_names
+            ):
+                raise ProjectResolutionError(
+                    f"Explicit project override '{explicit_project}' does not match the session-bound active project.",
+                    recent_projects,
+                )
+        elif (
+            public_release
+            and not allow_set_project_rebind
+            and not allow_cross_project_read
+            and not verified_root_override
+        ):
+            if explicit_name not in authorized_project_names and (
+                not explicit_alias or explicit_alias not in authorized_project_names
+            ):
+                raise ProjectResolutionError(
+                    f"Explicit project override '{explicit_project}' is not authorized for this session.",
+                    recent_projects,
+                )
 
         if record:
             project = {

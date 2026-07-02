@@ -357,6 +357,41 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_doc_returns_registration_status_when_docs_json_update_misses(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    class MissingRowStorage:
+        async def update_project_docs(self, *_args, **_kwargs):
+            return False
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        server_module.storage_backend = MissingRowStorage()
+        result = await manage_docs(
+            action="create",
+            doc="custom_doc",
+            metadata={
+                "doc_type": "custom",
+                "doc_name": "docs_json_miss_note",
+                "body": "# Note\nRegistration should warn.",
+                "register_doc": True,
+            },
+            dry_run=False,
+        )
+
+        assert result["ok"] is True
+        status = result["registration_status"]
+        assert status["file_written"] is True
+        assert status["registration_requested"] is True
+        assert status["docs_json_registered"] is False
+        assert status["update_project_docs_result"] is False
+        assert "rerun set_project" in status["available_action"]
+        assert any("did not update docs_json" in warning for warning in result.get("warnings", []))
+
+
+@pytest.mark.asyncio
 async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
@@ -390,6 +425,10 @@ async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Pa
 
         warnings = result.get("warnings") or []
         assert any("register_doc skipped during dry_run" in warning for warning in warnings)
+        status = result["registration_status"]
+        assert status["file_written"] is False
+        assert status["docs_json_registered"] is False
+        assert "dry_run=false" in status["available_action"]
 
 
 @pytest.mark.asyncio
@@ -713,6 +752,14 @@ async def test_manage_docs_create_template_missing_fails_closed(tmp_path: Path) 
         )
         assert result["ok"] is False
         assert "Invalid configured template" in result.get("error", "")
+        assert "Template resolution failed before doc registration" in result.get("suggestion", "")
+        template_resolution = result.get("template_resolution")
+        assert template_resolution["failure_kind"] == "template_resolution"
+        assert template_resolution["registration_attempted"] is False
+        assert template_resolution["requested_template"] == "DOES_NOT_EXIST_TEMPLATE"
+        assert "custom" in template_resolution["available_doc_types"]
+        assert "RESEARCH_REPORT_TEMPLATE" in template_resolution["available_templates"]
+        assert "metadata.doc_type='custom'" in template_resolution["recommended_action"]
         warnings = result.get("warnings") or []
         assert any("was not found" in warning for warning in warnings)
 
@@ -748,6 +795,49 @@ async def test_manage_docs_create_alias_legacy_fallback_config_source(tmp_path: 
         )
         assert result["ok"] is True
         assert result["config_source"] == "repo_config:reminder_config.doc_types.create_aliases"
+
+
+@pytest.mark.asyncio
+async def test_special_bug_create_returns_registration_status_when_docs_json_update_misses(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+
+    class MissingRowStorage:
+        async def update_project_docs(self, *_args, **_kwargs):
+            return False
+
+        async def fetch_project(self, *_args, **_kwargs):
+            return SimpleNamespace(docs_json="{}")
+
+        async def upsert_case_registry_record(self, **_kwargs):
+            return None
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        server_module.storage_backend = MissingRowStorage()
+        result = await manage_docs(
+            action="create",
+            doc="bug_note",
+            metadata={
+                "doc_type": "bug",
+                "doc_name": "BUG-REGISTRATION-001",
+                "category": "runtime",
+                "symptoms": "bug doc registration gap",
+            },
+            dry_run=False,
+        )
+
+        assert result["ok"] is True
+        status = result["registration_status"]
+        assert status["file_written"] is True
+        assert status["docs_json_registered"] is False
+        assert status["update_project_docs_result"] is False
+        assert status["case_registry_registered"] is True
+        assert "bug_note" in status["registration_keys"]
+        assert any(key.startswith("bug_") for key in status["registration_keys"])
+        assert "rerun set_project" in status["available_action"]
+        assert "did not update docs_json" in result["registration_warning"]
 
 
 @pytest.mark.asyncio

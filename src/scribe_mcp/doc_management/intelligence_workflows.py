@@ -34,10 +34,28 @@ def _doc_inventory(active_project: Mapping[str, Any]) -> List[Dict[str, Any]]:
         if not isinstance(raw_path, str) or not raw_path.endswith(".md"):
             continue
         path = Path(raw_path).resolve()
+        registered_aliases = [
+            str(alias)
+            for alias, alias_path in docs.items()
+            if isinstance(alias_path, str) and Path(alias_path).resolve() == path
+        ]
         if not path.exists() or not path.is_file():
+            items_by_path[path] = {
+                "doc_name": str(name),
+                "path": path,
+                "metadata": {},
+                "registration_source": "docs_json_missing_file",
+                "registered_aliases": sorted(set(registered_aliases)),
+            }
             continue
         if path not in items_by_path:
-            items_by_path[path] = {"doc_name": str(name), "path": path, "metadata": _metadata_for(path)}
+            items_by_path[path] = {
+                "doc_name": str(name),
+                "path": path,
+                "metadata": _metadata_for(path),
+                "registration_source": "docs_json",
+                "registered_aliases": sorted(set(registered_aliases)),
+            }
 
     if docs_dir and docs_dir.exists():
         for path in sorted(docs_dir.rglob("*.md"), key=lambda candidate: str(candidate).lower()):
@@ -47,7 +65,13 @@ def _doc_inventory(active_project: Mapping[str, Any]) -> List[Dict[str, Any]]:
             existing = items_by_path.get(resolved_path)
             if existing is not None:
                 continue
-            items_by_path[resolved_path] = {"doc_name": resolved_path.stem, "path": resolved_path, "metadata": _metadata_for(resolved_path)}
+            items_by_path[resolved_path] = {
+                "doc_name": resolved_path.stem,
+                "path": resolved_path,
+                "metadata": _metadata_for(resolved_path),
+                "registration_source": "filesystem_only",
+                "registered_aliases": [],
+            }
 
     return sorted(items_by_path.values(), key=lambda item: (str(item["path"]).lower(), str(item["doc_name"]).lower()))
 
@@ -56,7 +80,11 @@ def topology_scan(*, active_project: Mapping[str, Any]) -> Dict[str, Any]:
     docs_dir = Path(str(active_project.get("docs_dir") or "")).resolve()
     project_root = Path(str(active_project.get("root") or "")).resolve()
     items = _doc_inventory(active_project)
-    registered = {item["doc_name"]: item["path"] for item in items}
+    registered = {
+        item["doc_name"]: item["path"]
+        for item in items
+        if item.get("registration_source") == "docs_json"
+    }
     edges: List[Dict[str, Any]] = []
     duplicate_ids: Dict[str, List[str]] = {}
     id_to_docs: Dict[str, List[str]] = {}
@@ -85,7 +113,20 @@ def topology_scan(*, active_project: Mapping[str, Any]) -> Dict[str, Any]:
             "edges": edges,
             "duplicate_ids": duplicate_ids,
             "dangling_targets": [{"edge_id": e.get("edge_id"), "target_ref": e.get("target_ref"), "state": e.get("state"), "proof": {"code": "UNRESOLVED_TARGET"}} for e in dangling],
-            "anomalies": anomalies,
+            "anomalies": anomalies + [
+                {
+                    "doc": item["doc_name"],
+                    "code": "DOC_REGISTRY_DRIFT",
+                    "registration_source": item.get("registration_source"),
+                    "path": str(item["path"]),
+                    "proof": {
+                        "registered_aliases": item.get("registered_aliases", []),
+                        "available_action": "Register the file through manage_docs(create/rehome_doc) or repair/remove the stale docs_json mapping.",
+                    },
+                }
+                for item in items
+                if item.get("registration_source") in {"filesystem_only", "docs_json_missing_file"}
+            ],
             "cycle_paths": detect_hard_dependency_cycles(edges),
         },
     }

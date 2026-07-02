@@ -299,6 +299,8 @@ async def read_recent(
         fields = None
         include_metadata = True
 
+    effective_compact = compact and format != "readable"
+
     exec_context = None
     if hasattr(server_module, "get_execution_context"):
         try:
@@ -439,7 +441,7 @@ async def read_recent(
             response = _READ_RECENT_HELPER.success_with_entries(
                 entries=rows,
                 context=context,
-                compact=compact,
+                compact=effective_compact,
                 fields=fields,
                 include_metadata=include_metadata,
                 pagination=pagination_info,
@@ -546,7 +548,7 @@ async def read_recent(
     response = _READ_RECENT_HELPER.success_with_entries(
         entries=entries,
         context=context,
-        compact=compact,
+        compact=effective_compact,
         fields=fields,
         include_metadata=include_metadata,
         pagination=pagination_info,

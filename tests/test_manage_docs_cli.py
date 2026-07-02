@@ -46,3 +46,48 @@ def test_quality_check_accepts_custom_doc_name_without_content(monkeypatch) -> N
 
     exit_code = run_manage_docs_cli(_manage_docs_callable)
     assert exit_code == 0
+
+
+def test_apply_patch_cli_allows_patch_without_patch_mode(monkeypatch) -> None:
+    async def _manage_docs_callable(**kwargs):
+        assert kwargs["action"] == "apply_patch"
+        assert kwargs["doc"] == "architecture"
+        assert kwargs["patch"] == "--- before\n+++ after\n"
+        assert kwargs["patch_mode"] is None
+        return {"ok": True, "message": "patch ok"}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["manage_docs", "apply_patch", "architecture", "--patch", "--- before\n+++ after\n"],
+    )
+
+    exit_code = run_manage_docs_cli(_manage_docs_callable)
+    assert exit_code == 0
+
+
+def test_apply_patch_cli_dispatches_codex_patch_input(monkeypatch) -> None:
+    codex_patch = "*** Begin Patch\n*** Update File: ARCHITECTURE_GUIDE.md\n*** End Patch"
+
+    async def _manage_docs_callable(**kwargs):
+        assert kwargs["action"] == "apply_patch"
+        assert kwargs["doc"] == "architecture"
+        assert kwargs["patch"] == codex_patch
+        assert kwargs["patch_mode"] is None
+        return {"ok": True, "message": "codex patch ok"}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "manage_docs",
+            "apply_patch",
+            "architecture",
+            "--patch",
+            codex_patch,
+        ],
+    )
+
+    exit_code = run_manage_docs_cli(_manage_docs_callable)
+
+    assert exit_code == 0

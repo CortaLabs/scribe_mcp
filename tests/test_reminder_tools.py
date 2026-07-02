@@ -122,6 +122,28 @@ async def test_query_reminders_returns_history_and_active(reminder_runtime: dict
     assert isinstance(second.get("history"), list)
     assert isinstance(second.get("active_reminders"), list)
     assert len(second.get("history", [])) >= 1
+    assert second["active_reminders"]
+    active_reminder = second["active_reminders"][0]
+    assert active_reminder["key"]
+    assert active_reminder["source"].startswith("core.")
+    assert active_reminder["recommended_action"]
+    assert isinstance(active_reminder["available_actions"], list)
+    assert isinstance(second.get("reminder_guidance"), list)
+    assert second["reminder_guidance"][0]["key"] == active_reminder["key"]
+    assert second["reminder_guidance"][0]["source"] == active_reminder["source"]
+
+    compact = _as_dict(
+        await query_reminders(
+            agent="Codex",
+            project=project_name,
+            format="compact",
+        )
+    )
+    assert compact.get("ok") is True
+    assert compact["active_reminders"]
+    assert compact["active_reminders"][0]["recommended_action"]
+    assert compact["reminder_guidance"][0]["key"] == compact["active_reminders"][0]["key"]
+    assert compact["reminder_guidance"][0]["source"] == compact["active_reminders"][0]["source"]
 
 
 @pytest.mark.asyncio

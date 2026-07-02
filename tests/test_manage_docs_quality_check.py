@@ -496,6 +496,48 @@ async def test_quality_check_uses_discovered_doc_when_auto_registration_fails(
 
 
 @pytest.mark.asyncio
+async def test_quality_check_resolves_case_id_before_dev_plan_auto_registration(tmp_path: Path) -> None:
+    project_root = tmp_path / "quality_repo_case_report"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    progress_log = docs_dir / "PROGRESS_LOG.md"
+    progress_log.write_text("# Progress\n", encoding="utf-8")
+
+    case_id = "BUG-2026-06-29-0004"
+    report_path = project_root / "docs" / "bugs" / "integration" / f"2026-06-29_{case_id}" / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        "---\n"
+        "doc_type: bug_report\n"
+        f"case_id: {case_id}\n"
+        "status: closed\n"
+        "category: integration\n"
+        "---\n\n"
+        "# Bug Report\n\n"
+        "The report exists outside the active dev-plan tree.\n",
+        encoding="utf-8",
+    )
+
+    project = {
+        "name": "Q",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(progress_log),
+        "docs": {"progress_log": str(progress_log)},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "quality-case-report-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root, session_id="quality-case-report-session"):
+        result = await manage_docs(action="quality_check", doc_name=case_id)
+
+    assert result["ok"] is True, result
+    assert result["scope"]["doc_name"] == case_id
+    assert result["scope"]["path"] == str(report_path)
+
+
+@pytest.mark.asyncio
 async def test_quality_check_changelog_does_not_require_current_version_coverage_in_local_default(tmp_path: Path) -> None:
     project_root = tmp_path / "quality_repo_changelog_release"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"

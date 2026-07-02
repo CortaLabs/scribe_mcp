@@ -14,7 +14,11 @@ from scribe_mcp.config.settings import settings
 from scribe_mcp.config.repo_config import RepoDiscovery, resolve_runtime_efficiency_budgets
 from scribe_mcp.config.mode_detection import resolve_configured_mode
 from scribe_mcp.tool_contracts import read_only_local_tool
-from scribe_mcp.plugins.registry import get_plugin_registry
+from scribe_mcp.plugins.registry import (
+    get_plugin_registry,
+    trusted_plugin_runtime_enabled,
+    trusted_plugin_runtime_opt_in_vars,
+)
 from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.shared.tool_runtime import (
     repo_root_grant_diagnostics,
@@ -30,6 +34,68 @@ def _list_loaded_plugins() -> list[str]:
     except Exception:
         return []
     return sorted(registry.plugins.keys())
+
+
+def _plugin_loader_diagnostics() -> Dict[str, Any] | None:
+    try:
+        registry = get_plugin_registry()
+    except Exception:
+        return None
+    diagnostics = getattr(registry, "last_load_diagnostics", None)
+    return dict(diagnostics) if isinstance(diagnostics, dict) else None
+
+
+def _discover_repo_plugin_stems(plugins_dir: Path | None) -> list[str]:
+    if not plugins_dir or not plugins_dir.exists() or not plugins_dir.is_dir():
+        return []
+    return sorted(
+        plugin_file.stem
+        for plugin_file in plugins_dir.glob("*.py")
+        if not plugin_file.name.startswith("__")
+    )
+
+
+def _build_plugin_diagnostics(config: Any, loaded_plugins: list[str]) -> Dict[str, Any]:
+    plugin_settings = config.plugin_config or {}
+    plugin_loading_requested = bool(config.plugin_loading_requested())
+    repo_plugin_trust_enabled = trusted_plugin_runtime_enabled()
+    plugins_dir = config.plugins_dir
+    plugins_dir_exists = bool(plugins_dir and plugins_dir.exists() and plugins_dir.is_dir())
+    discovered_stems = _discover_repo_plugin_stems(plugins_dir)
+    allowlist = sorted(str(item) for item in plugin_settings.get("allowlist", []) or [])
+    blocklist = sorted(str(item) for item in plugin_settings.get("blocklist", []) or [])
+    blocked_reason = None
+    guidance = None
+
+    if plugin_loading_requested and discovered_stems and not repo_plugin_trust_enabled:
+        blocked_reason = "repo_plugin_trust_not_enabled"
+        primary_opt_in = trusted_plugin_runtime_opt_in_vars()[0]
+        guidance = {
+            "available_action": (
+                f"Set {primary_opt_in}=1 in a trusted local runtime, then restart or "
+                "reinitialize the Scribe MCP server."
+            ),
+            "equivalent_opt_in_vars": list(trusted_plugin_runtime_opt_in_vars()),
+            "restart_required": True,
+        }
+    elif plugin_loading_requested and not plugins_dir_exists:
+        blocked_reason = "plugins_dir_missing"
+    elif not plugin_loading_requested and discovered_stems:
+        blocked_reason = "plugin_config_not_enabled"
+
+    return {
+        "repo_plugin_trust_enabled": repo_plugin_trust_enabled,
+        "plugin_loading_requested": plugin_loading_requested,
+        "plugins_dir": str(plugins_dir) if plugins_dir else None,
+        "plugins_dir_exists": plugins_dir_exists,
+        "configured_allowlist_stems": allowlist,
+        "configured_blocklist_stems": blocklist,
+        "discovered_repo_local_stems": discovered_stems,
+        "blocked_reason": blocked_reason,
+        "guidance": guidance,
+        "eligible": bool(plugin_loading_requested and repo_plugin_trust_enabled and plugins_dir_exists),
+        "loaded": bool(loaded_plugins),
+    }
 
 
 def _safe_bool(value: Any) -> bool:
@@ -266,6 +332,9 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
     loaded_plugins = _list_loaded_plugins()
     plugin_info["loaded"] = loaded_plugins
     plugin_info["count"] = len(loaded_plugins)
+    loader_diagnostics = _plugin_loader_diagnostics()
+    if loader_diagnostics is not None:
+        plugin_info["loader_diagnostics"] = loader_diagnostics
 
     runtime_storage_backend = getattr(server_module, "storage_backend", None)
     runtime_state_manager = getattr(server_module, "state_manager", None)
@@ -299,6 +368,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
     config_view = None
     runtime_timing = dict(getattr(server_module, "_last_runtime_timing", {}) or {})
     if config is not None:
+        plugin_info.update(_build_plugin_diagnostics(config, loaded_plugins))
         config_view = {
             "repo_slug": config.repo_slug,
             "repo_root": str(config.repo_root),

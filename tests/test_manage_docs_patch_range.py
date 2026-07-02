@@ -105,6 +105,203 @@ async def test_apply_patch_success_and_hunks(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_patch_infers_unified_mode_without_patch_mode(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+    patch_text = _patch_text("alpha", "alpha inferred")
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="apply_patch",
+        section=None,
+        content=None,
+        patch=patch_text,
+        patch_source_hash=None,
+        patch_mode=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={},
+        dry_run=False,
+    )
+
+    assert change.success, change.error_message
+    assert "alpha inferred" in architecture_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_accepts_codex_update_file_dry_run(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    codex_patch = "\n".join(
+        [
+            "*** Begin Patch",
+            "*** Update File: ARCHITECTURE_GUIDE.md",
+            "@@",
+            "-alpha",
+            "+alpha codex",
+            "*** End Patch",
+        ]
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="apply_patch",
+        section=None,
+        content=None,
+        patch=codex_patch,
+        patch_source_hash=None,
+        patch_mode=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={},
+        dry_run=True,
+    )
+
+    assert change.success, change.error_message
+    assert "alpha codex" in change.content_written
+    assert "alpha codex" not in Path(project["docs"]["architecture"]).read_text(encoding="utf-8")
+    assert change.extra["codex_patch_adapter"]["translated"] is True
+    assert change.extra["codex_patch_adapter"]["target"] == "ARCHITECTURE_GUIDE.md"
+    assert change.extra["hunks_applied"] == 1
+    assert change.extra["preview_window"]["before"].startswith("alpha")
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_accepts_codex_update_file_write(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    architecture_path = Path(project["docs"]["architecture"])
+    codex_patch = "\n".join(
+        [
+            "*** Begin Patch",
+            "*** Update File: architecture",
+            "@@",
+            "-alpha",
+            "+alpha codex write",
+            " beta",
+            " gamma",
+            "*** End Patch",
+        ]
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="apply_patch",
+        section=None,
+        content=None,
+        patch=codex_patch,
+        patch_source_hash=None,
+        patch_mode=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={},
+        dry_run=False,
+    )
+
+    assert change.success, change.error_message
+    assert "alpha codex write" in architecture_path.read_text(encoding="utf-8")
+    assert change.extra["codex_patch_adapter"]["translated_patch_mode"] == "unified"
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_rejects_codex_add_delete_and_multi_doc_with_guidance(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    unsupported_patches = [
+        (
+            "\n".join(["*** Begin Patch", "*** Add File: NEW.md", "+hello", "*** End Patch"]),
+            "CODEX_PATCH_OPERATION_UNSUPPORTED",
+            "codex_patch_add_file_unsupported",
+        ),
+        (
+            "\n".join(["*** Begin Patch", "*** Delete File: ARCHITECTURE_GUIDE.md", "*** End Patch"]),
+            "CODEX_PATCH_OPERATION_UNSUPPORTED",
+            "codex_patch_delete_file_unsupported",
+        ),
+        (
+            "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Update File: ARCHITECTURE_GUIDE.md",
+                    "@@",
+                    "-alpha",
+                    "+alpha one",
+                    "*** Update File: PHASE_PLAN.md",
+                    "@@",
+                    "-# Phase",
+                    "+# Phase two",
+                    "*** End Patch",
+                ]
+            ),
+            "CODEX_PATCH_MULTI_DOC_UNSUPPORTED",
+            "codex_patch_multi_doc_unsupported",
+        ),
+    ]
+
+    for codex_patch, expected_error, failure_kind in unsupported_patches:
+        change = await apply_doc_change(
+            project,
+            doc="architecture",
+            action="apply_patch",
+            section=None,
+            content=None,
+            patch=codex_patch,
+            patch_source_hash=None,
+            patch_mode=None,
+            start_line=None,
+            end_line=None,
+            template=None,
+            metadata={},
+            dry_run=True,
+        )
+
+        assert not change.success
+        assert expected_error in (change.error_message or "")
+        diagnostics = change.extra["patch_diagnostics"]
+        assert diagnostics["failure_kind"] == failure_kind
+        assert "add_file" in diagnostics["unsupported_operations"]
+        assert "delete_file" in diagnostics["unsupported_operations"]
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_rejects_codex_update_for_wrong_managed_doc(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    codex_patch = "\n".join(
+        [
+            "*** Begin Patch",
+            "*** Update File: PHASE_PLAN.md",
+            "@@",
+            "-alpha",
+            "+alpha wrong",
+            "*** End Patch",
+        ]
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="apply_patch",
+        section=None,
+        content=None,
+        patch=codex_patch,
+        patch_source_hash=None,
+        patch_mode=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={},
+        dry_run=True,
+    )
+
+    assert not change.success
+    assert "CODEX_PATCH_TARGET_MISMATCH" in (change.error_message or "")
+    assert change.extra["patch_diagnostics"]["failure_kind"] == "codex_patch_target_mismatch"
+
+
+@pytest.mark.asyncio
 async def test_apply_patch_stale_source_and_precondition(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     patch_text = _patch_text("alpha", "alpha updated")
@@ -845,6 +1042,35 @@ async def test_healing_before_reminders(tmp_path: Path) -> None:
 
         messages = [r["message"] for r in result.get("reminders", [])]
         assert not any("prefer apply_patch" in msg.lower() for msg in messages)
+    finally:
+        server_module.state_manager = original_state_manager
+        server_module.storage_backend = original_storage_backend
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_apply_patch_reports_preview_and_write_state(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    original_state_manager = server_module.state_manager
+    original_storage_backend = server_module.storage_backend
+    server_module.state_manager = state_manager
+    server_module.storage_backend = None
+
+    try:
+        reset_reminder_cooldowns(project_root=project["root"])
+        result = await manage_docs(
+            action="apply_patch",
+            doc="architecture",
+            patch=_patch_text("alpha", "alpha preview"),
+            dry_run=True,
+        )
+
+        assert result["ok"] is True
+        assert result["dry_run"] is True
+        assert result["preview_only"] is True
+        assert result["write_applied"] is False
     finally:
         server_module.state_manager = original_state_manager
         server_module.storage_backend = original_storage_backend

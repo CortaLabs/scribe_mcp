@@ -177,9 +177,6 @@ Examples:
             print("❌ Error: --edit is required for apply_patch structured mode")
             return 1
 
-    if args.action == "apply_patch" and (args.patch or args.content) and not args.patch_mode:
-        print("❌ Error: --patch-mode is required when providing a patch")
-        return 1
     if args.action == "apply_patch" and args.patch_mode and args.patch_mode not in {"structured", "unified"}:
         print("❌ Error: --patch-mode must be 'structured' or 'unified'")
         return 1

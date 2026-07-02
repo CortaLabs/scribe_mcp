@@ -14,6 +14,7 @@ from scribe_mcp.doc_management.utils import (
     classify_scribe_source_document,
     discover_scribe_source_documents,
 )
+from scribe_mcp.doc_management import intelligence_workflows
 from scribe_mcp.doc_management import special_create as special_create_shared
 from scribe_mcp.tools.manage_docs import manage_docs, _get_index_updater_for_path
 
@@ -403,6 +404,39 @@ def test_classification_honors_template_backed_doc_type(tmp_path: Path) -> None:
     assert classified is not None
     assert classified.source_family == "dev_plan"
     assert classified.doc_type == "incident"
+
+
+def test_topology_scan_flags_filesystem_only_and_missing_file_registry_drift(tmp_path: Path) -> None:
+    project_root = tmp_path
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "test_project"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    disk_only = docs_dir / "DISK_ONLY.md"
+    disk_only.write_text("---\ndoc_type: custom\n---\n# Disk Only\n", encoding="utf-8")
+    missing = docs_dir / "MISSING.md"
+
+    result = intelligence_workflows.topology_scan(
+        active_project={
+            "name": "Test Project",
+            "root": str(project_root),
+            "docs_dir": str(docs_dir),
+            "docs": {
+                "missing_doc": str(missing),
+            },
+        }
+    )
+
+    drift = [
+        item
+        for item in result["snapshot"]["anomalies"]
+        if item.get("code") == "DOC_REGISTRY_DRIFT"
+    ]
+    assert {item["registration_source"] for item in drift} == {
+        "filesystem_only",
+        "docs_json_missing_file",
+    }
+    assert any(item["path"] == str(disk_only.resolve()) for item in drift)
+    assert any(item["path"] == str(missing.resolve()) for item in drift)
+    assert all("available_action" in item["proof"] for item in drift)
 
 
 if __name__ == "__main__":

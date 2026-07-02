@@ -16,6 +16,34 @@ from .logging_utils import (
 )
 
 
+def _build_reminder_guidance(reminders: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Summarize actionable reminder fields without duplicating reminder text."""
+    guidance: list[Dict[str, Any]] = []
+    for reminder in reminders:
+        if not isinstance(reminder, dict):
+            continue
+        action = reminder.get("recommended_action")
+        actions = reminder.get("available_actions")
+        tool = reminder.get("suggested_tool")
+        blockers = reminder.get("blocker_codes")
+        if not any((action, actions, tool, blockers)):
+            continue
+        item: Dict[str, Any] = {"key": reminder.get("key") or reminder.get("category") or "reminder"}
+        source = reminder.get("source")
+        if source:
+            item["source"] = source
+        if action:
+            item["recommended_action"] = action
+        if isinstance(actions, list) and actions:
+            item["available_actions"] = actions
+        if tool:
+            item["suggested_tool"] = tool
+        if isinstance(blockers, list) and blockers:
+            item["blocker_codes"] = blockers
+        guidance.append(item)
+    return guidance
+
+
 class LoggingToolMixin:
     """Mixin providing convenience helpers for logging-oriented tools.
 
@@ -63,6 +91,9 @@ class LoggingToolMixin:
         reminders = response.pop("reminders", list(context.reminders))
         response["recent_projects"] = recent_projects
         response["reminders"] = reminders
+        reminder_guidance = response.pop("reminder_guidance", _build_reminder_guidance(reminders))
+        if reminder_guidance:
+            response["reminder_guidance"] = reminder_guidance
         return response
 
     @staticmethod

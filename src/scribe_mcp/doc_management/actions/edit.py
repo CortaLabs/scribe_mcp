@@ -462,6 +462,8 @@ async def handle_edit_action(
         "action": action,
         "path": str(change.path) if change.success else "",
         "dry_run": dry_run,
+        "preview_only": dry_run,
+        "write_applied": bool(change.success and not dry_run),
         "diff": change.diff_preview,
     }
     if doc_name:
@@ -534,11 +536,22 @@ async def handle_edit_action(
             register_doc = True
         register_doc = bool(register_doc)
         register_key = metadata.get("register_as") or metadata.get("doc_name") or doc_name
+        registration_status: Dict[str, Any] = {
+            "file_written": bool(change.success and not dry_run),
+            "registration_requested": register_doc,
+            "docs_json_registered": False,
+            "project_registry_updated": False,
+            "state_project_updated": False,
+            "register_key": str(register_key) if register_key else None,
+            "path": str(change.path) if change.path else None,
+            "available_action": None,
+        }
 
         if register_doc and dry_run:
             response.setdefault("warnings", []).append(
                 "register_doc skipped during dry_run; no project registry changes were applied."
             )
+            registration_status["available_action"] = "Run manage_docs(action='create', dry_run=false, metadata={...}) to write and register the document."
         elif register_doc:
             if not register_key:
                 return helper.apply_context_payload(
@@ -570,19 +583,34 @@ async def handle_edit_action(
                     resolved_scope=authoritative_scope.get("resolved_scope"),
                     mirror_global=False,
                 )
+                registration_status["state_project_updated"] = True
                 runtime_backend = getattr(server_module, "storage_backend", None)
                 if runtime_backend:
-                    await runtime_backend.update_project_docs(
+                    update_result = await runtime_backend.update_project_docs(
                         project.get("name"),
                         json.dumps(docs_mapping),
                         repo_root=project.get("root"),
                     )
+                    registration_status["update_project_docs_result"] = update_result
+                    registration_status["docs_json_registered"] = bool(update_result)
+                    if update_result is False:
+                        registry_warning = (
+                            "Doc registration did not update docs_json: storage backend reported no matching "
+                            "project row. Available action: rerun set_project for this repo root, then retry "
+                            "manage_docs(action='create', dry_run=false)."
+                        )
+                        registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', dry_run=false)"
+                else:
+                    registration_status["available_action"] = "Configure or restore the Scribe storage backend, then retry manage_docs(action='create', dry_run=false)."
             except Exception as exc:
                 registry_warning = f"Registry update failed: {exc}"
+                registration_status["error"] = str(exc)
+                registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', dry_run=false)"
             if metadata.get("register_doc") is None:
                 response.setdefault("warnings", []).append(
                     "register_doc defaulted to true; set metadata.register_doc=false to skip registration."
                 )
+        response["registration_status"] = registration_status
 
     if registry_warning:
         response.setdefault("warnings", []).append(registry_warning)

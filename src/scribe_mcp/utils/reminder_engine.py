@@ -40,6 +40,11 @@ class ReminderInstance:
     tools_suppressed: List[str] = field(default_factory=list)
     cooldown_minutes: int = 0
     last_shown: Optional[datetime] = None
+    source: Optional[str] = None
+    recommended_action: Optional[str] = None
+    available_actions: List[str] = field(default_factory=list)
+    suggested_tool: Optional[str] = None
+    blocker_codes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -686,7 +691,16 @@ class ReminderEngine:
             category=reminder_templates.get("category", "general"),
             variables=variables,
             tools_suppressed=reminder_templates.get("tools_suppressed", []),
-            cooldown_minutes=rule_data.get("cooldown_minutes", 0)
+            cooldown_minutes=rule_data.get("cooldown_minutes", 0),
+            source=reminder_templates.get("source") or rule_data.get("source"),
+            recommended_action=reminder_templates.get("recommended_action") or rule_data.get("recommended_action"),
+            available_actions=self._coerce_string_list(
+                reminder_templates.get("available_actions") or rule_data.get("available_actions")
+            ),
+            suggested_tool=reminder_templates.get("suggested_tool") or rule_data.get("suggested_tool"),
+            blocker_codes=self._coerce_string_list(
+                reminder_templates.get("blocker_codes") or rule_data.get("blocker_codes")
+            ),
         )
 
     async def _generate_teaching_reminders(self, context: ReminderContext) -> List[ReminderInstance]:
@@ -755,19 +769,85 @@ class ReminderEngine:
 
         return filtered[:max_total]
 
+    @staticmethod
+    def _coerce_string_list(value: Any) -> List[str]:
+        """Return a compact list of non-empty strings from config/runtime data."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raw_items = [value]
+        elif isinstance(value, (list, tuple, set)):
+            raw_items = list(value)
+        else:
+            return []
+        return [str(item).strip() for item in raw_items if str(item).strip()]
+
+    def _derive_guidance(self, reminder: ReminderInstance) -> Dict[str, Any]:
+        """Build core-owned action guidance for a reminder instance."""
+        recommended_action = reminder.recommended_action
+        available_actions = list(reminder.available_actions)
+        suggested_tool = reminder.suggested_tool
+        blocker_codes = list(reminder.blocker_codes)
+
+        if not recommended_action:
+            if reminder.key.startswith("quality.") or reminder.category.startswith(("scaffold_", "frontmatter_", "release_", "stale_", "runtime_")):
+                recommended_action = "Run managed-doc diagnostics and clear the named blocker before claiming done."
+                suggested_tool = suggested_tool or "manage_docs"
+                available_actions = available_actions or ["manage_docs quality_check", "manage_docs quality_handoff_check"]
+            elif reminder.category == "logging":
+                recommended_action = "Record the current work state with a reasoning trace."
+                suggested_tool = suggested_tool or "append_entry"
+                available_actions = available_actions or ["append_entry"]
+            elif reminder.category == "docs":
+                recommended_action = "Update or verify the relevant managed planning document."
+                suggested_tool = suggested_tool or "manage_docs"
+                available_actions = available_actions or ["manage_docs quality_check", "manage_docs apply_patch", "manage_docs replace_section"]
+            elif reminder.category == "workflow":
+                recommended_action = "Follow the active Scribe planning workflow before advancing."
+                suggested_tool = suggested_tool or "manage_docs"
+                available_actions = available_actions or ["manage_docs", "read_recent"]
+            elif reminder.category == "teaching":
+                recommended_action = "Apply this Scribe usage guidance to the current tool call."
+                if reminder.key.startswith("teaching.manage_docs_"):
+                    suggested_tool = suggested_tool or "manage_docs"
+                    available_actions = available_actions or ["manage_docs"]
+            elif reminder.category == "context":
+                recommended_action = "Continue using the resolved project context for subsequent Scribe calls."
+                available_actions = available_actions or ["append_entry", "read_recent", "manage_docs"]
+
+        if reminder.key.startswith("quality.") and not blocker_codes:
+            blocker_codes = self._coerce_string_list(reminder.variables.get("blocker_codes"))
+
+        guidance: Dict[str, Any] = {}
+        if recommended_action:
+            guidance["recommended_action"] = recommended_action
+        if available_actions:
+            guidance["available_actions"] = available_actions
+        if suggested_tool:
+            guidance["suggested_tool"] = suggested_tool
+        if blocker_codes:
+            guidance["blocker_codes"] = blocker_codes
+        return guidance
+
     def to_dict_list(self, reminders: List[ReminderInstance]) -> List[Dict[str, Any]]:
         """Convert reminder instances to dictionary format for API response."""
         # Per-project tone (configure_reminders contract): each reminder carries
         # the project's configured tone in its variables (threaded via
         # ReminderContext); fall back to "neutral" when unset.
-        return [
-            {
-                "level": r.level,
-                "score": r.score,
-                "emoji": r.emoji,
-                "message": r.message,
-                "category": r.category,
-                "tone": str(r.variables.get("main_reminder_tone") or "neutral"),
-            } | ({"context": r.context} if r.context else {})
-            for r in reminders
-        ]
+        payload: List[Dict[str, Any]] = []
+        for reminder in reminders:
+            item: Dict[str, Any] = {
+                "key": reminder.key,
+                "level": reminder.level,
+                "score": reminder.score,
+                "emoji": reminder.emoji,
+                "message": reminder.message,
+                "category": reminder.category,
+                "tone": str(reminder.variables.get("main_reminder_tone") or "neutral"),
+                "source": reminder.source or f"core.{reminder.category}",
+            }
+            if reminder.context:
+                item["context"] = reminder.context
+            item.update(self._derive_guidance(reminder))
+            payload.append(item)
+        return payload

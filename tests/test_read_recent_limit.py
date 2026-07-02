@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 """Tests for read_recent EntryLimitManager integration."""
 
+from types import SimpleNamespace
+
 import pytest
+import scribe_mcp.tools.read_recent as read_recent_module
+from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.tools.read_recent import read_recent
+
+
+def _readable_text(result):
+    """Extract readable text from MCP CallToolResult or fallback dict output."""
+    if isinstance(result, dict):
+        return result.get("content", "")
+    return "\n".join(
+        block.text
+        for block in getattr(result, "content", [])
+        if getattr(block, "type", None) == "text"
+    )
 
 
 @pytest.mark.asyncio
@@ -117,6 +132,100 @@ async def test_readable_vs_structured_entry_preservation():
         for entry in structured_result["entries"]:
             assert isinstance(entry, dict)
             assert "message" in entry
+
+
+@pytest.mark.asyncio
+async def test_readable_compact_true_preserves_rendered_entry_fields(monkeypatch, tmp_path):
+    """compact=True must not compact entries before default readable rendering."""
+    project = {
+        "name": "compact-readable-test",
+        "root": str(tmp_path),
+        "progress_log": str(tmp_path / "PROGRESS_LOG.md"),
+    }
+    context = LoggingContext(
+        tool_name="read_recent",
+        project=project,
+        recent_projects=[],
+        state_snapshot={},
+        reminders=[],
+        resolution_source="test",
+    )
+
+    async def record_tool(_tool_name):
+        return {"tool": _tool_name}
+
+    async def prepare_context(**_kwargs):
+        return context
+
+    async def fake_read_tail(*_args, **_kwargs):
+        return [
+            "[ℹ️] [2026-01-03 14:30:00 UTC] [Agent: TestAgent] "
+            "[Project: compact-readable-test] Compact readable message"
+        ]
+
+    monkeypatch.setattr(
+        read_recent_module.server_module,
+        "state_manager",
+        SimpleNamespace(record_tool=record_tool),
+    )
+    monkeypatch.setattr(read_recent_module.server_module, "storage_backend", None)
+    monkeypatch.setattr(read_recent_module.server_module, "get_execution_context", lambda: None)
+    monkeypatch.setattr(read_recent_module._READ_RECENT_HELPER, "prepare_context", prepare_context)
+    monkeypatch.setattr(read_recent_module, "read_tail", fake_read_tail)
+
+    result = await read_recent(agent="test_agent", compact=True)
+    text = _readable_text(result)
+
+    assert "TestAgent" in text
+    assert "Compact readable message" in text
+    assert "14:30" in text
+
+
+@pytest.mark.asyncio
+async def test_compact_format_still_returns_compact_entry_keys(monkeypatch, tmp_path):
+    """format='compact' keeps compact entry behavior."""
+    project = {
+        "name": "compact-format-test",
+        "root": str(tmp_path),
+        "progress_log": str(tmp_path / "PROGRESS_LOG.md"),
+    }
+    context = LoggingContext(
+        tool_name="read_recent",
+        project=project,
+        recent_projects=[],
+        state_snapshot={},
+        reminders=[],
+        resolution_source="test",
+    )
+
+    async def record_tool(_tool_name):
+        return {"tool": _tool_name}
+
+    async def prepare_context(**_kwargs):
+        return context
+
+    async def fake_read_tail(*_args, **_kwargs):
+        return [
+            "[ℹ️] [2026-01-03 14:30:00 UTC] [Agent: TestAgent] "
+            "[Project: compact-format-test] Compact format message"
+        ]
+
+    monkeypatch.setattr(
+        read_recent_module.server_module,
+        "state_manager",
+        SimpleNamespace(record_tool=record_tool),
+    )
+    monkeypatch.setattr(read_recent_module.server_module, "storage_backend", None)
+    monkeypatch.setattr(read_recent_module.server_module, "get_execution_context", lambda: None)
+    monkeypatch.setattr(read_recent_module._READ_RECENT_HELPER, "prepare_context", prepare_context)
+    monkeypatch.setattr(read_recent_module, "read_tail", fake_read_tail)
+
+    result = await read_recent(agent="test_agent", compact=True, format="compact")
+
+    assert isinstance(result, dict)
+    assert result["entries"][0]["a"] == "TestAgent"
+    assert result["entries"][0]["m"] == "Compact format message"
+    assert "message" not in result["entries"][0]
 
 
 @pytest.mark.asyncio

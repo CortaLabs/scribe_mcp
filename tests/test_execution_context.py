@@ -616,7 +616,9 @@ async def test_execute_tool_call_boundary_reports_distinct_session_id_surfaces()
         router.reset(token)
 
     assert result == "codex"
-    assert observed["transport_session_id"] == "transport-req-1"
+    # Transport identity is actor-scoped: the connection id is namespaced by
+    # the calling agent so concurrent actors on one connection stay isolated.
+    assert observed["transport_session_id"] == "transport-req-1::actor=codex"
     assert observed["stable_session_id"] == "stable-session-42"
     assert observed["agent_session_id"] == "agent-session-77"
     assert observed["scoped_reuse_key"] == "/tmp:__prebinding__"
@@ -677,9 +679,11 @@ async def test_execute_tool_call_runtime_transport_overrides_compatibility_input
         router.reset(token)
 
     assert result["agent"] == "codex"
-    assert backend.lookup_order[0] == "runtime-transport-1"
-    assert result["session_id"] == "stable:runtime-transport-1"
-    assert result["transport_session_id"] == "runtime-transport-1"
+    # Runtime transport wins over all compatibility inputs; the id carries the
+    # actor scope so same-connection actors resolve distinct sessions.
+    assert backend.lookup_order[0] == "runtime-transport-1::actor=codex"
+    assert result["session_id"] == "stable:runtime-transport-1::actor=codex"
+    assert result["transport_session_id"] == "runtime-transport-1::actor=codex"
     assert result["transport_provenance"] == "verified"
 
 
@@ -867,7 +871,7 @@ async def test_execute_tool_call_accepts_dict_request_context_meta_transport_ses
     )
 
     assert result == "codex:project-a"
-    assert observed["transport_session_id"] == "dict-meta-transport"
+    assert observed["transport_session_id"] == "dict-meta-transport::actor=codex"
 
 
 @pytest.mark.asyncio

@@ -673,13 +673,8 @@ async def handle_special_document_creation(
                 prepared_metadata,
                 logger=logger,
             )
-        case_registry_warning = await _register_case_in_shared_registry(
-            storage_backend,
-            project=project,
-            target_path=target_path,
-            metadata=prepared_metadata,
-            doc_label=doc_label,
-        )
+        case_registry_warning: Optional[str] = None
+        doc_binding: Optional[Dict[str, object]] = None
 
         healed_metadata, _, _ = healing_shared.normalize_metadata_with_healing(prepared_metadata)
         log_meta = healed_metadata
@@ -722,6 +717,17 @@ async def handle_special_document_creation(
                 logger.warning("Failed to update index for %s: %s", doc_label, exc)
 
         registration_warning: Optional[str] = None
+        registration_status: Dict[str, Any] = {
+            "file_written": True,
+            "docs_json_registered": False,
+            "project_registry_updated": False,
+            "state_project_updated": False,
+            "case_registry_registered": doc_label not in {"bug_report", "security_report"},
+            "index_registered": index_path is None,
+            "index_refreshed": False,
+            "registration_keys": [],
+            "available_action": None,
+        }
         if project:
             try:
                 project_name = project.get("name")
@@ -740,7 +746,26 @@ async def handle_special_document_creation(
                     current_docs = dict(project.get("docs", {}) or {})
                     for key in registration_keys:
                         current_docs[key] = str(target_path)
+                    registration_status["registration_keys"] = registration_keys
                     project["docs"] = current_docs
+                    if doc_label in {"bug_report", "security_report"}:
+                        doc_binding = utils_shared.build_case_doc_binding_metadata(
+                            str(primary_doc_key or doc_name or target_path.stem),
+                            str(target_path),
+                            current_docs,
+                            primary_key=str(doc_name).strip() if doc_name else None,
+                        )
+                        prepared_metadata["doc_binding"] = doc_binding
+                        case_registry_warning = await _register_case_in_shared_registry(
+                            storage_backend,
+                            project=project,
+                            target_path=target_path,
+                            metadata=prepared_metadata,
+                            doc_label=doc_label,
+                        )
+                        registration_status["case_registry_registered"] = case_registry_warning is None
+                        if case_registry_warning:
+                            registration_status["case_registry_error"] = case_registry_warning
                     state_manager = getattr(server_module, "state_manager", None)
                     authoritative_scope = resolve_authoritative_write_scope(
                         context=execution_context,
@@ -749,13 +774,23 @@ async def handle_special_document_creation(
                     authoritative_session_id = authoritative_scope.get("authoritative_session_id")
                     if storage_backend:
                         docs_json = json.dumps(current_docs)
-                        await storage_backend.update_project_docs(
+                        update_result = await storage_backend.update_project_docs(
                             project_name,
                             docs_json,
                             repo_root=project.get("root"),
                         )
+                        registration_status["update_project_docs_result"] = update_result
+                        registration_status["docs_json_registered"] = bool(update_result)
+                        if update_result is False:
+                            registration_warning = (
+                                "Doc registration did not update docs_json: storage backend reported no matching "
+                                "project row. Available action: rerun set_project for this repo root, then retry "
+                                "manage_docs(action='create', metadata={...})."
+                            )
+                            registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
                     else:
                         registration_warning = "Doc registration used state-only fallback: storage backend unavailable."
+                        registration_status["available_action"] = "Configure or restore the Scribe storage backend, then retry manage_docs(action='create', metadata={...})."
                     if state_manager and hasattr(state_manager, "set_current_project"):
                         await state_manager.set_current_project(
                             project_name,
@@ -765,6 +800,7 @@ async def handle_special_document_creation(
                             resolved_scope=authoritative_scope.get("resolved_scope"),
                             mirror_global=False,
                         )
+                        registration_status["state_project_updated"] = True
                         if not authoritative_session_id:
                             message = (
                                 "Doc registration could not bind authoritative session; "
@@ -779,13 +815,17 @@ async def handle_special_document_creation(
                             before_hash=None,
                             after_hash=after_hash,
                         )
+                        registration_status["project_registry_updated"] = True
                     except Exception as reg_exc:
+                        registration_status["project_registry_updated"] = False
                         if registration_warning:
                             registration_warning += f"; Registry update failed: {reg_exc}"
                         else:
                             registration_warning = f"Registry update failed: {reg_exc}"
             except Exception as exc:
                 registration_warning = f"Doc registration failed: {exc}"
+                registration_status["error"] = str(exc)
+                registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
         if case_registry_warning:
             if registration_warning:
                 registration_warning += f"; {case_registry_warning}"
@@ -808,12 +848,25 @@ async def handle_special_document_creation(
 
                     current_docs[index_key] = str(index_path)
                     docs_json = json.dumps(current_docs)
-                    await storage_backend.update_project_docs(
+                    update_result = await storage_backend.update_project_docs(
                         project_name,
                         docs_json,
                         repo_root=project.get("root"),
                     )
+                    registration_status["index_update_project_docs_result"] = update_result
+                    registration_status["index_registered"] = bool(update_result)
+                    registration_status["index_refreshed"] = True
+                    if update_result is False:
+                        message = (
+                            "Index registration did not update docs_json: storage backend reported no matching "
+                            "project row. Available action: rerun set_project for this repo root, then retry "
+                            "manage_docs(action='create', metadata={...})."
+                        )
+                        registration_warning = f"{registration_warning}; {message}" if registration_warning else message
+                        registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
             except Exception as exc:
+                registration_status["index_registered"] = False
+                registration_status["index_error"] = str(exc)
                 if registration_warning:
                     registration_warning += f"; Index registration failed: {exc}"
                 else:
@@ -825,6 +878,7 @@ async def handle_special_document_creation(
             "document_type": doc_label,
             "doc_name": primary_doc_key or target_path.stem,
             "file_size": target_path.stat().st_size,
+            "registration_status": registration_status,
             "next_step_guidance": (
                 "create scaffolds the document. Next, use "
                 "manage_docs(action='replace_section', ...) to fill required sections."
@@ -836,6 +890,8 @@ async def handle_special_document_creation(
             success_payload["registration_warning"] = registration_warning
         if placement_warning:
             success_payload["placement_warning"] = placement_warning
+        if doc_binding:
+            success_payload.update(doc_binding)
 
         return helper.apply_context_payload(success_payload, context)
     except Exception as exc:

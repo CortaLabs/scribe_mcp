@@ -66,11 +66,14 @@ def _record(
     repo_root: str = "/tmp/repo",
     repo_id: str = "repo-1",
     category: str | None = None,
+    doc_binding: dict[str, object] | None = None,
     severity: str | None = None,
     status: str | None = "open",
     updated_seconds: int = 0,
 ) -> CaseRegistryRecord:
     metadata = {"category": category} if category else None
+    if doc_binding:
+        metadata = {**(metadata or {}), "doc_binding": doc_binding}
     now = datetime(2026, 4, 17, 12, 0, updated_seconds, tzinfo=timezone.utc)
     return CaseRegistryRecord(
         case_id=case_id,
@@ -129,6 +132,8 @@ def test_list_open_cases_filters_open_status_and_requested_fields(monkeypatch: p
         assert result["warnings"] == []
         assert isinstance(result["next_step"], str)
         assert [case["case_id"] for case in result["cases"]] == ["BUG-1"]
+        assert result["cases"][0]["case_closed"] is False
+        assert result["cases"][0]["doc_binding"]["canonical_doc_name"] == "BUG-1"
         assert result["filters"]["open_only"] is True
         backend.query_case_registry_records.assert_awaited_once()
 
@@ -160,6 +165,34 @@ def test_list_open_cases_uses_active_project_default(monkeypatch: pytest.MonkeyP
             limit=20,
             offset=0,
         )
+
+    asyncio.run(_run())
+
+
+def test_list_open_cases_fails_closed_without_active_repo_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _run() -> None:
+        backend = SimpleNamespace(
+            query_case_registry_records=AsyncMock(
+                return_value=[_record(case_id="BUG-OTHER-0001", project_name="other", repo_root="/tmp/other")]
+            )
+        )
+        fake_server = SimpleNamespace(
+            storage_backend=backend,
+            get_execution_context=lambda: None,
+        )
+        monkeypatch.setattr(list_open_cases_module, "server_module", fake_server)
+
+        result = await list_open_cases_module.list_open_cases(case_type="bug", limit=5)
+
+        assert result["ok"] is False
+        assert result["mode"] == "unknown"
+        assert result["cases"] == []
+        assert result["count"] == 0
+        assert result["filters"]["case_type"] == "bug"
+        assert result["filters"]["open_only"] is True
+        assert result["warnings"] == ["unable to resolve authoritative repo_root for case registry scope"]
+        assert result["next_step"] == "Bind Scribe to an active repo/project scope, then retry list_open_cases."
+        backend.query_case_registry_records.assert_not_awaited()
 
     asyncio.run(_run())
 
@@ -232,6 +265,47 @@ def test_list_open_cases_returns_normalized_failure_envelope(monkeypatch: pytest
         assert isinstance(result["warnings"], list) and result["warnings"]
         assert isinstance(result["next_step"], str) and result["next_step"]
         assert result["filters"]["case_type"] == "bug"
+
+    asyncio.run(_run())
+
+
+def test_list_open_cases_uses_doc_binding_metadata_for_open_records(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _run() -> None:
+        backend = SimpleNamespace(
+            query_case_registry_records=AsyncMock(
+                return_value=[
+                    _record(
+                        case_id="BUG-1",
+                        doc_binding={
+                            "canonical_doc_name": "BUG-1",
+                            "canonical_doc_path": ".scribe/docs/bugs/BUG-1/report.md",
+                            "aliases": [
+                                {
+                                    "alias": "BUG-1",
+                                    "alias_kind": "primary",
+                                    "doc_path": ".scribe/docs/bugs/BUG-1/report.md",
+                                }
+                            ],
+                        },
+                    )
+                ]
+            )
+        )
+        fake_server = SimpleNamespace(
+            storage_backend=backend,
+            get_execution_context=lambda: SimpleNamespace(
+                mode="project",
+                resolved_scope=SimpleNamespace(repo_root="/tmp/repo", project_name="integrate_bug_management_system_20260417"),
+            ),
+        )
+        monkeypatch.setattr(list_open_cases_module, "server_module", fake_server)
+
+        result = await list_open_cases_module.list_open_cases(case_type="bug", limit=5)
+
+        assert result["ok"] is True
+        assert result["cases"][0]["case_closed"] is False
+        assert result["cases"][0]["doc_binding"]["canonical_doc_name"] == "BUG-1"
+        assert result["cases"][0]["doc_binding"]["aliases"][0]["alias_kind"] == "primary"
 
     asyncio.run(_run())
 

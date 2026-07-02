@@ -19,6 +19,40 @@ _CREATE_DOC_TYPE_ACTIONS = {
 
 _SPECIAL_CREATE_ACTIONS = set(_CREATE_DOC_TYPE_ACTIONS.values())
 _SPECIAL_DOC_TYPES = {"research", "bug", "security", "review", "agent_card"}
+def _builtin_template_roots() -> list[Path]:
+    return [template_root(), template_root() / "documents"]
+
+
+def _builtin_template_options() -> list[str]:
+    options = set()
+    for root in _builtin_template_roots():
+        if root.exists():
+            options.update(path.stem for path in root.glob("*.md"))
+    return sorted(options)
+
+
+def _template_resolution_diagnostic(
+    *,
+    requested_template: str,
+    requested_doc_type: str,
+    resolved_doc_type: str,
+    config_source: Optional[str],
+) -> Dict[str, Any]:
+    return {
+        "failure_kind": "template_resolution",
+        "registration_attempted": False,
+        "requested_template": requested_template,
+        "requested_doc_type": requested_doc_type,
+        "resolved_doc_type": resolved_doc_type,
+        "config_source": config_source or "built_in",
+        "searched_template_roots": [str(root) for root in _builtin_template_roots()],
+        "available_templates": _builtin_template_options(),
+        "available_doc_types": ["custom", "spec", *sorted(_SPECIAL_DOC_TYPES)],
+        "recommended_action": (
+            "Use metadata.doc_type='custom' with content/body for a custom managed doc, "
+            "or configure doc_types.create_templates to one of available_templates."
+        ),
+    }
 
 
 def classify_create_doc_type(metadata: Optional[Dict[str, Any]]) -> str:
@@ -105,17 +139,25 @@ async def normalize_or_handle_create_action(
         if resolved_template:
             template_error = _validate_configured_template(resolved_template)
             if template_error:
+                template_resolution = _template_resolution_diagnostic(
+                    requested_template=resolved_template,
+                    requested_doc_type=requested_doc_type,
+                    resolved_doc_type=doc_type,
+                    config_source=config_source,
+                )
                 error = helper.error_response(
                     f"Invalid configured template for doc_type '{requested_doc_type}'.",
                     suggestion=(
-                        "Update repo config at doc_types.create_templates with a valid template name under "
-                        "templates/documents, or remove the mapping."
+                        "Template resolution failed before doc registration. Update repo config at "
+                        "doc_types.create_templates with a valid template name under templates/documents, "
+                        "or use metadata.doc_type='custom' with content/body."
                     ),
                 )
                 error["requested_doc_type"] = requested_doc_type
                 error["resolved_doc_type"] = doc_type
                 error["resolved_handler"] = "create_doc"
                 error["config_source"] = config_source or "built_in"
+                error["template_resolution"] = template_resolution
                 error.setdefault("warnings", []).append(template_error)
                 return action, error
 
@@ -135,6 +177,15 @@ async def normalize_or_handle_create_action(
             error["resolved_doc_type"] = doc_type
             error["resolved_handler"] = "unresolved"
             error["config_source"] = config_source or "built_in"
+            error["template_resolution"] = {
+                "failure_kind": "doc_type_registration",
+                "registration_attempted": False,
+                "available_doc_types": ["custom", "spec", *sorted(_SPECIAL_DOC_TYPES)],
+                "recommended_action": (
+                    "Use metadata.doc_type='custom' for a custom managed doc, or choose one "
+                    "of available_doc_types."
+                ),
+            }
             if config_warnings:
                 error["warnings"] = config_warnings
             return action, error

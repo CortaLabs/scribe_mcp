@@ -1,7 +1,7 @@
 # Release File Map
 
-Baseline date: **2026-06-18**
-Coverage: **v2.9.x public release line (current: 2.9.0)**
+Baseline date: **2026-06-29**
+Coverage: **v2.10.x public release line (current: 2.10.1)**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **v2.9.x public release line (current: 2.9.0)**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.9.0` and CLI scripts. The 2.9.0 line adds the read-only affected-row referential inventory preflight while keeping the 2.8.x host input-schema enrichment, lean plugin bundle, clean-checkout plugin sync, and clean-room install projection proof. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.10.1` and CLI scripts. The 2.10.1 line fixes readable `read_recent(compact=True)` rendering; adds internal `scribe_doctor` repo-local plugin diagnostics without widening trust; improves `manage_docs` registration/drift diagnostics; adds advisory reminder guidance fields; and accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input while carrying the 2.9.0 affected-row inventory preflight and 2.8.x host input-schema enrichment, lean plugin bundle, clean-checkout plugin sync, and clean-room install projection proof. Reminder hook/context injection remains security-blocked future work. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |

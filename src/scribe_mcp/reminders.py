@@ -368,8 +368,12 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
                 emoji="⚠️",
                 message=f"{current_phase}: {residue} readiness blocker(s) remain. Clear SCF_* blockers in active docs before claiming done.",
                 category=_cfg("scaffold_residue", "scaffold_residue"),
-                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_READINESS_BLOCKERS"]},
                 cooldown_minutes=default_cooldown,
+                recommended_action="Run quality_check on active managed docs and clear SCF_* readiness blockers before claiming done.",
+                available_actions=["manage_docs quality_check", "manage_docs quality_handoff_check"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_READINESS_BLOCKERS"],
             )
         )
     if release_changelog_missing > 0 and "SCF_CHANGELOG_CURRENT_VERSION_MISSING" not in suppressed:
@@ -384,8 +388,12 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
                     "then run preview_reconciliation/apply_global_changelog before release closeout."
                 ),
                 category=_cfg("release_changelog_coverage", "release_changelog_coverage"),
-                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_CHANGELOG_CURRENT_VERSION_MISSING"]},
                 cooldown_minutes=default_cooldown,
+                recommended_action="Add accepted CHANGELOG coverage for the active package version, then preview and apply global changelog reconciliation.",
+                available_actions=["manage_docs quality_check", "manage_docs preview_reconciliation", "manage_docs apply_global_changelog"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_CHANGELOG_CURRENT_VERSION_MISSING"],
             )
         )
     if mismatch > 0 and "SCF_FRONTMATTER_MISMATCH" not in suppressed:
@@ -396,8 +404,12 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
                 emoji="🧭",
                 message=f"{current_phase}: frontmatter/body readiness mismatch ({mismatch}). Re-run quality_check, then align frontmatter status with body state.",
                 category=_cfg("frontmatter_mismatch", "frontmatter_mismatch"),
-                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_FRONTMATTER_MISMATCH"]},
                 cooldown_minutes=default_cooldown,
+                recommended_action="Run quality_check and align managed-doc frontmatter lifecycle status with body readiness.",
+                available_actions=["manage_docs quality_check", "manage_docs frontmatter_update"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_FRONTMATTER_MISMATCH"],
             )
         )
     if stale > 0 and "SCF_INDEX_HYGIENE" not in suppressed:
@@ -408,8 +420,12 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
                 emoji="📚",
                 message=f"{current_phase}: research index hygiene signal ({stale}) in the active lane. Reconcile canonical research paths and refresh index references for this phase.",
                 category=_cfg("stale_research_index", "stale_research_index"),
-                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_INDEX_HYGIENE"]},
                 cooldown_minutes=default_cooldown,
+                recommended_action="Reconcile the research index against canonical research files before handoff.",
+                available_actions=["manage_docs quality_check", "manage_docs validate_crosslinks"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_INDEX_HYGIENE"],
             )
         )
     if runtime_budget_status in {"near_budget", "over_budget"} and "RUNTIME_EFFICIENCY_BUDGET" not in suppressed:
@@ -420,8 +436,12 @@ async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderC
                 emoji="⏱️",
                 message=f"Runtime-efficiency budget status is `{runtime_budget_status}` (runtime-efficiency-budget.v1). Use project_health/log_intelligence timing guidance before widening scope.",
                 category=_cfg("runtime_efficiency_budget", "runtime_efficiency_budget"),
-                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or ""},
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["RUNTIME_EFFICIENCY_BUDGET"]},
                 cooldown_minutes=default_cooldown,
+                recommended_action="Inspect project health and timing guidance before widening scope.",
+                available_actions=["manage_docs project_health"],
+                suggested_tool="manage_docs",
+                blocker_codes=["RUNTIME_EFFICIENCY_BUDGET"],
             )
         )
 

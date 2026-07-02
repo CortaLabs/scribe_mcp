@@ -6,10 +6,18 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 from pathlib import Path
 
 from scribe_mcp import server as server_module
+from scribe_mcp.case_lifecycle import (
+    CanonicalDocBinding,
+    build_canonical_doc_binding,
+    build_link_fix_lifecycle_result,
+    doc_binding_from_metadata,
+    doc_binding_to_metadata,
+)
 from scribe_mcp.doc_management import utils as doc_utils
 from scribe_mcp.shared.reference_resolution import build_reference_scope, resolve_reference
 from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
@@ -891,10 +899,11 @@ async def _register_case_registry_fix_link(
     normalized_execution_ref: Optional[dict[str, Any]] = None,
     normalized_artifact_ref: Optional[dict[str, Any]] = None,
     landing_status: str,
-) -> tuple[bool, Optional[str]]:
+    doc_binding: CanonicalDocBinding | None = None,
+) -> tuple[bool, Optional[str], Any | None]:
     backend = getattr(server_module, "storage_backend", None)
     if backend is None or not hasattr(backend, "upsert_case_registry_record"):
-        return False, "shared case registry backend is unavailable"
+        return False, "shared case registry backend is unavailable", None
 
     execution_meta = {
         "execution_id": getattr(context, "execution_id", None),
@@ -909,24 +918,124 @@ async def _register_case_registry_fix_link(
     # open (close_status is None).
     close_status = doc_utils.resolved_case_close_status(landing_status)
     closes_case = close_status is not None
+    metadata_overrides: dict[str, Any] = {
+        "execution_provenance": execution_meta,
+        "fix_link": {
+            "execution_id": execution_id,
+            "artifact_ref": artifact_ref,
+            "execution_ref": normalized_execution_ref or {"value": execution_id},
+            "artifact_ref_meta": normalized_artifact_ref or {"value": artifact_ref},
+            "landing_status": landing_status,
+        },
+    }
+    if doc_binding is not None:
+        metadata_overrides["doc_binding"] = doc_binding_to_metadata(doc_binding)
+
     upsert_kwargs = doc_utils.build_case_registry_upsert_kwargs(
         existing_record=case_record,
         overrides={"case_id": case_id, "status": close_status},
-        metadata_overrides={
-            "execution_provenance": execution_meta,
-            "fix_link": {
-                "execution_id": execution_id,
-                "artifact_ref": artifact_ref,
-                "execution_ref": normalized_execution_ref or {"value": execution_id},
-                "artifact_ref_meta": normalized_artifact_ref or {"value": artifact_ref},
-                "landing_status": landing_status,
-            },
-        },
+        metadata_overrides=metadata_overrides,
     )
     if upsert_kwargs is None:
-        return False, "unable to build case registry payload for fix link update"
-    await backend.upsert_case_registry_record(**upsert_kwargs)
-    return True, None
+        return False, "unable to build case registry payload for fix link update", None
+    upserted_record = await backend.upsert_case_registry_record(**upsert_kwargs)
+    return True, None, upserted_record
+
+
+async def _fetch_case_registry_record_after_fix(
+    *,
+    context: Any,
+    case_id: str,
+) -> Any | None:
+    backend = getattr(server_module, "storage_backend", None)
+    if backend is None or not hasattr(backend, "fetch_case_registry_record"):
+        return None
+    active_repo_root, _, _ = _active_repo_project_authority(context)
+    active_project_name = getattr(getattr(context, "resolved_scope", None), "project_name", None)
+    try:
+        return await backend.fetch_case_registry_record(
+            case_id=case_id,
+            repo_root=active_repo_root,
+            project_name=active_project_name,
+        )
+    except Exception:
+        return None
+
+
+def _doc_binding_for_case_record(case_record: Any, *, case_id: str) -> CanonicalDocBinding | None:
+    metadata = getattr(case_record, "metadata", None)
+    doc_path = str(getattr(case_record, "doc_path", "") or "")
+    binding = doc_binding_from_metadata(
+        metadata if isinstance(metadata, dict) else None,
+        fallback_case_id=case_id,
+        fallback_doc_path=doc_path or None,
+    )
+    if binding is not None:
+        return binding
+    if not doc_path:
+        return None
+    return build_canonical_doc_binding(
+        case_id,
+        doc_path,
+        {},
+        preferred_doc_name=str(getattr(case_record, "doc_name", "") or case_id),
+    )
+
+
+def _apply_lifecycle_readback(
+    response: dict[str, Any],
+    lifecycle: Any,
+    *,
+    preserve_next_step: bool = False,
+) -> None:
+    lifecycle_dict = lifecycle.to_dict()
+    response["lifecycle"] = dict(lifecycle_dict)
+    for field in (
+        "fix_link_recorded",
+        "case_closed",
+        "registry_status_before",
+        "registry_status_after",
+        "landing_status_terminal",
+        "closure_reason",
+        "doc_binding",
+        "last_fix_link",
+    ):
+        response[field] = lifecycle_dict[field]
+    if preserve_next_step:
+        return
+    next_step = str(lifecycle_dict.get("next_step") or "")
+    if lifecycle.case_closed:
+        response["next_step"] = "No follow-up required."
+        return
+    if lifecycle.fix_link_recorded:
+        next_step = (
+            f"{next_step} The fix link was recorded, but the case remains open; "
+            "use a terminal landing_status such as merged or resolved when closure is ready."
+        )
+        response["lifecycle"]["next_step"] = next_step
+    response["next_step"] = next_step
+
+
+def _case_record_for_lifecycle(case_record: Any, *, fallback_status: str | None = None) -> Any:
+    if hasattr(case_record, "status"):
+        return case_record
+    return SimpleNamespace(
+        case_id=str(getattr(case_record, "case_id", "") or ""),
+        case_type=str(getattr(case_record, "case_type", "") or ""),
+        status=fallback_status,
+        metadata=getattr(case_record, "metadata", None),
+    )
+
+
+def _landing_status_for_lifecycle(landing_status: str, current_status: str | None) -> str:
+    normalized = doc_utils.normalize_case_status(landing_status)
+    allowed_values = doc_utils.CASE_OPEN_STATUS_VALUES | doc_utils.CASE_CLOSED_STATUS_VALUES
+    if normalized in allowed_values:
+        return landing_status
+    normalized_current = doc_utils.normalize_case_status(current_status)
+    if normalized_current in doc_utils.CASE_OPEN_STATUS_VALUES:
+        return normalized_current
+    return "open"
 
 
 async def _load_and_authorize_case_registry_record(
@@ -1691,6 +1800,7 @@ async def link_fix(
             gate_response["case_event"] = {"event": "fix_link_blocked_incomplete"}
             return gate_response
 
+        doc_binding = _doc_binding_for_case_record(case_record, case_id=case_id)
         resolved_execution_value = str((resolved_execution or {}).get("value") or execution_id)
         message = f"[FIX LINKED] {case_id}: {artifact_ref} ({landing_status})"
         meta = {
@@ -1729,7 +1839,7 @@ async def link_fix(
                 error=message,
             )
 
-        registry_ok, registry_error = await _register_case_registry_fix_link(
+        registry_ok, registry_error, upserted_case_record = await _register_case_registry_fix_link(
             case_record=case_record,
             context=context,
             case_id=case_id,
@@ -1738,6 +1848,7 @@ async def link_fix(
             normalized_execution_ref=resolved_execution,
             normalized_artifact_ref=normalized_artifact_ref,
             landing_status=landing_status,
+            doc_binding=doc_binding,
         )
         if not registry_ok:
             message = f"Case registry fix-link update failed: {registry_error}"
@@ -1749,6 +1860,12 @@ async def link_fix(
                 next_step="Ensure case registry backend is available and retry link_fix.",
                 error=message,
             )
+        fetched_case_record_after = await _fetch_case_registry_record_after_fix(context=context, case_id=case_id)
+        case_record_after = (
+            fetched_case_record_after
+            if fetched_case_record_after is not None and hasattr(fetched_case_record_after, "status")
+            else upserted_case_record
+        )
 
         # Update the bug/security report document with fix reference information.
         # The case_id was registered in project["docs"] when open_bug/open_security was called.
@@ -1843,6 +1960,28 @@ async def link_fix(
             "doc_type": str(getattr(case_record, "doc_type", "") or ""),
             "project_name": str(getattr(case_record, "project_name", "") or ""),
         }
+        lifecycle_record_before = _case_record_for_lifecycle(case_record)
+        lifecycle_record_after = (
+            _case_record_for_lifecycle(
+                case_record_after,
+                fallback_status=getattr(lifecycle_record_before, "status", None),
+            )
+            if case_record_after is not None
+            else None
+        )
+        lifecycle_landing_status = _landing_status_for_lifecycle(
+            landing_status,
+            getattr(lifecycle_record_before, "status", None),
+        )
+        lifecycle = build_link_fix_lifecycle_result(
+            case_record_before=lifecycle_record_before,
+            case_record_after=lifecycle_record_after,
+            landing_status=lifecycle_landing_status,
+            fix_link_recorded=True,
+            doc_binding=doc_binding,
+            doc_update_warning=doc_update_warning,
+        )
+        _apply_lifecycle_readback(response, lifecycle)
         report_event_name = "report_body_updated"
         if doc_update_warning:
             report_event_name = "fix_link_partial"
@@ -1854,10 +1993,10 @@ async def link_fix(
             response["next_step"] = (
                 f"Fix report updates for {case_id} via manage_docs replace_section (appendix/resolution_plan)."
             )
+            _apply_lifecycle_readback(response, lifecycle, preserve_next_step=True)
         else:
             response["case_event"] = {"event": report_event_name}
             response["meta"] = {**response.get("meta", {}), "case_event": report_event_name}
-            response["next_step"] = "No follow-up required."
         await append_entry_tool(
             message=f"[CASE REPORT EVENT] {case_id}: {report_event_name}",
             status="info",
