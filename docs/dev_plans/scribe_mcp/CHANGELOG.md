@@ -10,6 +10,17 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Per-actor current-project pointer: multi-project same-repo conflict fix (2.12.0)
+- `entry_id`: 20260710:per-actor-global-project-pointer-2-12-0
+- `entry_status`: accepted
+- `title`: Per-actor current-project pointer eliminates multi-project same-repo binding conflicts (2.12.0)
+- `summary`: Bumped the public release line to `2.12.0`, a backward-compatible minor release on top of `2.11.0`. Fixes the surviving cross-PROJECT conflict after the `2.11.0` cross-actor session fix (BUG-2026-07-10-0002): the repo-wide "active project" pointer was a single shared `agent_projects["Scribe"]` row that every `set_project` overwrote, so concurrent agent lanes in one repo clobbered each other's current-project pointer (last-writer-wins) and a no-session status/HUD read by one lane surfaced another lane's project. The global mirror is now scoped per calling actor: `StateManager._set_global_project` writes a per-actor pointer row (keyed by the actor recovered from the actor-scoped transport id `<conn>::actor=<agent>`) alongside a legacy shared row kept only as a single-actor/actor-less fallback, and `_resolve_current_project` resolves the calling actor's own pointer first, falling back to the shared row only when no actor is resolvable. An identified actor with no binding resolves to nothing instead of inheriting a foreign lane's project. Per-actor session binding, explicit `project=` override authority, wrong-project BLOCK/reminders, and single-actor flows are unchanged. No schema migration; the running daemon serves old behavior until restart.
+- `evidence_refs`:
+  - src/scribe_mcp/state/manager.py
+  - tests/shared/test_multi_project_global_pointer_isolation.py
+  - docs/bugs/logic/2026-07-10_BUG-2026-07-10-0002/report.md
+  - pyproject.toml
+
 ## read_recent compact rendering, managed-doc usability, reminders, and internal plugin diagnostics (2.10.1)
 - `entry_id`: 20260629:read-recent-compact-plugin-diagnostics-2-10-1
 - `entry_status`: accepted
