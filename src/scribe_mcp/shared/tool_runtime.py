@@ -827,8 +827,28 @@ async def execute_tool_call(
                     has_runtime_transport_identity
                     or str(context_payload.get("transport_session_id") or "").startswith("process:")
                 ):
-                    context_payload["repo_root"] = existing_repo_root
-                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
+                    # The stored session root is a fallback for requests that
+                    # carry no root of their own — never an override. It must
+                    # not clobber a root the request already verified, and on
+                    # a set_project rebind to a DIFFERENT root the explicit
+                    # root must win: a stale stored root would otherwise wedge
+                    # the session against a repo the caller has explicitly
+                    # left, making every subsequent project lookup miss. A
+                    # same-root set_project still adopts (keeps the
+                    # verified-binding authority path for re-binds).
+                    current_repo_root = context_payload.get("repo_root")
+                    current_repo_root_scope = (
+                        (context_payload.get("scope_provenance") or {}).get("repo_root")
+                        if isinstance(context_payload.get("scope_provenance"), dict)
+                        else None
+                    )
+                    stored_root_applies = not current_repo_root or (
+                        current_repo_root_scope != "verified"
+                        and (name != "set_project" or existing_repo_root == current_repo_root)
+                    )
+                    if stored_root_applies:
+                        context_payload["repo_root"] = existing_repo_root
+                        _set_scope_provenance(context_payload, field="repo_root", label="verified")
         if not context_payload.get("session_id"):
             session_id = await router_context_manager.get_or_create_session_id(
                 context_payload["transport_session_id"]
@@ -863,6 +883,11 @@ async def execute_tool_call(
                     str(explicit_project),
                     repo_root=str(lookup_root),
                 )
+                if not project_record:
+                    # The caller named the project explicitly; a stale or
+                    # mismatched context root must not report it missing.
+                    # The unscoped lookup fails closed on ambiguous names.
+                    project_record = await storage_backend.fetch_project(str(explicit_project))
             else:
                 project_record = await storage_backend.fetch_project(str(explicit_project))
             if project_record:
@@ -889,6 +914,10 @@ async def execute_tool_call(
                         str(project_name),
                         repo_root=str(lookup_root),
                     )
+                    if not project_record:
+                        # The session binding was set explicitly via
+                        # set_project; a stale context root must not orphan it.
+                        project_record = await storage_backend.fetch_project(str(project_name))
                 else:
                     project_record = await storage_backend.fetch_project(str(project_name))
                 if project_record:
@@ -961,11 +990,26 @@ async def execute_tool_call(
         context_payload["intent"] = f"tool:{name}"
 
     if storage_backend and hasattr(storage_backend, "upsert_session"):
+        # Only a VERIFIED repo root may be persisted as the session's stored
+        # root. Diagnostic fallbacks (the server's own install root) and
+        # claimed call-argument roots are request-local; persisting them lets
+        # a later request adopt them as verified session scope (provenance
+        # laundering), which wedges every project lookup for the session
+        # against the wrong repo. set_project persists the root it verified
+        # through its own authority checks.
+        persisted_repo_root = context_payload.get("repo_root")
+        persisted_root_scope = (
+            (context_payload.get("scope_provenance") or {}).get("repo_root")
+            if isinstance(context_payload.get("scope_provenance"), dict)
+            else None
+        )
+        if persisted_root_scope != "verified":
+            persisted_repo_root = None
         try:
             await storage_backend.upsert_session(
                 session_id=context_payload.get("session_id"),
                 transport_session_id=context_payload.get("transport_session_id"),
-                repo_root=context_payload.get("repo_root"),
+                repo_root=persisted_repo_root,
                 mode=context_payload.get("mode"),
             )
         except Exception as exc:
