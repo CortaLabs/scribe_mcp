@@ -1369,6 +1369,18 @@ async def set_project(
                 session_key,
                 name,
             )
+            if hasattr(backend, "upsert_session"):
+                # set_project is the authority that verified this root; persist
+                # it as the session's stored root so later requests adopt the
+                # binding's repo scope. This also heals sessions whose stored
+                # root was poisoned by a pre-binding fallback root — without
+                # this write, a wedged session stays wedged no matter how many
+                # times the caller re-runs set_project.
+                await backend.upsert_session(
+                    session_id=session_key,
+                    repo_root=str(resolved_root),
+                    mode="project",
+                )
             if _SESSION_DEBUG_ENABLED:
                 logger.debug(
                     "set_project authoritative session binding | session_key=%s project=%s stable_session_id=%s context_session_id=%s",

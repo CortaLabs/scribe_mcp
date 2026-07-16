@@ -246,6 +246,14 @@ async def resolve_logging_context(
                                     project_name,
                                     repo_root=execution_repo_root,
                                 )
+                                if not record:
+                                    # The session's bound project may live in a
+                                    # different repo than this request's root
+                                    # (or the stored root is stale). The binding
+                                    # was set explicitly by set_project — resolve
+                                    # it by unique name (fails closed on
+                                    # ambiguity) before the JSON-config fallback.
+                                    record = await backend.fetch_project(project_name)
                             else:
                                 record = await backend.fetch_project(project_name)
                         if record:
@@ -350,6 +358,14 @@ async def resolve_logging_context(
                             candidate,
                             repo_root=execution_repo_root,
                         )
+                        if not record:
+                            # An explicitly named project that exists in another
+                            # repo (or whose row root differs from this request's
+                            # root) must resolve rather than be reported missing.
+                            # The unscoped lookup fails closed on ambiguous names,
+                            # and the authorization checks below still compare the
+                            # record's own root against the session's authority.
+                            record = await backend.fetch_project(candidate)
                     else:
                         record = await backend.fetch_project(candidate)
                 except Exception:
