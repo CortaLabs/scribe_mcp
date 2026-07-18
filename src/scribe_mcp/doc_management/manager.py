@@ -446,14 +446,17 @@ async def apply_doc_change(
             if action == "replace_section":
                 assert rendered_content is not None
                 allow_append = False
+                preserve_authored = False
                 if isinstance(metadata, dict):
                     allow_append = bool(metadata.get("allow_append") or metadata.get("scaffold"))
+                    preserve_authored = bool(metadata.get("preserve_authored"))
                 replace_section_info: Dict[str, Any] = {}
                 updated_body = _replace_section(
                     original_body,
                     section,
                     rendered_content,
                     allow_append=allow_append,
+                    preserve_authored=preserve_authored,
                     info=replace_section_info,
                 )
                 replace_section_info["hint"] = (
@@ -1511,36 +1514,122 @@ def _pull_back_trailing_separator(
     return lower_bound + keep_from, True
 
 
+def _line_start_at(text: str, index: int) -> int:
+    line_start = text.rfind("\n", 0, index)
+    return 0 if line_start == -1 else line_start + 1
+
+
+def _associated_heading_start(text: str, marker_index: int) -> Optional[int]:
+    """Line-start offset of the markdown heading directly above a section anchor.
+
+    A section's heading (``## Title``) lives on the line above its
+    ``<!-- ID: ... -->`` anchor, so a section boundary is drawn at that heading
+    rather than the bare anchor. Returns ``None`` when the anchor has no
+    adjacent heading.
+    """
+    marker_line_start = _line_start_at(text, marker_index)
+    cursor = marker_line_start - 1
+    while cursor >= 0:
+        line_end = cursor + 1
+        prev_newline = text.rfind("\n", 0, line_end - 1)
+        line_start = 0 if prev_newline == -1 else prev_newline + 1
+        line = text[line_start:line_end]
+        stripped = line.strip()
+        if not stripped:
+            cursor = line_start - 1
+            continue
+        if _HEADER_LINE_PATTERN.match(stripped):
+            return line_start
+        return None
+    return None
+
+
+def _section_body_span(text: str, section: Optional[str]) -> Optional[tuple[int, int]]:
+    """Return the ``(start, end)`` offsets of a section's editable body.
+
+    The span matches exactly the region ``_replace_section`` overwrites: from
+    just after the section's ``<!-- ID: ... -->`` anchor to the start of the
+    next section's heading, with any trailing horizontal-rule separator pulled
+    back so it is not consumed. Returns ``None`` when the anchor is missing or
+    appears more than once (no single unambiguous body).
+    """
+    marker = SECTION_MARKER.format(section=section)
+    idx = text.find(marker)
+    if idx == -1 or text.find(marker, idx + 1) != -1:
+        return None
+    start = idx + len(marker)
+    if start < len(text) and text[start] == "\r":
+        start += 1
+    if start < len(text) and text[start] == "\n":
+        start += 1
+    next_marker = text.find("<!-- ID:", start)
+    section_end = len(text)
+    if next_marker != -1:
+        next_heading_start = _associated_heading_start(text, next_marker)
+        section_end = (
+            next_heading_start if next_heading_start is not None else next_marker
+        )
+    section_end, _ = _pull_back_trailing_separator(text, start, section_end)
+    return start, section_end
+
+
+def _extract_section_body(text: str, section: Optional[str]) -> Optional[str]:
+    """Current body text of a section, or ``None`` when the anchor is missing/ambiguous."""
+    span = _section_body_span(text, section)
+    if span is None:
+        return None
+    return text[span[0] : span[1]]
+
+
+def _section_body_has_authored_content(body: str) -> bool:
+    """True when a section body holds authored content, not just scaffold structure.
+
+    Blank lines, markdown headings (``##``/``###`` subsection titles), and
+    horizontal-rule separators are structural; anything else — including
+    unfilled template placeholders — is treated as content to preserve rather
+    than overwrite. This deliberately biases toward preservation: a genuinely
+    empty section (structure only) may be filled, but anything a caller might
+    have authored is kept.
+    """
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _HEADER_LINE_PATTERN.match(stripped):
+            continue
+        if re.match(r"^-{3,}\s*$", stripped):
+            continue
+        return True
+    return False
+
+
 def _replace_section(
     text: str,
     section: Optional[str],
     content: str,
     *,
     allow_append: bool = False,
+    preserve_authored: bool = False,
     info: Optional[Dict[str, Any]] = None,
 ) -> str:
     marker = SECTION_MARKER.format(section=section)
 
-    def _line_start_at(index: int) -> int:
-        line_start = text.rfind("\n", 0, index)
-        return 0 if line_start == -1 else line_start + 1
-
-    def _associated_heading_start(marker_index: int) -> Optional[int]:
-        marker_line_start = _line_start_at(marker_index)
-        cursor = marker_line_start - 1
-        while cursor >= 0:
-            line_end = cursor + 1
-            prev_newline = text.rfind("\n", 0, line_end - 1)
-            line_start = 0 if prev_newline == -1 else prev_newline + 1
-            line = text[line_start:line_end]
-            stripped = line.strip()
-            if not stripped:
-                cursor = line_start - 1
-                continue
-            if _HEADER_LINE_PATTERN.match(stripped):
-                return line_start
-            return None
-        return None
+    # Additive mode: when the caller opts in via ``preserve_authored`` and the
+    # target section already holds authored content, append the new block to
+    # that content instead of overwriting it. Filling a genuinely-empty section
+    # (structure only) still replaces as normal. This is what makes fix-linking
+    # non-destructive to a report's authored prose/evidence.
+    if preserve_authored and content.strip():
+        existing_body = _extract_section_body(text, section)
+        if existing_body is not None and _section_body_has_authored_content(
+            existing_body
+        ):
+            if content.strip() in existing_body:
+                content = existing_body
+            else:
+                content = existing_body.rstrip() + "\n\n" + content.strip()
+            if info is not None:
+                info["preserved_authored_content"] = True
 
     replacement_heading_prefix: Optional[str] = None
 
@@ -1604,7 +1693,7 @@ def _replace_section(
         )
     section_start = idx
     if replacement_heading_prefix:
-        heading_start = _associated_heading_start(idx)
+        heading_start = _associated_heading_start(text, idx)
         if heading_start is not None:
             section_start = heading_start
 
@@ -1615,7 +1704,7 @@ def _replace_section(
     if replacement_heading_prefix is None:
         content_lines = content.lstrip().splitlines()
         if content_lines and _HEADER_LINE_PATTERN.match(content_lines[0].strip()):
-            heading_start = _associated_heading_start(idx)
+            heading_start = _associated_heading_start(text, idx)
             if heading_start is not None:
                 heading_line_end = text.find("\n", heading_start)
                 if heading_line_end == -1:
@@ -1635,7 +1724,7 @@ def _replace_section(
     next_marker = text.find("<!-- ID:", start)
     section_end = len(text)
     if next_marker != -1:
-        next_heading_start = _associated_heading_start(next_marker)
+        next_heading_start = _associated_heading_start(text, next_marker)
         section_end = next_heading_start if next_heading_start is not None else next_marker
 
     section_end, preserved_separator = _pull_back_trailing_separator(text, start, section_end)

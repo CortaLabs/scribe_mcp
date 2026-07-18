@@ -1884,6 +1884,7 @@ async def link_fix(
                 doc_name=report_doc_name,
                 section="appendix",
                 content=appendix_content,
+                metadata={"preserve_authored": True},
             )
             if not isinstance(appendix_result, dict) or not appendix_result.get("ok"):
                 doc_update_warning = (
@@ -1899,7 +1900,7 @@ async def link_fix(
             else:
                 # Update the resolution_plan section with landing status
                 resolution_content = (
-                    f"### Immediate Actions\n"
+                    f"### Fix Landed\n"
                     f"Fix landed with status: **{landing_status}**\n\n"
                     f"### Fix Details\n"
                     f"- Artifact: {artifact_ref}\n"
@@ -1911,6 +1912,7 @@ async def link_fix(
                     doc_name=report_doc_name,
                     section="resolution_plan",
                     content=resolution_content,
+                    metadata={"preserve_authored": True},
                 )
                 if not isinstance(resolution_result, dict) or not resolution_result.get("ok"):
                     doc_update_warning = (
