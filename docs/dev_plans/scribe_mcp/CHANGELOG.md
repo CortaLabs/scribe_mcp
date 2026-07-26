@@ -20,7 +20,6 @@ Use one section per curated project outcome.
   - src/scribe_mcp/__main__.py
   - src/scribe_mcp/tools/append_entry.py
   - tests/core/test_append_entry_content_validation.py
-  - pytest.ini
 - `observed_context`:
   - `source`: pyproject
   - `value`: 2.11.1
