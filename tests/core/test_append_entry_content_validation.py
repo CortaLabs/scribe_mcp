@@ -8,7 +8,6 @@ import scribe_mcp.tools.append_entry as append_entry_tool
 
 
 @pytest.mark.asyncio
-@pytest.mark.regression
 @pytest.mark.parametrize(
     ("content_kwargs", "unexpected_parameters"),
     [
