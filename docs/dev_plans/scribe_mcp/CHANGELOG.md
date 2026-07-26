@@ -10,6 +10,20 @@ Use one section per curated project outcome.
 - `evidence_refs`:
   - <path-or-proof-reference>
 
+## Reject hollow append_entry payloads before writes (2.11.1)
+- `entry_id`: 20260726:append-entry-required-message-2-11-1
+- `entry_status`: accepted
+- `title`: Reject hollow append_entry payloads before writes (2.11.1)
+- `summary`: Bumped the public release line to `2.11.1`, a backward-compatible patch on top of `2.11.0`. `append_entry` now rejects omitted, whitespace-only, and misnamed single-entry content with a structured `APPEND_ENTRY_CONTENT_REQUIRED` error before project resolution or any file, database, state, or activity mutation. Valid single-entry, config, and bulk modes remain supported.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/tools/append_entry.py
+  - tests/core/test_append_entry_content_validation.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.11.1
+
 ## read_recent compact rendering, managed-doc usability, reminders, and internal plugin diagnostics (2.10.1)
 - `entry_id`: 20260629:read-recent-compact-plugin-diagnostics-2-10-1
 - `entry_status`: accepted
