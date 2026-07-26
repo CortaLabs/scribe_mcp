@@ -1,0 +1,338 @@
+# Project Changelog
+
+Use one section per curated project outcome.
+
+## Entry Template
+- `entry_id`: <yyyymmdd>:<slug>
+- `entry_status`: draft|accepted|superseded
+- `title`: <one concise outcome title>
+- `summary`: <short human-readable outcome summary>
+- `evidence_refs`:
+  - <path-or-proof-reference>
+
+## Reject hollow append_entry payloads before writes (2.11.1)
+- `entry_id`: 20260726:append-entry-required-message-2-11-1
+- `entry_status`: accepted
+- `title`: Reject hollow append_entry payloads before writes (2.11.1)
+- `summary`: Bumped the public release line to `2.11.1`, a backward-compatible patch on top of `2.11.0`. `append_entry` now rejects omitted, whitespace-only, and misnamed single-entry content with a structured `APPEND_ENTRY_CONTENT_REQUIRED` error before project resolution or any file, database, state, or activity mutation. Valid single-entry, config, and bulk modes remain supported.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/tools/append_entry.py
+  - tests/core/test_append_entry_content_validation.py
+  - pytest.ini
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.11.1
+
+## read_recent compact rendering, managed-doc usability, reminders, and internal plugin diagnostics (2.10.1)
+- `entry_id`: 20260629:read-recent-compact-plugin-diagnostics-2-10-1
+- `entry_status`: accepted
+- `title`: read_recent compact rendering, managed-doc usability, reminders, and internal plugin diagnostics (2.10.1)
+- `summary`: Bumped the public release line to `2.10.1`, a backward-compatible patch on top of `2.10.0`. This release fixes `read_recent(compact=True)` in default readable output so the human-readable renderer keeps full entry fields instead of receiving compacted entry payloads. It also ships managed-doc usability and diagnostics improvements: `manage_docs` now reports registration status and drift diagnostics for special docs/bug logs plus docs_json, state, index, and project registry surfaces; reminder-enabled tools expose advisory `recommended_action`, `available_actions`, `suggested_tool`, `blocker_codes`, `source`, and top-level `reminder_guidance`; and `manage_docs(apply_patch)` accepts bounded Codex-style `*** Begin Patch` / single `*** Update File` patches for one selected managed doc while rejecting add/delete, multi-doc, and target-mismatch input with guidance. Repo-local plugin usability remains internal diagnostics/probe-only: `.scribe/plugins` loaders require explicit trusted local opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus runtime restart/reinitialization, with no automatic trust widening and no production default enablement. Hook/context injection for reminders remains security-blocked future work. No public API, CLI, protocol, schema, or data contract is broken.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+   - src/scribe_mcp/tools/read_recent.py
+   - src/scribe_mcp/tools/doctor.py
+   - src/scribe_mcp/tools/manage_docs.py
+   - src/scribe_mcp/tools/reminder_tools.py
+   - src/scribe_mcp/plugins/registry.py
+   - tests/test_read_recent_limit.py
+   - tests/test_entry_formatter.py
+   - tests/test_manage_docs_reminders.py
+   - tests/test_reminder_tools.py
+   - tests/test_reminder_time_variables.py
+   - tests/test_manage_docs_patch_range.py
+   - tests/test_manage_docs_cli.py
+   - tests/test_doctor_telemetry.py
+   - tests/test_repo_plugin_probe_script.py
+   - docs/COMPATIBILITY_MATRIX.md
+  - docs/RELEASE_FILE_MAP.md
+  - docs/INSTALL_AND_BOOTSTRAP.md
+  - docs/TOUR.md
+  - docs/Scribe_Usage.md
+  - README.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.10.1
+
+## Affected-row referential inventory preflight (2.9.0)
+- `entry_id`: 20260618:affected-row-referential-inventory-2-9-0
+- `entry_status`: accepted
+- `title`: Affected-row referential inventory preflight (2.9.0)
+- `summary`: Bumped the public release line to `2.9.0`, a backward-compatible minor release over the 2.8.x baseline. The release adds a read-only affected-row referential inventory primitive for governed project-row repair planning. It is exposed as MCP tool `scribe_affected_row_referential_inventory_readonly_public_safe` and CLI command `scribe affected-row-inventory preflight --dry-run`; both surfaces emit only public-safe labels, booleans, and aggregate buckets, fail closed on unproven target binding, ambiguous selected context, incomplete reference inventory, low-cardinality/private-output risk, missing storage backend, or mutation-shaped invocation, and do not authorize target contact mutation, repair, schema/migration, backup/export/restore/import, runtime lifecycle action, generated refresh, or Council exposure.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/storage/affected_row_referential_inventory.py
+  - src/scribe_mcp/storage/sqlite/projects.py
+  - src/scribe_mcp/storage/sqlite/__init__.py
+  - src/scribe_mcp/storage/postgres/__init__.py
+  - src/scribe_mcp/cli/main.py
+  - src/scribe_mcp/server.py
+  - tests/test_affected_row_referential_inventory.py
+  - tests/test_tool_metadata_contract.py
+  - tests/test_direct_tool_runtime_contract.py
+  - README.md
+  - docs/COMPATIBILITY_MATRIX.md
+  - docs/RELEASE_FILE_MAP.md
+  - docs/INSTALL_AND_BOOTSTRAP.md
+  - docs/TOUR.md
+  - docs/Scribe_Usage.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.9.0
+
+## Managed-doc registration, lean plugin shipping, and clean-room publish repair (2.8.1)
+- `entry_id`: 20260618:registration-lean-plugin-cleanbuild-2-8-1
+- `entry_status`: accepted
+- `title`: Managed-doc registration repair, lean plugin shipping, clean-room publish CI (2.8.1)
+- `summary`: Bumped the public release line to `2.8.1`, a backward-compatible patch on top of the `2.8.0` feature baseline. No public API, CLI, protocol, or schema contract is broken. This release fixes repeated managed-doc registration friction by auto-registering existing physical managed docs for targeted `manage_docs` actions such as `list_sections`, preserving persisted registry state, collapsing path-like registration keys safely, and preventing path-like registration from overwriting an existing basename alias. It fixes the GitHub cleanbuild/publish blocker by making `scripts/sync_plugin_skills.py --check` work in a clean checkout that lacks ignored generated `.claude/skills` and `.codex/skills` trees. The shipped plugin/wheel surface is intentionally lean: Claude and Codex plugin bundles ship only `scribe-integration` and `scribe-onboarding`; legacy broad-form `scribe-mcp-usage` content and the old packaged onboarding copy are not shipped because repo docs, onboarding, and integration docs cover the supported Scribe usage surface. Codex plugin projection now projects every shipped skill from the packaged bundle and clean-room install proof verifies the built wheel, runtime version, bundled skill set, and projection output. The shared case-status vocabulary also treats managed-doc status `complete` as terminal, so completed bug/security reports no longer remain visible through open-case filtering after runtime reload.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/utils.py
+  - scripts/sync_plugin_skills.py
+  - scripts/cleanroom_install_check.py
+  - src/scribe_mcp/scripts/project_codex_plugin.py
+  - src/scribe_mcp/plugins_bundle/**
+  - plugins/claude/skills/**
+  - plugins/codex/skills/**
+  - tests/test_auto_registration_real.py
+  - tests/test_auto_registration_production.py
+  - tests/test_plugin_bundles.py
+  - tests/test_case_status_vocab.py
+  - README.md
+  - docs/COMPATIBILITY_MATRIX.md
+  - docs/INSTALL_AND_BOOTSTRAP.md
+  - docs/TOUR.md
+  - docs/Scribe_Usage.md
+  - docs/RELEASE_FILE_MAP.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.8.1
+
+## Refinement sweep: schema enrichment, maintainability, read_file perf, reminders, discoverability, onboarding, packaging
+- `entry_id`: 20260617:refinement-audit-sweep-2-8-0
+- `entry_status`: accepted
+- `title`: Refinement sweep (manage_docs schema, case correctness, maintainability, read_file perf, reminders, discoverability, onboarding, packaging)
+- `summary`: Bumped the public release line to `2.8.0` (backward-compatible additive + fix; no breaking public API/CLI/schema contract). Host-facing `manage_docs` MCP input schema now advertises a live `action` enum from the action manifest, documents generic + per-action metadata keys, declares `required: ["action"]`, and preserves `additionalProperties`. WS1 case correctness: unified bug/case status vocabulary so closure states (incl. `wontfix`/`duplicate`) are preserved consistently, and replaced substring case-path resolution with exact matching that refuses ambiguous resolution. Maintainability/honest envelopes: removed the dead cross-project search engine in `query_entries` (15 symbols; 2587 -> 1868 lines) and dead self-healing in `utils/error_handler.py` (-222 lines); `query_entries` non-project `search_scope` now returns an honest `ok:false` teaching error instead of a silent no-op, and emergency/degraded paths return honest `ok:false` envelopes instead of fabricated rows. `read_file` gained real pagination slicing, a single-pass AST structure visitor, and SQL-pushdown of the message predicate on both SQLite and Postgres (headline perf fix) plus pagination. Reminder engine wired live: 16 previously-dead conditions, category-keyed priority sort, warm-rebind refresh, and configurable knobs. Discoverability/onboarding: rewritten `append_entry`/`health_check` tool descriptions, `manage_docs`/`read_file` docstrings surfacing the full governance action set + scan flags, a completed `/scribe-integration` skill, a new `/scribe-onboarding` install skill, and new-project reminder hints pointing to both; the architecture rule corrected to measured god-module sizes (response.py kept as a partial decomposition, not a thin facade; manager.py decomposition deferred). Managed-doc frontmatter `title`-clobber fixed so user-set titles are preserved (BUG-2026-06-17-0002). Packaging: added a redundant `postgres` alias extra (`asyncpg` is already a core dependency, so a plain `pip install scribe-mcp` is Postgres-ready and matches the default Postgres runtime posture), plugin manifests, and vendored the plugin + onboarding bundles into the wheel (`src/scribe_mcp/plugins_bundle/**` + `src/scribe_mcp/onboarding/**` via package-data) with `resolve_codex_plugin_root()` preferring the packaged bundle so `pip install scribe-mcp` works without a clone. Non-goals held: SQLite retained, god modules + `utils/response.py` not decomposed, no federation, no new systems beyond onboarding.
+- `evidence_refs`:
+  - pyproject.toml
+  - MANIFEST.in
+  - src/scribe_mcp/tools/manage_docs.py
+  - src/scribe_mcp/tools/read_file.py
+  - src/scribe_mcp/tools/query_entries.py
+  - src/scribe_mcp/tools/append_entry.py
+  - src/scribe_mcp/tools/health_check.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/utils/error_handler.py
+  - src/scribe_mcp/config/paths.py
+  - src/scribe_mcp/config/reminders/en-US.json
+  - src/scribe_mcp/install_wizard.py
+  - src/scribe_mcp/plugins_bundle/**
+  - src/scribe_mcp/onboarding/**
+  - docs/COMPATIBILITY_MATRIX.md
+  - docs/RELEASE_FILE_MAP.md
+  - skills/scribe-integration/SKILL.md
+  - tests/test_query_entries_dead_engine_honest_envelopes.py
+  - tests/test_tool_discoverability_p7.py
+  - docs/bugs/runtime/2026-06-17_BUG-2026-06-17-0002/report.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.8.0
+
+## Furnace-project quality-check O(N^2) elimination + read_recent fixes
+- `entry_id`: 20260616:furnace-quality-check-perf-2-7-2
+- `entry_status`: accepted
+- `title`: Furnace-project quality-check O(N^2) elimination + read_recent fixes
+- `summary`: Bumped the public patch line to `2.7.2`. Eliminated two O(N^2) defects in managed-doc quality analysis that made set_project/prepare_context ~20s on large ("furnace") projects: (1) per-inline-span line-number computation via str.count("\n", 0, offset) replaced with a precomputed line-offset index + bisect in quality/scopes.py; (2) offset_in_scope linear any()-over-scopes replaced with a per-kind sorted interval index + bisect in quality/context.py. Measured: an 18,867-line PHASE_PLAN quality check dropped 18.0s -> 1.15s; furnace set_project ~20.3s -> ~2.1s; warm rebind stays ~70ms. Also in this line: read_recent limit/n now returns exactly the requested row count (was silently using page_size default); progress-log supplementation is gated for DB-authoritative projects; the readiness managed-doc-quality cache key is O(1) via a directory-stat sentinel (was O(#research files)); count_entries() uses the scribe_metrics counter as an O(1) fast path; session-binding lookups are cached; and the research-index rglob is hoisted out of the per-doc loop. No public API/CLI/schema contract changes (PATCH).
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/doc_management/quality/scopes.py
+  - src/scribe_mcp/doc_management/quality/context.py
+  - src/scribe_mcp/readiness.py
+  - src/scribe_mcp/tools/read_recent.py
+  - src/scribe_mcp/storage/sqlite/entries.py
+  - src/scribe_mcp/storage/postgres/__init__.py
+  - src/scribe_mcp/state/manager.py
+  - src/scribe_mcp/doc_management/scaffold_quality.py
+  - src/scribe_mcp/doc_management/quality/rules/research.py
+  - tests/test_quality_scaling_regression.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.7.2
+
+## Case registry and report closeout patch
+- `entry_id`: 20260616:case-registry-report-closeout-2-7-1
+- `entry_status`: accepted
+- `title`: Case registry and report closeout patch
+- `summary`: Bumped the public patch line to `2.7.1`. Scribe now resolves explicit governed bug/security report paths without collapsing unrelated `report.md` basenames onto the first registered case, and `link_fix` closes shared case-registry rows for resolved, validated, implemented, merged, landed, fixed, done, completed, and closed landing statuses.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/tools/sentinel_tools.py
+  - tests/test_manage_docs_target_resolution.py
+  - tests/test_phase2_case_registry_contract.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.7.1
+
+## Runtime latency, telemetry, and binding reuse
+- `entry_id`: 20260616:runtime-latency-telemetry-binding-reuse-2-7-0
+- `entry_status`: accepted
+- `title`: Runtime latency, telemetry, and binding reuse
+- `summary`: Bumped the public release line to `2.7.0`. Scribe now records queryable tool runtimes with durations, correlation IDs, measurement scope, and repo root; `append_entry` returns phase timing; `set_project` has a strict same-agent/session/project/root no-write reuse path that skips redundant writes and mutation-time reminder refresh; successful timing logs stay out of warning output; local probes support JSON output, same-server root comparison, and background telemetry draining; diagnostics expose physical/logical reconciliation for fresh Postgres installs with existing file-backed Scribe artifacts.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/__main__.py
+  - src/scribe_mcp/tools/set_project.py
+  - src/scribe_mcp/tools/append_entry.py
+  - src/scribe_mcp/state/agent_manager.py
+  - src/scribe_mcp/scripts/scribe_probe.py
+  - src/scribe_mcp/utils/formatters/dispatcher.py
+  - src/scribe_mcp/physical_logical_reconciliation.py
+  - tests/test_set_project.py
+  - tests/test_scribe_probe.py
+  - tests/test_execution_context.py
+  - tests/test_physical_logical_reconciliation.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.7.0
+
+## Quality-check agent actions, bulk validation, and write-barrier safety
+- `entry_id`: 20260616:quality-check-agent-actions-bulk-write-barrier-2-6-0
+- `entry_status`: accepted
+- `title`: Quality-check agent actions, bulk validation, and write-barrier safety
+- `summary`: Bumped the public release line to `2.6.0`. `manage_docs quality_check` now returns agent-actionable summaries with grouped warning families, ranked `agent_actions`, file/section context, repair hints, and provenance; Atlas can run bulk quality checks across a project or bounded doc list; `quality_handoff_check` returns concrete follow-up actions; write barriers protect mutation surfaces and Postgres backup/restore custody; exported remote transport blocks local operator-only tools; sparse Postgres `read_recent` responses can be supplemented from canonical progress logs.
+- `evidence_refs`:
+  - pyproject.toml
+  - src/scribe_mcp/doc_management/quality/results.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/shared/write_barrier.py
+  - src/scribe_mcp/tools/append_entry.py
+  - src/scribe_mcp/tools/manage_docs.py
+  - src/scribe_mcp/tools/read_recent.py
+  - src/scribe_mcp/tools/set_project.py
+  - src/scribe_mcp/server_sse.py
+  - src/scribe_mcp/scripts/postgres_backup.py
+  - src/scribe_mcp/scripts/postgres_restore.py
+  - tests/test_manage_docs_quality_check.py
+  - tests/test_write_barrier_contract.py
+  - tests/security/test_transport_authorization.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.6.0
+
+## Unified create contract + error remediation envelopes (P2-P3)
+- `entry_id`: 20260611:create-contract-error-envelopes-2-5-0
+- `entry_status`: accepted
+- `title`: Unified create contract + error remediation envelopes
+- `summary`: Bumped the unpublished release line to `2.5.0` (backward-compatible public capability). Create contract unified and pinned: empty create legal for generic doc types, and a metadata.sections payload now emits stable section anchors so created sections are durable replace_section targets. New structured error remediation envelopes {code, remediation, alternatives[]} on DOC_NOT_FOUND (did-you-mean + registered docs), SECTION_ANCHOR_MISSING (inline available anchors + closest match), SECTION_ANCHOR_AMBIGUOUS, REPLACE_TEXT_NO_MATCH (nearest-line), and PATCH_CONTEXT_NOT_FOUND (structured-mode fallback).
+- `evidence_refs`:
+  - pyproject.toml
+  - docs/COMPATIBILITY_MATRIX.md
+  - src/scribe_mcp/doc_management/errors.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/actions/edit.py
+  - tests/test_create_contract_unified.py
+  - tests/test_error_remediation.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.5.0
+
+## Session authority contract + logging-never-blocked repairs (P1.6-P1.7, BUG-2026-06-11-0004)
+- `entry_id`: 20260611:session-authority-and-case-guidance-2-4-2
+- `entry_status`: accepted
+- `title`: Session authority contract + logging-never-blocked repairs
+- `summary`: Restored the pinned write-authority contract (request session_id outranks a bare carried-over stable_session_id in degraded contexts; verified resolved_scope keys keep absolute priority) regressed by e320b3d, re-adding the deleted contract test. append_entry now heals pipe characters to the broken bar instead of rejecting entries. open_bug/open_security guidance now maps completeness fields to their real template section anchors, validated against the live templates.
+- `evidence_refs`:
+  - src/scribe_mcp/tools/agent_project_utils.py
+  - src/scribe_mcp/tools/append_entry.py
+  - src/scribe_mcp/tools/sentinel_tools.py
+  - tests/test_manage_docs_session_binding.py
+  - tests/test_message_pipe_healing.py
+  - tests/test_case_field_section_anchors.py
+  - docs/bugs/logic/2026-06-11_BUG-2026-06-11-0004/report.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.4.2
+
+## manage_docs defect-repair wave (P1.1-P1.5)
+- `entry_id`: 20260611:manage-docs-defect-wave-2-4-2
+- `entry_status`: accepted
+- `title`: manage_docs defect-repair wave (P1.1-P1.5)
+- `summary`: Five live-reproduced manage_docs defects repaired on the unpublished `2.4.2` line: batch operations inherit top-level doc_name; exact-match edit payloads (metadata.find/.replace) preserved verbatim through parameter healing with a near-miss hint on no-match; section inspection reports inline anchors (editable_sections now complete); replace_section preserves inter-section separators and strips duplicate headings with a response hint; create-guidance reconciled to one story across reminder, create_intent, and rule template.
+- `evidence_refs`:
+  - src/scribe_mcp/doc_management/actions/batch.py
+  - src/scribe_mcp/doc_management/actions/query.py
+  - src/scribe_mcp/doc_management/manager.py
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/utils/parameter_validator.py
+  - src/scribe_mcp/config/reminders/en-US.json
+  - .council/templates/claude/rules/_rule_manage_docs_create.j2
+  - tests/test_batch_doc_name_inheritance.py
+  - tests/test_replace_text_multiline.py
+  - tests/test_create_editable_sections_complete.py
+  - tests/test_replace_section_separator.py
+  - tests/test_create_guidance_consistent.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.4.2
+
+## doc_updates auto-log contract repair
+- `entry_id`: 20260611:doc-updates-autolog-contract-2-4-2
+- `entry_status`: accepted
+- `title`: doc_updates auto-log contract repair
+- `summary`: Bumped the public release line to `2.4.2` and repaired the manage_docs edit auto-logger so internal doc_updates entries satisfy their own metadata_requirements (`doc`, `section`, `action`) and use a valid `warn` status, eliminating the ~37k "Log requirements not met: Missing metadata for log entry: doc" silent error stream (BUG-2026-06-11-0003).
+- `evidence_refs`:
+  - pyproject.toml
+  - docs/COMPATIBILITY_MATRIX.md
+  - src/scribe_mcp/doc_management/actions/edit.py
+  - tests/test_doc_updates_autolog_contract.py
+  - docs/bugs/logic/2026-06-11_BUG-2026-06-11-0003/report.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.4.2
+
+## Bug and security report follow-up editing
+- `entry_id`: 20260604:case-report-manage-docs-followup-2-4-1
+- `entry_status`: accepted
+- `title`: Bug and security report follow-up editing
+- `summary`: Bumped the public release line to `2.4.1`, added obvious `open_bug` and `open_security` follow-up handles, and taught `manage_docs` to resolve governed bug/security reports by case id, governed path, or canonical category metadata before applying edits.
+- `evidence_refs`:
+  - pyproject.toml
+  - README.md
+  - docs/COMPATIBILITY_MATRIX.md
+  - docs/RELEASE_SURFACE.md
+  - src/scribe_mcp/doc_management/runtime.py
+  - src/scribe_mcp/doc_management/utils.py
+  - src/scribe_mcp/tools/sentinel_tools.py
+  - tests/test_manage_docs_target_resolution.py
+  - tests/test_sentinel_tools.py
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.4.1
+
+## No-dotenv-safe settings import
+- `entry_id`: 20260518:no-dotenv-settings-import
+- `entry_status`: accepted
+- `title`: No-dotenv-safe settings import
+- `summary`: Added the generic `SCRIBE_DISABLE_DOTENV` settings-load guard so import/readiness proof can avoid repo and global dotenv reads, preserved storage backend fail-closed behavior, and bumped the public release line to `2.2.24`.
+- `evidence_refs`:
+  - src/scribe_mcp/config/settings.py
+  - tests/test_settings_schema_alias.py
+  - tests/test_storage_factory_backends.py
+  - tests/test_runtime_backend_repo_overrides.py
+  - pyproject.toml
+  - README.md
+  - docs/COMPATIBILITY_MATRIX.md
+- `observed_context`:
+  - `source`: pyproject
+  - `value`: 2.2.24
