@@ -155,16 +155,6 @@ research/
 
 # Council package sources do not ship in public scribe baseline
 packages/scribe_council/
-!packages/scribe_council/
-packages/scribe_council/*
-!packages/scribe_council/src/
-packages/scribe_council/src/*
-!packages/scribe_council/src/scribe_council/
-packages/scribe_council/src/scribe_council/*
-!packages/scribe_council/src/scribe_council/council_templates/
-packages/scribe_council/src/scribe_council/council_templates/*
-!packages/scribe_council/src/scribe_council/council_templates/__init__.py
-!packages/scribe_council/src/scribe_council/council_templates/retirements.v1.yaml
 
 # Generated / local output
 reports/
