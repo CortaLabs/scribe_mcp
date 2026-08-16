@@ -690,7 +690,7 @@ read_file(
 ```python
 read_file(
     agent="forge",
-    path="/home/austin/projects/MCP_SPINE/scribe_mcp/src/server.py",
+    path="/home/user/projects/scribe_mcp/src/server.py",
     mode="scan_only",
     include_dependencies=True,
     allow_outside_repo=True  # REQUIRED for paths outside current repo

@@ -99,7 +99,7 @@ Representative live payload excerpt:
 ```json
 {
   "ok": true,
-  "path": "/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/live_manage_docs_agentux_a8c1a4c6/custom_doc.md",
+  "path": "/home/user/projects/scribe_mcp/.scribe/docs/dev_plans/live_manage_docs_agentux_a8c1a4c6/custom_doc.md",
   "warning": null,
   "warnings": null,
   "next_step_guidance": "create scaffolds a governed document..."
@@ -139,11 +139,11 @@ Representative live payload:
 ```json
 {
   "ok": false,
-  "error": "Target directory /tmp is outside project root /home/austin/projects/MCP_SPINE/scribe_mcp",
+  "error": "Target directory /tmp is outside project root /home/user/projects/scribe_mcp",
   "suggestion": "Choose a target_dir inside the active project root, or omit target_dir to use the project docs_dir.",
   "boundary_guidance": {
     "rule": "target_dir must resolve inside the active project root",
-    "project_root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+    "project_root": "/home/user/projects/scribe_mcp",
     "rejected_target_dir": "/tmp",
     "supported_alternative": {
       "example": "Use an in-project target_dir (or omit it to use project docs_dir).",
@@ -203,7 +203,7 @@ Representative `scribe_doctor` payload excerpt:
   "runtime": {
     "execution_context": {
       "mode": "project",
-      "repo_root": "/home/austin/projects/MCP_SPINE/scribe_mcp",
+      "repo_root": "/home/user/projects/scribe_mcp",
       "session_id": "78b99e26-5759-42b0-98fe-1f26067b702b",
       "stable_session_id": "95f80b3f-1ade-4981-9e69-314b0c19b719"
     },
