@@ -37,19 +37,19 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 if [ -z "${SCRIBE_DB_URL:-}" ] && [ -f /run/secrets/scribe_db_url ]; then
-    SCRIBE_DB_URL="$(cat /run/secrets/scribe_db_url)"
+    IFS= read -r SCRIBE_DB_URL < /run/secrets/scribe_db_url
     export SCRIBE_DB_URL
     echo "[scribe-entrypoint] Loaded SCRIBE_DB_URL from Docker secret"
 fi
 
 if [ -z "${SCRIBE_OBJECT_STORE_KEY:-}" ] && [ -f /run/secrets/store_hmac_key ]; then
-    SCRIBE_OBJECT_STORE_KEY="$(cat /run/secrets/store_hmac_key)"
+    IFS= read -r SCRIBE_OBJECT_STORE_KEY < /run/secrets/store_hmac_key
     export SCRIBE_OBJECT_STORE_KEY
     echo "[scribe-entrypoint] Loaded SCRIBE_OBJECT_STORE_KEY from Docker secret"
 fi
 
 if [ -z "${SCRIBE_TRANSPORT_AUTH_TOKEN:-}" ] && [ -f /run/secrets/scribe_transport_auth_token ]; then
-    SCRIBE_TRANSPORT_AUTH_TOKEN="$(cat /run/secrets/scribe_transport_auth_token)"
+    IFS= read -r SCRIBE_TRANSPORT_AUTH_TOKEN < /run/secrets/scribe_transport_auth_token
     export SCRIBE_TRANSPORT_AUTH_TOKEN
     echo "[scribe-entrypoint] Loaded SCRIBE_TRANSPORT_AUTH_TOKEN from Docker secret"
 fi

@@ -42,8 +42,8 @@ except Exception:  # pragma: no cover - rich might be unavailable
 ToolFn = Callable[..., Any]
 
 DEFAULT_SAME_SERVER_ROOTS: tuple[str, str] = (
-    "/home/austin/projects/MCP_SPINE/scribe_mcp",
-    "/home/austin/projects/MCP_SPINE/council_mcp",
+    "/path/to/scribe_mcp",
+    "/path/to/peer_mcp",
 )
 HOOK_LABELS = {"hook_excluded", "hook_included", "hook_state_unknown"}
 
