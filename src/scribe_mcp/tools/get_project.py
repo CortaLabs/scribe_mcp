@@ -445,6 +445,11 @@ async def get_project(
         except Exception:
             selection_version = None
 
+    def _with_selection_version(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if selection_version is not None:
+            payload["selection_version"] = selection_version
+        return payload
+
     exec_context = None
     if hasattr(server_module, "get_execution_context"):
         try:
@@ -472,14 +477,12 @@ async def get_project(
         )
     except ProjectResolutionError as exc:
         payload = _GET_PROJECT_HELPER.translate_project_error(exc)
-        if selection_version is not None:
-            payload["selection_version"] = selection_version
         payload.setdefault(
             "suggestion",
             "Invoke set_project or add a config/projects/<name>.json entry",
         )
         payload.setdefault("reminders", [])
-        return payload
+        return _with_selection_version(payload)
 
     recent_projects = list(context.recent_projects)
     allowed_recovery_modes = {"compat_active_project", "compat_last_known_project"}
@@ -546,7 +549,7 @@ async def get_project(
                 context,
             )
             response.update(_resolution_payload())
-            return response
+            return _with_selection_version(response)
         target_project = dict(project_data)
         current_name = target_project.get("name") or resolved_name or requested_project
     else:
@@ -560,7 +563,7 @@ async def get_project(
                     context,
                 )
                 response.update(_resolution_payload())
-                return response
+                return _with_selection_version(response)
             if compatibility_mode:
                 recovery_reason = "session_authority_present"
         if not target_project and not exec_context and compatibility_mode and effective_recovery_mode == "compat_active_project":
@@ -603,7 +606,7 @@ async def get_project(
                 context,
             )
             response.update(_resolution_payload())
-            return response
+            return _with_selection_version(response)
 
     response = dict(target_project)
     if selection_version is not None:

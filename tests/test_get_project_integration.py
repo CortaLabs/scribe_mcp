@@ -312,6 +312,58 @@ class TestGetProjectIntegration:
         assert prepare.await_args.kwargs["agent_id"] == "sentinel"
 
     @pytest.mark.asyncio
+    async def test_missing_explicit_agent_selection_keeps_cas_version(
+        self, monkeypatch
+    ):
+        """A cleared project remains repairable through its selection version."""
+        state_manager = AsyncMock()
+        state_manager.record_tool.return_value = {"tool": "get_project"}
+        state_manager.load.return_value = SimpleNamespace(
+            recent_projects=[], current_project=None
+        )
+        fake_server = Mock()
+        fake_server.state_manager = state_manager
+        fake_server.get_agent_identity.return_value = None
+        fake_server.get_execution_context.return_value = None
+        fake_server.storage_backend = None
+        fake_server.get_agent_context_manager.return_value.get_current_project = AsyncMock(
+            return_value={
+                "agent_id": "sentinel",
+                "project_name": None,
+                "version": 9,
+            }
+        )
+        context = LoggingContext(
+            tool_name="get_project",
+            project=None,
+            recent_projects=[],
+            state_snapshot={},
+            reminders=[],
+            agent_id="sentinel",
+            resolution_source="agent_project",
+        )
+
+        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module",
+            fake_server,
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.prepare_context",
+            AsyncMock(return_value=context),
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.apply_context_payload",
+            lambda payload, _context: payload,
+        )
+
+        result = await get_project(agent="sentinel", format="structured")
+
+        assert result["ok"] is False
+        assert result["error"] == "No project configured."
+        assert result["selection_version"] == 9
+
+    @pytest.mark.asyncio
     async def test_fail_closed_without_recovery_mode(self, monkeypatch):
         """No-arg lookup must fail closed and not invoke hidden active-project fallback."""
         state_manager = AsyncMock()
