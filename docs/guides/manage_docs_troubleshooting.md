@@ -419,7 +419,7 @@ print(os.getenv("SCRIBE_DB_URL"))  # For postgres only
 
 # Solution 2: Configure PostgreSQL
 export SCRIBE_STORAGE_BACKEND=postgres
-export SCRIBE_DB_URL=postgresql://user:pass@host/db
+export SCRIBE_DB_URL=postgresql://user:example-password@host/db
 
 # Solution 3: Fix permissions (SQLite)
 chmod 644 .scribe/scribe.db

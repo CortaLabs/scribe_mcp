@@ -16,7 +16,9 @@ from scribe_mcp.doc_management import healing as healing_shared
 from scribe_mcp.doc_management import indexing as indexing_shared
 from scribe_mcp.doc_management import special_indexes as special_indexes_shared
 from scribe_mcp.doc_management import utils as utils_shared
-from scribe_mcp.doc_management.boundary_guidance import build_manage_docs_boundary_guidance
+from scribe_mcp.doc_management.boundary_guidance import (
+    build_manage_docs_boundary_guidance,
+)
 from scribe_mcp.doc_management.naming import normalize_research_doc_name
 from scribe_mcp.doc_management.manager import (
     DocumentOperationError,
@@ -28,6 +30,68 @@ from scribe_mcp.utils.slug import slugify_project_name
 
 def _hash_text(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _export_policy_metadata(
+    project: Dict[str, Any], metadata: Dict[str, Any], agent_id: str
+) -> Dict[str, Any]:
+    """Attach explicit non-exportable-by-default policy to created narratives."""
+    policy = {
+        "visibility": metadata.get("visibility", "internal"),
+        "owner_principal_id": metadata.get("owner_principal_id", agent_id),
+        "council_id": metadata.get("council_id", ""),
+        "project_id": metadata.get("project_id", project.get("name", "")),
+        "required_grants": metadata.get("required_grants", []),
+        "revoked_at": metadata.get("revoked_at"),
+    }
+    canonical = json.dumps(policy, sort_keys=True, separators=(",", ":"), default=str)
+    policy["policy_digest"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return policy
+
+
+def _ensure_export_policy_frontmatter(
+    content: str, project: Dict[str, Any], metadata: Dict[str, Any], agent_id: str
+) -> str:
+    """Persist the classification in the document, not only an execution payload."""
+    policy = _export_policy_metadata(project, metadata, agent_id)
+    lines = [
+        f"{key}: {json.dumps(value, sort_keys=True)}" for key, value in policy.items()
+    ]
+    block = "\n".join(lines)
+    if content.startswith("---\n"):
+        marker = content.find("\n---", 4)
+        if marker >= 0:
+            return f"{content[:marker]}\n{block}{content[marker:]}"
+    return f"---\n{block}\n---\n\n{content}"
+
+
+def _persist_export_policy_authority(
+    project: Dict[str, Any], target_path: Path, policy: Dict[str, Any]
+) -> None:
+    """Store creation-time authority outside editable narrative frontmatter."""
+    root = Path(str(project.get("root") or "")).resolve()
+    try:
+        relative_path = str(target_path.resolve().relative_to(root))
+    except ValueError:
+        return
+    authority_path = root / ".scribe" / "indexes" / "export_policy_authority.json"
+    try:
+        current = (
+            json.loads(authority_path.read_text(encoding="utf-8"))
+            if authority_path.exists()
+            else {}
+        )
+        if not isinstance(current, dict):
+            current = {}
+        current.setdefault(relative_path, {"policy_digest": policy["policy_digest"]})
+        authority_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = authority_path.with_suffix(".tmp")
+        temp_path.write_text(
+            json.dumps(current, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        temp_path.replace(authority_path)
+    except OSError:
+        return
 
 
 def _resolve_inline_special_content(
@@ -179,7 +243,9 @@ async def _render_special_template(
         )
         return utils_shared.strip_trailing_whitespace_lines(rendered)
     except (ImportError, TemplateEngineError) as exc:
-        raise DocumentOperationError(f"Failed to render template '{template_name}': {exc}") from exc
+        raise DocumentOperationError(
+            f"Failed to render template '{template_name}': {exc}"
+        ) from exc
 
 
 async def _record_special_doc_change(
@@ -239,7 +305,9 @@ async def _record_agent_report_card_metadata(
             file_path=str(target_path),
             agent_name=metadata.get("agent_name", agent_id),
             stage=metadata.get("stage"),
-            overall_grade=utils_shared.parse_numeric_grade(metadata.get("overall_grade")),
+            overall_grade=utils_shared.parse_numeric_grade(
+                metadata.get("overall_grade")
+            ),
             performance_level=metadata.get("performance_level"),
             metadata=metadata,
         )
@@ -260,7 +328,9 @@ def _case_registry_method(storage_backend: Any) -> Optional[Callable[..., Any]]:
     return None
 
 
-async def _call_case_registry_method(method: Callable[..., Any], upsert_kwargs: Dict[str, Any]) -> None:
+async def _call_case_registry_method(
+    method: Callable[..., Any], upsert_kwargs: Dict[str, Any]
+) -> None:
     def _is_signature_mismatch(exc: TypeError) -> bool:
         message = str(exc)
         markers = (
@@ -435,7 +505,10 @@ async def handle_special_document_creation(
             if legacy_docs_dir_str:
                 legacy_research_dir = Path(legacy_docs_dir_str) / "research"
                 try:
-                    if legacy_research_dir.resolve() != research_dir.resolve() and legacy_research_dir.exists():
+                    if (
+                        legacy_research_dir.resolve() != research_dir.resolve()
+                        and legacy_research_dir.exists()
+                    ):
                         legacy_docs = sorted(
                             p
                             for p in legacy_research_dir.glob("*.md")
@@ -460,7 +533,9 @@ async def handle_special_document_creation(
             "doc_name": safe_name,
             "researcher": metadata.get("researcher", agent_id),
         }
-        index_updater = lambda: _update_research_index(research_dir, agent_id, project_root)
+        index_updater = lambda: _update_research_index(
+            research_dir, agent_id, project_root
+        )
         index_path = research_dir / "INDEX.md"
     elif action == "create_bug_report":
         category = metadata.get("category")
@@ -479,7 +554,13 @@ async def handle_special_document_creation(
             slug = re.sub(r"[^\w\-_.]", "_", str(slug).strip())
         if not slug:
             slug = f"bug_{int(now.timestamp())}"
-        bug_dir = project_root / "docs" / "bugs" / category / f"{now.strftime('%Y-%m-%d')}_{slug}"
+        bug_dir = (
+            project_root
+            / "docs"
+            / "bugs"
+            / category
+            / f"{now.strftime('%Y-%m-%d')}_{slug}"
+        )
         target_path = bug_dir / "report.md"
         template_name = "BUG_REPORT_TEMPLATE.md"
         doc_label = "bug_report"
@@ -489,7 +570,9 @@ async def handle_special_document_creation(
             "category": category,
             "reported_at": metadata.get("reported_at", timestamp_str),
         }
-        index_updater = lambda: _update_bug_index(project_root / "docs" / "bugs", agent_id, project_root)
+        index_updater = lambda: _update_bug_index(
+            project_root / "docs" / "bugs", agent_id, project_root
+        )
         index_path = project_root / "docs" / "bugs" / "INDEX.md"
     elif action == "create_security_report":
         category = metadata.get("category")
@@ -508,7 +591,13 @@ async def handle_special_document_creation(
             slug = re.sub(r"[^\w\-_.]", "_", str(slug).strip())
         if not slug:
             slug = f"sec_{int(now.timestamp())}"
-        security_dir = project_root / "docs" / "security" / category / f"{now.strftime('%Y-%m-%d')}_{slug}"
+        security_dir = (
+            project_root
+            / "docs"
+            / "security"
+            / category
+            / f"{now.strftime('%Y-%m-%d')}_{slug}"
+        )
         target_path = security_dir / "report.md"
         template_name = "SECURITY_REPORT_TEMPLATE.md"
         doc_label = "security_report"
@@ -518,11 +607,16 @@ async def handle_special_document_creation(
             "category": category,
             "reported_at": metadata.get("reported_at", timestamp_str),
         }
-        index_updater = lambda: _update_security_index(project_root / "docs" / "security", agent_id, project_root)
+        index_updater = lambda: _update_security_index(
+            project_root / "docs" / "security", agent_id, project_root
+        )
         index_path = project_root / "docs" / "security" / "INDEX.md"
     elif action == "create_review_report":
         stage = _normalize_stage(metadata.get("stage"))
-        target_path = docs_dir / f"REVIEW_REPORT_{stage}_{now.strftime('%Y-%m-%d')}_{now.strftime('%H%M')}.md"
+        target_path = (
+            docs_dir
+            / f"REVIEW_REPORT_{stage}_{now.strftime('%Y-%m-%d')}_{now.strftime('%H%M')}.md"
+        )
         template_name = "REVIEW_REPORT_TEMPLATE.md"
         doc_label = "review_report"
         primary_doc_key = str(doc_name).strip() if doc_name else target_path.stem
@@ -532,7 +626,10 @@ async def handle_special_document_creation(
     elif action == "create_agent_report_card":
         card_agent = metadata.get("agent_name", agent_id)
         stage = _normalize_stage(metadata.get("stage"))
-        target_path = docs_dir / f"AGENT_REPORT_CARD_{card_agent}_{stage}_{now.strftime('%Y%m%d_%H%M')}.md"
+        target_path = (
+            docs_dir
+            / f"AGENT_REPORT_CARD_{card_agent}_{stage}_{now.strftime('%Y%m%d_%H%M')}.md"
+        )
         template_name = "AGENT_REPORT_CARD_TEMPLATE.md"
         doc_label = "agent_report_card"
         primary_doc_key = str(doc_name).strip() if doc_name else target_path.stem
@@ -540,7 +637,9 @@ async def handle_special_document_creation(
             "agent_name": card_agent,
             "stage": stage,
         }
-        index_updater = lambda: _update_agent_card_index(docs_dir, agent_id, project_root)
+        index_updater = lambda: _update_agent_card_index(
+            docs_dir, agent_id, project_root
+        )
         index_path = docs_dir / "AGENT_CARDS_INDEX.md"
     else:
         return helper.apply_context_payload(
@@ -548,7 +647,9 @@ async def handle_special_document_creation(
             context,
         )
 
-    prepared_metadata = _build_special_metadata(project, metadata, agent_id, extra_metadata)
+    prepared_metadata = _build_special_metadata(
+        project, metadata, agent_id, extra_metadata
+    )
 
     rendered_content = _resolve_inline_special_content(content, metadata)
     if not rendered_content:
@@ -587,6 +688,10 @@ async def handle_special_document_creation(
             helper.error_response("Failed to render document content."),
             context,
         )
+
+    rendered_content = _ensure_export_policy_frontmatter(
+        rendered_content, project, metadata, agent_id
+    )
 
     try:
         target_path.resolve().relative_to(project_root.resolve())
@@ -643,10 +748,14 @@ async def handle_special_document_creation(
     try:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(rendered_content, encoding="utf-8")
+        _persist_export_policy_authority(
+            project, target_path, _export_policy_metadata(project, metadata, agent_id)
+        )
 
         # Fire-and-forget sync to remote object store
         try:
             from scribe_mcp.object_store import sync_file_to_store
+
             await sync_file_to_store(target_path, rendered_content, project_root)
         except Exception:
             pass
@@ -676,7 +785,9 @@ async def handle_special_document_creation(
         case_registry_warning: Optional[str] = None
         doc_binding: Optional[Dict[str, object]] = None
 
-        healed_metadata, _, _ = healing_shared.normalize_metadata_with_healing(prepared_metadata)
+        healed_metadata, _, _ = healing_shared.normalize_metadata_with_healing(
+            prepared_metadata
+        )
         log_meta = healed_metadata
         log_meta.update(
             {
@@ -722,7 +833,8 @@ async def handle_special_document_creation(
             "docs_json_registered": False,
             "project_registry_updated": False,
             "state_project_updated": False,
-            "case_registry_registered": doc_label not in {"bug_report", "security_report"},
+            "case_registry_registered": doc_label
+            not in {"bug_report", "security_report"},
             "index_registered": index_path is None,
             "index_refreshed": False,
             "registration_keys": [],
@@ -763,15 +875,21 @@ async def handle_special_document_creation(
                             metadata=prepared_metadata,
                             doc_label=doc_label,
                         )
-                        registration_status["case_registry_registered"] = case_registry_warning is None
+                        registration_status["case_registry_registered"] = (
+                            case_registry_warning is None
+                        )
                         if case_registry_warning:
-                            registration_status["case_registry_error"] = case_registry_warning
+                            registration_status["case_registry_error"] = (
+                                case_registry_warning
+                            )
                     state_manager = getattr(server_module, "state_manager", None)
                     authoritative_scope = resolve_authoritative_write_scope(
                         context=execution_context,
                         agent_session_id=None,
                     )
-                    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+                    authoritative_session_id = authoritative_scope.get(
+                        "authoritative_session_id"
+                    )
                     if storage_backend:
                         docs_json = json.dumps(current_docs)
                         update_result = await storage_backend.update_project_docs(
@@ -779,18 +897,26 @@ async def handle_special_document_creation(
                             docs_json,
                             repo_root=project.get("root"),
                         )
-                        registration_status["update_project_docs_result"] = update_result
-                        registration_status["docs_json_registered"] = bool(update_result)
+                        registration_status["update_project_docs_result"] = (
+                            update_result
+                        )
+                        registration_status["docs_json_registered"] = bool(
+                            update_result
+                        )
                         if update_result is False:
                             registration_warning = (
                                 "Doc registration did not update docs_json: storage backend reported no matching "
                                 "project row. Available action: rerun set_project for this repo root, then retry "
                                 "manage_docs(action='create', metadata={...})."
                             )
-                            registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
+                            registration_status["available_action"] = (
+                                "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
+                            )
                     else:
                         registration_warning = "Doc registration used state-only fallback: storage backend unavailable."
-                        registration_status["available_action"] = "Configure or restore the Scribe storage backend, then retry manage_docs(action='create', metadata={...})."
+                        registration_status["available_action"] = (
+                            "Configure or restore the Scribe storage backend, then retry manage_docs(action='create', metadata={...})."
+                        )
                     if state_manager and hasattr(state_manager, "set_current_project"):
                         await state_manager.set_current_project(
                             project_name,
@@ -806,11 +932,17 @@ async def handle_special_document_creation(
                                 "Doc registration could not bind authoritative session; "
                                 "state updated without session binding."
                             )
-                            registration_warning = f"{registration_warning}; {message}" if registration_warning else message
+                            registration_warning = (
+                                f"{registration_warning}; {message}"
+                                if registration_warning
+                                else message
+                            )
                     try:
                         project_registry.record_doc_update(
                             project_name=project_name,
-                            doc=registration_keys[0] if registration_keys else legacy_key,
+                            doc=registration_keys[0]
+                            if registration_keys
+                            else legacy_key,
                             action="create",
                             before_hash=None,
                             after_hash=after_hash,
@@ -819,13 +951,17 @@ async def handle_special_document_creation(
                     except Exception as reg_exc:
                         registration_status["project_registry_updated"] = False
                         if registration_warning:
-                            registration_warning += f"; Registry update failed: {reg_exc}"
+                            registration_warning += (
+                                f"; Registry update failed: {reg_exc}"
+                            )
                         else:
                             registration_warning = f"Registry update failed: {reg_exc}"
             except Exception as exc:
                 registration_warning = f"Doc registration failed: {exc}"
                 registration_status["error"] = str(exc)
-                registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
+                registration_status["available_action"] = (
+                    "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
+                )
         if case_registry_warning:
             if registration_warning:
                 registration_warning += f"; {case_registry_warning}"
@@ -853,7 +989,9 @@ async def handle_special_document_creation(
                         docs_json,
                         repo_root=project.get("root"),
                     )
-                    registration_status["index_update_project_docs_result"] = update_result
+                    registration_status["index_update_project_docs_result"] = (
+                        update_result
+                    )
                     registration_status["index_registered"] = bool(update_result)
                     registration_status["index_refreshed"] = True
                     if update_result is False:
@@ -862,8 +1000,14 @@ async def handle_special_document_creation(
                             "project row. Available action: rerun set_project for this repo root, then retry "
                             "manage_docs(action='create', metadata={...})."
                         )
-                        registration_warning = f"{registration_warning}; {message}" if registration_warning else message
-                        registration_status["available_action"] = "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
+                        registration_warning = (
+                            f"{registration_warning}; {message}"
+                            if registration_warning
+                            else message
+                        )
+                        registration_status["available_action"] = (
+                            "rerun set_project for this repo root, then retry manage_docs(action='create', metadata={...})"
+                        )
             except Exception as exc:
                 registration_status["index_registered"] = False
                 registration_status["index_error"] = str(exc)
@@ -901,24 +1045,44 @@ async def handle_special_document_creation(
         )
 
 
-async def _update_research_index(research_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
-    await special_indexes_shared.update_research_index(research_dir, agent_id, repo_root=repo_root)
+async def _update_research_index(
+    research_dir: Path, agent_id: str, repo_root: Path | None = None
+) -> None:
+    await special_indexes_shared.update_research_index(
+        research_dir, agent_id, repo_root=repo_root
+    )
 
 
-async def _update_bug_index(bugs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
-    await special_indexes_shared.update_bug_index(bugs_dir, agent_id, repo_root=repo_root)
+async def _update_bug_index(
+    bugs_dir: Path, agent_id: str, repo_root: Path | None = None
+) -> None:
+    await special_indexes_shared.update_bug_index(
+        bugs_dir, agent_id, repo_root=repo_root
+    )
 
 
-async def _update_security_index(security_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
-    await special_indexes_shared.update_security_index(security_dir, agent_id, repo_root=repo_root)
+async def _update_security_index(
+    security_dir: Path, agent_id: str, repo_root: Path | None = None
+) -> None:
+    await special_indexes_shared.update_security_index(
+        security_dir, agent_id, repo_root=repo_root
+    )
 
 
-async def _update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
-    await special_indexes_shared.update_review_index(docs_dir, agent_id, repo_root=repo_root)
+async def _update_review_index(
+    docs_dir: Path, agent_id: str, repo_root: Path | None = None
+) -> None:
+    await special_indexes_shared.update_review_index(
+        docs_dir, agent_id, repo_root=repo_root
+    )
 
 
-async def _update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
-    await special_indexes_shared.update_agent_card_index(docs_dir, agent_id, repo_root=repo_root)
+async def _update_agent_card_index(
+    docs_dir: Path, agent_id: str, repo_root: Path | None = None
+) -> None:
+    await special_indexes_shared.update_agent_card_index(
+        docs_dir, agent_id, repo_root=repo_root
+    )
 
 
 async def _render_review_report_template(

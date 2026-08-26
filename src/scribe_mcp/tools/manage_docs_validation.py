@@ -246,6 +246,7 @@ def _validate_inputs(
     content: Any,
     patch: Any = None,
     patch_source_hash: Any = None,
+    expected_anchor_sha256: Any = None,
     edit: Any = None,
     patch_mode: Any = None,
     start_line: Any = None,
@@ -267,6 +268,9 @@ def _validate_inputs(
 
     validator.validate_string_param(doc, "doc")
     validator.validate_string_param(action, "action")
+
+    if expected_anchor_sha256 is not None:
+        validator.validate_string_param(expected_anchor_sha256, "expected_anchor_sha256")
 
     allowed_actions = {
         "replace_section",
@@ -319,6 +323,13 @@ def _validate_inputs(
         validator.validate_metadata(metadata, "metadata")
         if not metadata.get("find"):
             raise DocumentValidationError("metadata.find is required for replace_text")
+        # replace_text never reads `content`. Accepting it silently let a caller
+        # supply the replacement in the wrong parameter and get a deletion.
+        if content is not None:
+            raise DocumentValidationError(
+                "content is not supported for replace_text: pass the replacement "
+                "text as metadata.replace"
+            )
 
     if action == "create_doc":
         if metadata is None:

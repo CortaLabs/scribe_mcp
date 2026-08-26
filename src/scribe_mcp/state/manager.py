@@ -36,6 +36,12 @@ def _float_env(name: str, default: float, minimum: float) -> float:
 
 TOOL_HISTORY_LIMIT = 10
 _GLOBAL_AGENT_ID = "Scribe"
+# Actor scope marker folded into the transport session id by
+# ``tool_runtime._actor_scoped_transport_session_id`` (``<conn>::actor=<agent>``).
+# Kept in sync with that canonical definition so the state layer can recover the
+# calling actor for per-actor current-project resolution without importing the
+# heavy tool_runtime module (which would create an import cycle).
+_ACTOR_SCOPE_SEPARATOR = "::actor="
 _PROJECT_CACHE_TTL_SECONDS = _float_env("SCRIBE_PROJECT_CACHE_TTL_SECONDS", 30.0, 1.0)
 
 
@@ -271,6 +277,7 @@ class StateManager:
                     project_name=resolved_name,
                     updated_by=agent_id or _GLOBAL_AGENT_ID,
                     session_id=resolved_session_id,
+                    actor_id=agent_id,
                 )
 
             state = await self._load_locked()
@@ -482,18 +489,37 @@ class StateManager:
                 self._session_projects_cache[session_id] = project_data
 
         if not current_project and not session_id and hasattr(self._storage_backend, "get_agent_project"):
-            try:
-                global_project = await self._storage_backend.get_agent_project(_GLOBAL_AGENT_ID)
-            except Exception:
-                global_project = None
-
+            # Prefer the CALLING actor's own current-project pointer, recovered
+            # from the actor-scoped transport id. Only a truly actor-less reader
+            # (single-actor / legacy) falls back to the shared global row, which
+            # is otherwise last-writer-wins across concurrent lanes in one repo.
+            actor_id = self._resolve_actor_id_from_context()
             project_name = None
-            if isinstance(global_project, dict):
-                global_session_id = global_project.get("session_id")
-                if global_session_id in {None, "", "__global__"}:
+
+            if actor_id and actor_id != _GLOBAL_AGENT_ID:
+                try:
+                    actor_project = await self._storage_backend.get_agent_project(actor_id)
+                except Exception:
+                    actor_project = None
+                if isinstance(actor_project, dict):
+                    # The actor's own pointer is authoritative regardless of
+                    # which session wrote it — no global-session guard needed.
                     project_name = self._resolve_project_name(
-                        {"name": global_project.get("project_name")}
+                        {"name": actor_project.get("project_name")}
                     )
+
+            if not project_name and not actor_id:
+                try:
+                    global_project = await self._storage_backend.get_agent_project(_GLOBAL_AGENT_ID)
+                except Exception:
+                    global_project = None
+                if isinstance(global_project, dict):
+                    global_session_id = global_project.get("session_id")
+                    if global_session_id in {None, "", "__global__"}:
+                        project_name = self._resolve_project_name(
+                            {"name": global_project.get("project_name")}
+                        )
+
             if project_name:
                 current_project = project_name
 
@@ -549,18 +575,47 @@ class StateManager:
         project_name: Optional[str],
         updated_by: str,
         session_id: Optional[str],
+        actor_id: Optional[str] = None,
     ) -> None:
         if not hasattr(self._storage_backend, "set_agent_project"):
             return
 
         stable_session_id = session_id or self._resolve_session_id_from_context() or "__global__"
+        actor = (actor_id or self._resolve_actor_id_from_context() or "").strip()
+
+        # Per-actor current-project pointer: authoritative for THIS actor's
+        # no-session status/HUD reads. Keying by the calling actor stops
+        # concurrent lanes in one repo from clobbering a single shared row
+        # (last-writer-wins), which is how one lane's HUD showed another lane's
+        # project after that lane ran set_project.
+        if actor and actor != _GLOBAL_AGENT_ID:
+            try:
+                await self._storage_backend.set_agent_project(
+                    agent_id=actor,
+                    project_name=project_name,
+                    expected_version=None,
+                    updated_by=updated_by,
+                    session_id=stable_session_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to set per-actor project '%s' for actor '%s': %s",
+                    project_name,
+                    actor,
+                    exc,
+                )
+
+        # Legacy shared pointer: single-actor / actor-less fallback only. Written
+        # under the "__global__" sentinel session so it stays readable as a
+        # global default; identified actors read their own row above and never
+        # this one.
         try:
             await self._storage_backend.set_agent_project(
                 agent_id=_GLOBAL_AGENT_ID,
                 project_name=project_name,
                 expected_version=None,
                 updated_by=updated_by,
-                session_id=stable_session_id,
+                session_id="__global__",
             )
         except Exception as exc:
             logger.warning("Failed to set global project '%s': %s", project_name, exc)
@@ -692,6 +747,34 @@ class StateManager:
             session_id = getattr(execution_context, "session_id", None)
             if session_id:
                 return str(session_id)
+            return None
+        except Exception:
+            return None
+
+    def _resolve_actor_id_from_context(self) -> Optional[str]:
+        """Recover the calling actor id (the ``agent`` argument) from the
+        active runtime context.
+
+        The transport session id is namespaced per actor as
+        ``<conn>::actor=<agent>`` (see
+        ``tool_runtime._actor_scoped_transport_session_id``). That suffix is the
+        exact string used as ``agent_id`` when a project binding is written, so
+        recovering it lets a no-session status read resolve the calling actor's
+        own current-project pointer instead of a shared last-writer row.
+        """
+        try:
+            from scribe_mcp import server as server_module
+
+            router_ctx = getattr(server_module, "router_context_manager", None)
+            if router_ctx is None:
+                return None
+            execution_context = router_ctx.get_current()
+            if not execution_context:
+                return None
+            transport = getattr(execution_context, "transport_session_id", None)
+            if transport and _ACTOR_SCOPE_SEPARATOR in str(transport):
+                actor = str(transport).split(_ACTOR_SCOPE_SEPARATOR, 1)[1].strip()
+                return actor or None
             return None
         except Exception:
             return None

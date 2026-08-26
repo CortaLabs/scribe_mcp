@@ -12,6 +12,11 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, MutableMap
 
 from scribe_mcp.shared.repo_authority import build_repo_authority_snapshot
 from scribe_mcp.config.repo_config import RepoDiscovery
+from scribe_mcp.mcp_adapter import ProtocolEra
+from scribe_mcp.shared.execution_context import (
+    ApplicationIdentity,
+    resolve_application_identity,
+)
 from scribe_mcp.shared.session_utils import get_canonical_session_key
 
 ToolCallable = Callable[..., Any]
@@ -38,6 +43,49 @@ _UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor", "list_projects"}
 # plugin/bridge/RI special-casing. Extend the frozenset to onboard future read
 # tools; never add council/RI concepts.
 _READ_TOOLS = frozenset({"read_file"})
+
+
+def _trusted_request_attribute(app: Any, name: str) -> Any:
+    try:
+        request_context = app.request_context
+    except Exception:
+        return None
+    return getattr(request_context, name, None) if request_context is not None else None
+
+
+def _resolve_runtime_application_identity(app: Any) -> Optional[ApplicationIdentity]:
+    """Validate identity data attached by authenticated ingress.
+
+    Only direct request-context attributes are accepted. Protocol headers,
+    MCP metadata, tool arguments, client labels, and capabilities are never
+    identity sources.
+    """
+
+    raw_era = _trusted_request_attribute(app, "protocol_era")
+    attached = _trusted_request_attribute(app, "application_identity")
+    if raw_era is None and isinstance(attached, ApplicationIdentity):
+        raw_era = attached.protocol_era
+    if raw_era is None:
+        return None
+    try:
+        era = raw_era if isinstance(raw_era, ProtocolEra) else ProtocolEra(str(raw_era))
+    except ValueError as exc:
+        raise ValueError("authenticated ingress supplied an invalid protocol era") from exc
+    principal = _trusted_request_attribute(app, "principal_id")
+    transport = _trusted_request_attribute(app, "transport")
+    if isinstance(attached, ApplicationIdentity):
+        principal = principal or attached.principal_id
+        transport = transport or attached.transport
+        supplied_handle = attached.application_handle
+    else:
+        supplied_handle = _trusted_request_attribute(app, "application_handle")
+    return resolve_application_identity(
+        principal_id=str(principal or ""),
+        protocol_era=era,
+        transport=str(transport or ""),
+        supplied_handle=supplied_handle,
+        connection_id=None,
+    )
 
 
 def _normalize_configured_repo_root(value: Any) -> Optional[str]:
@@ -641,6 +689,8 @@ async def execute_tool_call(
         except Exception:
             current_context = None
 
+    application_identity = _resolve_runtime_application_identity(app)
+
     if public_release:
         caller_claims = _collect_public_release_session_claims(
             context_payload=context_payload,
@@ -691,6 +741,18 @@ async def execute_tool_call(
     else:
         context_payload.pop("parent_execution_id", None)
 
+    if application_identity is not None:
+        for key in (*_UNTRUSTED_CALLER_SESSION_KEYS, "stable_session_id", "compat_session_id"):
+            context_payload.pop(key, None)
+        context_payload["application_identity"] = application_identity
+        context_payload["transport_session_id"] = application_identity.identity_key
+        _set_scope_provenance(
+            context_payload,
+            field="transport_session_id",
+            label="verified",
+        )
+        context_payload["authoritative_session_key"] = application_identity.identity_key
+
     configured_default_repo_root, configured_trusted_roots = _configured_repo_roots(settings)
 
     repo_authority = build_repo_authority_snapshot(
@@ -711,15 +773,19 @@ async def execute_tool_call(
 
     session_id_claimed = bool(context_payload.get("session_id"))
 
-    runtime_transport_session_id = _actor_scoped_transport_session_id(
-        _derive_transport_session_id(
-            app=app,
-            fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
-            kwargs={},
-            allow_untrusted_sources=False,
-            allow_process_fallback=False,
-        ),
-        arguments.get("agent"),
+    runtime_transport_session_id = (
+        application_identity.identity_key
+        if application_identity is not None
+        else _actor_scoped_transport_session_id(
+            _derive_transport_session_id(
+                app=app,
+                fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
+                kwargs={},
+                allow_untrusted_sources=False,
+                allow_process_fallback=False,
+            ),
+            arguments.get("agent"),
+        )
     )
     has_runtime_transport_identity = bool(runtime_transport_session_id) and not str(
         runtime_transport_session_id
@@ -777,7 +843,7 @@ async def execute_tool_call(
             arguments.get("agent"),
         )
 
-    if context_payload.get("transport_session_id"):
+    if context_payload.get("transport_session_id") and application_identity is None:
         context_payload["transport_session_id"] = _actor_scoped_transport_session_id(
             str(context_payload["transport_session_id"]),
             arguments.get("agent"),
@@ -827,8 +893,28 @@ async def execute_tool_call(
                     has_runtime_transport_identity
                     or str(context_payload.get("transport_session_id") or "").startswith("process:")
                 ):
-                    context_payload["repo_root"] = existing_repo_root
-                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
+                    # The stored session root is a fallback for requests that
+                    # carry no root of their own — never an override. It must
+                    # not clobber a root the request already verified, and on
+                    # a set_project rebind to a DIFFERENT root the explicit
+                    # root must win: a stale stored root would otherwise wedge
+                    # the session against a repo the caller has explicitly
+                    # left, making every subsequent project lookup miss. A
+                    # same-root set_project still adopts (keeps the
+                    # verified-binding authority path for re-binds).
+                    current_repo_root = context_payload.get("repo_root")
+                    current_repo_root_scope = (
+                        (context_payload.get("scope_provenance") or {}).get("repo_root")
+                        if isinstance(context_payload.get("scope_provenance"), dict)
+                        else None
+                    )
+                    stored_root_applies = not current_repo_root or (
+                        current_repo_root_scope != "verified"
+                        and (name != "set_project" or existing_repo_root == current_repo_root)
+                    )
+                    if stored_root_applies:
+                        context_payload["repo_root"] = existing_repo_root
+                        _set_scope_provenance(context_payload, field="repo_root", label="verified")
         if not context_payload.get("session_id"):
             session_id = await router_context_manager.get_or_create_session_id(
                 context_payload["transport_session_id"]
@@ -863,6 +949,11 @@ async def execute_tool_call(
                     str(explicit_project),
                     repo_root=str(lookup_root),
                 )
+                if not project_record:
+                    # The caller named the project explicitly; a stale or
+                    # mismatched context root must not report it missing.
+                    # The unscoped lookup fails closed on ambiguous names.
+                    project_record = await storage_backend.fetch_project(str(explicit_project))
             else:
                 project_record = await storage_backend.fetch_project(str(explicit_project))
             if project_record:
@@ -872,14 +963,27 @@ async def execute_tool_call(
                 )
                 _set_scope_provenance(context_payload, field="repo_root", label="verified")
                 _set_scope_provenance(context_payload, field="project_name", label="verified")
+        # Resolve the session->project binding under the SAME canonical key the
+        # write side (set_project -> resolve_context_authoritative_session_key)
+        # bound it with: stable_session_id preferred, session_id fallback (see
+        # session_utils.get_canonical_session_key). Reading with the raw
+        # session_id alone silently misses a binding that was written under a
+        # divergent stable_session_id -- the exact asymmetry that surfaces under
+        # concurrent multi-agent load as "ExecutionContext repo scope
+        # unresolved" for a session that WAS bound. Falling back to session_id
+        # keeps single-key flows byte-identical.
+        canonical_session_key = (
+            context_payload.get("stable_session_id")
+            or context_payload.get("session_id")
+        )
         if (
             not context_payload.get("repo_root")
-            and context_payload.get("session_id")
+            and canonical_session_key
             and (session_id_claimed or has_runtime_transport_identity or process_fallback_transport)
         ):
             project_name = None
             if hasattr(storage_backend, "get_session_project"):
-                project_name = await storage_backend.get_session_project(context_payload.get("session_id"))
+                project_name = await storage_backend.get_session_project(canonical_session_key)
             if project_name:
                 context_payload["project_name"] = str(project_name)
                 _set_scope_provenance(context_payload, field="project_name", label="verified")
@@ -889,6 +993,10 @@ async def execute_tool_call(
                         str(project_name),
                         repo_root=str(lookup_root),
                     )
+                    if not project_record:
+                        # The session binding was set explicitly via
+                        # set_project; a stale context root must not orphan it.
+                        project_record = await storage_backend.fetch_project(str(project_name))
                 else:
                     project_record = await storage_backend.fetch_project(str(project_name))
                 if project_record:
@@ -961,11 +1069,26 @@ async def execute_tool_call(
         context_payload["intent"] = f"tool:{name}"
 
     if storage_backend and hasattr(storage_backend, "upsert_session"):
+        # Only a VERIFIED repo root may be persisted as the session's stored
+        # root. Diagnostic fallbacks (the server's own install root) and
+        # claimed call-argument roots are request-local; persisting them lets
+        # a later request adopt them as verified session scope (provenance
+        # laundering), which wedges every project lookup for the session
+        # against the wrong repo. set_project persists the root it verified
+        # through its own authority checks.
+        persisted_repo_root = context_payload.get("repo_root")
+        persisted_root_scope = (
+            (context_payload.get("scope_provenance") or {}).get("repo_root")
+            if isinstance(context_payload.get("scope_provenance"), dict)
+            else None
+        )
+        if persisted_root_scope != "verified":
+            persisted_repo_root = None
         try:
             await storage_backend.upsert_session(
                 session_id=context_payload.get("session_id"),
                 transport_session_id=context_payload.get("transport_session_id"),
-                repo_root=context_payload.get("repo_root"),
+                repo_root=persisted_repo_root,
                 mode=context_payload.get("mode"),
             )
         except Exception as exc:
@@ -1032,7 +1155,11 @@ async def execute_tool_call(
         else:
             context_payload["session_reuse_status"] = "reused"
 
-    canonical_session_key = resolve_context_authoritative_session_key(current_context)
+    canonical_session_key = (
+        application_identity.identity_key
+        if application_identity is not None
+        else resolve_context_authoritative_session_key(current_context)
+    )
     if not canonical_session_key:
         canonical_session_key = (
             str(context_payload.get("stable_session_id")).strip()

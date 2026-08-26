@@ -388,12 +388,22 @@ class BulletproofParameterCorrector:
     """
 
     @staticmethod
-    def correct_message_parameter(message: Any) -> str:
+    def correct_message_parameter(message: Any, max_length: Optional[int] = 1000) -> str:
         """
         Correct and sanitize message parameter to always return a valid string.
 
         Args:
             message: Any input value for message parameter
+            max_length: Cap for short identifier-shaped fields (agent, emoji,
+                log_type). Pass None for audit-trail content such as an entry
+                message, where a silent cap corrupts the trail at write time.
+
+                None also marks the value as *content* rather than an
+                identifier, so its newlines are preserved: `_sanitize_message`
+                owns escaping them for the single-line file record, and
+                flattening here would destroy the structure before that
+                escaping ever runs. Identifiers keep their flattening — a
+                newline inside `[Agent: ...]` would break the log-line format.
 
         Returns:
             Always returns a valid, sanitized message string
@@ -408,16 +418,21 @@ class BulletproofParameterCorrector:
             except Exception:
                 return "Invalid message format"
 
-        # Remove problematic characters
-        corrected = message.replace("\n", " ").replace("\r", " ").replace("|", ";")
+        # Remove problematic characters. Newlines are structure and only get
+        # flattened for identifiers; the pipe substitution stays on both paths
+        # (its own family member is censused separately).
+        corrected = message
+        if max_length is not None:
+            corrected = corrected.replace("\n", " ").replace("\r", " ")
+        corrected = corrected.replace("|", ";")
 
         # Ensure non-empty
         if not corrected.strip():
             return "Empty message"
 
         # Truncate if too long
-        if len(corrected) > 1000:
-            corrected = corrected[:997] + "..."
+        if max_length is not None and len(corrected) > max_length:
+            corrected = corrected[:max_length - 3] + "..."
 
         return corrected.strip()
 
@@ -558,6 +573,14 @@ class BulletproofParameterCorrector:
                         value = value.replace("\n", " ").replace("\r", " ").replace("|", ";")
                         if len(value) > 500:
                             value = value[:497] + "..."
+                elif value is None:
+                    # Preserve None. Stringifying it fabricates the literal
+                    # "None", which downstream consumers cannot distinguish from
+                    # a caller who really meant that word — replace_text wrote
+                    # "None" into documents and reported success. An absent
+                    # value must stay absent so the boundary that owns the
+                    # parameter can refuse it.
+                    value = None
                 elif not isinstance(value, (int, float, bool, list, dict)):
                     try:
                         value = str(value)

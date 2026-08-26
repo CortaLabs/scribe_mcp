@@ -28,14 +28,19 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import contextvars
 import dataclasses
 import datetime
+import hashlib
+import hmac
+import json
 import logging
 import secrets
 import time
 from typing import Any
 
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -45,7 +50,12 @@ import uvicorn
 
 import scribe_mcp.server as server_module
 from scribe_mcp.config.settings import Settings
+from scribe_mcp.mcp_adapter import MCPCompatibilityPolicy, ProtocolEra
 from scribe_mcp.server import app, _startup, _shutdown
+from scribe_mcp.shared.execution_context import (
+    ApplicationIdentity,
+    resolve_application_identity,
+)
 from scribe_mcp.state.agent_manager import SessionLeaseExpired
 from scribe_mcp.storage.base import ProjectRecord
 
@@ -57,6 +67,46 @@ logger = logging.getLogger(__name__)
 
 _server_start_time: float | None = None
 _AUTH_EXEMPT_PATHS: frozenset[str] = frozenset({"/health"})
+_MODERN_PATH = "/mcp"
+_LEGACY_ENDPOINTS: frozenset[str] = frozenset({"/sse", "/messages", "/messages/"})
+DOWNGRADE_REASONS: frozenset[str] = frozenset(
+    {"explicit_legacy_mode", "recognized_legacy_endpoint"}
+)
+_APPLICATION_HANDLE_HEADER = "scribe-application-handle"
+_INGRESS_PRINCIPAL_SECRET = secrets.token_bytes(32)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _IngressRequestIdentity:
+    principal_id: str
+    protocol_era: ProtocolEra
+    transport: str
+    application_identity: ApplicationIdentity
+
+
+_INGRESS_REQUEST_IDENTITY: contextvars.ContextVar[_IngressRequestIdentity | None] = (
+    contextvars.ContextVar("scribe_ingress_request_identity", default=None)
+)
+
+
+class _IngressRequestContextProxy:
+    """Expose only server-attached ingress identity to the tool chokepoint."""
+
+    def __getattr__(self, name: str) -> Any:
+        attached = _INGRESS_REQUEST_IDENTITY.get()
+        if attached is None or name not in {
+            "principal_id",
+            "protocol_era",
+            "transport",
+            "application_identity",
+        }:
+            raise AttributeError(name)
+        return getattr(attached, name)
+
+
+# ``tool_runtime`` consumes this server-owned seam. The proxy is context-local,
+# so concurrent requests never share identity attributes.
+app.request_context = _IngressRequestContextProxy()
 
 
 def _resolve_transport_runtime(
@@ -112,18 +162,349 @@ def _unauthorized_response() -> JSONResponse:
     )
 
 
+def _typed_ingress_response(
+    *,
+    status_code: int,
+    error_type: str,
+    message: str,
+    reason_code: str,
+) -> JSONResponse:
+    return JSONResponse(
+        {
+            "error": message,
+            "type": error_type,
+            "reason_code": reason_code,
+        },
+        status_code=status_code,
+    )
+
+
+def _typed_mcp_rejection(
+    request: Request,
+    payload: Any | None,
+    *,
+    status_code: int,
+    error_type: str,
+    message: str,
+    reason_code: str,
+    jsonrpc_code: int,
+    data: dict[str, Any] | None = None,
+) -> JSONResponse:
+    error: dict[str, Any] = {"code": jsonrpc_code, "message": message}
+    if data is not None:
+        error["data"] = data
+    request_id = payload.get("id") if isinstance(payload, dict) else None
+    return JSONResponse(
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": error,
+            "type": error_type,
+            "reason_code": reason_code,
+        },
+        status_code=status_code,
+    )
+
+
+def _request_json_payload(request: Request, raw_body: bytes) -> tuple[Any | None, JSONResponse | None]:
+    if not raw_body:
+        return None, None
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        return None, _typed_ingress_response(
+            status_code=415,
+            error_type="UnsupportedMediaType",
+            message="Request body must use application/json",
+            reason_code="unsupported_media_type",
+        )
+    try:
+        return json.loads(raw_body), None
+    except (ValueError, RecursionError):
+        if request.url.path.rstrip("/") == _MODERN_PATH:
+            return None, _typed_mcp_rejection(
+                request,
+                None,
+                status_code=400,
+                error_type="ParseError",
+                message="Malformed JSON request body",
+                reason_code="malformed_request",
+                jsonrpc_code=-32700,
+            )
+        return None, _typed_ingress_response(
+            status_code=400,
+            error_type="ParseError",
+            message="Malformed JSON request body",
+            reason_code="malformed_request",
+        )
+
+
+def _protocol_rejection(
+    request: Request,
+    payload: Any | None,
+    *,
+    legacy_enabled: bool,
+) -> JSONResponse | None:
+    path = request.url.path
+    modern_path = path.rstrip("/") == _MODERN_PATH
+    if not modern_path and path not in _LEGACY_ENDPOINTS:
+        return None
+    revision_values = request.headers.getlist("mcp-protocol-version")
+    if len(revision_values) > 1 or any("," in item for item in revision_values):
+        if modern_path:
+            return _typed_mcp_rejection(
+                request,
+                payload,
+                status_code=400,
+                error_type="HeaderMismatch",
+                message="MCP-Protocol-Version must appear at most once",
+                reason_code="duplicate_protocol_header",
+                jsonrpc_code=-32020,
+            )
+        return _typed_ingress_response(
+            status_code=400,
+            error_type="HeaderMismatch",
+            message="MCP-Protocol-Version must appear at most once",
+            reason_code="duplicate_protocol_header",
+        )
+    header_revision = revision_values[0].strip() if revision_values else None
+    body_revision = None
+    if isinstance(payload, dict) and payload.get("method") == "initialize":
+        params = payload.get("params")
+        if isinstance(params, dict):
+            candidate = params.get("protocolVersion")
+            body_revision = candidate.strip() if isinstance(candidate, str) else None
+
+    policy = MCPCompatibilityPolicy(legacy_enabled=legacy_enabled)
+    expected = (
+        policy.default_revision
+        if modern_path
+        else policy.legacy_revisions[0]
+    )
+    supplied = [item for item in (header_revision, body_revision) if item is not None]
+    if header_revision and body_revision and header_revision != body_revision:
+        if modern_path:
+            return _typed_mcp_rejection(
+                request,
+                payload,
+                status_code=400,
+                error_type="HeaderMismatch",
+                message="MCP protocol header and initialize body disagree",
+                reason_code="protocol_header_body_mismatch",
+                jsonrpc_code=-32020,
+            )
+        return _typed_ingress_response(
+            status_code=400,
+            error_type="HeaderMismatch",
+            message="MCP protocol header and initialize body disagree",
+            reason_code="protocol_header_body_mismatch",
+        )
+    if path in _LEGACY_ENDPOINTS and not legacy_enabled:
+        return _typed_ingress_response(
+            status_code=410,
+            error_type="LegacyTransportDisabled",
+            message="Legacy HTTP compatibility is disabled",
+            reason_code="legacy_transport_disabled",
+        )
+    if any(revision != expected for revision in supplied):
+        if modern_path:
+            return _typed_mcp_rejection(
+                request,
+                payload,
+                status_code=400,
+                error_type="UnsupportedProtocolVersion",
+                message=f"Unsupported protocol revision for {path}",
+                reason_code="unsupported_protocol_revision",
+                jsonrpc_code=-32022,
+                data={"supported": [policy.default_revision]},
+            )
+        return _typed_ingress_response(
+            status_code=400,
+            error_type="UnsupportedProtocolVersion",
+            message=f"Unsupported protocol revision for {path}",
+            reason_code="unsupported_protocol_revision",
+        )
+    return None
+
+
+def _request_principal(expected_auth_token: str) -> str:
+    digest = hmac.new(
+        _INGRESS_PRINCIPAL_SECRET,
+        expected_auth_token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"operator-root:{digest}"
+
+
 class TransportAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, *, expected_auth_token: str) -> None:
         super().__init__(app)
         self._expected_auth_token = expected_auth_token
+        settings = Settings.load()
+        self._allowed_origins = frozenset(settings.transport_allowed_origins)
+        self._max_request_bytes = settings.transport_max_request_bytes
+        self._request_timeout_seconds = settings.transport_request_timeout_seconds
+        self._legacy_enabled = settings.transport_legacy_enabled
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path not in _AUTH_EXEMPT_PATHS and not _request_is_authenticated(
-            request,
-            self._expected_auth_token,
-        ):
+        path = request.url.path
+        if path in _AUTH_EXEMPT_PATHS:
+            return await call_next(request)
+
+        origins = request.headers.getlist("origin")
+        if len(origins) > 1 or any("," in origin for origin in origins):
+            return _typed_ingress_response(
+                status_code=400,
+                error_type="HeaderMismatch",
+                message="Origin must appear at most once",
+                reason_code="multiple_origin",
+            )
+        if origins and origins[0] not in self._allowed_origins:
+            return _typed_ingress_response(
+                status_code=403,
+                error_type="InvalidOrigin",
+                message="Origin is not allowed",
+                reason_code="invalid_origin",
+            )
+
+        bearer_headers = request.headers.getlist("authorization")
+        token_headers = request.headers.getlist("x-scribe-auth")
+        if len(bearer_headers) > 1 or len(token_headers) > 1:
+            return _typed_ingress_response(
+                status_code=400,
+                error_type="HeaderMismatch",
+                message="Authentication headers must not be repeated",
+                reason_code="duplicate_auth_header",
+            )
+        if bearer_headers and token_headers:
+            bearer = bearer_headers[0].strip()
+            bearer = bearer[7:].strip() if bearer.lower().startswith("bearer ") else ""
+            if not bearer or not secrets.compare_digest(bearer, token_headers[0].strip()):
+                return _typed_ingress_response(
+                    status_code=400,
+                    error_type="HeaderMismatch",
+                    message="Authentication headers disagree",
+                    reason_code="auth_header_mismatch",
+                )
+        if not _request_is_authenticated(request, self._expected_auth_token):
             return _unauthorized_response()
-        return await call_next(request)
+        shutdown_phase = str(
+            server_module.get_transport_shutdown_state().get("phase") or "running"
+        )
+        if shutdown_phase != "running":
+            return _shutdown_phase_response(shutdown_phase)
+
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > self._max_request_bytes:
+                    raise OverflowError
+            except (ValueError, OverflowError):
+                return _typed_ingress_response(
+                    status_code=413,
+                    error_type="RequestTooLarge",
+                    message="Request body exceeds the configured limit",
+                    reason_code="request_limit_exceeded",
+                )
+        raw_body = await request.body()
+        if len(raw_body) > self._max_request_bytes:
+            return _typed_ingress_response(
+                status_code=413,
+                error_type="RequestTooLarge",
+                message="Request body exceeds the configured limit",
+                reason_code="request_limit_exceeded",
+            )
+        payload, body_rejection = _request_json_payload(request, raw_body)
+        if body_rejection is not None:
+            return body_rejection
+        protocol_rejection = _protocol_rejection(
+            request,
+            payload,
+            legacy_enabled=self._legacy_enabled,
+        )
+        if protocol_rejection is not None:
+            return protocol_rejection
+
+        is_legacy = path in _LEGACY_ENDPOINTS
+        era = ProtocolEra.LEGACY if is_legacy else ProtocolEra.MODERN
+        transport = "http-sse" if is_legacy else "streamable-http"
+        supplied_handle = request.headers.get(_APPLICATION_HANDLE_HEADER)
+        method = payload.get("method") if isinstance(payload, dict) else None
+        params = payload.get("params") if isinstance(payload, dict) else None
+        tool_name = params.get("name") if isinstance(params, dict) else None
+        if (
+            method == "tools/call"
+            and isinstance(tool_name, str)
+            and _is_remote_tool_invoke_transport()
+            and _tool_is_local_operator_only(tool_name)
+        ):
+            return _local_operator_tool_blocked_response(tool_name)
+        requires_handle = path.rstrip("/") == _MODERN_PATH and method == "tools/call"
+        if requires_handle and not supplied_handle:
+            return _typed_ingress_response(
+                status_code=401,
+                error_type="ApplicationIdentityRequired",
+                message="Scribe-Application-Handle is required",
+                reason_code="application_handle_required",
+            )
+        try:
+            identity = resolve_application_identity(
+                principal_id=_request_principal(self._expected_auth_token),
+                protocol_era=era,
+                transport=transport,
+                supplied_handle=supplied_handle,
+                connection_id="authenticated-http-ingress" if supplied_handle is None else None,
+            )
+        except (TypeError, ValueError) as exc:
+            return _typed_ingress_response(
+                status_code=401,
+                error_type="InvalidApplicationIdentity",
+                message=str(exc),
+                reason_code="application_identity_denied",
+            )
+        if supplied_handle and identity.application_handle is None:
+            identity = dataclasses.replace(identity, application_handle=supplied_handle)
+        attached = _IngressRequestIdentity(
+            principal_id=identity.principal_id,
+            protocol_era=era,
+            transport=transport,
+            application_identity=identity,
+        )
+
+        phase = await server_module.begin_transport_operation()
+        if phase != "running":
+            return _shutdown_phase_response(phase)
+        token = _INGRESS_REQUEST_IDENTITY.set(attached)
+        try:
+            try:
+                async with asyncio.timeout(self._request_timeout_seconds):
+                    response = await call_next(request)
+            except TimeoutError:
+                return _typed_ingress_response(
+                    status_code=504,
+                    error_type="RequestTimeout",
+                    message="Request exceeded the configured timeout",
+                    reason_code="request_timeout",
+                )
+            if identity.application_handle and supplied_handle is None:
+                response.headers[_APPLICATION_HANDLE_HEADER] = identity.application_handle
+            downgrade_reason = "recognized_legacy_endpoint" if is_legacy else None
+            logger.info(
+                "HTTP ingress accepted route=%s era=%s downgrade_reason=%s",
+                path,
+                era.value,
+                downgrade_reason,
+                extra={
+                    "event_type": "http_ingress",
+                    "service": "scribe_mcp",
+                    "route": path,
+                    "summary": "authenticated MCP ingress accepted",
+                    "downgrade_reason": downgrade_reason,
+                },
+            )
+            return response
+        finally:
+            _INGRESS_REQUEST_IDENTITY.reset(token)
+            await server_module.end_transport_operation()
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +1009,21 @@ def _build_starlette_app(
     sse_transport: SseServerTransport,
     expected_auth_token: str,
 ) -> Starlette:
+    runtime_settings = Settings.load()
+    modern_starlette_app = app.streamable_http_app(
+        streamable_http_path=_MODERN_PATH,
+        json_response=True,
+        stateless_http=True,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        ),
+        max_request_body_size=runtime_settings.transport_max_request_bytes,
+    )
+    modern_route = next(
+        route
+        for route in modern_starlette_app.routes
+        if getattr(route, "path", None) == _MODERN_PATH
+    )
     # ``SseServerTransport.connect_sse`` manages the SSE response stream
     # directly through the ASGI ``send`` callable (accessed via the
     # semi-private ``request._send``). After the connection closes we return an
@@ -637,23 +1033,25 @@ def _build_starlette_app(
         async with sse_transport.connect_sse(
             request.scope, request.receive, request._send,
         ) as (read_stream, write_stream):
-            await app.run(
+            await app._lowlevel_server.run(
                 read_stream,
                 write_stream,
-                app.create_initialization_options(),
+                app._lowlevel_server.create_initialization_options(),
             )
         return Response()
 
     @asynccontextmanager
     async def lifespan(_: Starlette):
-        try:
-            yield
-        finally:
-            await _shutdown()
+        async with modern_starlette_app.router.lifespan_context(modern_starlette_app):
+            try:
+                yield
+            finally:
+                await _shutdown()
 
     starlette_app = Starlette(
         routes=[
             Route("/health", health_check),
+            modern_route,
             Route("/sse", handle_sse),
             Mount("/messages/", app=sse_transport.handle_post_message),
             Route("/api/v1/backend/{operation}", handle_backend_operation, methods=["POST"]),

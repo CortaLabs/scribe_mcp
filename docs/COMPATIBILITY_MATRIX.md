@@ -1,11 +1,13 @@
 # Compatibility Matrix
 
-Baseline date: **2026-06-29**
-Release framing: **v2.11.x compatibility baseline (current: 2.11.1)**
+Baseline date: **2026-08-26**
+Release framing: **v2.13.x MCP SDK v2 migration baseline (current: 2.13.0)**
 
 ## Baseline contract
 
-This baseline keeps compatibility posture for the 2.11.x release line — currently `2.11.1`, a backward-compatible patch on top of the 2.11.0 source line and the 2.9.x affected-row inventory baseline. The 2.11.1 line rejects hollow `append_entry` payloads before any write, fixes readable `read_recent(compact=True)` rendering, adds fail-closed repo-local plugin diagnostics in `scribe_doctor`, improves managed-doc registration/drift diagnostics, adds advisory reminder guidance fields, and accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input with **no breaking public API, CLI, protocol, or schema/data contract changes**. The carried 2.8.x baseline bundles the completed `scribe_refinement_audit` sweep:
+This baseline advances Scribe to `2.13.0` for the MCP SDK v2 migration while retaining the maintenance and session-isolation work already present on `main`. Scribe requires Python `>=3.11` and supports MCP Python SDK `>=2.0.0,<3.0`. The isolated migration candidate remains exactly `mcp==2.0.0`, `mcp-types==2.0.0`, and `httpx2==2.5.0`. The modern wire default is protocol revision `2026-07-28`; legacy compatibility is deliberately limited to the known `mcp==1.26.0` client, protocol revision `2025-11-25`, handshake stdio, and the retained `/sse` plus `/messages/` routes. Production does not use automatic downgrade or arbitrary legacy fallback.
+
+The carried maintenance line rejects hollow `append_entry` payloads before any write, fixes readable `read_recent(compact=True)` rendering, adds fail-closed repo-local plugin diagnostics in `scribe_doctor`, improves managed-doc registration/drift diagnostics, adds advisory reminder guidance fields, and accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input with **no breaking public API, CLI, or schema/data contract changes**. The carried 2.8.x baseline bundles the completed `scribe_refinement_audit` sweep:
 
 - **Host schema + case correctness:** host-facing `manage_docs` input-schema enrichment (live `action` enum sourced from the action manifest plus documented `metadata` sub-keys, `additionalProperties` preserved); unified bug/case status vocabulary (closure states such as `wontfix`/`duplicate` preserved consistently); exact (non-substring) case-path resolution that refuses to act on ambiguous matches.
 - **Maintainability / honest envelopes:** removal of the dead cross-project search engine in `query_entries` (15 symbols; the file dropped from ~2,587 to ~1,868 lines) and dead self-healing paths in `utils/error_handler.py`. As part of this, `query_entries` now returns honest result envelopes on paths that were previously dead or silently misleading — see the named behavior change below.
@@ -18,7 +20,10 @@ This baseline keeps compatibility posture for the 2.11.x release line — curren
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.11.1` (backward-compatible patch on the 2.11.x line)
+- **Core package version:** `scribe-mcp==2.13.0` (MCP SDK v2 migration baseline)
+- **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
+- **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
+- **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
 - **Affected-row inventory posture:** read-only, public-safe labels/aggregates only, fail-closed, no mutation authority
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
@@ -31,7 +36,9 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.11.1` | Supported (current) | Current public Scribe install. Rejects hollow `append_entry` payloads before any write; fixes default readable `read_recent(compact=True)` output so rendered entries retain full fields; adds `scribe_doctor` diagnostics for internal repo-local plugin loading/trust state, discovered stems, configured allow/block lists, blocked reasons, and restart/opt-in guidance; improves `manage_docs` registration/drift diagnostics; adds advisory reminder guidance fields; and accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` updates while rejecting add/delete, multi-doc, and target-mismatch input. Reminder hook/context injection remains security-blocked future work. |
+| `2.13.0` | Supported (current) | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
+| `2.11.1` | Supported (previous) | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
+| `2.10.1` | Supported (previous) | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |
 | `2.9.0` | Supported (previous) | Adds MCP/CLI read-only affected-row referential inventory preflight for governed repair planning, with public-safe labels/aggregates only and fail-closed guards for target binding, selected-context, reference inventory, low-cardinality/private-output, missing backend, and mutation-shaped invocation. |
 | `2.8.1` | Supported (previous) | Patch on the 2.8.0 feature baseline: existing physical managed docs are auto-registered for targeted `manage_docs` actions, path-like registration preserves existing aliases, plugin sync works in clean checkout CI, shipped plugin bundles contain only `scribe-integration` and `scribe-onboarding`, the packaged Codex projection writes every shipped skill, and `complete` is terminal for case filtering. |
 | `2.8.0` | Supported (feature baseline) | Feature baseline for the 2.8.x line. Bundles the `scribe_refinement_audit` sweep: host-facing `manage_docs` input-schema enrichment, unified case-status vocabulary + exact case-path resolution, dead-code/honest-envelope maintainability cleanup, `read_file` pagination + single-pass AST + SQL-pushdown message filtering, a wired reminder engine, tool discoverability + onboarding skills, a managed-doc `title`-preservation fix, and packaged plugin projection. Backward-compatible additive + fix release; no breaking public API/CLI/schema contract. |
@@ -48,6 +55,9 @@ One behavior change is worth naming explicitly because it changes a return value
 
 | Combination / practice | Status | Why |
 | --- | --- | --- |
+| MCP SDK `<2.0.0` as the Scribe server runtime | Unsupported | The 2.13.0 runtime dependency supports MCP SDK major 2 only. |
+| Automatic fallback from a failed modern request to legacy mode | Unsupported | Legacy selection must be explicit and source-owned; auth, transport, protocol, and capability failures fail closed. |
+| Legacy clients other than `mcp==1.26.0` / protocol `2025-11-25` | Not signed off | This migration preserves only the named compatibility lane. |
 | Public onboarding that treats remote/client as generally available | Unsupported | Public release profile fail-closes remote/client startup. |
 | Standalone SQLite presented as default runtime posture | Unsupported | Runtime settings default storage backend to Postgres. |
 | Guidance that depends on repo-local/operator files as public setup | Unsupported | Those files are local convenience, not release contract. |

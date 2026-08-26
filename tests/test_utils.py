@@ -42,6 +42,129 @@ def test_clean_meta_value_replaces_newlines_and_pipes():
     assert _clean_meta_value("line1\nline2|x") == "line1 line2 x"
 
 
+async def _isolated_set_project_state(tmp_path: Path, monkeypatch) -> tuple[StateManager, str]:
+    state_manager = StateManager(path=tmp_path / "state.json")
+    monkeypatch.setattr(set_project.server_module, "state_manager", state_manager)
+    monkeypatch.setattr(set_project.server_module, "storage_backend", None)
+
+    prior_name = f"prior-project-{uuid.uuid4().hex[:8]}"
+    prior_root = tmp_path / "prior-root"
+    prior_root.mkdir()
+    await state_manager.set_current_project(
+        prior_name,
+        {
+            "name": prior_name,
+            "root": str(prior_root),
+            "progress_log": str(prior_root / "PROGRESS_LOG.md"),
+        },
+    )
+
+    real_set_current_project = state_manager.set_current_project
+
+    async def _set_current_project(name, project_data=None, **kwargs):
+        kwargs["agent_id"] = None
+        kwargs["skip_upsert"] = False
+        return await real_set_current_project(name, project_data, **kwargs)
+
+    monkeypatch.setattr(state_manager, "set_current_project", _set_current_project)
+    return state_manager, prior_name
+
+
+async def _no_slug_collision(_name: str, _backend, _repo_root: Path):
+    return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_set_project_accepts_exact_council_workspace_root(
+    tmp_path: Path,
+    monkeypatch,
+):
+    state_manager, _prior_name = await _isolated_set_project_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(set_project, "_check_slug_collision", _no_slug_collision)
+
+    workspace_root = tmp_path / "council-workspace"
+    marker = workspace_root / ".council" / "council.yaml"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("council: test\n", encoding="utf-8")
+    project_name = f"council-workspace-{uuid.uuid4().hex[:8]}"
+
+    result = await set_project.set_project(
+        agent="test_agent",
+        name=project_name,
+        root=str(workspace_root),
+        format="structured",
+    )
+
+    assert result["ok"] is True
+    assert Path(result["project"]["root"]).resolve() == workspace_root.resolve()
+    assert result["root_authorization"]["authorization_mode"] == "first_party"
+    assert result["root_authorization"]["authority_source"] == "explicit_local_repo_root"
+    assert result["root_authorization"]["reason_code"] == "first_party_explicit_local_repo_root"
+    assert result["root_authorization"]["skip_validation_requested"] is False
+    assert result["root_authorization"]["compatibility_override_used"] is False
+    progress_log = Path(result["project"]["progress_log"]).resolve()
+    assert progress_log.name == "PROGRESS_LOG.md"
+    assert progress_log.parent.parent == (workspace_root / settings.dev_plans_base).resolve()
+    assert (await state_manager.load()).current_project == project_name
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_set_project_rejects_bare_council_workspace_marker(
+    tmp_path: Path,
+    monkeypatch,
+):
+    state_manager, prior_name = await _isolated_set_project_state(tmp_path, monkeypatch)
+
+    workspace_root = tmp_path / "bare-council-workspace"
+    (workspace_root / ".council").mkdir(parents=True)
+    project_name = f"bare-council-workspace-{uuid.uuid4().hex[:8]}"
+
+    result = await set_project.set_project(
+        agent="test_agent",
+        name=project_name,
+        root=str(workspace_root),
+        format="structured",
+    )
+
+    assert result["ok"] is False
+    assert result["reason_code"] == "explicit_root_not_local_repo"
+    assert (await state_manager.load()).current_project == prior_name
+    assert not (workspace_root / settings.dev_plans_base / project_name).exists()
+    assert not (workspace_root / ".scribe").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_set_project_rejects_nested_path_below_council_workspace_root(
+    tmp_path: Path,
+    monkeypatch,
+):
+    state_manager, prior_name = await _isolated_set_project_state(tmp_path, monkeypatch)
+
+    workspace_root = tmp_path / "council-workspace"
+    marker = workspace_root / ".council" / "council.yaml"
+    nested_root = workspace_root / "nested" / "child"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("council: test\n", encoding="utf-8")
+    nested_root.mkdir(parents=True)
+    project_name = f"nested-council-workspace-{uuid.uuid4().hex[:8]}"
+
+    result = await set_project.set_project(
+        agent="test_agent",
+        name=project_name,
+        root=str(nested_root),
+        format="structured",
+    )
+
+    assert result["ok"] is False
+    assert result["reason_code"] == "explicit_root_not_local_repo"
+    assert (await state_manager.load()).current_project == prior_name
+    assert not (workspace_root / settings.dev_plans_base / project_name).exists()
+    assert not (nested_root / ".scribe").exists()
+
+
 @pytest.mark.asyncio
 async def test_set_project_rejects_log_outside_root():
     # safe_root must be a discoverable local repo root so the new first-gate

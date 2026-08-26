@@ -37,6 +37,9 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run focused storage posture suite
+        env:
+          SCRIBE_MODE: standalone
+          SCRIBE_STORAGE_BACKEND: sqlite
         run: pytest -q tests/test_settings_schema_alias.py tests/test_storage_factory_backends.py tests/test_mode_detection.py tests/test_server_storage_policy.py
 
       - name: Run Postgres-marked integration storage lane

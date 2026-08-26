@@ -268,7 +268,7 @@ This is the normal shared/team posture and the recommended public runtime path.
 
 ```bash
 export SCRIBE_STORAGE_BACKEND=postgres
-export SCRIBE_DB_URL="postgresql://user:pass@host:5432/scribe"
+export SCRIBE_DB_URL="postgresql://user:example-password@host:5432/scribe"
 ```
 
 ### Standalone SQLite mode

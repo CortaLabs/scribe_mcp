@@ -24,17 +24,17 @@ from scribe_mcp.storage.postgres.schema import SCHEMA_PATH, ensure_schema
 def _sample_cfg(tmp_path: Path, *, persist_superuser_env: bool = False) -> BootstrapConfig:
     return BootstrapConfig(
         superuser_user="postgres",
-        superuser_password="super-secret",
+        superuser_password="test-super-secret",
         superuser_host="127.0.0.1",
         superuser_port=5432,
         superuser_db="postgres",
         admin_user="scribe_admin",
-        admin_password="admin-secret",
+        admin_password="test-admin-secret",
         admin_host="127.0.0.1",
         admin_port=5432,
         admin_db="postgres",
         app_user="scribe_app",
-        app_password="app-secret",
+        app_password="test-app-secret",
         app_host="127.0.0.1",
         app_port=5432,
         app_db="scribe",
@@ -95,12 +95,12 @@ def test_init_sql_creates_repo_scoped_project_identity() -> None:
 def test_build_dsn_escapes_credentials() -> None:
     dsn = _build_dsn(
         user="scribe user",
-        password="p@ss:word",
+        password="test-p@ss:word",
         host="db.internal",
         port=5432,
         database="scribe-db",
     )
-    assert dsn == "postgresql://scribe+user:p%40ss%3Aword@db.internal:5432/scribe-db"
+    assert dsn == "postgresql://scribe+user:test-p%40ss%3Aword@db.internal:5432/scribe-db"
 
 
 def test_redact_dsn_masks_password() -> None:
@@ -122,7 +122,7 @@ def test_build_env_updates_with_superuser(tmp_path: Path) -> None:
     cfg = _sample_cfg(tmp_path, persist_superuser_env=True)
     updates = _build_env_updates(cfg)
     assert updates["SCRIBE_POSTGRES_SUPERUSER_USER"] == "postgres"
-    assert updates["SCRIBE_POSTGRES_SUPERUSER_PASSWORD"] == "super-secret"
+    assert updates["SCRIBE_POSTGRES_SUPERUSER_PASSWORD"] == "test-super-secret"
 
 
 def test_write_env_file_overwrites_when_enabled(tmp_path: Path) -> None:
@@ -345,14 +345,14 @@ def test_ensure_role_existing_uses_literal_password(monkeypatch: pytest.MonkeyPa
         _ensure_role(
             conn,
             role_name="scribe_admin",
-            password="pa'ss",
+            password="test-pa'ss",
         )
     )
 
     assert state == "updated"
     query, args = conn.queries[0]
     assert "$1" not in query
-    assert "PASSWORD 'pa''ss'" in query
+    assert "PASSWORD 'test-pa''ss'" in query
     assert args == ()
 
 
@@ -367,7 +367,7 @@ def test_ensure_role_create_uses_literal_password_and_flags(monkeypatch: pytest.
         _ensure_role(
             conn,
             role_name="scribe_app",
-            password="app-pass",
+            password="test-app-pass",
             createdb=True,
             createrole=True,
         )
@@ -376,5 +376,5 @@ def test_ensure_role_create_uses_literal_password_and_flags(monkeypatch: pytest.
     assert state == "created"
     query, args = conn.queries[0]
     assert "$1" not in query
-    assert "CREATE ROLE \"scribe_app\" LOGIN PASSWORD 'app-pass' CREATEDB CREATEROLE;" == query
+    assert "CREATE ROLE \"scribe_app\" LOGIN PASSWORD 'test-app-pass' CREATEDB CREATEROLE;" == query
     assert args == ()

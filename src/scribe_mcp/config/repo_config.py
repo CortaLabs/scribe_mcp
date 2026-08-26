@@ -491,6 +491,7 @@ class RepoDiscovery:
         Looks for:
         - .git directory
         - .scribe directory (Scribe-specific marker)
+        - .council/council.yaml file (Council workspace marker)
         - pyproject.toml (Python project marker)
         - package.json (Node.js project marker)
 
@@ -521,6 +522,9 @@ class RepoDiscovery:
                 if (current / marker).exists():
                     return current
 
+            if (current / ".council" / "council.yaml").is_file():
+                return current
+
             # Check for scribe config file directly
             if (current / ".scribe" / "scribe.yaml").exists():
                 return current
@@ -533,6 +537,8 @@ class RepoDiscovery:
         for marker in [".git", ".scribe", "pyproject.toml", "package.json"]:
             if (current / marker).exists():
                 return current
+        if (current / ".council" / "council.yaml").is_file():
+            return current
 
         return None
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Protocol, Union, cast, get_origin, get_args
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Protocol, Union, cast, get_origin, get_args
 
 # Centralised logging -- must run before any getLogger() calls import modules.
 from scribe_mcp.config.logging import configure_logging as _configure_logging
@@ -20,13 +20,19 @@ _configure_logging()
 import logging as _logging
 logger = _logging.getLogger(__name__)
 
-try:  # pragma: no cover - optional dependency
-    from mcp.server import Server  # type: ignore
-    from mcp.server import stdio as mcp_stdio  # type: ignore
-    from mcp import types as mcp_types  # type: ignore
-    _MCP_AVAILABLE = True
-except Exception:  # pragma: no cover - optional dependency
-    _MCP_AVAILABLE = False
+from scribe_mcp.mcp_adapter import (
+    MCPCompatibilityPolicy,
+    ProtocolEra,
+    build_mcp_server,
+    configure_mcp_server,
+    load_mcp_runtime,
+    normalize_tool_definition,
+)
+
+MCP_RUNTIME = load_mcp_runtime()
+Server = MCP_RUNTIME.server_type
+mcp_types = MCP_RUNTIME.types
+_MCP_AVAILABLE = True
 
 # Bridge tool extension support (optional)
 try:
@@ -34,51 +40,6 @@ try:
     BRIDGES_AVAILABLE = True
 except ImportError:
     BRIDGES_AVAILABLE = False
-
-    class _ServerStub:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        def tool(self, _name: str | None = None, **_: Any):
-            def decorator(func):
-                return func
-
-            return decorator
-
-        def on_startup(self, func):
-            return func
-
-        def on_shutdown(self, func):
-            return func
-
-        def create_initialization_options(self) -> dict[str, Any]:
-            return {}
-
-        async def run(self, *args, **kwargs) -> None:
-            raise RuntimeError(
-                "MCP Python SDK not installed. Install the 'mcp' package to run the server."
-            )
-
-        def run_stdio(self) -> None:
-            raise RuntimeError(
-                "MCP Python SDK not installed. Install the 'mcp' package to run the server."
-            )
-
-    class _MissingStdIOServer:
-        async def __aenter__(self) -> tuple[Any, Any]:
-            raise RuntimeError(
-                "MCP Python SDK not installed. Install the 'mcp' package to run the stdio server."
-            )
-
-        async def __aexit__(self, exc_type, exc, tb) -> bool:
-            return False
-
-    def _missing_stdio_server() -> AsyncIterator[tuple[Any, Any]]:
-        return _MissingStdIOServer()
-
-    Server = _ServerStub  # type: ignore
-    mcp_stdio = type("_StubStdIO", (), {"stdio_server": _missing_stdio_server})()  # type: ignore
-    mcp_types = None  # type: ignore
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.state import StateManager
@@ -120,10 +81,8 @@ if TYPE_CHECKING:
         def call_tool(self, *args: Any, **kwargs: Any) -> ToolDecorator: ...
 
 if TYPE_CHECKING:
-    _server_instance: ToolServer = cast("ToolServer", Server(settings.mcp_server_name))
-    app = _server_instance
-else:
-    app = Server(settings.mcp_server_name)
+    app: ToolServer
+app = build_mcp_server(settings.mcp_server_name, MCPCompatibilityPolicy())
 if not hasattr(app, "state"):
     app.state = SimpleNamespace()
 if not hasattr(app.state, "execution_context"):
@@ -133,6 +92,12 @@ state_manager = StateManager(storage_backend=storage_backend)
 agent_context_manager = None  # Will be initialized in startup
 agent_identity = None  # Will be initialized in startup
 router_context_manager = RouterContextManager(storage_backend=storage_backend)
+_SCRIBE_TOOL_REGISTRY: dict[str, Callable[..., Any]] = {}
+_SCRIBE_TOOL_DEFS: dict[str, Any] = {}
+Server._scribe_tool_registry = _SCRIBE_TOOL_REGISTRY
+Server._scribe_tool_defs = _SCRIBE_TOOL_DEFS
+app._scribe_tool_registry = _SCRIBE_TOOL_REGISTRY
+app._scribe_tool_defs = _SCRIBE_TOOL_DEFS
 _startup_complete = False
 _last_runtime_timing: dict[str, Any] = {}
 _journal_replay_complete = False  # Tracks background journal replay status
@@ -519,8 +484,6 @@ async def drain_background_tasks(*, timeout: float | None = None) -> list[BaseEx
 
 
 if _MCP_AVAILABLE:
-    from mcp import types as mcp_types
-
     # Always install Scribe's metadata-aware wrapper; upstream Server.tool does
     # not populate the local registry used by CLI/tool readback contracts.
     if not getattr(app, "_scribe_metadata_wrapper_installed", False):
@@ -703,16 +666,18 @@ if _MCP_AVAILABLE:
                 tool_execution = _coerce_tool_execution(execution)
                 tool_meta = _normalize_tool_meta(_meta, meta)
                 tool_tags = _normalize_tags(tags)
-                Server._scribe_tool_registry[tool_name] = target
-                Server._scribe_tool_defs[tool_name] = mcp_types.Tool(
+                _SCRIBE_TOOL_REGISTRY[tool_name] = target
+                _SCRIBE_TOOL_DEFS[tool_name] = normalize_tool_definition(
+                    runtime=MCP_RUNTIME,
+                    era=ProtocolEra.MODERN,
                     name=tool_name,
                     title=title,
                     description=tool_description,
-                    inputSchema=schema,
-                    outputSchema=output_schema,
+                    input_schema=schema,
+                    output_schema=output_schema,
                     icons=tool_icons,
                     annotations=tool_annotations,
-                    _meta=tool_meta,
+                    meta=tool_meta,
                     execution=tool_execution,
                     tags=tool_tags,
                 )
@@ -725,21 +690,23 @@ if _MCP_AVAILABLE:
         setattr(app, "tool", _tool_decorator)
         setattr(app, "_scribe_metadata_wrapper_installed", True)
 
-        @app.list_tools()
-        async def _list_tools() -> list[mcp_types.Tool]:
+        async def _list_tools(_era: ProtocolEra) -> list[Any]:
             tools.ensure_all_tools_loaded()
-            defs = getattr(Server, "_scribe_tool_defs", {})
-            return list(defs.values())
+            return list(_SCRIBE_TOOL_DEFS.values())
 
-        @app.call_tool()
-        async def _call_tool(name: str, arguments: Dict[str, Any], **kwargs: Any) -> Any:
+        async def _call_tool(
+            name: str,
+            arguments: Dict[str, Any],
+            context: Any,
+            _era: ProtocolEra,
+        ) -> Any:
             tools.ensure_tool_loaded(name)
-            registry = getattr(Server, "_scribe_tool_registry", {})
-            result = await execute_tool_call(
+            kwargs = {"context": context} if context is not None else {}
+            return await execute_tool_call(
                 name=name,
                 arguments=dict(arguments or {}),
                 kwargs=kwargs,
-                registry=registry,
+                registry=_SCRIBE_TOOL_REGISTRY,
                 app=app,
                 storage_backend=storage_backend,
                 settings=settings,
@@ -750,7 +717,14 @@ if _MCP_AVAILABLE:
                 log_scope_violation_cb=log_scope_violation,
                 bridge_tool_resolver=_resolve_bridge_tool,
             )
-            return result
+
+        configure_mcp_server(
+            app,
+            runtime=MCP_RUNTIME,
+            definition_provider=lambda: _SCRIBE_TOOL_DEFS,
+            list_handler=_list_tools,
+            call_handler=_call_tool,
+        )
 
 
 # Import tool modules to register them with the server instance.
@@ -1373,6 +1347,14 @@ def list_registered_tools() -> list[str]:
     return sorted(str(name) for name in registry.keys())
 
 
+def _mcp_model_field(model: Any, snake_name: str, alias: str, default: Any = None) -> Any:
+    """Read a public MCP model field across snake-case and wire-alias spellings."""
+    value = getattr(model, snake_name, default)
+    if value is default:
+        value = getattr(model, alias, default)
+    return value
+
+
 def _ensure_registered_tool_metadata_complete() -> None:
     defs = getattr(Server, "_scribe_tool_defs", {})
     registry = getattr(Server, "_scribe_tool_registry", {})
@@ -1395,8 +1377,8 @@ def describe_registered_tools() -> dict[str, dict[str, Any]]:
     description_map: dict[str, dict[str, Any]] = {}
     for tool_name, func in registry.items():
         tool_def = defs.get(tool_name)
-        schema = getattr(tool_def, "inputSchema", None) if tool_def else None
-        output_schema = getattr(tool_def, "outputSchema", None) if tool_def else None
+        schema = _mcp_model_field(tool_def, "input_schema", "inputSchema") if tool_def else None
+        output_schema = _mcp_model_field(tool_def, "output_schema", "outputSchema") if tool_def else None
         description = getattr(tool_def, "description", "") if tool_def else ""
         if not description:
             description = inspect.getdoc(func) or ""
@@ -1404,14 +1386,18 @@ def describe_registered_tools() -> dict[str, dict[str, Any]]:
         execution = getattr(tool_def, "execution", None) if tool_def else None
         meta = getattr(tool_def, "meta", None) if tool_def else None
         tags = getattr(tool_def, "tags", None) if tool_def else None
+        if tags is None and isinstance(meta, dict):
+            scribe_meta = meta.get("scribe")
+            if isinstance(scribe_meta, dict):
+                tags = scribe_meta.get("tags")
         description_map[str(tool_name)] = {
             "name": str(tool_name),
             "title": getattr(tool_def, "title", "") if tool_def else "",
             "description": description,
             "input_schema": schema if isinstance(schema, dict) else {},
             "output_schema": output_schema if isinstance(output_schema, dict) else {},
-            "annotations": annotations.model_dump() if hasattr(annotations, "model_dump") else annotations,
-            "execution": execution.model_dump() if hasattr(execution, "model_dump") else execution,
+            "annotations": annotations.model_dump(by_alias=True) if hasattr(annotations, "model_dump") else annotations,
+            "execution": execution.model_dump(by_alias=True) if hasattr(execution, "model_dump") else execution,
             "meta": meta if isinstance(meta, dict) else {},
             "tags": list(tags) if isinstance(tags, (list, tuple, set)) else [],
         }
@@ -1436,9 +1422,9 @@ def resolve_tool_startup_profile(name: str) -> str:
         return "local_only"
 
     annotations = getattr(tool_def, "annotations", None)
-    read_only_hint = getattr(annotations, "readOnlyHint", None)
-    destructive_hint = getattr(annotations, "destructiveHint", None)
-    open_world_hint = getattr(annotations, "openWorldHint", None)
+    read_only_hint = _mcp_model_field(annotations, "read_only_hint", "readOnlyHint")
+    destructive_hint = _mcp_model_field(annotations, "destructive_hint", "destructiveHint")
+    open_world_hint = _mcp_model_field(annotations, "open_world_hint", "openWorldHint")
     if bool(read_only_hint) and not bool(destructive_hint) and not bool(open_world_hint):
         return "local_only"
     return "storage_only"
@@ -1517,20 +1503,11 @@ async def _session_cleanup_task(agent_manager):
 
 async def main() -> None:
     """Run the MCP server over stdio."""
-    if not _MCP_AVAILABLE:
-        raise RuntimeError(
-            "MCP Python SDK not installed. Install the 'mcp' package to run the server."
-        )
     set_transport_policy(build_transport_policy(transport="stdio", host="stdio", port=0, auth_required=False))
     await _startup()
 
     try:
-        async with mcp_stdio.stdio_server() as (read_stream, write_stream):
-            await app.run(
-                read_stream,
-                write_stream,
-                app.create_initialization_options(),
-            )
+        await app.run_stdio_async()
     finally:
         if not _HAS_LIFECYCLE_HOOKS:
             await _shutdown()

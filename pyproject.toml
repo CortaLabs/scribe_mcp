@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.11.1"
+version = "2.13.0"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,7 +22,7 @@ dependencies = [
   "asyncpg~=0.29",
   "httpx~=0.27",
   "jinja2~=3.1",
-  "mcp==1.26.0",
+  "mcp>=2.0.0,<3.0",
   "markdown-it-py~=3.0",
   "portalocker~=2.0",
   "python-dotenv~=1.0",
@@ -75,6 +75,7 @@ include = ["scribe_mcp*"]
 "scribe_mcp" = [
   "py.typed",
   "config/*.json",
+  "config/reminders/*.json",
   "config/*.yaml",
   "config/*.yml",
   "db/*.sql",
