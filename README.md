@@ -45,9 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Release contract: `scribe-mcp 2.13.0` · Updated: `2026-08-26`
+Release contract: `scribe-mcp 2.13.1` · Updated: `2026-08-26`
 
-`2.13.0` moves the Scribe server to MCP Python SDK v2 while preserving the carried maintenance behavior and the deliberately bounded legacy client lane. SDK and wire versions are different contracts: Scribe runs on `mcp>=2.0.0,<3.0` (the migration candidate is exactly `mcp==2.0.0`), while the modern wire default is protocol revision `2026-07-28`.
+`2.13.1` preserves that SDK v2 contract and exposes the authoritative agent-project selection version required for safe optimistic-concurrency recovery. SDK and wire versions are different contracts: Scribe runs on `mcp>=2.0.0,<3.0`, while the modern wire default is protocol revision `2026-07-28`.
 
 ### MCP v2 default and compatibility boundary
 

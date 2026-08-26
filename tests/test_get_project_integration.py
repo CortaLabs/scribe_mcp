@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 import tempfile
 import shutil
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from scribe_mcp.tools.get_project import _read_recent_progress_entries, _gather_doc_info, get_project
+from scribe_mcp.shared.logging_utils import LoggingContext
 
 
 @pytest.fixture
@@ -236,6 +236,80 @@ class TestGatherDocInfo:
 
 class TestGetProjectIntegration:
     """Integration tests for get_project with readable format."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_agent_selection_exposes_cas_version(
+        self, monkeypatch, tmp_path
+    ):
+        """The requested agent row, including its CAS version, is public truth."""
+        state_manager = AsyncMock()
+        state_manager.record_tool.return_value = {"tool": "get_project"}
+        state_manager.load.return_value = SimpleNamespace(
+            recent_projects=["heartbeat"], current_project="heartbeat"
+        )
+        fake_server = Mock()
+        fake_server.state_manager = state_manager
+        fake_server.get_agent_identity.return_value = None
+        fake_server.get_execution_context.return_value = None
+        fake_server.storage_backend = None
+        fake_server.get_agent_context_manager.return_value.get_current_project = AsyncMock(
+            return_value={
+                "agent_id": "sentinel",
+                "project_name": "heartbeat",
+                "version": 7,
+            }
+        )
+        context = LoggingContext(
+            tool_name="get_project",
+            project={
+                "name": "heartbeat",
+                "root": str(tmp_path),
+                "progress_log": "",
+                "version": 7,
+            },
+            recent_projects=["heartbeat"],
+            state_snapshot={},
+            reminders=[],
+            agent_id="sentinel",
+            resolution_source="agent_project",
+        )
+        prepare = AsyncMock(return_value=context)
+
+        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module",
+            fake_server,
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.prepare_context",
+            prepare,
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.apply_context_payload",
+            lambda payload, _context: payload,
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._compute_doc_status",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._compute_log_counts",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project._read_recent_entries_from_db",
+            AsyncMock(return_value=[]),
+        )
+        monkeypatch.setattr(
+            "scribe_mcp.tools.get_project.detect_project_state",
+            lambda *_args, **_kwargs: ("ACTIVE", "ok"),
+        )
+
+        result = await get_project(agent="sentinel", format="structured")
+
+        assert result["project"]["version"] == 7
+        assert result["selection_version"] == 7
+        assert prepare.await_args.kwargs["agent_id"] == "sentinel"
 
     @pytest.mark.asyncio
     async def test_fail_closed_without_recovery_mode(self, monkeypatch):
