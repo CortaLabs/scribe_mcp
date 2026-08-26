@@ -383,13 +383,36 @@ anyio.run(main)'''
 def test_source_rollback_shadow_restores_prior_dependency_without_mutating_worktree(
     mcp_v2_repo_root: Path,
 ) -> None:
-    prior = subprocess.run(
-        ["git", "show", "HEAD:pyproject.toml"], cwd=mcp_v2_repo_root,
-        text=True, capture_output=True, check=True,
-    ).stdout
+    revisions = subprocess.run(
+        ["git", "rev-list", "HEAD", "--", "pyproject.toml"],
+        cwd=mcp_v2_repo_root,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.splitlines()
+    legacy_baseline = None
+    prior = ""
+    for revision in revisions:
+        manifest = subprocess.run(
+            ["git", "show", f"{revision}:pyproject.toml"],
+            cwd=mcp_v2_repo_root,
+            text=True,
+            capture_output=True,
+        )
+        adapter = subprocess.run(
+            ["git", "cat-file", "-e", f"{revision}:src/scribe_mcp/mcp_adapter.py"],
+            cwd=mcp_v2_repo_root,
+            text=True,
+            capture_output=True,
+        )
+        if '"mcp==1.26.0"' in manifest.stdout and adapter.returncode != 0:
+            legacy_baseline = revision
+            prior = manifest.stdout
+            break
+    assert legacy_baseline is not None
     current = (mcp_v2_repo_root / "pyproject.toml").read_text(encoding="utf-8")
     prior_cli = subprocess.run(
-        ["git", "show", "HEAD:src/scribe_mcp/__main__.py"], cwd=mcp_v2_repo_root,
+        ["git", "show", f"{legacy_baseline}:src/scribe_mcp/__main__.py"], cwd=mcp_v2_repo_root,
         text=True, capture_output=True, check=True,
     ).stdout
     current_adapter = (mcp_v2_repo_root / "src/scribe_mcp/mcp_adapter.py").read_text(
@@ -407,7 +430,7 @@ def test_source_rollback_shadow_restores_prior_dependency_without_mutating_workt
         )
     ]
     prior_adapter = subprocess.run(
-        ["git", "cat-file", "-e", "HEAD:src/scribe_mcp/mcp_adapter.py"], cwd=mcp_v2_repo_root,
+        ["git", "cat-file", "-e", f"{legacy_baseline}:src/scribe_mcp/mcp_adapter.py"], cwd=mcp_v2_repo_root,
         text=True, capture_output=True,
     )
     assert '"mcp==1.26.0"' in prior

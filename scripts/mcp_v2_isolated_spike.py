@@ -117,17 +117,39 @@ print(json.dumps(result, sort_keys=True))
     return json.loads(completed.stdout)
 
 
-def _rollback_receipt(repo_root: Path) -> dict[str, Any]:
-    prior = subprocess.run(
-        ["git", "show", "HEAD:pyproject.toml"],
+def _legacy_baseline_ref(repo_root: Path) -> tuple[str, str]:
+    revisions = subprocess.run(
+        ["git", "rev-list", "HEAD", "--", "pyproject.toml"],
         cwd=repo_root,
         text=True,
         capture_output=True,
         check=True,
-    ).stdout
+    ).stdout.splitlines()
+    for revision in revisions:
+        manifest = subprocess.run(
+            ["git", "show", f"{revision}:pyproject.toml"],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+        )
+        if manifest.returncode != 0 or '"mcp==1.26.0"' not in manifest.stdout:
+            continue
+        adapter = subprocess.run(
+            ["git", "cat-file", "-e", f"{revision}:src/scribe_mcp/mcp_adapter.py"],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+        )
+        if adapter.returncode != 0:
+            return revision, manifest.stdout
+    raise RuntimeError("No committed legacy MCP baseline was found in repository history")
+
+
+def _rollback_receipt(repo_root: Path) -> dict[str, Any]:
+    baseline_ref, prior = _legacy_baseline_ref(repo_root)
     current = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
     prior_cli = subprocess.run(
-        ["git", "show", "HEAD:src/scribe_mcp/__main__.py"],
+        ["git", "show", f"{baseline_ref}:src/scribe_mcp/__main__.py"],
         cwd=repo_root,
         text=True,
         capture_output=True,
@@ -149,7 +171,7 @@ def _rollback_receipt(repo_root: Path) -> dict[str, Any]:
         for path in readback_paths
     }
     prior_adapter = subprocess.run(
-        ["git", "cat-file", "-e", "HEAD:src/scribe_mcp/mcp_adapter.py"],
+        ["git", "cat-file", "-e", f"{baseline_ref}:src/scribe_mcp/mcp_adapter.py"],
         cwd=repo_root,
         text=True,
         capture_output=True,
@@ -160,6 +182,7 @@ def _rollback_receipt(repo_root: Path) -> dict[str, Any]:
         1,
     )
     return {
+        "baseline_ref": baseline_ref,
         "prior_dependency": "mcp==1.26.0" if '"mcp==1.26.0"' in prior else None,
         "current_dependency": "mcp>=2.0.0,<3.0" if '"mcp>=2.0.0,<3.0"' in current else None,
         "dependency_shadow_restored": (
