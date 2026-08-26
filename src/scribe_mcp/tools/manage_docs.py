@@ -58,7 +58,7 @@ _METADATA_ACTION_HINTS = (
 # manage_docs docstring — the single source the agent already reads).
 _METADATA_FRONTMATTER_KEYS = (
     "title, summary, tags, owners, category, status, version, related_docs, "
-    "maintained_by, run_id, stage, session_id, work_item_id"
+    "agent_id, maintained_by, run_id, stage, session_id, work_item_id"
 )
 
 
@@ -105,6 +105,7 @@ def _build_manage_docs_input_schema() -> Dict[str, Any]:
             "content": {"type": "string"},
             "patch": {"type": "string"},
             "patch_source_hash": {"type": "string"},
+            "expected_anchor_sha256": {"type": "string"},
             "edit": {"type": "object"},
             "patch_mode": {"type": "string"},
             "start_line": {"type": ["integer", "string"]},
@@ -128,6 +129,25 @@ _MANAGE_DOCS_INPUT_SCHEMA: Dict[str, Any] = _build_manage_docs_input_schema()
 def _should_skip_doc_index(doc_key: Optional[str], path: Path) -> bool:
     """Compatibility wrapper for legacy tests/import paths."""
     return indexing_shared.should_skip_doc_index(doc_key, path)
+
+
+def _preserve_explicit_create_actor(
+    action: str,
+    metadata: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Protect explicit create attribution from ambient runtime identity."""
+    if action != "create" or not isinstance(metadata, dict):
+        return metadata
+
+    explicit_actor = metadata.get("agent_id")
+    if not isinstance(explicit_actor, str) or not explicit_actor.strip():
+        return metadata
+    if isinstance(metadata.get("created_by"), str) and metadata["created_by"].strip():
+        return metadata
+
+    normalized = dict(metadata)
+    normalized["created_by"] = explicit_actor.strip()
+    return normalized
 
 
 async def _get_or_create_storage_project(backend: Any, project: Dict[str, Any]) -> Any:
@@ -164,6 +184,7 @@ async def manage_docs(
     content: Optional[str] = None,
     patch: Optional[str] = None,
     patch_source_hash: Optional[str] = None,
+    expected_anchor_sha256: Optional[str] = None,
     edit: Optional[Dict[str, Any] | str] = None,
     patch_mode: Optional[str] = None,
     start_line: Optional[int] = None,
@@ -226,11 +247,12 @@ async def manage_docs(
 
     Generic frontmatter workflow metadata (via `metadata`) supports top-level keys:
     `summary`, `tags`, `owners`, `category`, `status`, `version`, `related_docs`,
-    `maintained_by`, `run_id`, `stage`, `session_id`, `work_item_id`.
+    `agent_id`, `maintained_by`, `run_id`, `stage`, `session_id`, `work_item_id`.
 
     Reserved lifecycle behavior:
-    - `created_by` is computed from the acting runtime agent (fallback `Scribe`) on create
-      and treated as immutable on edit.
+    - `created_by` preserves an explicit non-empty create-time `metadata.agent_id`;
+      otherwise it is computed from the acting runtime agent (fallback `Scribe`). It is
+      treated as immutable on edit.
     - `maintained_by` defaults to the acting agent for create/edit mutations unless
       explicitly overridden.
     - `edit_trace` is reserved and authored by the tool. Raw caller-provided
@@ -249,6 +271,7 @@ async def manage_docs(
     state_snapshot = await server_module.state_manager.record_tool("manage_docs")
     if doc_name is None and doc is not None:
         doc_name = doc
+    metadata = _preserve_explicit_create_actor(action, metadata)
 
     try:
         result = await runtime_shared.handle_manage_docs_request(
@@ -258,6 +281,7 @@ async def manage_docs(
             content=content,
             patch=patch,
             patch_source_hash=patch_source_hash,
+            expected_anchor_sha256=expected_anchor_sha256,
             edit=edit,
             patch_mode=patch_mode,
             start_line=start_line,

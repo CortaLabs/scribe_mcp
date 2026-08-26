@@ -229,35 +229,66 @@ class ReminderValidator:
 
 def validate_and_load_engine(config_path: Optional[str] = None) -> ReminderEngine:
     """Validate configuration and return a working reminder engine."""
-    validator = ReminderValidator()
     engine = ReminderEngine(config_path)
 
     # Try to validate loaded configuration
     try:
-        config_valid = validator.validate_config(engine.config)
-        reminders_valid = validator.validate_reminders(engine.reminders)
-        rules_valid = validator.validate_rules(engine.rules)
+        validators = {
+            "Configuration": ReminderValidator(),
+            "Templates": ReminderValidator(),
+            "Rules": ReminderValidator(),
+        }
+        config_valid = validators["Configuration"].validate_config(engine.config)
+        reminders_valid = validators["Templates"].validate_reminders(engine.reminders)
+        rules_valid = validators["Rules"].validate_rules(engine.rules)
 
         if not config_valid or not reminders_valid:
+            config_file = Path(engine.config_path).resolve()
+            template_file: Optional[Path] = None
+            if engine.reminders_path is not None:
+                preferred_template = engine.reminders_path / f"{engine.language}.json"
+                fallback_template = engine.reminders_path / f"{engine.fallback_language}.json"
+                template_file = (
+                    preferred_template
+                    if preferred_template.exists() or not fallback_template.exists()
+                    else fallback_template
+                ).resolve()
+            rules_file = engine.rules_path.resolve() if engine.rules_path is not None else None
+            package_origin = Path(__file__).resolve().parents[1]
+
             logger.warning("REMINDER CONFIGURATION VALIDATION FAILED - USING FALLBACKS")
             logger.warning("Configuration valid: %s", config_valid)
             logger.warning("Reminders valid: %s", reminders_valid)
             logger.warning("Rules valid: %s", rules_valid)
+            logger.warning("Configuration path: %s", config_file)
+            logger.warning("Template path: %s", template_file)
+            logger.warning("Rules path: %s", rules_file)
+            logger.warning("Package origin: %s", package_origin)
 
-            if validator.errors:
+            validation_errors = [
+                (section, error)
+                for section, section_validator in validators.items()
+                for error in section_validator.errors
+            ]
+            if validation_errors:
                 logger.warning("ERRORS FOUND:")
-                for i, error in enumerate(validator.errors, 1):
-                    logger.warning("  %d. %s", i, error)
+                for i, (section, error) in enumerate(validation_errors, 1):
+                    logger.warning("  %d. %s: %s", i, section, error)
 
-            if validator.warnings:
+            validation_warnings = [
+                (section, warning)
+                for section, section_validator in validators.items()
+                for warning in section_validator.warnings
+            ]
+            if validation_warnings:
                 logger.warning("WARNINGS:")
-                for i, warning in enumerate(validator.warnings, 1):
-                    logger.warning("  %d. %s", i, warning)
+                for i, (section, warning) in enumerate(validation_warnings, 1):
+                    logger.warning("  %d. %s: %s", i, section, warning)
 
             # Load fallback configuration
             logger.info("Loading fallback reminder configuration...")
-            fallback_config = validator.get_fallback_config()
-            fallback_reminders = validator.get_fallback_reminders()
+            fallback_config = validators["Configuration"].get_fallback_config()
+            fallback_reminders = validators["Templates"].get_fallback_reminders()
 
             engine.config = fallback_config
             engine.reminders = fallback_reminders
@@ -267,16 +298,22 @@ def validate_and_load_engine(config_path: Optional[str] = None) -> ReminderEngin
             logger.warning("New project tutorial reminders will be limited due to configuration errors")
         else:
             logger.info("Reminder configuration loaded successfully")
-            if validator.warnings:
-                logger.warning("%d warnings found", len(validator.warnings))
-                for i, warning in enumerate(validator.warnings, 1):
-                    logger.warning("  %d. %s", i, warning)
+            validation_warnings = [
+                (section, warning)
+                for section, section_validator in validators.items()
+                for warning in section_validator.warnings
+            ]
+            if validation_warnings:
+                logger.warning("%d warnings found", len(validation_warnings))
+                for i, (section, warning) in enumerate(validation_warnings, 1):
+                    logger.warning("  %d. %s: %s", i, section, warning)
 
     except Exception as e:
         logger.warning("Failed to validate reminder configuration: %s", e)
         logger.warning("Using minimal fallback configuration")
 
         # Emergency fallback
+        validator = ReminderValidator()
         engine.config = validator.get_fallback_config()
         engine.reminders = validator.get_fallback_reminders()
         engine.variables = engine.reminders.get("variables", {})

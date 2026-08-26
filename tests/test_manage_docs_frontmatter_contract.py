@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from scribe_mcp.doc_management.manager import apply_doc_change
+from scribe_mcp.doc_management.special_create import _ensure_export_policy_frontmatter
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 
 
@@ -30,8 +31,32 @@ async def _setup_project(tmp_path: Path) -> dict:
     }
 
 
+def test_special_create_persists_complete_non_exportable_policy_by_default(
+    tmp_path: Path,
+) -> None:
+    project = {
+        "name": "Frontmatter Contract Project",
+        "root": str(tmp_path),
+    }
+
+    rendered = _ensure_export_policy_frontmatter(
+        "# Narrative\n", project, {}, "agent:forge"
+    )
+    frontmatter = parse_frontmatter(rendered).frontmatter_data
+
+    assert frontmatter["visibility"] == "internal"
+    assert frontmatter["owner_principal_id"] == "agent:forge"
+    assert frontmatter["council_id"] == ""
+    assert frontmatter["project_id"] == "Frontmatter Contract Project"
+    assert frontmatter["required_grants"] == []
+    assert frontmatter["revoked_at"] is None
+    assert len(frontmatter["policy_digest"]) == 64
+
+
 @pytest.mark.asyncio
-async def test_response_exposes_compact_frontmatter_summaries_by_default(tmp_path: Path) -> None:
+async def test_response_exposes_compact_frontmatter_summaries_by_default(
+    tmp_path: Path,
+) -> None:
     project = await _setup_project(tmp_path)
     change = await apply_doc_change(
         project,
@@ -57,8 +82,11 @@ async def test_response_exposes_compact_frontmatter_summaries_by_default(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_include_frontmatter_extra_exposes_merged_frontmatter(tmp_path: Path) -> None:
+async def test_include_frontmatter_extra_exposes_merged_frontmatter(
+    tmp_path: Path,
+) -> None:
     project = await _setup_project(tmp_path)
+    metadata = {"include_frontmatter_extra": True, "agent_id": "CoderAgent-Phase1"}
     change = await apply_doc_change(
         project,
         doc="architecture",
@@ -70,17 +98,23 @@ async def test_include_frontmatter_extra_exposes_merged_frontmatter(tmp_path: Pa
         start_line=None,
         end_line=None,
         template=None,
-        metadata={"include_frontmatter_extra": True, "agent_id": "CoderAgent-Phase1"},
+        metadata=metadata,
         dry_run=False,
     )
 
     assert change.success
+    assert metadata == {
+        "include_frontmatter_extra": True,
+        "agent_id": "CoderAgent-Phase1",
+    }
     assert isinstance(change.extra.get("frontmatter"), dict)
     assert change.extra.get("attribution", {}).get("actor_id") == "CoderAgent-Phase1"
 
 
 @pytest.mark.asyncio
-async def test_edit_ignores_raw_edit_trace_and_created_by_override(tmp_path: Path) -> None:
+async def test_edit_ignores_raw_edit_trace_and_created_by_override(
+    tmp_path: Path,
+) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
     path.write_text(
@@ -131,14 +165,20 @@ async def test_edit_ignores_raw_edit_trace_and_created_by_override(tmp_path: Pat
     assert "metadata.created_by" in fields
     assert "metadata.frontmatter.edit_trace" in fields
 
-    hint_codes = {item.get("code") for item in (change.extra.get("metadata_hints") or []) if isinstance(item, dict)}
+    hint_codes = {
+        item.get("code")
+        for item in (change.extra.get("metadata_hints") or [])
+        if isinstance(item, dict)
+    }
     assert "created_by_edit_override_ignored" in hint_codes
     assert "edit_trace_ignored" in hint_codes
     assert "legacy_created_by_placeholder_preserved" in hint_codes
 
 
 @pytest.mark.asyncio
-async def test_edit_ignores_maintained_by_overrides_from_metadata_and_frontmatter(tmp_path: Path) -> None:
+async def test_edit_ignores_maintained_by_overrides_from_metadata_and_frontmatter(
+    tmp_path: Path,
+) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
     path.write_text(
@@ -160,6 +200,11 @@ async def test_edit_ignores_maintained_by_overrides_from_metadata_and_frontmatte
         encoding="utf-8",
     )
 
+    metadata = {
+        "agent_id": "CoderAgent-Phase1",
+        "maintained_by": "OverrideIgnored",
+        "frontmatter": {"maintained_by": "FrontmatterOverrideIgnored"},
+    }
     change = await apply_doc_change(
         project,
         doc="architecture",
@@ -171,28 +216,34 @@ async def test_edit_ignores_maintained_by_overrides_from_metadata_and_frontmatte
         start_line=None,
         end_line=None,
         template=None,
-        metadata={
-            "agent_id": "CoderAgent-Phase1",
-            "maintained_by": "OverrideIgnored",
-            "frontmatter": {"maintained_by": "FrontmatterOverrideIgnored"},
-        },
+        metadata=metadata,
         dry_run=False,
     )
 
     assert change.success
+    assert metadata == {
+        "agent_id": "CoderAgent-Phase1",
+        "maintained_by": "OverrideIgnored",
+        "frontmatter": {"maintained_by": "FrontmatterOverrideIgnored"},
+    }
     parsed = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert parsed.frontmatter_data.get("maintained_by") == "CoderAgent-Phase1"
 
     ignored = change.extra.get("frontmatter_ignored_keys") or []
     fields = {item.get("field") for item in ignored if isinstance(item, dict)}
+    assert "metadata.maintained_by" in fields
     assert "metadata.frontmatter.maintained_by" in fields
 
-    hint_codes = {item.get("code") for item in (change.extra.get("metadata_hints") or []) if isinstance(item, dict)}
+    hint_codes = {
+        item.get("code")
+        for item in (change.extra.get("metadata_hints") or [])
+        if isinstance(item, dict)
+    }
     assert "maintained_by_ignored" in hint_codes
 
 
 @pytest.mark.asyncio
-async def test_runtime_actor_identity_overrides_metadata_actor_for_authoritative_fields(
+async def test_explicit_workflow_actor_precedes_ambient_runtime_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = await _setup_project(tmp_path)
@@ -206,6 +257,7 @@ async def test_runtime_actor_identity_overrides_metadata_actor_for_authoritative
         lambda: _InternalIdentity(),
     )
 
+    metadata = {"agent_id": "ReviewAgent"}
     change = await apply_doc_change(
         project,
         doc="architecture",
@@ -217,19 +269,63 @@ async def test_runtime_actor_identity_overrides_metadata_actor_for_authoritative
         start_line=None,
         end_line=None,
         template=None,
-        metadata={"agent_id": "ReviewAgent"},
+        metadata=metadata,
         dry_run=False,
     )
 
     assert change.success
-    assert change.extra.get("attribution", {}).get("actor_id") == "agent-20260417-deadbeef"
+    assert metadata == {"agent_id": "ReviewAgent"}
+    assert change.extra.get("attribution", {}).get("actor_id") == "ReviewAgent"
 
-    parsed = parse_frontmatter(Path(project["docs"]["architecture"]).read_text(encoding="utf-8"))
-    assert parsed.frontmatter_data.get("maintained_by") == "agent-20260417-deadbeef"
+    parsed = parse_frontmatter(
+        Path(project["docs"]["architecture"]).read_text(encoding="utf-8")
+    )
+    assert parsed.frontmatter_data.get("maintained_by") == "ReviewAgent"
 
 
 @pytest.mark.asyncio
-async def test_replace_range_does_not_create_frontmatter_without_explicit_opt_in(tmp_path: Path) -> None:
+async def test_runtime_actor_identity_is_fallback_without_explicit_workflow_actor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = await _setup_project(tmp_path)
+
+    class _InternalIdentity:
+        async def get_or_create_agent_id(self) -> str:
+            return "agent-20260417-deadbeef"
+
+    monkeypatch.setattr(
+        "scribe_mcp.server.get_agent_identity",
+        lambda: _InternalIdentity(),
+    )
+
+    metadata: dict[str, object] = {}
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="frontmatter_update",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata=metadata,
+        dry_run=False,
+    )
+
+    assert change.success
+    assert metadata == {}
+    assert (
+        change.extra.get("attribution", {}).get("actor_id")
+        == "agent-20260417-deadbeef"
+    )
+
+
+@pytest.mark.asyncio
+async def test_replace_range_does_not_create_frontmatter_without_explicit_opt_in(
+    tmp_path: Path,
+) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
     path.write_text("# No Frontmatter\n\nBody\n", encoding="utf-8")
@@ -255,7 +351,9 @@ async def test_replace_range_does_not_create_frontmatter_without_explicit_opt_in
 
 
 @pytest.mark.asyncio
-async def test_body_edit_preserves_explicit_title_when_heading_differs(tmp_path: Path) -> None:
+async def test_body_edit_preserves_explicit_title_when_heading_differs(
+    tmp_path: Path,
+) -> None:
     """Regression for BUG-2026-06-17-0002 (case a).
 
     A doc whose body's first heading differs from its explicit frontmatter
@@ -303,7 +401,9 @@ async def test_body_edit_preserves_explicit_title_when_heading_differs(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_frontmatter_update_sets_title_authoritatively_and_it_persists(tmp_path: Path) -> None:
+async def test_frontmatter_update_sets_title_authoritatively_and_it_persists(
+    tmp_path: Path,
+) -> None:
     """Regression for BUG-2026-06-17-0002 (case b).
 
     ``frontmatter_update`` with ``metadata.frontmatter.title`` is the governed
@@ -339,7 +439,10 @@ async def test_frontmatter_update_sets_title_authoritatively_and_it_persists(tmp
         start_line=None,
         end_line=None,
         template=None,
-        metadata={"agent_id": "CoderAgent-Phase1", "frontmatter": {"title": "NEW TITLE"}},
+        metadata={
+            "agent_id": "CoderAgent-Phase1",
+            "frontmatter": {"title": "NEW TITLE"},
+        },
         dry_run=False,
     )
     assert set_change.success
@@ -367,7 +470,9 @@ async def test_frontmatter_update_sets_title_authoritatively_and_it_persists(tmp
 
 
 @pytest.mark.asyncio
-async def test_doc_without_explicit_title_still_infers_from_heading(tmp_path: Path) -> None:
+async def test_doc_without_explicit_title_still_infers_from_heading(
+    tmp_path: Path,
+) -> None:
     """Regression for BUG-2026-06-17-0002 (case c — back-compat).
 
     A doc with NO explicit frontmatter title still gets the inferred title from
@@ -399,7 +504,9 @@ async def test_doc_without_explicit_title_still_infers_from_heading(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_frontmatter_update_changes_metadata_without_dummy_body_content(tmp_path: Path) -> None:
+async def test_frontmatter_update_changes_metadata_without_dummy_body_content(
+    tmp_path: Path,
+) -> None:
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
     original_body = path.read_text(encoding="utf-8")
@@ -425,7 +532,10 @@ async def test_frontmatter_update_changes_metadata_without_dummy_body_content(tm
         action="frontmatter_update",
         section=None,
         content=None,
-        metadata={"agent_id": "CoderAgent-Phase1", "frontmatter": {"summary": "Body preserved"}},
+        metadata={
+            "agent_id": "CoderAgent-Phase1",
+            "frontmatter": {"summary": "Body preserved"},
+        },
         template=None,
         dry_run=False,
     )

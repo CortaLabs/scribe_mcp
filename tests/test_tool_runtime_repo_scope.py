@@ -450,3 +450,133 @@ async def test_execute_tool_call_raises_when_session_persistence_fails(tmp_path:
         )
 
     assert observed["called"] is False
+
+
+class _CanonicalKeyBindingStorage:
+    """Session->project binding written under the canonical key.
+
+    Mirrors the write side (set_project ->
+    resolve_context_authoritative_session_key -> set_session_project), which
+    keys ``session_projects`` on ``stable_session_id or session_id`` (see
+    scribe_mcp.shared.session_utils.get_canonical_session_key). Records the key
+    each ``get_session_project`` read queried with so a test can assert the
+    read used the SAME canonical key as the write.
+    """
+
+    def __init__(self, *, repo_root: Path, project_name: str, bound_key: str) -> None:
+        self._repo_root = str(repo_root)
+        self._project_name = project_name
+        self._bound_key = bound_key
+        self.queried_keys: list[str | None] = []
+
+    async def get_session_by_transport(self, _transport_session_id: str):
+        return None
+
+    async def get_session_project(self, session_id):
+        self.queried_keys.append(session_id)
+        return self._project_name if session_id == self._bound_key else None
+
+    async def fetch_project(self, project_name: str, *, repo_root: str | None = None):
+        if project_name == self._project_name:
+            return SimpleNamespace(repo_root=self._repo_root)
+        return None
+
+    async def upsert_session(self, **_kwargs):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_session_binding_read_uses_canonical_stable_session_key(tmp_path: Path) -> None:
+    """Regression: a bound session must resolve its verified scope when its
+    stable_session_id differs from session_id.
+
+    The binding is written under the canonical key (stable_session_id), but a
+    context under concurrent multi-agent load carries a divergent session_id
+    (transport-derived) alongside it. Reading the binding with the raw
+    session_id alone silently misses it and raises "repo scope unresolved" for
+    a session that WAS bound. The read must use the same canonical key the
+    write used: stable_session_id preferred, session_id fallback.
+    """
+    repo_root = (tmp_path / "bound-repo").resolve()
+    repo_root.mkdir(parents=True)
+    observed = {"called": False}
+
+    def capture_tool(agent: str, **_kwargs) -> str:
+        observed["called"] = True
+        return agent
+
+    storage = _CanonicalKeyBindingStorage(
+        repo_root=repo_root,
+        project_name="bound-project",
+        bound_key="stable-key-A",
+    )
+    router = RouterContextManager(storage_backend=storage)
+
+    result = await execute_tool_call(
+        name="capture_tool",
+        arguments={"agent": "Atlas"},
+        kwargs={
+            "context": {
+                "mode": "project",
+                "session_id": "transport-session-Z",
+                "stable_session_id": "stable-key-A",
+            }
+        },
+        registry={"capture_tool": capture_tool},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=storage,
+        settings=SimpleNamespace(project_root=tmp_path / "server-default"),
+        state_manager=_NoopStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"capture_tool"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == "Atlas"
+    assert observed["called"] is True
+    # The read resolved the binding under the canonical (stable) key, never the
+    # raw transport-derived session_id.
+    assert "stable-key-A" in storage.queried_keys
+    assert "transport-session-Z" not in storage.queried_keys
+
+
+@pytest.mark.asyncio
+async def test_session_binding_read_falls_back_to_session_id_without_stable(
+    tmp_path: Path,
+) -> None:
+    """Backward-compat: with no stable_session_id, the canonical key is exactly
+    session_id, so single-key flows resolve byte-identically to before."""
+    repo_root = (tmp_path / "bound-repo-2").resolve()
+    repo_root.mkdir(parents=True)
+    observed = {"called": False}
+
+    def capture_tool(agent: str, **_kwargs) -> str:
+        observed["called"] = True
+        return agent
+
+    storage = _CanonicalKeyBindingStorage(
+        repo_root=repo_root,
+        project_name="bound-project",
+        bound_key="only-session-id",
+    )
+    router = RouterContextManager(storage_backend=storage)
+
+    result = await execute_tool_call(
+        name="capture_tool",
+        arguments={"agent": "Atlas"},
+        kwargs={"context": {"mode": "project", "session_id": "only-session-id"}},
+        registry={"capture_tool": capture_tool},
+        app=SimpleNamespace(request_context=None),
+        storage_backend=storage,
+        settings=SimpleNamespace(project_root=tmp_path / "server-default"),
+        state_manager=_NoopStateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"capture_tool"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == "Atlas"
+    assert observed["called"] is True
+    assert storage.queried_keys == ["only-session-id"]

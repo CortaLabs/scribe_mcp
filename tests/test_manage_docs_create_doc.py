@@ -192,43 +192,44 @@ async def test_create_doc_normalizes_top_level_workflow_metadata(tmp_path: Path)
     project = await _setup_project(tmp_path)
     target_dir = Path(project["docs_dir"]) / "custom"
     target_dir.mkdir(parents=True, exist_ok=True)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
 
-    change = await apply_doc_change(
-        project,
-        doc_name="workflow_doc",
-        action="create_doc",
-        section=None,
-        content=None,
-        patch=None,
-        patch_source_hash=None,
-        edit=None,
-        start_line=None,
-        end_line=None,
-        template=None,
-        metadata={
-            "doc_name": "workflow_doc",
-            "doc_type": "note",
-            "body": "# Workflow\nBody\n",
-            "target_dir": str(target_dir),
-            "summary": "workflow summary",
-            "tags": "priority",
-            "owners": ["alpha", "alpha", "beta", ""],
-            "category": "internal|engineering",
-            "status": "in_progress",
-            "version": "1.2",
-            "related_docs": ["phase_plan"],
-            "maintained_by": "MaintainerA",
-            "run_id": "run-1",
-            "stage": "phase_1",
-            "session_id": "session-9",
-            "work_item_id": "work-22",
-            "agent_id": "CoderAgent-Phase1",
-        },
-        dry_run=False,
-    )
+    class _AmbientIdentity:
+        async def get_or_create_agent_id(self) -> str:
+            return "agent-ambient-runtime"
 
-    assert change.success
-    parsed = parse_frontmatter(Path(change.path).read_text(encoding="utf-8"))
+    with _isolated_server(state_manager, project_root=project["root"]):
+        server_module.get_agent_identity = lambda: _AmbientIdentity()
+        result = await manage_docs(
+            agent="GeneratedRuntimeAgent",
+            action="create",
+            doc_name="workflow_doc",
+            metadata={
+                "doc_name": "workflow_doc",
+                "doc_type": "custom",
+                "body": "# Workflow\nBody\n",
+                "target_dir": str(target_dir),
+                "summary": "workflow summary",
+                "tags": "priority",
+                "owners": ["alpha", "alpha", "beta", ""],
+                "category": "internal|engineering",
+                "status": "in_progress",
+                "version": "1.2",
+                "related_docs": ["phase_plan"],
+                "maintained_by": "MaintainerA",
+                "run_id": "run-1",
+                "stage": "phase_1",
+                "session_id": "session-9",
+                "work_item_id": "work-22",
+                "agent_id": "CoderAgent-Phase1",
+            },
+            dry_run=False,
+        )
+
+    assert result["ok"] is True, result
+    parsed = parse_frontmatter(Path(result["path"]).read_text(encoding="utf-8"))
     fm = parsed.frontmatter_data
     assert fm.get("summary") == "workflow summary"
     assert fm.get("tags") == ["priority"]

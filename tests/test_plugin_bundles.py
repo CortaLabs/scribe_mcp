@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import importlib.util
+import hashlib
 import json
 import shutil
 import sys
 import tomllib
 from pathlib import Path
+from types import ModuleType
+
+import yaml
 
 from scribe_mcp.cli import main as cli_main
 from scribe_mcp.scripts.project_codex_plugin import project_codex_plugin
@@ -21,6 +26,46 @@ PACKAGE_BUNDLE_ROOT = REPO_ROOT / "src" / "scribe_mcp" / "plugins_bundle"
 PACKAGE_ONBOARDING_SKILL = (
     PACKAGE_BUNDLE_ROOT / "codex" / "skills" / "scribe-onboarding" / "SKILL.md"
 )
+SCRIBE_COUNCIL_ROOT = REPO_ROOT / "packages" / "scribe_council"
+SCRIBE_COUNCIL_TEMPLATES = (
+    SCRIBE_COUNCIL_ROOT / "src" / "scribe_council" / "council_templates"
+)
+SCRIBE_RETIREMENTS_PATH = SCRIBE_COUNCIL_TEMPLATES / "retirements.v1.yaml"
+SCRIBE_RETIREMENTS_SHA256 = (
+    "58c3bca5e28f2e08af623cca0af5c3aa7fe93589754ffd94b87ade92cc8f325e"
+)
+SCRIBE_PROVIDER_SKILLS = [
+    "scribe-integration",
+    "scribe-onboarding",
+]
+SCRIBE_RETIREMENTS_DESCRIPTOR = {
+    "schema_version": "provider-host-retirements.v1",
+    "retirements": [
+        {
+            "transition_id": "scribe-mcp-usage-to-scribe-integration",
+            "artifact_kind": "skill",
+            "predecessor_canonical_identity": "skill:scribe-mcp-usage",
+            "predecessor_tree_hashes": [
+                {
+                    "host": "claude",
+                    "target_root": ".claude/skills/scribe-mcp-usage",
+                    "manifest_path": ".claude/skills/.council_generated_manifest.json",
+                    "tree_sha256": "a5a5d7e4e55981f0148cc031eb2248b8bf14cb7af4796c38de0072a3b3e6ff28",
+                },
+                {
+                    "host": "codex",
+                    "target_root": ".codex/skills/scribe-mcp-usage",
+                    "manifest_path": ".codex/skills/.council_generated_manifest.json",
+                    "tree_sha256": "a5a5d7e4e55981f0148cc031eb2248b8bf14cb7af4796c38de0072a3b3e6ff28",
+                },
+            ],
+            "successor_canonical_identity": "skill:scribe-integration",
+            "publisher_id": "scribe-council",
+            "owner_id": "scribe-mcp",
+            "action": "retire_generated_host_tree",
+        }
+    ],
+}
 ALLOWED_PUBLIC_AGENTS = [
     "scribe-architect",
     "scribe-bug-hunter",
@@ -68,6 +113,29 @@ def _agent_slugs(directory: Path, suffix: str) -> list[str]:
 
 def _normalized_policy_text(text: str) -> str:
     return "".join(ch for ch in text.casefold() if ch.isalnum())
+
+
+def _canonical_descriptor_sha256(payload: object) -> str:
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _load_scribe_council_template_provider() -> ModuleType:
+    module_path = SCRIBE_COUNCIL_TEMPLATES / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        "scribe_council.council_templates",
+        module_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _assert_public_safe_text(text: str) -> None:
@@ -363,6 +431,143 @@ def test_packaged_onboarding_skill_stays_outside_shipped_plugin_surface() -> Non
     """The packaged onboarding helper is the lean shipped plugin skill."""
     assert PACKAGE_ONBOARDING_SKILL.is_file()
     assert not (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage").exists()
+
+
+def test_scribe_provider_publishes_host_retirement_descriptor() -> None:
+    """Scribe publishes its exact one-time predecessor retirement contract."""
+    # The descriptor is intentionally readable without importing provider code.
+    descriptor = yaml.safe_load(SCRIBE_RETIREMENTS_PATH.read_text(encoding="utf-8"))
+    assert descriptor == SCRIBE_RETIREMENTS_DESCRIPTOR
+    assert _canonical_descriptor_sha256(descriptor) == SCRIBE_RETIREMENTS_SHA256
+
+    provider = _load_scribe_council_template_provider()
+    manifest = provider.get_council_templates()
+    assert manifest["package_name"] == "scribe-council"
+    assert manifest["retirements_path"] == str(SCRIBE_RETIREMENTS_PATH)
+    assert manifest["retirements_digest"] == SCRIBE_RETIREMENTS_SHA256
+    assert provider.RETIREMENTS_DESCRIPTOR_SHA256 == SCRIBE_RETIREMENTS_SHA256
+
+    package_config = tomllib.loads(
+        (SCRIBE_COUNCIL_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    package_data = package_config["tool"]["setuptools"]["package-data"][
+        "scribe_council"
+    ]
+    assert package_data.count("council_templates/retirements.v1.yaml") == 1
+
+    retirement = descriptor["retirements"][0]
+    assert list(retirement) == [
+        "transition_id",
+        "artifact_kind",
+        "predecessor_canonical_identity",
+        "predecessor_tree_hashes",
+        "successor_canonical_identity",
+        "publisher_id",
+        "owner_id",
+        "action",
+    ]
+    assert [row["host"] for row in retirement["predecessor_tree_hashes"]] == [
+        "claude",
+        "codex",
+    ]
+    for row in retirement["predecessor_tree_hashes"]:
+        assert list(row) == [
+            "host",
+            "target_root",
+            "manifest_path",
+            "tree_sha256",
+        ]
+    assert "admission_receipt_id" not in retirement
+    assert "source_content_receipt_id" not in retirement
+    assert "predecessor_tree_hash" not in retirement
+
+
+def test_scribe_provider_exports_only_scribe_owned_skills() -> None:
+    """The provider must not republish Council-owned template source."""
+    provider = _load_scribe_council_template_provider()
+    manifest = provider.get_council_templates()
+    skills_dir = Path(manifest["skills_dir"])
+    shipped = sorted(
+        path.parent.name for path in skills_dir.glob("*/SKILL.md.j2")
+    )
+
+    assert shipped == SCRIBE_PROVIDER_SKILLS
+    assert "meta-architect" not in shipped
+    assert not (skills_dir / "meta-architect" / "SKILL.md.j2").exists()
+    assert manifest["retirements_path"] == str(SCRIBE_RETIREMENTS_PATH)
+    assert manifest["retirements_digest"] == SCRIBE_RETIREMENTS_SHA256
+
+
+def test_scribe_retirement_descriptor_rejects_alternate_or_tampered_shapes() -> None:
+    """Only the exact two-host owner publication has the published digest."""
+    altered_descriptors: list[dict[str, object]] = []
+
+    for field, altered_value in (
+        ("predecessor_canonical_identity", "skill:other"),
+        ("successor_canonical_identity", "skill:other"),
+        ("publisher_id", "other-publisher"),
+        ("owner_id", "other-owner"),
+        ("artifact_kind", "rule"),
+        ("action", "delete"),
+    ):
+        altered = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+        altered["retirements"][0][field] = altered_value
+        altered_descriptors.append(altered)
+
+    for field, altered_value in (
+        ("tree_sha256", "0" * 64),
+        ("target_root", ".codex/skills/other"),
+        ("manifest_path", ".codex/skills/other.json"),
+        ("host", "agents"),
+    ):
+        altered = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+        altered["retirements"][0]["predecessor_tree_hashes"][1][field] = (
+            altered_value
+        )
+        altered_descriptors.append(altered)
+
+    extra_host = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    extra_host["retirements"][0]["predecessor_tree_hashes"].append(
+        {
+            "host": "agents",
+            "target_root": ".agents/skills/scribe-mcp-usage",
+            "manifest_path": ".agents/skills/.council_generated_manifest.json",
+            "tree_sha256": "a5a5d7e4e55981f0148cc031eb2248b8bf14cb7af4796c38de0072a3b3e6ff28",
+        }
+    )
+    altered_descriptors.append(extra_host)
+
+    extra_transition = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    extra_transition["retirements"].append(
+        json.loads(json.dumps(extra_transition["retirements"][0]))
+    )
+    altered_descriptors.append(extra_transition)
+
+    singular_shape = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    retirement = singular_shape["retirements"][0]
+    retirement["predecessor_tree_hash"] = retirement.pop("predecessor_tree_hashes")[
+        0
+    ]["tree_sha256"]
+    altered_descriptors.append(singular_shape)
+
+    reversed_hosts = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    reversed_hosts["retirements"][0]["predecessor_tree_hashes"].reverse()
+    altered_descriptors.append(reversed_hosts)
+
+    extra_key = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    extra_key["retirements"][0]["legacy_alias"] = True
+    altered_descriptors.append(extra_key)
+
+    for altered in altered_descriptors:
+        assert altered != SCRIBE_RETIREMENTS_DESCRIPTOR
+        assert _canonical_descriptor_sha256(altered) != SCRIBE_RETIREMENTS_SHA256
+
+
+def test_scribe_retirement_descriptor_is_not_a_plugin_runtime_asset() -> None:
+    """Retirement authority ships only from the scribe-council provider."""
+    plugin_roots = [CLAUDE_PLUGIN_ROOT, CODEX_PLUGIN_ROOT, PACKAGE_BUNDLE_ROOT]
+    for plugin_root in plugin_roots:
+        assert not list(plugin_root.rglob("retirements.v1.yaml"))
 
 
 def test_resolve_codex_plugin_root_prefers_packaged_bundle() -> None:

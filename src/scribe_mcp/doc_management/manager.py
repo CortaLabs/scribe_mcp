@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import ast
 import difflib
+import fcntl
 import hashlib
 import logging
+import os
+import tempfile
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -182,6 +186,51 @@ class DocumentValidationError(Exception):
     pass
 
 
+class AnchorCASDenied(DocumentOperationError):
+    """A managed-anchor compare-and-swap precondition was denied.
+
+    This exception intentionally crosses the edit action boundary so a denied
+    anchor write cannot emit a misleading doc-update log or registry receipt.
+    """
+
+
+ANCHOR_DIGEST_ALGORITHM = "managed_anchor_sha256_v1"
+
+
+@asynccontextmanager
+async def _document_mutation_lock(project: Dict[str, Any], doc_name: str):
+    """Hold one cross-process lock for the complete document mutation.
+
+    Resolve the physical managed-document path before deriving the lock
+    identity.  Registered names, absolute references, and other aliases for
+    one file must therefore share one cross-process lock.  Resolution here is
+    only for lock identity; the mutation transaction resolves and validates
+    the document again while the lock is held.
+    """
+    root = Path(str(project.get("root") or "")).resolve()
+    try:
+        physical_path = _resolve_doc_path(project, doc_name).resolve()
+        lock_identity = f"{root.as_posix()}\0path:{physical_path.as_posix()}"
+    except Exception:
+        # Preserve the existing error path for invalid/unknown documents while
+        # retaining a deterministic lock for operations that have no physical
+        # document to resolve yet (for example, create).
+        lock_identity = f"{root.as_posix()}\0doc:{doc_name}"
+    lock_key = hashlib.sha256(lock_identity.encode("utf-8")).hexdigest()
+    lock_dir = Path(tempfile.gettempdir()) / "scribe-managed-doc-locks"
+    lock_path = lock_dir / f"{lock_key}.lock"
+    await asyncio.to_thread(lock_dir.mkdir, parents=True, exist_ok=True)
+    handle = await asyncio.to_thread(lock_path.open, "a+")
+    try:
+        await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            await asyncio.to_thread(handle.close)
+
+
 def _derive_backup_family(
     *,
     doc_category: Optional[str],
@@ -321,7 +370,7 @@ def resolve_registered_doc_key(project: Dict[str, Any], doc_name: str) -> str:
     return candidate
 
 
-async def apply_doc_change(
+async def _apply_doc_change_unlocked(
     project: Dict[str, Any],
     *,
     doc_name: Optional[str] = None,
@@ -332,6 +381,7 @@ async def apply_doc_change(
     content: Optional[str],
     patch: Optional[str] = None,
     patch_source_hash: Optional[str] = None,
+    expected_anchor_sha256: Optional[str] = None,
     edit: Optional[Dict[str, Any]] = None,
     patch_mode: Optional[str] = None,
     start_line: Optional[int] = None,
@@ -342,6 +392,16 @@ async def apply_doc_change(
     document_store: Optional[Any] = None,
 ) -> DocChangeResult:
     """Apply a document change with comprehensive error handling and verification."""
+    # The router cannot alter the compatibility-owned edit action signature,
+    # therefore the public manage_docs field arrives in this private metadata
+    # slot. Remove it before frontmatter/logging so it is never persisted.
+    if isinstance(metadata, dict):
+        metadata = dict(metadata)
+        if expected_anchor_sha256 is None:
+            expected_anchor_sha256 = metadata.pop("_expected_anchor_sha256", None)
+        else:
+            metadata.pop("_expected_anchor_sha256", None)
+    anchor_cas_enabled = expected_anchor_sha256 is not None
     # Auto-resolve document_store from app.state when not explicitly passed.
     if document_store is None:
         try:
@@ -431,6 +491,30 @@ async def apply_doc_change(
             raise DocumentOperationError(str(exc))
         original_body = original_parsed.body
         frontmatter_line_count = len(original_parsed.frontmatter_raw.splitlines()) if original_parsed.has_frontmatter else 0
+
+        anchor_snapshot_before: Optional[Dict[str, str]] = None
+        if anchor_cas_enabled:
+            if action != "replace_section":
+                raise AnchorCASDenied(
+                    "ANCHOR_CAS_UNSUPPORTED: expected_anchor_sha256 is supported for replace_section only",
+                    extra={"precondition_failed": "ANCHOR_CAS_UNSUPPORTED"},
+                )
+            normalized_expected = _normalize_anchor_digest(expected_anchor_sha256)
+            anchor_snapshot_before = _managed_anchor_snapshot(
+                original_body,
+                section,
+                doc_path,
+            )
+            if anchor_snapshot_before["anchor_sha256"] != normalized_expected:
+                raise AnchorCASDenied(
+                    "ANCHOR_STALE: expected_anchor_sha256 does not match the current anchor",
+                    extra={
+                        "precondition_failed": "ANCHOR_DIGEST_MISMATCH",
+                        "anchor_id": anchor_snapshot_before["anchor_id"],
+                        "anchor_sha256_before": anchor_snapshot_before["anchor_sha256"],
+                        "anchor_digest_algorithm": ANCHOR_DIGEST_ALGORITHM,
+                    },
+                )
 
         # Render content when required
         rendered_content: Optional[str] = None
@@ -718,9 +802,24 @@ async def apply_doc_change(
                 find_text = metadata.get("find")
                 if not isinstance(find_text, str) or not find_text:
                     raise DocumentOperationError("REPLACE_TEXT_MISSING_FIND: metadata.find is required")
-                replace_text = metadata.get("replace")
-                if replace_text is None:
-                    replace_text = ""
+                # replace_text never reads `content`. Accepting it silently let a
+                # caller put the replacement in the wrong parameter and receive a
+                # deletion reported as a successful edit.
+                if content is not None:
+                    raise DocumentOperationError(
+                        "REPLACE_TEXT_UNEXPECTED_CONTENT: content is not supported for "
+                        "replace_text (pass the replacement as metadata.replace)"
+                    )
+                # Key absence, not falsiness: an explicit metadata.replace=""
+                # is a deliberate deletion, while an omitted key means the caller
+                # never supplied a replacement at all. Defaulting the omission to
+                # "" silently deletes the matched block and reports success.
+                if "replace" not in metadata or metadata["replace"] is None:
+                    raise DocumentOperationError(
+                        "REPLACE_TEXT_MISSING_REPLACE: metadata.replace is required "
+                        "(pass an explicit empty string to delete the matched text)"
+                    )
+                replace_text = metadata["replace"]
                 match_mode = str(metadata.get("match_mode") or "literal").strip().lower()
                 if match_mode not in {"literal", "regex", "prefix"}:
                     raise DocumentOperationError(
@@ -827,20 +926,23 @@ async def apply_doc_change(
 
         date_str = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         actor_id = "Scribe"
+        explicit_actor = False
         if isinstance(metadata, dict):
             metadata_actor = metadata.get("agent_id")
             if isinstance(metadata_actor, str) and metadata_actor.strip():
                 actor_id = metadata_actor.strip()
-        try:
-            from scribe_mcp import server as server_module
+                explicit_actor = True
+        if not explicit_actor:
+            try:
+                from scribe_mcp import server as server_module
 
-            agent_identity = server_module.get_agent_identity()
-            if agent_identity:
-                resolved_actor = await agent_identity.get_or_create_agent_id()
-                if isinstance(resolved_actor, str) and resolved_actor.strip():
-                    actor_id = resolved_actor.strip()
-        except Exception:
-            pass
+                agent_identity = server_module.get_agent_identity()
+                if agent_identity:
+                    resolved_actor = await agent_identity.get_or_create_agent_id()
+                    if isinstance(resolved_actor, str) and resolved_actor.strip():
+                        actor_id = resolved_actor.strip()
+            except Exception:
+                pass
         frontmatter_extra: Dict[str, Any] = {}
 
         # === AUTO-TRANSFORM HOOK (opt-in via frontmatter) ===
@@ -908,6 +1010,20 @@ async def apply_doc_change(
                 allow_create=allow_frontmatter_create,
             )
             after_hash = _hash_text(updated_text)
+            if anchor_snapshot_before is not None:
+                anchor_snapshot_after = _managed_anchor_snapshot(
+                    updated_body,
+                    section,
+                    doc_path,
+                )
+                extra.update(
+                    {
+                        "anchor_id": anchor_snapshot_after["anchor_id"],
+                        "anchor_sha256_before": anchor_snapshot_before["anchor_sha256"],
+                        "anchor_sha256_after": anchor_snapshot_after["anchor_sha256"],
+                        "anchor_digest_algorithm": ANCHOR_DIGEST_ALGORITHM,
+                    }
+                )
             frontmatter_only = updated_body == original_body and bool(frontmatter_extra.get("frontmatter_updated"))
             frontmatter_extra.update(
                 {
@@ -953,8 +1069,26 @@ async def apply_doc_change(
                         raise DocumentOperationError(
                             f"DOC_SNAPSHOT_FAILED: {exc}"
                         ) from exc
-                # Write the file
-                await async_atomic_write(doc_path, updated_text, mode="w", repo_root=repo_root, document_store=document_store)
+                # Write the file. A process can fail after os.replace has
+                # committed the complete bytes; recognize that state before
+                # attempting rollback so retry remains idempotent.
+                try:
+                    await async_atomic_write(
+                        doc_path,
+                        updated_text,
+                        mode="w",
+                        repo_root=repo_root,
+                        document_store=document_store,
+                    )
+                except Exception as write_error:
+                    try:
+                        observed_text = await asyncio.to_thread(
+                            doc_path.read_text, encoding="utf-8"
+                        )
+                    except Exception:
+                        raise write_error
+                    if observed_text != updated_text:
+                        raise
 
                 # Verify the write was successful
                 verification_passed = await _verify_file_write(doc_path, updated_text, after_hash)
@@ -1082,6 +1216,8 @@ async def apply_doc_change(
             file_size_after=file_size_after,
         )
 
+    except AnchorCASDenied:
+        raise
     except (DocumentValidationError, DocumentOperationError, DocumentVerificationError, WriteBarrierError) as e:
         sanitized_error = sanitize_error_message(str(e))
         duration_ms = (time.time() - start_time) * 1000
@@ -1190,6 +1326,52 @@ async def apply_doc_change(
             verification_passed=False,
             file_size_before=file_size_before,
             file_size_after=file_size_before,
+        )
+
+
+async def apply_doc_change(
+    project: Dict[str, Any],
+    *,
+    doc_name: Optional[str] = None,
+    doc: Optional[str] = None,
+    doc_category: Optional[str] = None,
+    action: str,
+    section: Optional[str],
+    content: Optional[str],
+    patch: Optional[str] = None,
+    patch_source_hash: Optional[str] = None,
+    expected_anchor_sha256: Optional[str] = None,
+    edit: Optional[Dict[str, Any]] = None,
+    patch_mode: Optional[str] = None,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
+    template: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    dry_run: bool,
+    document_store: Optional[Any] = None,
+) -> DocChangeResult:
+    """Serialize a complete managed-document read/compare/write transaction."""
+    resolved_doc_name = str(doc_name or doc or "")
+    async with _document_mutation_lock(project, resolved_doc_name):
+        return await _apply_doc_change_unlocked(
+            project,
+            doc_name=doc_name,
+            doc=doc,
+            doc_category=doc_category,
+            action=action,
+            section=section,
+            content=content,
+            patch=patch,
+            patch_source_hash=patch_source_hash,
+            expected_anchor_sha256=expected_anchor_sha256,
+            edit=edit,
+            patch_mode=patch_mode,
+            start_line=start_line,
+            end_line=end_line,
+            template=template,
+            metadata=metadata,
+            dry_run=dry_run,
+            document_store=document_store,
         )
 
 
@@ -1579,6 +1761,103 @@ def _extract_section_body(text: str, section: Optional[str]) -> Optional[str]:
     if span is None:
         return None
     return text[span[0] : span[1]]
+
+
+def _normalize_anchor_digest(value: Any) -> str:
+    """Validate a caller-provided managed-anchor digest."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
+        raise AnchorCASDenied(
+            "ANCHOR_DIGEST_INVALID: expected a 64-character SHA256 hex digest",
+            extra={"precondition_failed": "ANCHOR_DIGEST_INVALID"},
+        )
+    return value.strip().lower()
+
+
+def _normalized_anchor_block(value: str) -> str:
+    """Canonicalize line endings and trailing whitespace without losing prose."""
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
+
+
+def _managed_anchor_snapshot(
+    text: str,
+    section: Optional[str],
+    doc_path: Path,
+) -> Dict[str, str]:
+    """Resolve one well-formed section anchor and return its stable digest."""
+    anchor_id = str(section or "").strip()
+    if not anchor_id:
+        raise AnchorCASDenied(
+            "ANCHOR_MISSING: section is required for anchor CAS",
+            extra={"precondition_failed": "ANCHOR_MISSING"},
+        )
+    marker = SECTION_MARKER.format(section=anchor_id)
+    matches = list(re.finditer(re.escape(marker), text))
+    if not matches:
+        raise AnchorCASDenied(
+            f"ANCHOR_MISSING: '{anchor_id}' was not found",
+            extra={"precondition_failed": "ANCHOR_MISSING", "anchor_id": anchor_id},
+        )
+    if len(matches) != 1:
+        raise AnchorCASDenied(
+            f"ANCHOR_AMBIGUOUS: '{anchor_id}' appears {len(matches)} times",
+            extra={"precondition_failed": "ANCHOR_AMBIGUOUS", "anchor_id": anchor_id},
+        )
+
+    marker_index = matches[0].start()
+    marker_line_start = _line_start_at(text, marker_index)
+    marker_line_end = text.find("\n", marker_line_start)
+    if marker_line_end == -1:
+        marker_line_end = len(text)
+    marker_line = text[marker_line_start:marker_line_end]
+    if not marker_line[: marker_line.find(marker)].strip() == "":
+        raise AnchorCASDenied(
+            f"ANCHOR_MALFORMED: '{anchor_id}' must start its own line",
+            extra={"precondition_failed": "ANCHOR_MALFORMED", "anchor_id": anchor_id},
+        )
+
+    heading_start = _associated_heading_start(text, marker_index)
+    if heading_start is None:
+        raise AnchorCASDenied(
+            f"ANCHOR_MOVED: '{anchor_id}' is not attached to a markdown heading",
+            extra={"precondition_failed": "ANCHOR_MOVED", "anchor_id": anchor_id},
+        )
+    heading_end = text.find("\n", heading_start)
+    if heading_end == -1:
+        heading_end = len(text)
+    heading_line = text[heading_start:heading_end].strip()
+    if not _HEADER_LINE_PATTERN.match(heading_line):
+        raise AnchorCASDenied(
+            f"ANCHOR_MALFORMED: '{anchor_id}' has no valid heading",
+            extra={"precondition_failed": "ANCHOR_MALFORMED", "anchor_id": anchor_id},
+        )
+
+    heading_ordinal = sum(
+        1
+        for match in re.finditer(r"(?m)^[ \t]*#{1,6}[ \t]+\S.*$", text[:heading_start])
+    ) + 1
+    body_span = _section_body_span(text, anchor_id)
+    if body_span is None:
+        raise AnchorCASDenied(
+            f"ANCHOR_MALFORMED: unable to resolve block for '{anchor_id}'",
+            extra={"precondition_failed": "ANCHOR_MALFORMED", "anchor_id": anchor_id},
+        )
+    block = _normalized_anchor_block(text[heading_start : body_span[1]])
+    locator = f"heading={_normalized_anchor_block(heading_line)};ordinal={heading_ordinal}"
+    payload = "\n".join(
+        (
+            f"path={doc_path.resolve().as_posix()}",
+            f"anchor_id={anchor_id}",
+            f"locator={locator}",
+            f"block={block}",
+        )
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return {
+        "anchor_id": anchor_id,
+        "anchor_sha256": digest,
+        "anchor_digest_algorithm": ANCHOR_DIGEST_ALGORITHM,
+    }
 
 
 def _section_body_has_authored_content(body: str) -> bool:
@@ -3773,6 +4052,22 @@ def _apply_frontmatter_pipeline(
         for key in _WORKFLOW_FRONTMATTER_KEYS:
             if key not in metadata:
                 continue
+            if key == "maintained_by":
+                if is_create:
+                    updates[key] = metadata.get(key)
+                    explicit_maintained_by = str(metadata.get(key) or "").strip() or None
+                    frontmatter_updates_summary["updated_keys"].append(key)
+                else:
+                    frontmatter_ignored_keys.append(
+                        {"field": "metadata.maintained_by", "reason": "reserved_field_managed_by_tool"}
+                    )
+                    metadata_hints.append(
+                        {
+                            "code": "maintained_by_ignored",
+                            "message": "maintained_by is reserved and authored by manage_docs.",
+                        }
+                    )
+                continue
             if key in _LIST_WORKFLOW_KEYS:
                 normalized = _normalize_string_list(metadata.get(key))
                 if isinstance(metadata.get(key), str):
@@ -3785,8 +4080,6 @@ def _apply_frontmatter_pipeline(
                 updates[key] = normalized
             else:
                 updates[key] = metadata.get(key)
-                if key == "maintained_by":
-                    explicit_maintained_by = str(metadata.get(key) or "").strip() or None
             frontmatter_updates_summary["updated_keys"].append(key)
 
         for trace_key in _TRACE_INPUT_KEYS:
@@ -4351,6 +4644,13 @@ def _validate_and_correct_inputs(
             if corrected_action in {"normalize_headers", "generate_toc"}:
                 corrected_content = None
                 corrected_template = None
+            if corrected_action == "replace_text":
+                # replace_text takes its replacement from metadata.replace, so a
+                # caller-supplied `content` is a real (rejectable) signal. Clear
+                # the corrector's fabricated sentinel first, or every call looks
+                # like it supplied content.
+                if corrected_content in {"No message provided", "Empty message"}:
+                    corrected_content = None
             if corrected_action == "validate_crosslinks":
                 corrected_content = corrected_content if corrected_content not in {"No message provided", "Empty message"} else None
                 corrected_template = None
