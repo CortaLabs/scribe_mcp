@@ -29,10 +29,13 @@ import uuid
 
 import pytest
 
+from scribe_mcp.mcp_adapter import ProtocolEra
 from scribe_mcp.shared.execution_context import (
+    ApplicationIdentity,
     ExecutionContext,
     RouterContextManager,
     get_current_execution_context,
+    resolve_application_identity,
 )
 from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
@@ -205,7 +208,15 @@ class _Harness:
         self.registry = {
             "set_project": self._set_project_stub(),
             "append_entry": self._probe_stub("append_entry"),
+            "manage_docs": self._probe_stub("manage_docs"),
+            "hook_prime": self._probe_stub("hook_prime"),
         }
+
+    def use_application_identity(self, identity: ApplicationIdentity) -> None:
+        self.app.request_context.protocol_era = identity.protocol_era
+        self.app.request_context.principal_id = identity.principal_id
+        self.app.request_context.transport = identity.transport
+        self.app.request_context.application_handle = identity.application_handle
 
     def _set_project_stub(self):
         async def set_project(agent: str, name: str, root: Optional[str] = None, **_kwargs: Any) -> Dict[str, Any]:
@@ -244,7 +255,7 @@ class _Harness:
             context = get_current_execution_context()
             assert context is not None
             self.captured_contexts[f"{agent}:{tool_name}"] = context
-            return {"ok": True}
+            return {"ok": True, "project": _kwargs.get("project")}
 
         return probe
 
@@ -388,6 +399,55 @@ async def test_single_actor_flow_keeps_one_stable_session(repo_root: Path) -> No
         await harness.backend.get_session_project(harness.binding_key(ctx_bind))
         == "solo_project"
     )
+
+
+@pytest.mark.asyncio
+async def test_modern_same_label_seats_keep_preview_apply_target_across_hook_prime(
+    repo_root: Path,
+) -> None:
+    harness = _Harness(repo_root, connection_id="untrusted-protocol-session")
+    seat_a = resolve_application_identity(
+        principal_id="principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="trusted-seat-a",
+    )
+    seat_b = resolve_application_identity(
+        principal_id="principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="trusted-seat-b",
+    )
+
+    harness.use_application_identity(seat_a)
+    await harness.call(
+        "set_project",
+        {"agent": "forge", "name": "project-a", "root": str(repo_root)},
+    )
+    harness.use_application_identity(seat_b)
+    await harness.call(
+        "set_project",
+        {"agent": "forge", "name": "project-b", "root": str(repo_root)},
+    )
+
+    harness.use_application_identity(seat_a)
+    preview = await harness.call(
+        "manage_docs",
+        {"agent": "forge", "action": "preview_reconciliation"},
+    )
+    harness.use_application_identity(seat_b)
+    await harness.call("hook_prime", {"agent": "forge"})
+    harness.use_application_identity(seat_a)
+    apply_result = await harness.call(
+        "manage_docs",
+        {"agent": "forge", "action": "apply_global_changelog"},
+    )
+
+    assert preview["project"] == "project-a"
+    assert apply_result["project"] == "project-a"
+    assert seat_a.identity_key != seat_b.identity_key
 
 
 # ---------------------------------------------------------------------------

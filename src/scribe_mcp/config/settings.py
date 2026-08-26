@@ -320,6 +320,10 @@ class Settings:
     remote_fallback: bool
     release_profile: str
     public_release: bool
+    transport_allowed_origins: Tuple[str, ...] = ()
+    transport_max_request_bytes: int = 4 * 1024 * 1024
+    transport_request_timeout_seconds: float = 30.0
+    transport_legacy_enabled: bool = True
 
     def resolve_outside_repo_read_policy(
         self,
@@ -437,6 +441,20 @@ class Settings:
         transport_host = os.environ.get("SCRIBE_TRANSPORT_HOST", "127.0.0.1").strip() or "127.0.0.1"
         transport_port = max(1, _int_env("SCRIBE_TRANSPORT_PORT", 8200))
         transport_auth_token = _optional_env("SCRIBE_TRANSPORT_AUTH_TOKEN", "SCRIBE_AUTH_TOKEN")
+        transport_allowed_origins = tuple(
+            origin.strip()
+            for origin in os.environ.get("SCRIBE_TRANSPORT_ALLOWED_ORIGINS", "").split(",")
+            if origin.strip()
+        )
+        transport_max_request_bytes = max(
+            1,
+            _int_env("SCRIBE_TRANSPORT_MAX_REQUEST_BYTES", 4 * 1024 * 1024),
+        )
+        transport_request_timeout_seconds = max(
+            0.1,
+            float(os.environ.get("SCRIBE_TRANSPORT_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+        transport_legacy_enabled = _bool_env("SCRIBE_TRANSPORT_LEGACY_ENABLED", True)
         allow_outside_repo_reads = _bool_env(
             "SCRIBE_ALLOW_OUTSIDE_REPO_READS",
             _bool_env("SCRIBE_ALLOW_CROSS_REPO_READS", False),
@@ -603,6 +621,10 @@ class Settings:
             remote_fallback=remote_fallback,
             release_profile=release_profile,
             public_release=public_release,
+            transport_allowed_origins=transport_allowed_origins,
+            transport_max_request_bytes=transport_max_request_bytes,
+            transport_request_timeout_seconds=transport_request_timeout_seconds,
+            transport_legacy_enabled=transport_legacy_enabled,
         )
 
 

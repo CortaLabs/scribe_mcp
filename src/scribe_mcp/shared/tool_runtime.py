@@ -12,6 +12,11 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, MutableMap
 
 from scribe_mcp.shared.repo_authority import build_repo_authority_snapshot
 from scribe_mcp.config.repo_config import RepoDiscovery
+from scribe_mcp.mcp_adapter import ProtocolEra
+from scribe_mcp.shared.execution_context import (
+    ApplicationIdentity,
+    resolve_application_identity,
+)
 from scribe_mcp.shared.session_utils import get_canonical_session_key
 
 ToolCallable = Callable[..., Any]
@@ -38,6 +43,49 @@ _UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor", "list_projects"}
 # plugin/bridge/RI special-casing. Extend the frozenset to onboard future read
 # tools; never add council/RI concepts.
 _READ_TOOLS = frozenset({"read_file"})
+
+
+def _trusted_request_attribute(app: Any, name: str) -> Any:
+    try:
+        request_context = app.request_context
+    except Exception:
+        return None
+    return getattr(request_context, name, None) if request_context is not None else None
+
+
+def _resolve_runtime_application_identity(app: Any) -> Optional[ApplicationIdentity]:
+    """Validate identity data attached by authenticated ingress.
+
+    Only direct request-context attributes are accepted. Protocol headers,
+    MCP metadata, tool arguments, client labels, and capabilities are never
+    identity sources.
+    """
+
+    raw_era = _trusted_request_attribute(app, "protocol_era")
+    attached = _trusted_request_attribute(app, "application_identity")
+    if raw_era is None and isinstance(attached, ApplicationIdentity):
+        raw_era = attached.protocol_era
+    if raw_era is None:
+        return None
+    try:
+        era = raw_era if isinstance(raw_era, ProtocolEra) else ProtocolEra(str(raw_era))
+    except ValueError as exc:
+        raise ValueError("authenticated ingress supplied an invalid protocol era") from exc
+    principal = _trusted_request_attribute(app, "principal_id")
+    transport = _trusted_request_attribute(app, "transport")
+    if isinstance(attached, ApplicationIdentity):
+        principal = principal or attached.principal_id
+        transport = transport or attached.transport
+        supplied_handle = attached.application_handle
+    else:
+        supplied_handle = _trusted_request_attribute(app, "application_handle")
+    return resolve_application_identity(
+        principal_id=str(principal or ""),
+        protocol_era=era,
+        transport=str(transport or ""),
+        supplied_handle=supplied_handle,
+        connection_id=None,
+    )
 
 
 def _normalize_configured_repo_root(value: Any) -> Optional[str]:
@@ -641,6 +689,8 @@ async def execute_tool_call(
         except Exception:
             current_context = None
 
+    application_identity = _resolve_runtime_application_identity(app)
+
     if public_release:
         caller_claims = _collect_public_release_session_claims(
             context_payload=context_payload,
@@ -691,6 +741,18 @@ async def execute_tool_call(
     else:
         context_payload.pop("parent_execution_id", None)
 
+    if application_identity is not None:
+        for key in (*_UNTRUSTED_CALLER_SESSION_KEYS, "stable_session_id", "compat_session_id"):
+            context_payload.pop(key, None)
+        context_payload["application_identity"] = application_identity
+        context_payload["transport_session_id"] = application_identity.identity_key
+        _set_scope_provenance(
+            context_payload,
+            field="transport_session_id",
+            label="verified",
+        )
+        context_payload["authoritative_session_key"] = application_identity.identity_key
+
     configured_default_repo_root, configured_trusted_roots = _configured_repo_roots(settings)
 
     repo_authority = build_repo_authority_snapshot(
@@ -711,15 +773,19 @@ async def execute_tool_call(
 
     session_id_claimed = bool(context_payload.get("session_id"))
 
-    runtime_transport_session_id = _actor_scoped_transport_session_id(
-        _derive_transport_session_id(
-            app=app,
-            fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
-            kwargs={},
-            allow_untrusted_sources=False,
-            allow_process_fallback=False,
-        ),
-        arguments.get("agent"),
+    runtime_transport_session_id = (
+        application_identity.identity_key
+        if application_identity is not None
+        else _actor_scoped_transport_session_id(
+            _derive_transport_session_id(
+                app=app,
+                fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
+                kwargs={},
+                allow_untrusted_sources=False,
+                allow_process_fallback=False,
+            ),
+            arguments.get("agent"),
+        )
     )
     has_runtime_transport_identity = bool(runtime_transport_session_id) and not str(
         runtime_transport_session_id
@@ -777,7 +843,7 @@ async def execute_tool_call(
             arguments.get("agent"),
         )
 
-    if context_payload.get("transport_session_id"):
+    if context_payload.get("transport_session_id") and application_identity is None:
         context_payload["transport_session_id"] = _actor_scoped_transport_session_id(
             str(context_payload["transport_session_id"]),
             arguments.get("agent"),
@@ -1089,7 +1155,11 @@ async def execute_tool_call(
         else:
             context_payload["session_reuse_status"] = "reused"
 
-    canonical_session_key = resolve_context_authoritative_session_key(current_context)
+    canonical_session_key = (
+        application_identity.identity_key
+        if application_identity is not None
+        else resolve_context_authoritative_session_key(current_context)
+    )
     if not canonical_session_key:
         canonical_session_key = (
             str(context_payload.get("stable_session_id")).strip()

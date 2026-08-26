@@ -45,7 +45,23 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-`2.11.1` is a backward-compatible **patch** release over the 2.11.0 line, with no breaking public API, CLI, protocol, schema, or data contract changes. It rejects hollow `append_entry` payloads before any write, fixes readable `read_recent(compact=True)` output, adds clearer internal repo-local plugin diagnostics in `scribe_doctor`, improves `manage_docs` registration/drift diagnostics, adds advisory reminder guidance fields, accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input, and carries the 2.9.0 public-safe affected-row inventory primitive plus the 2.8.1 tool-discoverability, onboarding, install-ergonomics, runtime-honesty, registration, lean-plugin, and cleanbuild repairs. Repo-local plugins remain diagnostics/probe-only for trusted local runtimes, require explicit opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus restart/reinitialization, and are not enabled by production defaults. Reminder hook/context injection remains security-blocked future work:
+Release contract: `scribe-mcp 2.13.0` · Updated: `2026-08-26`
+
+`2.13.0` moves the Scribe server to MCP Python SDK v2 while preserving the carried maintenance behavior and the deliberately bounded legacy client lane. SDK and wire versions are different contracts: Scribe runs on `mcp>=2.0.0,<3.0` (the migration candidate is exactly `mcp==2.0.0`), while the modern wire default is protocol revision `2026-07-28`.
+
+### MCP v2 default and compatibility boundary
+
+| Client path | Transport and endpoint | Protocol | Policy |
+| --- | --- | --- | --- |
+| Modern default | stdio through `scribe-server` | `2026-07-28` | Default local host path |
+| Modern HTTP | Streamable HTTP at `/mcp` | `2026-07-28` | Requires the same Origin and bearer-auth checks as every protected HTTP route |
+| Named legacy | handshake stdio, or HTTP+SSE at `/sse` with posts to `/messages/` | `2025-11-25` with known client `mcp==1.26.0` | Explicit compatibility only; never selected because a modern call failed |
+
+The static HTTP bearer is an **operator-root credential**. It is suitable only for an operator-controlled trust boundary; it is not scoped multi-user authorization. All HTTP MCP routes except `/health` require authentication, and modern `/mcp` and legacy `/sse` plus `/messages/` enforce the same Origin and authorization policy. Authentication, protocol, transport, capability, timeout, and malformed-request failures fail closed with no silent downgrade.
+
+Legacy HTTP session continuity is limited to the current single-worker, sticky-process model. Unknown-session or wrong-worker traffic fails before tool dispatch. Operators should retire the legacy lane only after telemetry shows no named legacy use and compatibility, schema/result parity, auth/Origin, and client migration gates pass. Rollback restores the prior dependency, adapter, and default-policy sources from version control; it never reinterprets modern failures as legacy. See the [compatibility matrix](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/COMPATIBILITY_MATRIX.md) and [remote client contract](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/REMOTE_CLIENT.md).
+
+The release also rejects hollow `append_entry` payloads before any write, fixes readable `read_recent(compact=True)` output, adds clearer internal repo-local plugin diagnostics in `scribe_doctor`, improves `manage_docs` registration/drift diagnostics, adds advisory reminder guidance fields, accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input, and carries the public-safe affected-row inventory primitive plus the tool-discoverability, onboarding, install-ergonomics, runtime-honesty, registration, lean-plugin, and cleanbuild repairs. Repo-local plugins remain diagnostics/probe-only for trusted local runtimes, require explicit opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus restart/reinitialization, and are not enabled by production defaults. Reminder hook/context injection remains security-blocked future work:
 
 - A new read-only affected-row referential inventory preflight is available through MCP as `scribe_affected_row_referential_inventory_readonly_public_safe` and through the CLI as `scribe affected-row-inventory preflight --dry-run`. It inspects SQLite/Postgres project-row repair readiness using public-safe labels, booleans, and aggregate buckets only; it fails closed on unproven target binding, ambiguous selected context, incomplete reference inventory, low-cardinality/private-output risk, missing storage backend, and mutation-shaped invocations.
 - `manage_docs` now auto-registers existing physical managed docs for targeted actions instead of rejecting them as `DOC_NOT_FOUND` when the registry is stale; path-like registration also preserves existing basename aliases.

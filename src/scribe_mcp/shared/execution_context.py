@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
+import hmac
 import os
+import secrets
+import threading
 import uuid
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, field as dataclass_field, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 from typing import Any, Dict, Mapping, Optional, Set
 
+from scribe_mcp.mcp_adapter import ProtocolEra
 from scribe_mcp.shared.session_scope import ResolvedScope, ScopeProvenance, build_resolved_scope
 from scribe_mcp.storage.base import ConflictError
 
@@ -24,6 +29,190 @@ _CURRENT_CONTEXT: contextvars.ContextVar["ExecutionContext | None"] = contextvar
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_APPLICATION_IDENTITY_TTL = timedelta(hours=8)
+_APPLICATION_IDENTITY_SECRET = secrets.token_bytes(32)
+_PROCESS_START_NONCE = secrets.token_bytes(32)
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationIdentity:
+    """Server-owned application identity, separate from MCP protocol sessions."""
+
+    identity_key: str
+    principal_id: str
+    protocol_era: ProtocolEra
+    transport: str
+    expires_at: datetime
+    revoked: bool = False
+    application_handle: Optional[str] = dataclass_field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ApplicationIdentityRecord:
+    identity: ApplicationIdentity
+
+
+_APPLICATION_IDENTITIES: Dict[str, _ApplicationIdentityRecord] = {}
+_STDIO_IDENTITIES: Dict[str, ApplicationIdentity] = {}
+_APPLICATION_IDENTITIES_LOCK = threading.Lock()
+
+
+def _identity_digest(value: str) -> str:
+    return hmac.new(
+        _APPLICATION_IDENTITY_SECRET,
+        value.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _application_identity_key(
+    *,
+    handle: str,
+    principal_id: str,
+    protocol_era: ProtocolEra,
+    transport: str,
+) -> str:
+    material = "\0".join((handle, principal_id, protocol_era.value, transport))
+    return _identity_digest(material)
+
+
+def _validate_application_identity_inputs(
+    *,
+    principal_id: str,
+    protocol_era: ProtocolEra,
+    transport: str,
+) -> tuple[str, ProtocolEra, str]:
+    principal = str(principal_id or "").strip()
+    if not principal:
+        raise ValueError("authenticated principal_id is required")
+    if not isinstance(protocol_era, ProtocolEra):
+        raise TypeError("protocol_era must be ProtocolEra")
+    normalized_transport = str(transport or "").strip()
+    allowed = {
+        ProtocolEra.MODERN: {"stdio", "streamable-http"},
+        ProtocolEra.LEGACY: {"stdio", "http-sse"},
+    }[protocol_era]
+    if normalized_transport not in allowed:
+        raise ValueError("transport is not valid for the selected protocol era")
+    return principal, protocol_era, normalized_transport
+
+
+def resolve_application_identity(
+    *,
+    principal_id: str,
+    protocol_era: ProtocolEra,
+    transport: str,
+    supplied_handle: str | None,
+    connection_id: str | None,
+) -> ApplicationIdentity:
+    """Mint or validate a principal-bound Scribe application identity.
+
+    ``connection_id`` is a server-trusted minting signal, never identity
+    material. Raw handles remain process-local and are absent from stored
+    records and representations; only keyed one-way digests index the registry.
+    """
+
+    principal, era, normalized_transport = _validate_application_identity_inputs(
+        principal_id=principal_id,
+        protocol_era=protocol_era,
+        transport=transport,
+    )
+    now = datetime.now(timezone.utc)
+
+    if normalized_transport == "stdio":
+        if supplied_handle:
+            raise ValueError("stdio application identity does not accept a supplied handle")
+        cache_key = _identity_digest(f"stdio\0{principal}\0{era.value}")
+        with _APPLICATION_IDENTITIES_LOCK:
+            existing = _STDIO_IDENTITIES.get(cache_key)
+            if existing and not existing.revoked and existing.expires_at > now:
+                return existing
+            process_token = _PROCESS_START_NONCE.hex()
+            identity = ApplicationIdentity(
+                identity_key=_application_identity_key(
+                    handle=process_token,
+                    principal_id=principal,
+                    protocol_era=era,
+                    transport=normalized_transport,
+                ),
+                principal_id=principal,
+                protocol_era=era,
+                transport=normalized_transport,
+                expires_at=now + _APPLICATION_IDENTITY_TTL,
+            )
+            _STDIO_IDENTITIES[cache_key] = identity
+            return identity
+
+    if supplied_handle is None:
+        if not isinstance(connection_id, str) or not connection_id.strip():
+            raise ValueError("missing Scribe application handle")
+        raw_handle = secrets.token_urlsafe(32)
+        identity = ApplicationIdentity(
+            identity_key=_application_identity_key(
+                handle=raw_handle,
+                principal_id=principal,
+                protocol_era=era,
+                transport=normalized_transport,
+            ),
+            principal_id=principal,
+            protocol_era=era,
+            transport=normalized_transport,
+            expires_at=now + _APPLICATION_IDENTITY_TTL,
+            application_handle=raw_handle,
+        )
+        record_key = _identity_digest(f"handle\0{raw_handle}")
+        with _APPLICATION_IDENTITIES_LOCK:
+            _APPLICATION_IDENTITIES[record_key] = _ApplicationIdentityRecord(
+                identity=replace(identity, application_handle=None)
+            )
+        return identity
+
+    if not isinstance(supplied_handle, str) or not supplied_handle.strip():
+        raise ValueError("missing Scribe application handle")
+    record_key = _identity_digest(f"handle\0{supplied_handle}")
+    with _APPLICATION_IDENTITIES_LOCK:
+        record = _APPLICATION_IDENTITIES.get(record_key)
+    if record is None:
+        raise ValueError("unknown or caller-selected Scribe application handle")
+    identity = record.identity
+    if identity.revoked:
+        raise ValueError("Scribe application handle is revoked")
+    if identity.expires_at <= now:
+        raise ValueError("Scribe application handle is expired")
+    if not hmac.compare_digest(
+        identity.principal_id.encode("utf-8"),
+        principal.encode("utf-8"),
+    ):
+        raise ValueError("Scribe application handle principal mismatch")
+    if identity.protocol_era is not era or identity.transport != normalized_transport:
+        raise ValueError("Scribe application handle scope mismatch")
+    return identity
+
+
+def revoke_application_identity(identity_key: str) -> bool:
+    """Revoke a process-local application identity by its one-way key."""
+
+    normalized_key = str(identity_key or "").strip()
+    if not normalized_key:
+        return False
+    with _APPLICATION_IDENTITIES_LOCK:
+        for record_key, record in tuple(_APPLICATION_IDENTITIES.items()):
+            if hmac.compare_digest(record.identity.identity_key, normalized_key):
+                _APPLICATION_IDENTITIES[record_key] = _ApplicationIdentityRecord(
+                    identity=replace(record.identity, revoked=True)
+                )
+                return True
+        for cache_key, identity in tuple(_STDIO_IDENTITIES.items()):
+            if hmac.compare_digest(identity.identity_key, normalized_key):
+                _STDIO_IDENTITIES[cache_key] = replace(identity, revoked=True)
+                return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -56,6 +245,7 @@ class ExecutionContext:
     parent_execution_id: Optional[str] = None
     toolchain: Optional[str] = None
     authoritative_session_key: Optional[str] = None
+    application_identity: Optional[ApplicationIdentity] = None
 
 
 class RouterContextManager:
@@ -190,6 +380,7 @@ class RouterContextManager:
         """Remove session from all caches. Called by session cleanup task."""
         if not session_id:
             return
+        application_identity_keys: list[str] = []
         async with self._lock:
             stale_transport_ids = [
                 transport_id
@@ -198,6 +389,7 @@ class RouterContextManager:
             ]
             for transport_id in stale_transport_ids:
                 self._transport_sessions.pop(transport_id, None)
+                application_identity_keys.append(transport_id)
             self._session_projects.pop(session_id, None)
             self._files_read_in_session.pop(session_id, None)
             stale_identity_keys = [
@@ -207,6 +399,8 @@ class RouterContextManager:
             ]
             for identity_key in stale_identity_keys:
                 self._stable_agent_sessions.pop(identity_key, None)
+        for identity_key in application_identity_keys:
+            revoke_application_identity(identity_key)
 
     def _build_agent_identity(self, payload: Dict[str, Any]) -> AgentIdentity:
         agent_kind = os.environ.get("SCRIBE_AGENT_KIND", "other")
@@ -304,6 +498,9 @@ class RouterContextManager:
             parent_execution_id=payload.get("parent_execution_id"),
             toolchain=payload.get("toolchain"),
             authoritative_session_key=resolved_scope.authoritative_session_key,
+            application_identity=payload.get("application_identity")
+            if isinstance(payload.get("application_identity"), ApplicationIdentity)
+            else None,
         )
 
     def set_current(self, context: ExecutionContext) -> contextvars.Token:
