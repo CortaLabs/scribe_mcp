@@ -40,10 +40,12 @@ import uuid
 
 import pytest
 
+from scribe_mcp.mcp_adapter import ProtocolEra
 from scribe_mcp.shared.execution_context import (
     ExecutionContext,
     RouterContextManager,
     get_current_execution_context,
+    resolve_application_identity,
 )
 from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
@@ -548,3 +550,90 @@ async def test_ambiguous_project_name_still_fails_closed(
             explicit_project="proj_dup",
             state_snapshot={},
         )
+
+
+class _PersistedApplicationSessions:
+    def __init__(self) -> None:
+        self.sessions: dict[str, dict[str, str]] = {}
+
+    async def get_session_by_transport(self, transport_session_id: str):
+        return self.sessions.get(transport_session_id)
+
+    async def upsert_session(
+        self,
+        *,
+        session_id: str,
+        transport_session_id: str,
+        **_kwargs,
+    ) -> None:
+        self.sessions[transport_session_id] = {"session_id": session_id}
+
+
+@pytest.mark.asyncio
+async def test_modern_application_handles_cannot_share_router_project_binding() -> None:
+    router = RouterContextManager()
+    first = resolve_application_identity(
+        principal_id="principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="connection-one",
+    )
+    second = resolve_application_identity(
+        principal_id="principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="connection-two",
+    )
+
+    first_session = await router.get_or_create_session_id(first.identity_key)
+    second_session = await router.get_or_create_session_id(second.identity_key)
+    await router.cache_project_binding(first_session, "project-one")
+    await router.cache_project_binding(second_session, "project-two")
+
+    assert first_session != second_session
+    assert await router.get_cached_project(first_session) == "project-one"
+    assert await router.get_cached_project(second_session) == "project-two"
+
+    await router.cleanup_session(first_session)
+    assert await router.get_cached_project(first_session) is None
+    assert await router.get_cached_project(second_session) == "project-two"
+    with pytest.raises(ValueError, match="revoked"):
+        resolve_application_identity(
+            principal_id="principal",
+            protocol_era=ProtocolEra.MODERN,
+            transport="streamable-http",
+            supplied_handle=first.application_handle,
+            connection_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_modern_application_handle_reconnect_reuses_only_its_persisted_session() -> None:
+    storage = _PersistedApplicationSessions()
+    minted = resolve_application_identity(
+        principal_id="principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="initial-connection",
+    )
+    resumed = resolve_application_identity(
+        principal_id="principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=minted.application_handle,
+        connection_id=None,
+    )
+
+    first_session = await RouterContextManager(storage).get_or_create_session_id(
+        minted.identity_key
+    )
+    reconnected_session = await RouterContextManager(storage).get_or_create_session_id(
+        resumed.identity_key
+    )
+
+    assert reconnected_session == first_session
+    assert minted.application_handle not in storage.sessions
+    assert set(storage.sessions) == {minted.identity_key}

@@ -1,7 +1,7 @@
 # Release File Map
 
-Baseline date: **2026-06-29**
-Coverage: **v2.10.x public release line (current: 2.10.1)**
+Baseline date: **2026-08-26**
+Coverage: **v2.13.x MCP SDK v2 migration line (current: 2.13.0)**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **v2.10.x public release line (current: 2.10.1)**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.10.1` and CLI scripts. The 2.10.1 line fixes readable `read_recent(compact=True)` rendering; adds internal `scribe_doctor` repo-local plugin diagnostics without widening trust; improves `manage_docs` registration/drift diagnostics; adds advisory reminder guidance fields; and accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input while carrying the 2.9.0 affected-row inventory preflight and 2.8.x host input-schema enrichment, lean plugin bundle, clean-checkout plugin sync, and clean-room install projection proof. Reminder hook/context injection remains security-blocked future work. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.13.0`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -61,6 +61,8 @@ Coverage: **v2.10.x public release line (current: 2.10.1)**
 | Compatibility docs must be updated in the same change as the version bump. | Prevents repo docs from lagging the published package contract. |
 | Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
 | Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
+
+The four release-truth surfaces for this migration are `pyproject.toml`, `src/scribe_mcp/__main__.py`, `docs/COMPATIBILITY_MATRIX.md`, and this file. They report `2.13.0` and the same Python, SDK, modern-protocol, exact-candidate, and named-legacy contract. The optional `packages/scribe_council/pyproject.toml` package is independently versioned and is not changed in lockstep with the core release.
 
 ## Public support material
 

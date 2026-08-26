@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.mcp_adapter import ProtocolEra
+from scribe_mcp.shared.execution_context import (
+    RouterContextManager,
+    resolve_application_identity,
+    revoke_application_identity,
+)
+from scribe_mcp.shared import execution_context
 from scribe_mcp.shared import tool_runtime
 from scribe_mcp.shared.tool_runtime import execute_tool_call
 
@@ -69,6 +76,254 @@ class _SessionAllocatorStorage:
             "scoped_reuse_key": None,
             "session_id": session_id,
         }
+
+
+def test_modern_http_application_handle_is_server_minted_and_principal_bound() -> None:
+    minted = resolve_application_identity(
+        principal_id="principal-a",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="trusted-connection-a",
+    )
+
+    assert minted.application_handle is not None
+    assert len(minted.application_handle) >= 43
+    assert minted.application_handle not in repr(minted)
+    assert minted.principal_id == "principal-a"
+    assert len(minted.identity_key) == 64
+
+    resumed = resolve_application_identity(
+        principal_id="principal-a",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=minted.application_handle,
+        connection_id=None,
+    )
+    assert resumed.identity_key == minted.identity_key
+
+    with pytest.raises(ValueError, match="principal"):
+        resolve_application_identity(
+            principal_id="principal-b",
+            protocol_era=ProtocolEra.MODERN,
+            transport="streamable-http",
+            supplied_handle=minted.application_handle,
+            connection_id=None,
+        )
+
+
+def test_modern_http_application_handle_rejects_missing_unknown_and_revoked() -> None:
+    with pytest.raises(ValueError, match="missing"):
+        resolve_application_identity(
+            principal_id="principal-a",
+            protocol_era=ProtocolEra.MODERN,
+            transport="streamable-http",
+            supplied_handle=None,
+            connection_id=None,
+        )
+
+    with pytest.raises(ValueError, match="unknown"):
+        resolve_application_identity(
+            principal_id="principal-a",
+            protocol_era=ProtocolEra.MODERN,
+            transport="streamable-http",
+            supplied_handle="caller-selected-handle",
+            connection_id=None,
+        )
+
+    minted = resolve_application_identity(
+        principal_id="principal-a",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="trusted-connection-b",
+    )
+    revoke_application_identity(minted.identity_key)
+    with pytest.raises(ValueError, match="revoked"):
+        resolve_application_identity(
+            principal_id="principal-a",
+            protocol_era=ProtocolEra.MODERN,
+            transport="streamable-http",
+            supplied_handle=minted.application_handle,
+            connection_id=None,
+        )
+
+
+def test_modern_http_application_handle_rejects_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution_context, "_APPLICATION_IDENTITY_TTL", timedelta(seconds=-1))
+    minted = resolve_application_identity(
+        principal_id="principal-a",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="trusted-expired-connection",
+    )
+
+    with pytest.raises(ValueError, match="expired"):
+        resolve_application_identity(
+            principal_id="principal-a",
+            protocol_era=ProtocolEra.MODERN,
+            transport="streamable-http",
+            supplied_handle=minted.application_handle,
+            connection_id=None,
+        )
+
+
+def test_modern_stdio_identity_is_process_minted_and_stable() -> None:
+    first = resolve_application_identity(
+        principal_id="local-principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="stdio",
+        supplied_handle=None,
+        connection_id=None,
+    )
+    second = resolve_application_identity(
+        principal_id="local-principal",
+        protocol_era=ProtocolEra.MODERN,
+        transport="stdio",
+        supplied_handle=None,
+        connection_id=None,
+    )
+
+    assert first.identity_key == second.identity_key
+    assert first.application_handle is None
+
+
+def test_legacy_http_identity_is_server_minted_and_principal_bound() -> None:
+    minted = resolve_application_identity(
+        principal_id="legacy-principal",
+        protocol_era=ProtocolEra.LEGACY,
+        transport="http-sse",
+        supplied_handle=None,
+        connection_id="trusted-legacy-connection",
+    )
+
+    resumed = resolve_application_identity(
+        principal_id="legacy-principal",
+        protocol_era=ProtocolEra.LEGACY,
+        transport="http-sse",
+        supplied_handle=minted.application_handle,
+        connection_id=None,
+    )
+    assert resumed.identity_key == minted.identity_key
+    with pytest.raises(ValueError, match="principal"):
+        resolve_application_identity(
+            principal_id="foreign-principal",
+            protocol_era=ProtocolEra.LEGACY,
+            transport="http-sse",
+            supplied_handle=minted.application_handle,
+            connection_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_modern_http_identity_denials_happen_before_tool_dispatch(tmp_path: Path) -> None:
+    repo_root = tmp_path / "trusted-repo-modern"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    called = False
+
+    def capture(agent: str) -> str:
+        nonlocal called
+        called = True
+        return agent
+
+    async def invoke(application_handle: str | None) -> None:
+        await execute_tool_call(
+            name="capture",
+            arguments={"agent": "same-label", "context": {"repo_root": str(repo_root)}},
+            kwargs={},
+            registry={"capture": capture},
+            app=SimpleNamespace(
+                request_context=SimpleNamespace(
+                    protocol_era=ProtocolEra.MODERN,
+                    principal_id="principal-a",
+                    transport="streamable-http",
+                    application_handle=application_handle,
+                    request=SimpleNamespace(headers={"mcp-session-id": "untrusted"}),
+                    meta={"clientInfo": "untrusted", "capabilities": {"x": True}},
+                )
+            ),
+            storage_backend=None,
+            settings=SimpleNamespace(
+                project_root=repo_root,
+                public_release=True,
+                trusted_repo_roots=(str(repo_root),),
+            ),
+            state_manager=_StateManager(),
+            router_context_manager=RouterContextManager(),
+            sentinel_only=set(),
+            sentinel_allowed={"capture"},
+            log_scope_violation_cb=lambda *_args, **_kwargs: None,
+        )
+
+    with pytest.raises(ValueError, match="missing"):
+        await invoke(None)
+    assert called is False
+
+    with pytest.raises(ValueError, match="unknown"):
+        await invoke("caller-selected")
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_modern_http_dispatch_uses_application_identity_not_protocol_session(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "trusted-repo-modern-dispatch"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    minted = resolve_application_identity(
+        principal_id="principal-a",
+        protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http",
+        supplied_handle=None,
+        connection_id="server-trusted-connection",
+    )
+    router = RouterContextManager()
+    observed: dict[str, str] = {}
+
+    def capture(agent: str) -> str:
+        current = router.get_current()
+        assert current is not None
+        assert current.application_identity is not None
+        observed["transport"] = current.transport_session_id or ""
+        observed["session"] = current.session_id
+        return agent
+
+    result = await execute_tool_call(
+        name="capture",
+        arguments={"agent": "same-label", "context": {"repo_root": str(repo_root)}},
+        kwargs={},
+        registry={"capture": capture},
+        app=SimpleNamespace(
+            request_context=SimpleNamespace(
+                protocol_era=ProtocolEra.MODERN,
+                principal_id="principal-a",
+                transport="streamable-http",
+                application_handle=minted.application_handle,
+                request=SimpleNamespace(headers={"mcp-session-id": "attacker-session"}),
+                meta={"clientInfo": "same-label"},
+            )
+        ),
+        storage_backend=None,
+        settings=SimpleNamespace(
+            project_root=repo_root,
+            public_release=True,
+            trusted_repo_roots=(str(repo_root),),
+        ),
+        state_manager=_StateManager(),
+        router_context_manager=router,
+        sentinel_only=set(),
+        sentinel_allowed={"capture"},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == "same-label"
+    assert observed["transport"] == minted.identity_key
+    assert observed["session"] != "attacker-session"
 
 
 @pytest.mark.asyncio

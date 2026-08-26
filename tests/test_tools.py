@@ -35,6 +35,125 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def test_mcp_v2_call_dispatches_once_through_execute_tool_call(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "tool": kwargs["name"]}
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+    result = run(
+        server.app.call_tool(
+            "scribe_private_context_selector_readback",
+            {
+                "agent": "test-agent",
+                "selector_class_label": "selector",
+                "target_fingerprint_binding_label": "bound",
+                "runtime_role_label": "role",
+                "default_context_bypass_label": "disabled",
+                "active_runtime_exclusion_label": "excluded",
+                "source_authority_label": "source",
+            },
+        )
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["name"] == "scribe_private_context_selector_readback"
+    assert calls[0]["registry"] is server._SCRIBE_TOOL_REGISTRY
+    assert calls[0]["state_manager"] is server.state_manager
+    assert calls[0]["router_context_manager"] is server.router_context_manager
+    assert calls[0]["sentinel_only"] is server._SENTINEL_ONLY_TOOLS
+    assert calls[0]["sentinel_allowed"] is server._SENTINEL_ALLOWED_TOOLS
+    assert result.structured_content == {
+        "ok": True,
+        "tool": "scribe_private_context_selector_readback",
+    }
+    assert result.is_error is False
+
+
+def test_mcp_v2_invalid_schema_has_zero_handler_side_effects(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+
+    with pytest.raises(ValueError, match="invalid arguments"):
+        run(server.app.call_tool("scribe_private_context_selector_readback", {}))
+
+    assert calls == []
+
+
+def test_mcp_named_legacy_list_and_call_preserve_contract(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {
+            "content": [{"type": "text", "text": "legacy-ok"}],
+            "structuredContent": {"ok": True, "era": "legacy"},
+            "isError": False,
+        }
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+    listed = run(server.app.list_tools(protocol_era=server.ProtocolEra.LEGACY))
+    result = run(
+        server.app.call_tool(
+            "scribe_private_context_selector_readback",
+            {
+                "agent": "test-agent",
+                "selector_class_label": "selector",
+                "target_fingerprint_binding_label": "bound",
+                "runtime_role_label": "role",
+                "default_context_bypass_label": "disabled",
+                "active_runtime_exclusion_label": "excluded",
+                "source_authority_label": "source",
+            },
+            protocol_era=server.ProtocolEra.LEGACY,
+        )
+    )
+
+    tool = next(item for item in listed if item.name == "scribe_private_context_selector_readback")
+    assert tool.input_schema["required"] == [
+        "agent",
+        "selector_class_label",
+        "target_fingerprint_binding_label",
+        "runtime_role_label",
+        "default_context_bypass_label",
+        "active_runtime_exclusion_label",
+        "source_authority_label",
+    ]
+    assert tool.meta["scribe"]["tags"] == ["context", "selector", "readback", "read-only"]
+    assert len(calls) == 1
+    assert result.content[0].text == "legacy-ok"
+    assert result.structured_content == {"ok": True, "era": "legacy"}
+    assert result.is_error is False
+
+
+def test_mcp_unsupported_era_has_zero_handler_side_effects(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+
+    with pytest.raises(ValueError, match="unsupported MCP protocol era"):
+        run(
+            server.app.call_tool(
+                "scribe_private_context_selector_readback",
+                {"agent": "test-agent"},
+                protocol_era="legacy",
+            )
+        )
+
+    assert calls == []
+
+
 @pytest.fixture
 def isolated_state(tmp_path, monkeypatch):
     """Provide an isolated StateManager and assign it to the server module."""

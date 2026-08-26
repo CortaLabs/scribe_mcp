@@ -1,7 +1,7 @@
 # MCP server guide
 
-Release line: `2.8.1`
-Updated: `2026-06-18`
+Release line: `2.12.0`
+Updated: `2026-08-22`
 
 This guide shows how to run Scribe as an MCP server for hosts such as Codex or Claude-compatible clients.
 
@@ -25,10 +25,25 @@ For most real installs, that means:
 The package also ships a broader operational surface than just one stdio entry point:
 
 - `scribe-server` for stdio MCP
-- `scribe-server-sse` for SSE transport
+- `scribe-server-sse` for the HTTP application: modern Streamable HTTP at `/mcp` plus explicit legacy `/sse` and `/messages/`
 - `scribe_doctor` and startup probes for diagnostics
 - bundled plugin assets under `plugins/` plus `scribe plugins project-codex` for Codex projection
 - write-barrier protected Postgres backup/restore helpers for Scribe-owned maintenance windows
+
+## Protocol and transport contract
+
+MCP Python SDK v2 is the Python package/API line; protocol `2026-07-28` is the modern wire revision. They are related but not interchangeable version labels. Scribe `2.12.0` supports server SDK `mcp>=2.0.0,<3.0` and defaults to the following paths:
+
+| Client mode | Transport | Protocol | Selection rule |
+| --- | --- | --- | --- |
+| Modern | stdio via `scribe-server` | `2026-07-28` | Default |
+| Modern | Streamable HTTP at `/mcp` | `2026-07-28` | Default HTTP MCP endpoint |
+| Named legacy | handshake stdio | `2025-11-25`; known client `mcp==1.26.0` | Explicit compatibility only |
+| Named legacy | HTTP+SSE at `/sse`, posting to `/messages/` | `2025-11-25`; known client `mcp==1.26.0` | Explicit compatibility only |
+
+Scribe never uses an automatic or error-driven downgrade. A legacy revision requires explicit legacy mode, and a modern authentication, protocol, capability, timeout, transport, or malformed-request error remains an error with zero fallback dispatch.
+
+For HTTP, the static bearer is an **operator-root credential**, not scoped multi-user authorization. `/mcp`, `/sse`, `/messages/`, and existing protected REST routes share the same Origin validation, bearer authentication, request limits, and remote-tool authorization; `/health` is the only anonymous route. Legacy session continuity is supported only by the current single-worker, sticky-process model. Unknown-session or wrong-worker traffic fails before tool dispatch.
 
 ## Quick host examples
 
@@ -122,6 +137,12 @@ Exported remote transport blocks local operator-only Scribe tools unless the too
 Release-governance reminder for operators: missing accepted changelog coverage for the active package version raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` through `manage_docs` quality/readiness flows (`quality_check`, reminders, `project_health`) until coverage and reconciliation proof are complete.
 
 Compatibility aliases may exist, but these are the names public docs should lead with.
+
+## Rollback and retirement
+
+Rollback restores the previous dependency, adapter, and default protocol/transport policy from source control. It is not a runtime fallback mechanism: never reinterpret a failed modern request as legacy.
+
+Retire the `mcp==1.26.0` / `2025-11-25` lane and `/sse` plus `/messages/` only after protected usage telemetry shows no legacy consumers for the agreed observation window, supported clients have migrated to modern stdio or `/mcp`, parity and Origin/auth tests pass, and source policy plus public release docs are updated together.
 
 ## Troubleshooting
 

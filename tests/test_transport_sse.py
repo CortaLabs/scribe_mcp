@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -119,6 +120,57 @@ class TestHealthCheckEndpoint:
 class TestSSERouteStructure:
     """Verify the Starlette app is constructed with correct routes."""
 
+    def test_downgrade_reason_vocabulary_is_closed(self):
+        from scribe_mcp.server_sse import DOWNGRADE_REASONS
+
+        assert DOWNGRADE_REASONS == {
+            "explicit_legacy_mode",
+            "recognized_legacy_endpoint",
+        }
+
+    @pytest.mark.asyncio
+    async def test_retained_sse_uses_mcp2_lowlevel_initialization_run_seam(self, monkeypatch):
+        """The retained SSE route must dispatch through MCP2's low-level server."""
+        import scribe_mcp.server_sse as sse_mod
+
+        read_stream = object()
+        write_stream = object()
+        initialization_options = object()
+        lowlevel_server = MagicMock()
+        lowlevel_server.create_initialization_options.return_value = initialization_options
+        lowlevel_server.run = AsyncMock()
+
+        class FakeSseTransport:
+            @asynccontextmanager
+            async def connect_sse(self, scope, receive, send):
+                yield read_stream, write_stream
+
+            async def handle_post_message(self, scope, receive, send):
+                return None
+
+        with patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock):
+            assembled = sse_mod._build_starlette_app(
+                sse_transport=FakeSseTransport(),
+                expected_auth_token="top-secret",
+            )
+        monkeypatch.setattr(sse_mod.app, "_lowlevel_server", lowlevel_server)
+
+        sse_route = next(route for route in assembled.routes if route.path == "/sse")
+        request = MagicMock()
+        request.scope = {"type": "http", "path": "/sse"}
+        request.receive = AsyncMock()
+        request._send = AsyncMock()
+
+        response = await sse_route.endpoint(request)
+
+        assert response.status_code == 200
+        lowlevel_server.create_initialization_options.assert_called_once_with()
+        lowlevel_server.run.assert_awaited_once_with(
+            read_stream,
+            write_stream,
+            initialization_options,
+        )
+
     @pytest.mark.asyncio
     async def test_run_sse_creates_starlette_app(self):
         """run_sse should create a Starlette app with /health, /sse, /messages/ routes."""
@@ -160,6 +212,9 @@ class TestSSERouteStructure:
                 route_paths.append(route.path)
 
         assert "/health" in route_paths, f"Missing /health route in {route_paths}"
+        assert any(p.rstrip("/") == "/mcp" for p in route_paths), (
+            f"Missing /mcp route in {route_paths}"
+        )
         assert "/sse" in route_paths, f"Missing /sse route in {route_paths}"
         # Starlette's Mount normalises trailing slashes; /messages/ becomes /messages
         assert any(p.rstrip("/") == "/messages" for p in route_paths), (
@@ -303,18 +358,223 @@ class TestTransportAuthBoundary:
                 expected_auth_token="top-secret",
             )
             with TestClient(app, raise_server_exceptions=False) as client:
+                modern_response = client.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                )
                 sse_response = client.get("/sse")
                 rest_response = client.post("/api/v1/batch", json={"operations": []})
                 message_response = client.post("/messages/")
+                invalid_response = client.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                    headers={"authorization": "Bearer wrong-token"},
+                )
                 health_response = client.get("/health")
 
+        assert modern_response.status_code == 401
         assert sse_response.status_code == 401
         assert rest_response.status_code == 401
         assert message_response.status_code == 401
+        assert invalid_response.status_code == 401
+        assert modern_response.json()["type"] == "Unauthorized"
         assert sse_response.json()["type"] == "Unauthorized"
         assert rest_response.json()["type"] == "Unauthorized"
         assert message_response.json()["type"] == "Unauthorized"
         assert health_response.status_code == 200
+
+    def test_all_non_health_routes_share_origin_and_auth_policy(self, monkeypatch):
+        import scribe_mcp.server_sse as sse_mod
+
+        monkeypatch.setenv("SCRIBE_TRANSPORT_ALLOWED_ORIGINS", "https://trusted.example")
+        with patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock):
+            app = sse_mod._build_starlette_app(
+                sse_transport=sse_mod.SseServerTransport("/messages/"),
+                expected_auth_token="top-secret",
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                for method, path, payload in (
+                    ("post", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+                    ("get", "/sse", None),
+                    ("post", "/messages/", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+                    ("post", "/api/v1/batch", {"operations": []}),
+                ):
+                    request_kwargs = {
+                        "headers": {
+                            "authorization": "Bearer top-secret",
+                            "origin": "https://evil.example",
+                        }
+                    }
+                    if payload is not None:
+                        request_kwargs["json"] = payload
+                    response = getattr(client, method)(path, **request_kwargs)
+                    assert response.status_code == 403, (path, response.text)
+                    assert response.json()["type"] == "InvalidOrigin"
+
+                health = client.get("/health", headers={"origin": "https://evil.example"})
+
+        assert health.status_code == 200
+
+    def test_multiple_origin_and_conflicting_auth_headers_fail_closed(self):
+        import scribe_mcp.server_sse as sse_mod
+
+        with patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock):
+            app = sse_mod._build_starlette_app(
+                sse_transport=sse_mod.SseServerTransport("/messages/"),
+                expected_auth_token="top-secret",
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                multiple_origin = client.post(
+                    "/api/v1/batch",
+                    json={"operations": []},
+                    headers=[
+                        ("authorization", "Bearer top-secret"),
+                        ("origin", "https://one.example"),
+                        ("origin", "https://two.example"),
+                    ],
+                )
+                auth_mismatch = client.post(
+                    "/api/v1/batch",
+                    json={"operations": []},
+                    headers={
+                        "authorization": "Bearer top-secret",
+                        "x-scribe-auth": "different-token",
+                    },
+                )
+
+        assert multiple_origin.status_code == 400
+        assert multiple_origin.json()["type"] == "HeaderMismatch"
+        assert auth_mismatch.status_code == 400
+        assert auth_mismatch.json()["type"] == "HeaderMismatch"
+
+    def test_modern_revision_and_body_mismatch_reject_before_dispatch(self, monkeypatch):
+        import scribe_mcp.server_sse as sse_mod
+
+        call_tool = AsyncMock()
+        monkeypatch.setattr(sse_mod.app, "call_tool", call_tool)
+        with patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock):
+            app = sse_mod._build_starlette_app(
+                sse_transport=sse_mod.SseServerTransport("/messages/"),
+                expected_auth_token="top-secret",
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                unsupported = client.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                    headers={
+                        "authorization": "Bearer top-secret",
+                        "mcp-protocol-version": "2099-01-01",
+                        "accept": "application/json, text/event-stream",
+                    },
+                )
+                mismatch = client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-11-25",
+                            "clientInfo": {"name": "untrusted-label", "version": "1"},
+                            "capabilities": {},
+                        },
+                    },
+                    headers={
+                        "authorization": "Bearer top-secret",
+                        "mcp-protocol-version": "2026-07-28",
+                        "accept": "application/json, text/event-stream",
+                    },
+                )
+
+        assert unsupported.status_code == 400
+        assert unsupported.json()["type"] == "UnsupportedProtocolVersion"
+        assert unsupported.json()["error"]["code"] == -32022
+        assert mismatch.status_code == 400
+        assert mismatch.json()["type"] == "HeaderMismatch"
+        assert mismatch.json()["error"]["code"] == -32020
+        call_tool.assert_not_awaited()
+
+    def test_valid_modern_tools_list_dispatches_without_protocol_session(self):
+        import scribe_mcp.server_sse as sse_mod
+
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1"},
+        }
+        with patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock):
+            app = sse_mod._build_starlette_app(
+                sse_transport=sse_mod.SseServerTransport("/messages/"),
+                expected_auth_token="top-secret",
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/list",
+                        "params": {"_meta": meta},
+                    },
+                    headers={
+                        "authorization": "Bearer top-secret",
+                        "mcp-protocol-version": "2026-07-28",
+                        "mcp-method": "tools/list",
+                        "accept": "application/json, text/event-stream",
+                    },
+                )
+
+        assert response.status_code == 200
+        assert "result" in response.json()
+        assert "tools" in response.json()["result"]
+        assert "mcp-session-id" not in response.headers
+        assert response.headers["scribe-application-handle"]
+
+    def test_request_body_limit_rejects_before_route_dispatch(self, monkeypatch):
+        import scribe_mcp.server_sse as sse_mod
+
+        monkeypatch.setenv("SCRIBE_TRANSPORT_MAX_REQUEST_BYTES", "64")
+        dispatch = AsyncMock(return_value={})
+        monkeypatch.setattr(sse_mod.server_module, "invoke_tool", dispatch)
+        with patch("scribe_mcp.server_sse._shutdown", new_callable=AsyncMock):
+            app = sse_mod._build_starlette_app(
+                sse_transport=sse_mod.SseServerTransport("/messages/"),
+                expected_auth_token="top-secret",
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    "/api/v1/tools/invoke",
+                    json={"tool_name": "x", "arguments": {"value": "x" * 256}},
+                    headers={"authorization": "Bearer top-secret"},
+                )
+
+        assert response.status_code == 413
+        assert response.json()["type"] == "RequestTooLarge"
+        dispatch.assert_not_awaited()
+
+    def test_request_timeout_is_typed_and_does_not_downgrade(self, monkeypatch):
+        import scribe_mcp.server_sse as sse_mod
+
+        async def slow_route(_request):
+            await asyncio.sleep(0.2)
+            return sse_mod.JSONResponse({"ok": True})
+
+        monkeypatch.setenv("SCRIBE_TRANSPORT_REQUEST_TIMEOUT_SECONDS", "0.1")
+        app = Starlette(routes=[Route("/mcp", slow_route, methods=["POST"])])
+        app.add_middleware(
+            sse_mod.TransportAuthMiddleware,
+            expected_auth_token="top-secret",
+        )
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                headers={"authorization": "Bearer top-secret"},
+            )
+
+        assert response.status_code == 504
+        assert response.json()["type"] == "RequestTimeout"
+        assert response.json()["reason_code"] == "request_timeout"
 
 
 class TestTransportFailureTaxonomy:
