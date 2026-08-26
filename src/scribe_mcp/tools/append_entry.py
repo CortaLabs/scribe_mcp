@@ -148,6 +148,33 @@ def _sanitize_message(message: str) -> str:
     return sanitized
 
 
+def _has_append_content(
+    message: Any,
+    items: Optional[str],
+    items_list: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """Return whether a single or bulk append payload contains log text."""
+    if isinstance(message, str) and message.strip():
+        return True
+
+    bulk_items: Any = items_list
+    if bulk_items is None and isinstance(items, str):
+        try:
+            bulk_items = json.loads(items)
+        except json.JSONDecodeError:
+            return False
+
+    if not isinstance(bulk_items, list):
+        return False
+
+    return any(
+        isinstance(item, dict)
+        and item.get("message") is not None
+        and str(item["message"]).strip()
+        for item in bulk_items
+    )
+
+
 def _get_repo_slug(project_root: str) -> str:
     """Extract repository slug from project root path."""
     from pathlib import Path
@@ -242,7 +269,11 @@ def _validate_and_prepare_parameters(
         healing_applied = False
 
         if message:
-            healed_message = _PARAMETER_CORRECTOR.correct_message_parameter(message)
+            # Uncapped: the entry message is the audit trail itself, and this
+            # healed value is what reaches both the file trail and the DB mirror.
+            healed_message = _PARAMETER_CORRECTOR.correct_message_parameter(
+                message, max_length=None
+            )
             if healed_message != message:
                 healed_params["message"] = healed_message
                 healing_applied = True
@@ -470,7 +501,10 @@ async def _process_single_entry(
         confidence = final_config.confidence
 
         # Validate message content — heal delimiter/newline collisions instead
-        # of rejecting (logging must never be blocked)
+        # of rejecting (logging must never be blocked).
+        # The escaping below exists to keep the file record on one line. The DB
+        # mirror has no such constraint, so it keeps the caller's real text.
+        db_message = message
         validation_error = _validate_message(message)
         if validation_error:
             message = _sanitize_message(message)
@@ -755,7 +789,7 @@ async def _process_single_entry(
                             ts=ts_dt,
                             emoji=resolved_emoji,
                             agent=resolved_agent,
-                            message=message,
+                            message=db_message,
                             meta=db_meta_payload,
                             raw_line=line or "",
                             sha256=sha_value,
@@ -1124,9 +1158,16 @@ async def _process_bulk_entries(
         }
 
 
-def _should_use_bulk_mode(message: str, items: Optional[str] = None, items_list: Optional[List[Dict[str, Any]]] = None) -> bool:
+def _should_use_bulk_mode(
+    message: str,
+    items: Optional[str] = None,
+    items_list: Optional[List[Dict[str, Any]]] = None,
+    auto_split: bool = True,
+) -> bool:
     """Detect if content should be processed as bulk entries using BulkProcessor utility."""
-    return BulkProcessor.detect_bulk_mode(message, items, items_list, length_threshold=500)
+    return BulkProcessor.detect_bulk_mode(
+        message, items, items_list, length_threshold=500, auto_split=auto_split
+    )
 
 
 def _split_multiline_message(message: str, delimiter: str = "\n") -> List[Dict[str, Any]]:
@@ -1253,7 +1294,8 @@ async def append_entry(
     `meta` (why/what/how) to make the trail auditable.
 
     Args:
-        message: Log message (auto-splits multiline if auto_split=True)
+        message: Non-empty log message (required unless items/items_list supplies bulk entries;
+            auto-splits multiline content if auto_split=True)
         status: Status type (info|success|warn|error|bug|plan)
         emoji: Custom emoji override
         agent: Agent identifier
@@ -1299,6 +1341,35 @@ async def append_entry(
             exec_context = None
 
     try:
+        config_message = config.message if config is not None else None
+        config_items = config.items if config is not None else None
+        config_items_list = config.items_list if config is not None else None
+        raw_message = message if message not in (None, "") else config_message
+        raw_items = items if items is not None else config_items
+        raw_items_list = items_list if items_list is not None else config_items_list
+        if not _has_append_content(raw_message, raw_items, raw_items_list):
+            unexpected_parameters = sorted(str(key) for key in _kwargs)
+            suggestion = (
+                "Pass log text with message='...' or provide non-empty items/items_list "
+                "entries containing a message field."
+            )
+            if unexpected_parameters:
+                suggestion += (
+                    " Unsupported parameter(s) received: "
+                    f"{', '.join(unexpected_parameters)}. Rename the log-text field to 'message'."
+                )
+            return ErrorHandler.create_validation_error(
+                error_message=(
+                    "append_entry requires non-empty message content or bulk items; "
+                    "no log entry was written."
+                ),
+                suggestion=suggestion,
+                context={
+                    "error_code": "APPEND_ENTRY_CONTENT_REQUIRED",
+                    "unexpected_parameters": unexpected_parameters,
+                },
+            )
+
         # === PHASE 3 ENHANCED PARAMETER VALIDATION AND PREPARATION ===
         # Replace monolithic parameter handling with bulletproof validation and healing
         final_config, validation_info = _validate_and_prepare_parameters(
@@ -1544,27 +1615,12 @@ async def append_entry(
                 agent_id, "append_entry", {"message_length": len(message), "status": status, "bulk_mode": items is not None}
             )
 
-        # === INPUT VALIDATION ===
-        # Validate that either message, items, or items_list is provided
-        if not items and not items_list and not message:
-            fallback_message = None
-            if config is not None:
-                try:
-                    fallback_message = config.message
-                except Exception:
-                    fallback_message = None
-            message = fallback_message or "No message provided"
-            if status is None:
-                status = "warn"
-            final_config.message = message
-            final_config.status = status
-
         log_cache: Dict[str, Tuple[Path, Dict[str, Any]]] = {}
         base_log_type = (log_type or "progress").lower()
 
         # === ENHANCED PROCESSING MODE SELECTION ===
         # Determine if we should use bulk mode with intelligent detection
-        use_bulk_mode = _should_use_bulk_mode(message, items, items_list)
+        use_bulk_mode = _should_use_bulk_mode(message, items, items_list, auto_split=auto_split)
 
         if use_bulk_mode:
             # === BULK PROCESSING WITH ENHANCED ERROR HANDLING ===

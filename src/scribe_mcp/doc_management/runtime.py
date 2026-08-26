@@ -2434,6 +2434,7 @@ async def handle_manage_docs_request(
     valid_actions: set[str] = VALID_ACTIONS,
     action_router: Dict[str, str] = ACTION_ROUTER,
     caller_agent: Optional[str] = None,
+    expected_anchor_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute manage_docs runtime flow after thin-router argument collection."""
     try:
@@ -2444,6 +2445,7 @@ async def handle_manage_docs_request(
             content=content,
             patch=patch,
             patch_source_hash=patch_source_hash,
+            expected_anchor_sha256=expected_anchor_sha256,
             edit=edit,
             patch_mode=patch_mode,
             start_line=start_line,
@@ -2462,6 +2464,7 @@ async def handle_manage_docs_request(
         content = healed_params["content"]
         patch = healed_params["patch"]
         patch_source_hash = healed_params["patch_source_hash"]
+        expected_anchor_sha256 = healed_params["expected_anchor_sha256"]
         edit = healed_params["edit"]
         patch_mode = healed_params["patch_mode"]
         start_line = healed_params["start_line"]
@@ -2920,7 +2923,14 @@ async def handle_manage_docs_request(
                 )
                 return helper.apply_context_payload(error_payload, context)
 
-    metadata_mapping = metadata if isinstance(metadata, dict) else None
+    metadata_mapping = dict(metadata) if isinstance(metadata, dict) else None
+    if expected_anchor_sha256 is not None:
+        if metadata_mapping is None:
+            metadata_mapping = {}
+        # The edit action is a compatibility boundary owned by another package.
+        # Carry the producer-only CAS precondition through the owned runtime
+        # metadata map; manager.py consumes and removes this private key.
+        metadata_mapping["_expected_anchor_sha256"] = expected_anchor_sha256
 
     # For replace_range called via the MCP tool surface, default to file-relative
     # line numbers so that agents using read_file line numbers get correct results.
@@ -3043,6 +3053,16 @@ async def handle_manage_docs_request(
 
     if response is not None:
         if isinstance(response, dict):
+            extra = response.get("extra")
+            if isinstance(extra, dict) and extra.get("anchor_digest_algorithm"):
+                for key in (
+                    "anchor_id",
+                    "anchor_sha256_before",
+                    "anchor_sha256_after",
+                    "anchor_digest_algorithm",
+                ):
+                    if key in extra:
+                        response.setdefault(key, extra[key])
             response = _attach_manage_docs_project_context(response, context=context)
             if response.get("ok") and action in {"create", "create_doc"}:
                 response = await _attach_create_section_inventory(response)

@@ -35,9 +35,8 @@ from scribe_mcp.tools import sentinel_tools
 def _registered_schema(tool_name: str) -> dict:
     """Return the host-facing input schema as the MCP host would see it."""
     server.list_registered_tools()
-    defs = (
-        getattr(type(server.app), "_scribe_tool_defs", None)
-        or getattr(server.app, "_scribe_tool_defs", None)
+    defs = getattr(type(server.app), "_scribe_tool_defs", None) or getattr(
+        server.app, "_scribe_tool_defs", None
     )
     assert defs, "Tool registry should be populated after list_registered_tools()"
     tool = defs[tool_name]
@@ -73,11 +72,16 @@ def test_severity_enum_exposed_and_additional_properties_preserved(
 
     # The registered schema is exactly the module-level dict the registration
     # consumes (no divergence between source-of-truth and host surface).
-    assert schema["properties"]["severity"]["enum"] == module_schema["properties"]["severity"]["enum"]
+    assert (
+        schema["properties"]["severity"]["enum"]
+        == module_schema["properties"]["severity"]["enum"]
+    )
 
 
 @pytest.mark.parametrize("tool_name", ["open_bug", "open_security"])
-def test_severity_enum_is_sourced_from_logpriority_not_a_frozen_literal(tool_name: str) -> None:
+def test_severity_enum_is_sourced_from_logpriority_not_a_frozen_literal(
+    tool_name: str,
+) -> None:
     """Anti-drift: the severity enum must equal the live ``LogPriority`` values."""
     schema = _registered_schema(tool_name)
     canonical = [member.value for member in LogPriority]
@@ -101,12 +105,16 @@ def test_category_is_documented_free_form_not_enumerated(tool_name: str) -> None
     )
 
 
-def test_link_fix_landing_status_enum_exposed_and_additional_properties_preserved() -> None:
+def test_link_fix_landing_status_enum_exposed_and_additional_properties_preserved() -> (
+    None
+):
     """landing_status exposes the unified case-status enum; surface preserved."""
     schema = _registered_schema("link_fix")
 
     landing_schema = schema["properties"]["landing_status"]
-    assert "enum" in landing_schema, "landing_status must expose an enum at the host layer"
+    assert "enum" in landing_schema, (
+        "landing_status must expose an enum at the host layer"
+    )
     assert isinstance(landing_schema["enum"], list) and landing_schema["enum"], (
         "landing_status enum must be a non-empty list"
     )
@@ -125,7 +133,9 @@ def test_link_fix_landing_status_enum_exposed_and_additional_properties_preserve
     assert "BUG-" in case_id_desc and "SEC-" in case_id_desc
 
 
-def test_landing_status_enum_is_sourced_from_unified_case_vocab_not_a_frozen_literal() -> None:
+def test_landing_status_enum_is_sourced_from_unified_case_vocab_not_a_frozen_literal() -> (
+    None
+):
     """Anti-drift: landing_status enum equals the live unified case-status vocab.
 
     The enum must follow the exact tokens ``resolved_case_close_status``
@@ -138,7 +148,10 @@ def test_landing_status_enum_is_sourced_from_unified_case_vocab_not_a_frozen_lit
 
     assert schema["properties"]["landing_status"]["enum"] == canonical
     # Module-level constant the registration consumes agrees.
-    assert sentinel_tools._LINK_FIX_INPUT_SCHEMA["properties"]["landing_status"]["enum"] == canonical
+    assert (
+        sentinel_tools._LINK_FIX_INPUT_SCHEMA["properties"]["landing_status"]["enum"]
+        == canonical
+    )
 
     # Every enumerated token is real: each is classifiable by the canonical
     # resolver (open -> None, fix-terminal -> "closed", non-fix -> preserved).
@@ -163,3 +176,35 @@ def test_landing_status_enum_tracks_vocab_dynamically() -> None:
     # Baseline restored: a fresh build no longer contains the probe.
     clean = sentinel_tools._build_link_fix_input_schema()
     assert sentinel_token not in clean["properties"]["landing_status"]["enum"]
+
+
+def test_reopen_case_open_target_enum_and_host_schema_are_exact() -> None:
+    """reopen_case exposes live open targets and required business inputs."""
+    schema = _registered_schema("reopen_case")
+    canonical = sorted(doc_utils.CASE_OPEN_STATUS_VALUES)
+
+    assert schema["additionalProperties"] is True
+    assert set(schema["required"]) == {"agent", "case_id", "reason"}
+    assert schema["properties"]["target_status"]["enum"] == canonical
+    assert schema["properties"]["target_status"]["default"] == "investigating"
+    assert schema["properties"]["case_id"].get("description", "").strip()
+    assert schema["properties"]["reason"].get("description", "").strip()
+    assert (
+        sentinel_tools._REOPEN_CASE_INPUT_SCHEMA["properties"]["target_status"]["enum"]
+        == canonical
+    )
+
+
+def test_reopen_case_open_target_enum_tracks_vocab_dynamically() -> None:
+    """A freshly built reopen schema follows the canonical open vocabulary."""
+    sentinel_token = "__reopen_probe_status__"
+    original = doc_utils.CASE_OPEN_STATUS_VALUES
+    try:
+        doc_utils.CASE_OPEN_STATUS_VALUES = frozenset(original | {sentinel_token})
+        rebuilt = sentinel_tools._build_reopen_case_input_schema()
+        assert sentinel_token in rebuilt["properties"]["target_status"]["enum"]
+    finally:
+        doc_utils.CASE_OPEN_STATUS_VALUES = original
+
+    clean = sentinel_tools._build_reopen_case_input_schema()
+    assert sentinel_token not in clean["properties"]["target_status"]["enum"]

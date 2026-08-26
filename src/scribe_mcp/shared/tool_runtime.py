@@ -897,14 +897,27 @@ async def execute_tool_call(
                 )
                 _set_scope_provenance(context_payload, field="repo_root", label="verified")
                 _set_scope_provenance(context_payload, field="project_name", label="verified")
+        # Resolve the session->project binding under the SAME canonical key the
+        # write side (set_project -> resolve_context_authoritative_session_key)
+        # bound it with: stable_session_id preferred, session_id fallback (see
+        # session_utils.get_canonical_session_key). Reading with the raw
+        # session_id alone silently misses a binding that was written under a
+        # divergent stable_session_id -- the exact asymmetry that surfaces under
+        # concurrent multi-agent load as "ExecutionContext repo scope
+        # unresolved" for a session that WAS bound. Falling back to session_id
+        # keeps single-key flows byte-identical.
+        canonical_session_key = (
+            context_payload.get("stable_session_id")
+            or context_payload.get("session_id")
+        )
         if (
             not context_payload.get("repo_root")
-            and context_payload.get("session_id")
+            and canonical_session_key
             and (session_id_claimed or has_runtime_transport_identity or process_fallback_transport)
         ):
             project_name = None
             if hasattr(storage_backend, "get_session_project"):
-                project_name = await storage_backend.get_session_project(context_payload.get("session_id"))
+                project_name = await storage_backend.get_session_project(canonical_session_key)
             if project_name:
                 context_payload["project_name"] = str(project_name)
                 _set_scope_provenance(context_payload, field="project_name", label="verified")

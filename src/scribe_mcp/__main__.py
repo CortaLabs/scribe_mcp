@@ -26,7 +26,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version="scribe-mcp 2.10.1",
+        version="scribe-mcp 2.13.0",
     )
     parser.add_argument(
         "--transport",
@@ -52,9 +52,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     if args.transport == "sse":
         from scribe_mcp.server_sse import run_sse
+
         asyncio.run(run_sse(host=args.host, port=args.port))
     else:
         from scribe_mcp.server import main as server_main
+
         asyncio.run(server_main())
 
 

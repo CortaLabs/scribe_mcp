@@ -60,6 +60,7 @@ _TOOL_NAME_TO_MODULE: Dict[str, str] = {
     "query_reminders": "reminder_tools",
     "read_file": "read_file",
     "read_recent": "read_recent",
+    "reopen_case": "sentinel_tools",
     "reset_reminders": "reminder_tools",
     "rotate_log": "rotate_log",
     "scribe_doctor": "doctor",
