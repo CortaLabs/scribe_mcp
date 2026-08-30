@@ -11,7 +11,13 @@ from typing import Any, Dict, List, Optional
 
 from scribe_mcp.storage.base import StorageBackend
 from scribe_mcp.storage.affected_row_referential_inventory import AffectedRowReferentialInventoryReport
-from scribe_mcp.storage.models import CaseRegistryRecord, ProjectRecord, RepoScopeGrantRecord
+from scribe_mcp.storage.models import (
+    ApplyPreviewClaimResult,
+    ApplyPreviewReceiptRecord,
+    CaseRegistryRecord,
+    ProjectRecord,
+    RepoScopeGrantRecord,
+)
 from scribe_mcp.storage.project_identity_preflight import ProjectIdentityPreflightReport
 
 from .domain_facade import SQLiteDomainFacadeMixin
@@ -22,6 +28,7 @@ from . import documents as document_ops
 from . import entries as entry_ops
 from . import projects as project_ops
 from . import telemetry as telemetry_ops
+from . import apply_preview_receipts as apply_preview_receipt_ops
 from .migrations import (
     ensure_column,
     ensure_column_sync,
@@ -61,6 +68,63 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
     async def close(self) -> None:
         """Close the connection pool and release all connections."""
         await self._internals.close()
+
+    async def issue_apply_preview_receipt(
+        self, record: ApplyPreviewReceiptRecord
+    ) -> ApplyPreviewReceiptRecord:
+        return await apply_preview_receipt_ops.issue_apply_preview_receipt(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            fetchone_fn=self._fetchone,
+            record=record,
+        )
+
+    async def fetch_apply_preview_receipt(
+        self, token_sha256: str
+    ) -> ApplyPreviewReceiptRecord | None:
+        return await apply_preview_receipt_ops.fetch_apply_preview_receipt(
+            initialise_fn=self._initialise,
+            fetchone_fn=self._fetchone,
+            token_sha256=token_sha256,
+        )
+
+    async def claim_apply_preview_receipt(
+        self, token_sha256: str, *, lease_seconds: int
+    ) -> ApplyPreviewClaimResult:
+        return await apply_preview_receipt_ops.claim_apply_preview_receipt(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            fetchone_fn=self._fetchone,
+            token_sha256=token_sha256,
+            lease_seconds=lease_seconds,
+        )
+
+    async def finalize_apply_preview_receipt(
+        self,
+        token_sha256: str,
+        *,
+        fence: int,
+        terminal_state: str,
+        result_code: str,
+        result_json: str,
+    ) -> ApplyPreviewReceiptRecord:
+        return await apply_preview_receipt_ops.finalize_apply_preview_receipt(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            fetchone_fn=self._fetchone,
+            token_sha256=token_sha256,
+            fence=fence,
+            terminal_state=terminal_state,
+            result_code=result_code,
+            result_json=result_json,
+        )
+
+    async def cleanup_apply_preview_receipts(self) -> int:
+        return await apply_preview_receipt_ops.cleanup_apply_preview_receipts(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            fetchall_fn=self._fetchall,
+        )
 
     async def upsert_project(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -211,3 +212,47 @@ async def test_create_special_doc_dry_run_includes_editable_sections(tmp_path: P
     assert isinstance(result.get("editable_sections"), list)
     assert result.get("editable_sections")
     assert result.get("section_source") in {"anchors", "headings"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_create_review_dry_run_avoids_reserved_mcp_content_shape_and_side_effects(tmp_path: Path) -> None:
+    project = await _setup_project(tmp_path)
+    original_docs = dict(project["docs"])
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    with _isolated_server(state_manager, project_root=Path(project["root"])):
+        server_module.storage_backend = getattr(state_manager, "_storage_backend", None)
+        host_result = await server_module.app.call_tool(
+            "manage_docs",
+            {
+                "agent": "test-agent",
+                "action": "create",
+                "doc": "REVIEW_CI_RUNNER_01",
+                "project": project["name"],
+                "metadata": {
+                    "doc_type": "review",
+                    "doc_name": "REVIEW_CI_RUNNER_01",
+                    "stage": "general",
+                },
+                "dry_run": True,
+            },
+        )
+
+    assert isinstance(host_result.content, Sequence)
+    assert not isinstance(host_result.content, (str, bytes))
+    result = host_result.structured_content
+    assert isinstance(result, dict)
+    assert result["ok"] is True, result
+    assert result["dry_run"] is True
+    assert "content" not in result
+    assert isinstance(result.get("preview"), str)
+    assert result["preview"]
+    assert not Path(result["path"]).exists()
+
+    persisted_state = await state_manager.load()
+    persisted_project = persisted_state.get_project(project["name"])
+    assert persisted_project is not None
+    assert persisted_project["docs"] == original_docs
+    assert "REVIEW_CI_RUNNER_01" not in persisted_project["docs"]

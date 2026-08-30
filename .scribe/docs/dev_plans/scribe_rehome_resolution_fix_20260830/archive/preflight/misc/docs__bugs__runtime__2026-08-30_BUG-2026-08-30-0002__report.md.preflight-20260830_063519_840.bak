@@ -1,0 +1,112 @@
+---
+visibility: internal
+owner_principal_id: mantis_rehome_b1_recovery
+council_id: ''
+project_id: scribe_rehome_resolution_fix_20260830
+required_grants: []
+revoked_at: null
+policy_digest: 6073c60369687505c4ad8214032c4eba45419c70c4fe9d811fa3415ec96d38be
+title: "\U0001F41E Same-project rehome loses canonical nested mapping and review dry-run\
+  \ collides with MCP content \u2014 scribe_rehome_resolution_fix_20260830"
+related_docs: []
+last_updated: 2026-08-30 06:35:11 UTC
+created_by: agent-20260830-061345-5cbeec8b
+maintained_by: agent-20260830-061345-5cbeec8b
+status: scaffolded
+canonical_doc_type: other
+edit_trace:
+  tool: manage_docs
+  created_at: 2026-08-30 06:35:11 UTC
+  created_via: replace_section
+  last_edited_at: 2026-08-30 06:35:11 UTC
+  last_edited_by: agent-20260830-061345-5cbeec8b
+  last_action: replace_section
+---
+
+
+# 🐞 Same-project rehome loses canonical nested mapping and review dry-run collides with MCP content — scribe_rehome_resolution_fix_20260830
+**Author:** Scribe
+**Version:** v0.1
+**Status:** INVESTIGATING
+**Last Updated:** 2026-08-30 06:34:30 UTC
+
+> Summarise why this document exists and what decisions it captures.
+
+---
+## Bug Overview
+<!-- ID: bug_overview -->
+**Symptoms:** A successful same-project review rehome moved the file into `contracts/`, but the next canonical-name write resolved the deleted project-root path. Special review create dry-runs also failed MCP host result validation because `content` was a string.
+
+**Customer impact:** The governed create → rehome → populate workflow was unusable for nested review documents, forcing callers toward path-based writes that the safety boundary rejects. Dry-run callers could not safely preview special review creation through the host.
+
+
+---
+## Description
+<!-- ID: description -->
+### Summary
+After rehoming REVIEW_CI_RUNNER_01 into a nested same-project contracts path, the next replace_section by canonical doc name resolves the removed root path. A special review create dry-run also returns top-level content as a string, causing host response validation to reject it.
+
+### Expected Behaviour
+The canonical doc name resolves the nested target immediately and after project rebind, with no stale source mapping. Dry-run create returns a non-mutating host-valid result whose MCP content envelope is a sequence.
+
+### Actual Behaviour
+After rehoming REVIEW_CI_RUNNER_01 into a nested same-project contracts path, the next replace_section by canonical doc name resolves the removed root path. A special review create dry-run also returns top-level content as a string, causing host response validation to reject it.
+
+### Steps to Reproduce
+- [ ] Create special review doc REVIEW_CI_RUNNER_01.
+- [ ] Rehome it within the same project to contracts/REVIEW_CI_RUNNER_01.md using target_doc_name REVIEW_CI_RUNNER_01.
+- [ ] Call replace_section by canonical doc name and observe auto-registration targeting the removed root file.
+- [ ] Call special review create with dry_run=True through the MCP host and observe reserved content shape validation failure.
+
+
+
+---
+## Investigation
+<!-- ID: investigation -->
+**Root Cause Analysis:**
+Same-project rehome computed and persisted separate source and target doc maps, then refreshed the active project with the source map whose canonical key was removed. Special-create dry-runs placed rendered markdown in top-level content, colliding with MCP CallToolResult.content sequence semantics.
+
+**Affected Areas:**
+- src/scribe_mcp/doc_management/runtime.py
+- tests/test_manage_docs_cleanup_support.py
+- tests/test_manage_docs_create_intent.py
+
+
+**Related Issues:**
+- Link to related bugs, tickets, or documentation.
+
+
+---
+## Resolution Plan
+<!-- ID: resolution_plan -->
+### Immediate Actions
+- [ ] Use one canonical docs map for same-project moves, persist/refresh it once, and move string-valued dry-run content to preview after section inventory. Add hermetic regression tests for immediate write, durable rebind, absence of stale source mapping, host content shape, and no dry-run side effects.
+
+
+### Long-Term Fixes
+- [ ] Outline long-term remedial work or refactors.
+
+### Testing Strategy
+- [ ] Define validation steps for the fix (unit, integration, regression).
+
+
+---
+## Timeline & Ownership
+<!-- ID: timeline -->
+| Phase | Owner | Target Date | Notes |
+| --- | --- | --- | --- |
+| Investigation | [Name] | [Date] | [Details] |
+| Fix Development | [Name] | [Date] | [Details] |
+| Testing | [Name] | [Date] | [Details] |
+| Deployment | [Name] | [Date] | [Details] |
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **Logs & Evidence:** [Link to relevant logs, traces, screenshots]
+- **Fix References:** [Git commits, PRs, or documentation]
+- **Open Questions:** [List unresolved unknowns or next investigations]
+
+
+---

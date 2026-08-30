@@ -20,6 +20,9 @@ from scribe_mcp.storage.affected_row_referential_inventory import (
     build_affected_row_referential_inventory_report,
 )
 from scribe_mcp.storage.models import (
+    APPLY_PREVIEW_RESULT_CODES,
+    ApplyPreviewClaimResult,
+    ApplyPreviewReceiptRecord,
     BenchmarkRecord,
     CaseRegistryRecord,
     DevPlanRecord,
@@ -98,6 +101,26 @@ def _coerce_json(value: Any) -> Dict[str, Any]:
         except Exception:
             return {}
     return {}
+
+
+def _json_text(value: Any) -> Optional[str]:
+    """Return stable JSON text for asyncpg JSON/JSONB codec variants."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _validate_token_sha256(token_sha256: str) -> None:
+    if (
+        not isinstance(token_sha256, str)
+        or len(token_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in token_sha256)
+    ):
+        raise ValueError(
+            "token_sha256 must be exactly 64 lowercase hexadecimal characters"
+        )
 
 
 def _is_legacy_project_name_unique_violation(exc: asyncpg.UniqueViolationError) -> bool:
@@ -204,6 +227,189 @@ class PostgresStorage(StorageBackend):
         await self._internals.close()
         self._schema_ready = False
         self._completed_migrations.clear()
+
+    async def issue_apply_preview_receipt(
+        self, record: ApplyPreviewReceiptRecord
+    ) -> ApplyPreviewReceiptRecord:
+        row = await self._fetchrow(
+            """
+            INSERT INTO apply_preview_receipts (
+                token_sha256, receipt_version, state, principal_id, session_id, run_id,
+                project_key, repo_id, action, normalized_intent_json, target_binding_json,
+                precondition_json, predicted_after_json, issued_at, expires_at, fence,
+                apply_lease_expires_at, terminal_result_code, terminal_result_json,
+                terminal_at, audit_correlation_id, updated_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
+                $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19::jsonb,
+                $20, $21, $22
+            )
+            RETURNING *;
+            """,
+            record.token_sha256,
+            record.receipt_version,
+            record.state,
+            record.principal_id,
+            record.session_id,
+            record.run_id,
+            record.project_key,
+            record.repo_id,
+            record.action,
+            record.normalized_intent_json,
+            record.target_binding_json,
+            record.precondition_json,
+            record.predicted_after_json,
+            record.issued_at,
+            record.expires_at,
+            record.fence,
+            record.apply_lease_expires_at,
+            record.terminal_result_code,
+            record.terminal_result_json,
+            record.terminal_at,
+            record.audit_correlation_id,
+            record.updated_at,
+        )
+        assert row is not None
+        return self._apply_preview_receipt_from_row(row)
+
+    async def fetch_apply_preview_receipt(
+        self, token_sha256: str
+    ) -> ApplyPreviewReceiptRecord | None:
+        _validate_token_sha256(token_sha256)
+        row = await self._fetchrow(
+            "SELECT * FROM apply_preview_receipts WHERE token_sha256 = $1 LIMIT 1;",
+            token_sha256,
+        )
+        return self._apply_preview_receipt_from_row(row) if row else None
+
+    async def claim_apply_preview_receipt(
+        self, token_sha256: str, *, lease_seconds: int
+    ) -> ApplyPreviewClaimResult:
+        _validate_token_sha256(token_sha256)
+        if (
+            not isinstance(lease_seconds, int)
+            or isinstance(lease_seconds, bool)
+            or lease_seconds <= 0
+        ):
+            raise ValueError("lease_seconds must be a positive integer")
+
+        row = await self._fetchrow(
+            """
+            UPDATE apply_preview_receipts
+            SET state = 'applying',
+                fence = fence + 1,
+                apply_lease_expires_at = NOW() + ($2 * INTERVAL '1 second'),
+                updated_at = NOW()
+            WHERE token_sha256 = $1
+              AND expires_at > NOW()
+              AND (
+                  state = 'issued'
+                  OR (state = 'applying' AND apply_lease_expires_at <= NOW())
+              )
+            RETURNING *;
+            """,
+            token_sha256,
+            lease_seconds,
+        )
+        if row:
+            record = self._apply_preview_receipt_from_row(row)
+            status = "claimed" if record.fence == 1 else "recovery"
+            return ApplyPreviewClaimResult(status=status, record=record)
+
+        current = await self._fetchrow(
+            """
+            SELECT *,
+                   CASE
+                       WHEN state IN ('applied', 'failed_terminal') THEN 'terminal'
+                       WHEN expires_at <= NOW() THEN 'expired'
+                       WHEN state = 'applying' AND apply_lease_expires_at > NOW() THEN 'busy'
+                       ELSE 'not_found'
+                   END AS claim_status
+            FROM apply_preview_receipts
+            WHERE token_sha256 = $1
+            LIMIT 1;
+            """,
+            token_sha256,
+        )
+        if not current:
+            return ApplyPreviewClaimResult(status="not_found")
+
+        record = self._apply_preview_receipt_from_row(current)
+        status = current.get("claim_status")
+        if status is None:
+            if record.state in {"applied", "failed_terminal"}:
+                status = "terminal"
+            elif record.expires_at <= datetime.now(timezone.utc):
+                status = "expired"
+            elif record.state == "applying":
+                status = "busy"
+            else:
+                status = "not_found"
+        return ApplyPreviewClaimResult(status=status, record=record)
+
+    async def finalize_apply_preview_receipt(
+        self,
+        token_sha256: str,
+        *,
+        fence: int,
+        terminal_state: str,
+        result_code: str,
+        result_json: str,
+    ) -> ApplyPreviewReceiptRecord:
+        _validate_token_sha256(token_sha256)
+        if terminal_state not in {"applied", "failed_terminal"}:
+            raise ValueError("terminal_state must be applied or failed_terminal")
+        if result_code not in APPLY_PREVIEW_RESULT_CODES:
+            raise ValueError("result_code is not a supported apply-preview result code")
+        if not isinstance(fence, int) or isinstance(fence, bool) or fence < 1:
+            raise ValueError("fence must be a positive integer")
+        if not isinstance(result_json, str) or not result_json:
+            raise ValueError("result_json must be a non-empty string")
+
+        row = await self._fetchrow(
+            """
+            UPDATE apply_preview_receipts
+            SET state = $3,
+                apply_lease_expires_at = NULL,
+                terminal_result_code = $4,
+                terminal_result_json = $5::jsonb,
+                terminal_at = NOW(),
+                updated_at = NOW()
+            WHERE token_sha256 = $1
+              AND fence = $2
+              AND state = 'applying'
+            RETURNING *;
+            """,
+            token_sha256,
+            fence,
+            terminal_state,
+            result_code,
+            result_json,
+        )
+        if not row:
+            raise LookupError("apply-preview receipt has no active fenced claim")
+        return self._apply_preview_receipt_from_row(row)
+
+    async def cleanup_apply_preview_receipts(self) -> int:
+        deleted = await self._fetchval(
+            """
+            WITH deleted AS (
+                DELETE FROM apply_preview_receipts
+                WHERE token_sha256 IN (
+                    SELECT token_sha256
+                    FROM apply_preview_receipts
+                    WHERE expires_at <= NOW()
+                      AND state <> 'applying'
+                    ORDER BY expires_at, token_sha256
+                    LIMIT 100
+                )
+                RETURNING 1
+            )
+            SELECT COUNT(*) FROM deleted;
+            """
+        )
+        return int(deleted or 0)
 
     async def upsert_project(
         self,
@@ -2950,6 +3156,33 @@ class PostgresStorage(StorageBackend):
             metadata=_coerce_json(row.get("metadata")) if row.get("metadata") is not None else None,
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
+        )
+
+    @staticmethod
+    def _apply_preview_receipt_from_row(row: Any) -> ApplyPreviewReceiptRecord:
+        return ApplyPreviewReceiptRecord(
+            token_sha256=str(row["token_sha256"]),
+            receipt_version=int(row["receipt_version"]),
+            state=str(row["state"]),
+            principal_id=str(row["principal_id"]),
+            session_id=str(row["session_id"]),
+            run_id=str(row["run_id"]),
+            project_key=str(row["project_key"]),
+            repo_id=str(row["repo_id"]),
+            action=str(row["action"]),
+            normalized_intent_json=_json_text(row["normalized_intent_json"]) or "",
+            target_binding_json=_json_text(row["target_binding_json"]) or "",
+            precondition_json=_json_text(row["precondition_json"]) or "",
+            predicted_after_json=_json_text(row["predicted_after_json"]) or "",
+            issued_at=row["issued_at"],
+            expires_at=row["expires_at"],
+            fence=int(row["fence"]),
+            apply_lease_expires_at=row.get("apply_lease_expires_at"),
+            terminal_result_code=row.get("terminal_result_code"),
+            terminal_result_json=_json_text(row.get("terminal_result_json")),
+            terminal_at=row.get("terminal_at"),
+            audit_correlation_id=str(row["audit_correlation_id"]),
+            updated_at=row["updated_at"],
         )
 
     async def _resolve_project_record(

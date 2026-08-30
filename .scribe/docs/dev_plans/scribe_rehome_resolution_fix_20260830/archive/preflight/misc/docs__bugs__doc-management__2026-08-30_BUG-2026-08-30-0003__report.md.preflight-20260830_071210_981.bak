@@ -1,0 +1,106 @@
+---
+visibility: "internal"
+owner_principal_id: "seshat"
+council_id: ""
+project_id: "scribe_rehome_resolution_fix_20260830"
+required_grants: []
+revoked_at: null
+policy_digest: "55326539641c99432b88878067f1fd507960ca447b1eb0a2ebba97857e1bc954"
+---
+
+
+# 🐞 Research quality_check prefers misplaced top-level doc over canonical research path — scribe_rehome_resolution_fix_20260830
+**Author:** Scribe
+**Version:** v0.1
+**Status:** INVESTIGATING
+**Last Updated:** 2026-08-30 07:11:31 UTC
+
+> Summarise why this document exists and what decisions it captures.
+
+---
+## Bug Overview
+<!-- ID: bug_overview -->
+**Bug ID:** BUG-2026-08-30-0003
+
+**Reported By:** seshat
+
+**Date Reported:** 2026-08-30 07:11:31 UTC
+
+**Severity:** MEDIUM
+
+**Status:** INVESTIGATING
+
+**Component:** manage_docs target resolution
+
+**Environment:** local test
+
+**Customer Impact:** [UNFILLED]
+
+
+---
+## Description
+<!-- ID: description -->
+### Summary
+tests/test_research_artifact_hygiene.py::test_quality_check_research_prefers_canonical_research_dir_over_top_level_fallback fails alone: quality_check resolves the top-level duplicate instead of research/\<doc\>.md.
+
+### Expected Behaviour
+For doc_category=research, canonical research/\<doc\>.md must win over a misplaced project-root duplicate.
+
+### Actual Behaviour
+tests/test_research_artifact_hygiene.py::test_quality_check_research_prefers_canonical_research_dir_over_top_level_fallback fails alone: quality_check resolves the top-level duplicate instead of research/\<doc\>.md.
+
+### Steps to Reproduce
+- [ ] Run uv run pytest -q tests/test_research_artifact_hygiene.py::test_quality_check_research_prefers_canonical_research_dir_over_top_level_fallback.
+- [ ] Observe scope.path resolves the project-root duplicate rather than research/<doc>.md.
+
+
+
+---
+## Investigation
+<!-- ID: investigation -->
+**Root Cause Analysis:**
+Not diagnosed; failing path is outside the lines changed by SCRIBE-REHOME-B1 and reproduces independently.
+
+**Affected Areas:**
+- tests/test_research_artifact_hygiene.py
+- src/scribe_mcp/doc_management/runtime.py
+
+
+**Related Issues:**
+- Link to related bugs, tickets, or documentation.
+
+
+---
+## Resolution Plan
+<!-- ID: resolution_plan -->
+### Immediate Actions
+- [ ] Track separately; do not widen the bounded rehome/dry-run repair. Route to Mantis for RCA under its own contract.
+
+
+### Long-Term Fixes
+- [ ] Outline long-term remedial work or refactors.
+
+### Testing Strategy
+- [ ] Define validation steps for the fix (unit, integration, regression).
+
+
+---
+## Timeline & Ownership
+<!-- ID: timeline -->
+| Phase | Owner | Target Date | Notes |
+| --- | --- | --- | --- |
+| Investigation | [Name] | [Date] | [Details] |
+| Fix Development | [Name] | [Date] | [Details] |
+| Testing | [Name] | [Date] | [Details] |
+| Deployment | [Name] | [Date] | [Details] |
+
+
+---
+## Appendix
+<!-- ID: appendix -->
+- **Logs & Evidence:** [Link to relevant logs, traces, screenshots]
+- **Fix References:** [Git commits, PRs, or documentation]
+- **Open Questions:** [List unresolved unknowns or next investigations]
+
+
+---

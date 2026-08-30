@@ -8,13 +8,12 @@ import difflib
 import fcntl
 import hashlib
 import logging
-import os
 import tempfile
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import IO, Any, AsyncContextManager, AsyncIterator, Dict, Optional, Sequence
 
 # Import with absolute paths from scribe_mcp root
 from scribe_mcp.doc_management import errors as doc_errors
@@ -197,8 +196,97 @@ class AnchorCASDenied(DocumentOperationError):
 ANCHOR_DIGEST_ALGORITHM = "managed_anchor_sha256_v1"
 
 
+@dataclass(frozen=True)
+class MutationLockTarget:
+    """One canonical repository path participating in a document mutation."""
+
+    repo_root: str = field(repr=False)
+    path: str | Path = field(repr=False)
+
+    def __post_init__(self) -> None:
+        root = Path(self.repo_root).expanduser().resolve()
+        path = Path(self.path).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        object.__setattr__(self, "repo_root", str(root))
+        object.__setattr__(self, "path", str(path.resolve()))
+
+    @property
+    def lock_identity(self) -> str:
+        return f"{self.repo_root}\0path:{self.path}"
+
+
+def _mutation_lock_path(lock_identity: str) -> Path:
+    lock_key = hashlib.sha256(lock_identity.encode("utf-8")).hexdigest()
+    return Path(tempfile.gettempdir()) / "scribe-managed-doc-locks" / f"{lock_key}.lock"
+
+
+async def _acquire_mutation_lock(lock_path: Path) -> IO[str]:
+    await asyncio.to_thread(lock_path.parent.mkdir, parents=True, exist_ok=True)
+    handle = await asyncio.to_thread(lock_path.open, "a+")
+    try:
+        await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_EX)
+    except BaseException:
+        await asyncio.to_thread(handle.close)
+        raise
+    return handle
+
+
+async def _release_mutation_lock(handle: IO[str]) -> None:
+    try:
+        await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        await asyncio.to_thread(handle.close)
+
+
 @asynccontextmanager
-async def _document_mutation_lock(project: Dict[str, Any], doc_name: str):
+async def _mutation_locks_for_identities(
+    lock_identities: Sequence[str],
+) -> AsyncIterator[None]:
+    lock_paths = sorted(
+        {_mutation_lock_path(identity) for identity in lock_identities},
+        key=lambda path: path.as_posix(),
+    )
+    handles: list[IO[str]] = []
+    try:
+        for lock_path in lock_paths:
+            handles.append(await _acquire_mutation_lock(lock_path))
+        yield
+    finally:
+        for handle in reversed(handles):
+            await _release_mutation_lock(handle)
+
+
+@asynccontextmanager
+async def _document_mutation_locks(
+    targets: Sequence[MutationLockTarget],
+) -> AsyncIterator[None]:
+    """Acquire deduplicated cross-process mutation locks in deterministic order."""
+
+    if not targets:
+        raise ValueError("at least one mutation lock target is required")
+    canonical_targets = tuple(
+        target if isinstance(target, MutationLockTarget) else MutationLockTarget(**target)
+        for target in targets
+    )
+    async with _mutation_locks_for_identities(
+        [target.lock_identity for target in canonical_targets]
+    ):
+        yield
+
+
+def document_mutation_locks(
+    targets: Sequence[MutationLockTarget],
+) -> AsyncContextManager[None]:
+    """Return a deterministic multi-path document mutation lock context."""
+
+    return _document_mutation_locks(targets)
+
+
+@asynccontextmanager
+async def _document_mutation_lock(
+    project: Dict[str, Any], doc_name: str
+) -> AsyncIterator[None]:
     """Hold one cross-process lock for the complete document mutation.
 
     Resolve the physical managed-document path before deriving the lock
@@ -216,19 +304,8 @@ async def _document_mutation_lock(project: Dict[str, Any], doc_name: str):
         # retaining a deterministic lock for operations that have no physical
         # document to resolve yet (for example, create).
         lock_identity = f"{root.as_posix()}\0doc:{doc_name}"
-    lock_key = hashlib.sha256(lock_identity.encode("utf-8")).hexdigest()
-    lock_dir = Path(tempfile.gettempdir()) / "scribe-managed-doc-locks"
-    lock_path = lock_dir / f"{lock_key}.lock"
-    await asyncio.to_thread(lock_dir.mkdir, parents=True, exist_ok=True)
-    handle = await asyncio.to_thread(lock_path.open, "a+")
-    try:
-        await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_EX)
+    async with _mutation_locks_for_identities([lock_identity]):
         yield
-    finally:
-        try:
-            await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            await asyncio.to_thread(handle.close)
 
 
 def _derive_backup_family(

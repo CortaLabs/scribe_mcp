@@ -10,12 +10,12 @@ Tests are organised into five categories:
 
 from __future__ import annotations
 
-import json
 import sys
-from datetime import datetime
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -24,7 +24,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scribe_mcp.storage.base import ConflictError, RemoteUnavailableError
-from scribe_mcp.storage.models import ProjectRecord
+from scribe_mcp.storage.models import (
+    ApplyPreviewClaimResult,
+    ApplyPreviewReceiptRecord,
+    ProjectRecord,
+)
 from scribe_mcp.storage.remote import RemoteStorageBackend
 
 
@@ -87,6 +91,43 @@ def _make_project_dict(**overrides: Any) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def _make_apply_preview_record(**overrides: Any) -> ApplyPreviewReceiptRecord:
+    issued_at = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    base = {
+        "token_sha256": "a" * 64,
+        "receipt_version": 1,
+        "state": "issued",
+        "principal_id": "principal-1",
+        "session_id": "session-1",
+        "run_id": "run-1",
+        "project_key": "project-1",
+        "repo_id": "repo-1",
+        "action": "replace_section",
+        "normalized_intent_json": '{"action":"replace_section"}',
+        "target_binding_json": '{"doc":"ARCHITECTURE_GUIDE"}',
+        "precondition_json": '{"sha256":"before"}',
+        "predicted_after_json": '{"sha256":"after"}',
+        "issued_at": issued_at,
+        "expires_at": issued_at + timedelta(minutes=5),
+        "fence": 0,
+        "apply_lease_expires_at": None,
+        "terminal_result_code": None,
+        "terminal_result_json": None,
+        "terminal_at": None,
+        "audit_correlation_id": "audit-1",
+        "updated_at": issued_at,
+    }
+    base.update(overrides)
+    return ApplyPreviewReceiptRecord(**base)
+
+
+def _serialize_apply_preview_record(record: ApplyPreviewReceiptRecord) -> dict[str, Any]:
+    return {
+        key: value.isoformat() if isinstance(value, datetime) else value
+        for key, value in asdict(record).items()
+    }
 
 
 # ===================================================================
@@ -522,6 +563,90 @@ class TestRemoteAuth:
             "Authorization": "Bearer client-token",
             "x-scribe-auth": "client-token",
         }
+
+
+class TestApplyPreviewReceiptMethods:
+    @pytest.mark.asyncio
+    async def test_methods_delegate_once_and_decode_typed_results(
+        self, auth_live_backend: RemoteStorageBackend
+    ) -> None:
+        issued = _make_apply_preview_record()
+        applying = _make_apply_preview_record(
+            state="applying",
+            fence=1,
+            apply_lease_expires_at=issued.issued_at + timedelta(seconds=30),
+        )
+        applied = _make_apply_preview_record(
+            state="applied",
+            fence=1,
+            terminal_result_code="APPLY_RECEIPT_APPLIED",
+            terminal_result_json='{"ok":true}',
+            terminal_at=issued.issued_at + timedelta(seconds=2),
+        )
+        responses = [
+            {"result": _serialize_apply_preview_record(issued)},
+            {"result": _serialize_apply_preview_record(issued)},
+            {
+                "result": {
+                    "status": "claimed",
+                    "record": _serialize_apply_preview_record(applying),
+                }
+            },
+            {"result": _serialize_apply_preview_record(applied)},
+            {"result": 3},
+        ]
+        auth_live_backend._client.post = AsyncMock(
+            side_effect=[_make_response(response) for response in responses]
+        )
+
+        assert await auth_live_backend.issue_apply_preview_receipt(issued) == issued
+        assert await auth_live_backend.fetch_apply_preview_receipt(issued.token_sha256) == issued
+        assert await auth_live_backend.claim_apply_preview_receipt(
+            issued.token_sha256, lease_seconds=30
+        ) == ApplyPreviewClaimResult(status="claimed", record=applying)
+        assert await auth_live_backend.finalize_apply_preview_receipt(
+            issued.token_sha256,
+            fence=1,
+            terminal_state="applied",
+            result_code="APPLY_RECEIPT_APPLIED",
+            result_json='{"ok":true}',
+        ) == applied
+        assert await auth_live_backend.cleanup_apply_preview_receipts() == 3
+
+        assert auth_live_backend._client.post.await_count == 5
+        operations = [
+            call.args[0].rsplit("/", 1)[-1]
+            for call in auth_live_backend._client.post.await_args_list
+        ]
+        assert operations == [
+            "issue_apply_preview_receipt",
+            "fetch_apply_preview_receipt",
+            "claim_apply_preview_receipt",
+            "finalize_apply_preview_receipt",
+            "cleanup_apply_preview_receipts",
+        ]
+        issue_payload = auth_live_backend._client.post.await_args_list[0].kwargs["json"]
+        assert issue_payload == {"record": _serialize_apply_preview_record(issued)}
+
+    @pytest.mark.asyncio
+    async def test_receipt_decoding_rejects_malformed_remote_payload(
+        self, auth_live_backend: RemoteStorageBackend
+    ) -> None:
+        auth_live_backend._client.post = AsyncMock(
+            return_value=_make_response({"result": {"status": "claimed", "record": "not-an-object"}})
+        )
+
+        with pytest.raises(RemoteUnavailableError, match="malformed"):
+            await auth_live_backend.claim_apply_preview_receipt("a" * 64, lease_seconds=30)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_rejects_non_integer_remote_result(
+        self, auth_live_backend: RemoteStorageBackend
+    ) -> None:
+        auth_live_backend._client.post = AsyncMock(return_value=_make_response({"result": "three"}))
+
+        with pytest.raises(RemoteUnavailableError, match="malformed"):
+            await auth_live_backend.cleanup_apply_preview_receipts()
 
 
 class TestErrorHandling:

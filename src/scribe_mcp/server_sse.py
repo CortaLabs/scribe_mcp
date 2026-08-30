@@ -58,6 +58,7 @@ from scribe_mcp.shared.execution_context import (
 )
 from scribe_mcp.state.agent_manager import SessionLeaseExpired
 from scribe_mcp.storage.base import ProjectRecord
+from scribe_mcp.storage.models import ApplyPreviewReceiptRecord
 
 logger = logging.getLogger(__name__)
 
@@ -514,6 +515,12 @@ class TransportAuthMiddleware(BaseHTTPMiddleware):
 #: Legacy allowlist of StorageBackend methods exposed via REST for non-public profiles.
 #: Operations NOT in this set are rejected with HTTP 403 Forbidden.
 _LEGACY_OPERATION_ALLOWLIST: frozenset[str] = frozenset({
+    # Apply-preview receipt operations (internal-only)
+    "issue_apply_preview_receipt",
+    "fetch_apply_preview_receipt",
+    "claim_apply_preview_receipt",
+    "finalize_apply_preview_receipt",
+    "cleanup_apply_preview_receipts",
     # Project operations
     "fetch_project",
     "upsert_project",
@@ -559,6 +566,11 @@ _LEGACY_OPERATION_ALLOWLIST: frozenset[str] = frozenset({
 
 #: Explicit denied operations for public-release transport hardening.
 PUBLIC_RELEASE_DENIED_OPERATIONS: frozenset[str] = frozenset({
+    "issue_apply_preview_receipt",
+    "fetch_apply_preview_receipt",
+    "claim_apply_preview_receipt",
+    "finalize_apply_preview_receipt",
+    "cleanup_apply_preview_receipts",
     "delete_project",
     "upsert_project",
     "upsert_session",
@@ -733,6 +745,49 @@ def _rehydrate_kwargs(kwargs: dict[str, Any]) -> None:
             kwargs["ts"] = datetime.datetime.fromisoformat(ts_val)
         except (ValueError, TypeError):
             pass
+
+    receipt = kwargs.get("record")
+    if isinstance(receipt, dict):
+        def _parse_receipt_datetime(value: Any) -> datetime.datetime:
+            if isinstance(value, datetime.datetime):
+                return value
+            text = str(value).strip()
+            if text.endswith("Z"):
+                text = f"{text[:-1]}+00:00"
+            return datetime.datetime.fromisoformat(text)
+
+        kwargs["record"] = ApplyPreviewReceiptRecord(
+            token_sha256=receipt["token_sha256"],
+            receipt_version=receipt["receipt_version"],
+            state=receipt["state"],
+            principal_id=receipt["principal_id"],
+            session_id=receipt["session_id"],
+            run_id=receipt["run_id"],
+            project_key=receipt["project_key"],
+            repo_id=receipt["repo_id"],
+            action=receipt["action"],
+            normalized_intent_json=receipt["normalized_intent_json"],
+            target_binding_json=receipt["target_binding_json"],
+            precondition_json=receipt["precondition_json"],
+            predicted_after_json=receipt["predicted_after_json"],
+            issued_at=_parse_receipt_datetime(receipt["issued_at"]),
+            expires_at=_parse_receipt_datetime(receipt["expires_at"]),
+            fence=receipt["fence"],
+            apply_lease_expires_at=(
+                _parse_receipt_datetime(receipt["apply_lease_expires_at"])
+                if receipt.get("apply_lease_expires_at") is not None
+                else None
+            ),
+            terminal_result_code=receipt.get("terminal_result_code"),
+            terminal_result_json=receipt.get("terminal_result_json"),
+            terminal_at=(
+                _parse_receipt_datetime(receipt["terminal_at"])
+                if receipt.get("terminal_at") is not None
+                else None
+            ),
+            audit_correlation_id=receipt["audit_correlation_id"],
+            updated_at=_parse_receipt_datetime(receipt["updated_at"]),
+        )
 
 
 # ---------------------------------------------------------------------------

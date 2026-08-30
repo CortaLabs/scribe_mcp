@@ -6,7 +6,13 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from scribe_mcp.storage.models import CaseRegistryRecord, ProjectRecord, RepoScopeGrantRecord
+from scribe_mcp.storage.models import (
+    ApplyPreviewClaimResult,
+    ApplyPreviewReceiptRecord,
+    CaseRegistryRecord,
+    ProjectRecord,
+    RepoScopeGrantRecord,
+)
 
 
 class ConflictError(Exception):
@@ -21,6 +27,40 @@ class RemoteUnavailableError(Exception):
 
 class StorageBackend(ABC):
     """Unified interface for persistence layers."""
+
+    async def issue_apply_preview_receipt(
+        self, record: ApplyPreviewReceiptRecord
+    ) -> ApplyPreviewReceiptRecord:
+        """Persist a new apply-preview receipt without storing its bearer token."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def fetch_apply_preview_receipt(
+        self, token_sha256: str
+    ) -> ApplyPreviewReceiptRecord | None:
+        """Fetch an apply-preview receipt by its SHA-256 bearer digest."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def claim_apply_preview_receipt(
+        self, token_sha256: str, *, lease_seconds: int
+    ) -> ApplyPreviewClaimResult:
+        """Atomically claim or recover a receipt execution lease."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def finalize_apply_preview_receipt(
+        self,
+        token_sha256: str,
+        *,
+        fence: int,
+        terminal_state: str,
+        result_code: str,
+        result_json: str,
+    ) -> ApplyPreviewReceiptRecord:
+        """Finalize a claimed receipt only when its monotonic fence matches."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def cleanup_apply_preview_receipts(self) -> int:
+        """Delete receipts eligible for cleanup and return the deleted count."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
 
     async def setup(self) -> None:
         """Perform any startup work. Optional for some backends."""

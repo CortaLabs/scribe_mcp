@@ -1,0 +1,105 @@
+---
+id: scribe_rehome_resolution_fix_20260830-research-dry-run-apply-reuse
+title: Research Dry Run Apply Reuse
+doc_type: RESEARCH_DRY_RUN_APPLY_REUSE
+doc_name: RESEARCH_DRY_RUN_APPLY_REUSE
+category: research
+status: scaffolded
+version: '0.1'
+last_updated: 2026-08-30 09:17:49 UTC
+maintained_by: agent-20260830-091401-a6c5bf05
+created_by: agent-20260830-091401-a6c5bf05
+owners:
+- lens
+- seshat
+related_docs: []
+tags: []
+summary: Implementation-ready mapping for compact apply affordance on successful mutating
+  manage_docs dry runs
+canonical_doc_type: research_dry_run_apply_reuse
+edit_trace:
+  tool: manage_docs
+  created_at: 2026-08-30 09:16:06 UTC
+  created_via: create_doc
+  last_edited_at: 2026-08-30 09:17:49 UTC
+  last_edited_by: agent-20260830-091401-a6c5bf05
+  last_action: append
+  work_item_id: 054d013c-005c-4d39-a19e-d97c08137aa9
+---
+
+# Research — Dry-Run Apply Reuse
+
+## Executive Summary
+
+Objective: identify the narrowest additive seam for attaching an opaque apply affordance to every successful mutating manage_docs(dry_run=True) response. Confidence: high for source mappings; low for remote/PR state because governed shell inspection was denied while this worker lacked a resolver-verified claim.
+
+The narrowest seam is the shared post-router response finalization in src/scribe_mcp/doc_management/runtime.py:3190-3224. It receives every handler response, action, dry_run, active project, execution context, and normalized scope, and already performs common enrichment. Add one helper there, gated by response.ok and dry_run and _is_manage_docs_write_intent(action), to attach a compact receipt. Create has an early return at runtime.py:3094-3100, so invoke the same helper there too.
+
+## System Surface Map
+
+1. Successful mutating dry-run response → runtime.py:3190-3224 → MCP return. Confidence: high. Trace: tools/manage_docs.py:271-340 → runtime router runtime.py:3102-3180 → finalizer runtime.py:3190-3224 → host result. UI is intentionally absent per SPEC.
+2. Action authority/classification → runtime.py:39-142 and 145-166; write-intent predicate 281-282. Confidence: high. Trace: host schema tools/manage_docs.py:65-126 → live build_manage_docs_action_manifest → VALID_ACTIONS/ACTION_ROUTER → mutation predicate.
+3. Mutation execution/preimage → manager.py:154-169, 197-231, 1332-1375. Confidence: high. Trace: actions/edit.py:131-164 → injected apply_doc_change runtime.py:3128 → manager lock/CAS → actions/edit.py:460-487 response.
+
+## Core System Seams
+
+Shared finalization runtime.py:3190-3224 copies anchor fields, adds project context, case binding, warnings, and returns. Receipt attachment belongs after successful response enrichment and before return. Confidence: high.
+
+Create special handling runtime.py:3094-3100 returns early; a helper only in the normal finalizer would omit create. Call the helper before both return sites. Confidence: high.
+
+Host schema tools/manage_docs.py:65-126 derives action enum from build_manage_docs_action_manifest()[all_actions] at 86-100; response adds supported manifest at 321-322. A new action needs runtime authority/router plus live enum; no prompt, roster, or skill edit. Confidence: high.
+
+Mutation actions runtime.py:154-166 are replace_section, apply_patch, replace_range, append, status_update, frontmatter_update, normalize_headers, generate_toc, replace_text, validate_crosslinks, metadata_repair. Create and rehome_doc are additionally writes via runtime.py:281-282. Read-only registration actions are list_sections, list_checklist_items, preview_reconciliation, search at 179-184; quality/scaffold and query paths are not mutation actions. Confidence: high.
+
+## Invariants
+
+Session/project identity: context preparation requires a project at runtime.py:2611-2642; unsafe fallback resolution is rejected for writes at 2780-2798. Confidence: high.
+
+Path authorization: non-dry-run write intent invokes assert_writes_allowed at runtime.py:2697-2702. Confidence: high.
+
+CAS/hash/locking: DocChangeResult before_hash/after_hash at manager.py:154-169; ANCHOR_DIGEST_ALGORITHM at 197; cross-process lock at 200-231; patch_source_hash and expected_anchor_sha256 flow through 1332-1375. Confidence: high.
+
+Audit: manager.py:61-101 has operation logging; handlers receive append_entry. Receipt issue/consume should append linked preview/apply events with opaque ID only. Confidence: high.
+
+TTL/idempotency gap: source search found agent_manager.py:53-101,279-282 15-minute session lease, but no receipt-specific persistent consumed-token store. A process-local dict is unsafe across workers/restarts. Confidence: medium/high. Receipt repository/storage API is UNKNOWN and must be designed or verified.
+
+Serialization: manage_docs.py:311-322 returns JSON-safe payloads and live supported action metadata; mcp_adapter.py:182-296 normalizes/validates tool definitions. Confidence: high.
+
+## Risk Surfaces
+
+Create omission if only normal finalizer changes (high). Receipt must not expose secrets or internal session/project state (high). Hash-only capture may be insufficient for create/rehome resolution (medium). Multi-process persistence and atomic single-consume semantics are unverified (high). Existing edit dry-run shape at actions/edit.py:460-476 includes dry_run, preview_only, write_applied, diff, hashes; preserve all additively (high).
+
+## Existing Verification Surfaces
+
+Representative tests: tests/test_manage_docs_runtime_action_classification.py; test_manage_docs_anchor_cas.py; test_gen_001_baseline_hash_recorded.py; test_manage_docs_actor_identity.py; test_manage_docs_session_binding.py; test_project_identity_preflight.py; test_manage_docs_create_doc.py; test_manage_docs_patch_range.py; test_manage_docs_frontmatter_contract.py; test_manage_docs_generate_toc.py; test_manage_docs_schema_keystone.py; test_mcp_adapter.py; test_response_formatter_helpers.py; test_manage_docs_quality_check.py.
+
+New tests must cover create/edit/rehome successful previews, read-only and quality no-affordance, apply-once, deterministic replay, expiry, wrong actor/session/project, preimage drift, invalid receipt, and host-valid MCP result content. Full suite is out of scope.
+
+## Relevant Files
+
+- src/scribe_mcp/doc_management/runtime.py:39-166,281-282,3094-3100,3190-3229
+- src/scribe_mcp/tools/manage_docs.py:65-126,271-340
+- src/scribe_mcp/doc_management/actions/edit.py:131-164,460-504
+- src/scribe_mcp/doc_management/manager.py:61-101,154-231,1332-1375
+- src/scribe_mcp/state/agent_manager.py:53-101,279-282
+- src/scribe_mcp/mcp_adapter.py:182-296
+
+## Recommendations
+
+Prefer one new server-issued receipt/apply action over overloading an existing edit action. Keep automatic affordance generation in the shared finalizer and create twin. Additive object recommendation: apply_receipt with opaque id, action, expires_at, preimage_sha256, and apply_action; do not expose normalized payload. Follow-up accepts receipt ID plus actor/session context, reloads normalized operation, then rechecks policy/path/preimage and atomically consumes once. Reuse an existing project storage only if it proves atomic CAS/expiry; otherwise add a narrowly scoped repository. Exact invocation field and persistence schema are UNKNOWN pending Blueprint design.
+
+## Handoff
+
+Blueprint should design around the shared post-handler finalizer plus create early-return twin, preserve the action manifest and mutation predicate, preserve session-bound project/path policy and manager CAS/lock/hash invariants, and verify representative mutation/read-only and receipt lifecycle tests.
+
+## MCP SDK v2 and Branch Truth
+
+NOT VERIFIED / BLOCKED. Governed read-only Git/remote inspection was denied with WORK_ITEM_MUTATION_DENIED[BIND_MISSING], and claim_work_item separately returned SEAT_PROOF_MALFORMED. No claim is made about MCP SDK v2 on main, migration branches/worktrees, remotes, or PRs. Orchestrator must run the prescribed read-only command set from a verified bound seat.
+
+## Unknowns
+
+Receipt persistence schema/API, atomic consume and cleanup; exact new action invocation; whether create/rehome retain sufficient canonical operation data; current remote/PR state. No RI query was used, so no RI honesty envelope applies.
+
+## Self-QA
+
+PASS for source-grounded mapping, confidence labels, explicit unknowns, tests, and handoff. NOT READY for complete package handoff until verified v2 branch facts and bind evidence are supplied.
