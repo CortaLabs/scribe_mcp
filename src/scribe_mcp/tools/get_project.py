@@ -23,7 +23,6 @@ from scribe_mcp.shared.project_utils import detect_project_state
 from scribe_mcp.config import log_config as log_config_module
 from scribe_mcp.utils.logs import parse_log_line, read_all_lines
 from scribe_mcp.utils.slug import normalize_project_input
-from datetime import datetime, timezone
 
 
 class _GetProjectHelper(LoggingToolMixin):
@@ -417,9 +416,39 @@ async def get_project(
     """
     state_snapshot = await server_module.state_manager.record_tool("get_project")
     agent_identity = server_module.get_agent_identity()
-    agent_id = None
-    if agent_identity:
+    # The public ``agent`` argument is the session-isolation key.  Ignoring it
+    # made get_project resolve the process-global identity instead, which both
+    # selected the wrong row and discarded the agent_projects CAS version that
+    # set_project(expected_version=...) needs for safe recovery.
+    requested_agent = str(agent or "").strip()
+    agent_id = (
+        requested_agent
+        if requested_agent and requested_agent != "Codex"
+        else None
+    )
+    if agent_id is None and agent_identity:
         agent_id = await agent_identity.get_or_create_agent_id()
+    selection_version: Optional[int] = None
+    if agent_id:
+        try:
+            agent_manager = server_module.get_agent_context_manager()
+            selection = (
+                await agent_manager.get_current_project(agent_id)
+                if agent_manager is not None
+                else None
+            )
+            raw_version = (
+                selection.get("version") if isinstance(selection, dict) else None
+            )
+            if type(raw_version) is int and raw_version >= 0:
+                selection_version = raw_version
+        except Exception:
+            selection_version = None
+
+    def _with_selection_version(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if selection_version is not None:
+            payload["selection_version"] = selection_version
+        return payload
 
     exec_context = None
     if hasattr(server_module, "get_execution_context"):
@@ -453,7 +482,7 @@ async def get_project(
             "Invoke set_project or add a config/projects/<name>.json entry",
         )
         payload.setdefault("reminders", [])
-        return payload
+        return _with_selection_version(payload)
 
     recent_projects = list(context.recent_projects)
     allowed_recovery_modes = {"compat_active_project", "compat_last_known_project"}
@@ -520,7 +549,7 @@ async def get_project(
                 context,
             )
             response.update(_resolution_payload())
-            return response
+            return _with_selection_version(response)
         target_project = dict(project_data)
         current_name = target_project.get("name") or resolved_name or requested_project
     else:
@@ -534,7 +563,7 @@ async def get_project(
                     context,
                 )
                 response.update(_resolution_payload())
-                return response
+                return _with_selection_version(response)
             if compatibility_mode:
                 recovery_reason = "session_authority_present"
         if not target_project and not exec_context and compatibility_mode and effective_recovery_mode == "compat_active_project":
@@ -577,9 +606,11 @@ async def get_project(
                 context,
             )
             response.update(_resolution_payload())
-            return response
+            return _with_selection_version(response)
 
     response = dict(target_project)
+    if selection_version is not None:
+        response.setdefault("version", selection_version)
     response.setdefault("meta", {})
     if current_name:
         response["meta"]["current_project"] = current_name
@@ -727,6 +758,8 @@ async def get_project(
             },
             "recent_entries": recent_entries,
         }
+        if selection_version is not None:
+            payload["selection_version"] = selection_version
 
         # Add pagination info for recent_entries
         from scribe_mcp.utils.estimator import PaginationCalculator

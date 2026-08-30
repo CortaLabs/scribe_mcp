@@ -1,0 +1,56 @@
+
+# ✅ Acceptance Checklist — scribe_rehome_resolution_fix_20260830
+**Author:** Blueprint
+**Version:** v1.0
+**Status:** Ready
+**Last Updated:** 2026-08-30 UTC
+
+> Acceptance checklist for scribe_rehome_resolution_fix_20260830.
+
+---
+## Documentation Hygiene
+<!-- ID: documentation_hygiene -->
+- [x] `SCRIBE-DRY-APPLY-P1.DOCS`: architecture, phase plan, checklist, and manifest are populated and cross-linked. Proof: `ARCHITECTURE_GUIDE.md`, `PHASE_PLAN.md`, `CHECKLIST.md`, `WORK_ITEMS.md`.
+- [x] `SCRIBE-DRY-APPLY-P1.BASELINE`: current dirty rehome and 2.13.2 candidate files are enumerated and preserved. Proof: architecture Requirements and Scribe decision checkpoint.
+- [x] `SCRIBE-DRY-APPLY-P1.SECURITY`: both force-closed findings are mandatory architecture and package acceptance. Proof: C-RECEIPT-STORAGE and C-REHOME-COMPOSITE.
+- [x] `SCRIBE-DRY-APPLY-P1.SCOPE`: prompt, roster, skill, generated output, Git delivery, deployment, and runtime activation are explicitly excluded.
+
+
+---
+## Phase 0
+<!-- ID: phase_0 -->
+- [ ] `SCRIBE-DRY-APPLY-I1` — typed receipt records and fail-closed `StorageBackend` methods. Proof required: focused tests and import smoke from the matching PHASE_PLAN package. <!-- id: SCRIBE-DRY-APPLY-I1 -->
+
+
+---
+## Phase 1
+<!-- ID: phase_1 -->
+- [ ] `SCRIBE-DRY-APPLY-I2` — SQLite atomic claim/fence/recovery/replay. Proof required: real concurrent SQLite tests and import smoke. <!-- id: SCRIBE-DRY-APPLY-I2 -->
+- [ ] `SCRIBE-DRY-APPLY-I3` — PostgreSQL fresh schema, migration 005, and atomic lifecycle. Proof required: migration/idempotency/concurrency tests and import smoke. <!-- id: SCRIBE-DRY-APPLY-I3 -->
+- [ ] `SCRIBE-DRY-APPLY-I4` — Remote one-RPC atomic delegation and public-release fail-closed behavior. Proof required: transport/auth/failure tests and import smoke. <!-- id: SCRIBE-DRY-APPLY-I4 -->
+
+
+---
+## Phase 2
+<!-- ID: phase_2 -->
+- [ ] `SCRIBE-DRY-APPLY-I5` — receipt service, exact retained intent, TTL, fencing, terminal replay, redaction, and deterministic multi-path locks. Proof required: engine/security tests and import smokes. <!-- id: SCRIBE-DRY-APPLY-I5 -->
+- [ ] `SCRIBE-REHOME-B3` — preserve dirty rehome fixes, share one composite executor, automatically expose apply, and accept receipt-only follow-up. Proof required: all named runtime/rehome neighbor tests and imports. <!-- id: SCRIBE-REHOME-B3 -->
+- [ ] `SCRIBE-DRY-APPLY-V1` — cross-backend and end-to-end behavioral/security proof. Proof required: current-revision behavioral PASS plus security PASS. <!-- id: SCRIBE-DRY-APPLY-V1 -->
+- [ ] `SCRIBE-REHOME-B2` — amend the existing release package to 2.14.0 after validation. Proof required: package metadata, CLI version, README readback. <!-- id: SCRIBE-REHOME-B2 -->
+
+
+---
+## Final Verification
+<!-- ID: final_verification -->
+- [ ] Every package has completed its exact focused tests, direct-neighbor tests, and import smokes; no full-suite substitute is accepted.
+- [ ] Successful eligible dry runs expose only `apply.action`, opaque `apply.receipt`, and `apply.expires_at`; read-only/failed/inapplicable previews do not.
+- [ ] Receipt apply accepts no mutation arguments and executes only server-retained normalized intent.
+- [ ] SQLite, PostgreSQL, and Remote prove durable fail-closed claim/fence/finalize/replay parity.
+- [ ] Composite rehome proves both authorities, paths, files, registries, indexes, preimages, deterministic locks, recognized partial recovery, and unknown-state stop.
+- [ ] Token plaintext and retained intent are absent from storage readback, logs, errors, traces, telemetry, and host content.
+- [ ] Existing dirty rehome/create-preview/version work remains present.
+- [ ] `pyproject.toml`, `python -m scribe_mcp --version`, and README report 2.14.0.
+- [ ] Source/test/release proof is reported separately from deployment, restart, merge, or production activation.
+
+
+---

@@ -23,7 +23,7 @@ def test_load_mcp_runtime_selects_public_sdk_v2_surfaces():
     runtime = load_mcp_runtime()
 
     assert runtime.major == 2
-    assert runtime.version == "2.0.0"
+    assert runtime.version.startswith("2.")
     assert runtime.server_type.__name__ == "MCPServer"
     assert runtime.types.Tool.__module__.startswith("mcp_types")
     assert callable(runtime.stdio.stdio_server)

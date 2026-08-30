@@ -12,6 +12,7 @@ from scribe_mcp import server as server_module
 from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
+from scribe_mcp.tools.set_project import set_project
 
 
 @contextmanager
@@ -384,6 +385,107 @@ async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_pa
     warning_codes = {item.get("code") for item in quality.get("warnings", [])}
     assert "SCF_NONCANONICAL_LOCATION" not in warning_codes
     assert "SCF_DOC_UNINDEXED" not in warning_codes
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_rehome_doc_same_project_nested_target_remains_canonical_after_rebind(tmp_path: Path) -> None:
+    project_root = tmp_path / "cleanup_repo_rehome_same_project_review"
+    project = _project_payload(project_root, "active_project")
+    docs_dir = Path(project["docs_dir"])
+
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
+
+    with _isolated_server(state_manager, project_root=project_root):
+        created = await manage_docs(
+            action="create",
+            doc="REVIEW_CI_RUNNER_01",
+            metadata={
+                "doc_type": "review",
+                "doc_name": "REVIEW_CI_RUNNER_01",
+                "stage": "general",
+            },
+            dry_run=False,
+        )
+        source_path = Path(created["path"])
+        rehomed = await manage_docs(
+            action="rehome_doc",
+            doc="REVIEW_CI_RUNNER_01",
+            metadata={
+                "source_path": str(source_path),
+                "target_project": project["name"],
+                "target_relative_path": "contracts/REVIEW_CI_RUNNER_01.md",
+                "target_doc_name": "REVIEW_CI_RUNNER_01",
+            },
+            dry_run=False,
+        )
+        replaced = await manage_docs(
+            action="replace_section",
+            doc="REVIEW_CI_RUNNER_01",
+            section="executive_summary",
+            content="Nested review summary after rehome.",
+            dry_run=False,
+        )
+
+    target_path = docs_dir / "contracts" / "REVIEW_CI_RUNNER_01.md"
+    assert created["ok"] is True, created
+    assert rehomed["ok"] is True, rehomed
+    assert replaced["ok"] is True, replaced
+    assert source_path != target_path
+    assert not source_path.exists()
+    assert target_path.exists()
+    assert "Nested review summary after rehome." in target_path.read_text(encoding="utf-8")
+
+    cached_state = await state_manager.load()
+    rebound_project = cached_state.get_project(project["name"])
+    assert rebound_project is not None
+    assert rebound_project["docs"]["REVIEW_CI_RUNNER_01"] == str(target_path)
+    assert str(source_path) not in rebound_project["docs"].values()
+
+    backend = getattr(state_manager, "_storage_backend", None)
+    assert backend is not None
+    persisted_record = await backend.fetch_project(project["name"])
+    assert persisted_record is not None
+    persisted_docs = json.loads(persisted_record.docs_json or "{}")
+    assert persisted_docs["REVIEW_CI_RUNNER_01"] == str(target_path)
+    assert str(source_path) not in persisted_docs.values()
+
+    with _isolated_server(state_manager, project_root=project_root):
+        rebound = await set_project(
+            agent="cleanup-test-agent",
+            name=project["name"],
+            root=str(project_root),
+            skip_validation=True,
+            format="structured",
+        )
+        rebound_quality = await manage_docs(
+            action="quality_check",
+            doc="REVIEW_CI_RUNNER_01",
+            dry_run=True,
+        )
+        rebound_replaced = await manage_docs(
+            action="replace_section",
+            doc="REVIEW_CI_RUNNER_01",
+            section="executive_summary",
+            content="Nested review summary after actual set_project rebind.",
+            dry_run=False,
+        )
+
+    assert rebound["ok"] is True, rebound
+    assert rebound_quality["ok"] is True, rebound_quality
+    assert rebound_quality["scope"]["path"] == str(target_path)
+    assert rebound_replaced["ok"] is True, rebound_replaced
+    assert rebound_replaced["path"] == str(target_path)
+    assert "Nested review summary after actual set_project rebind." in target_path.read_text(
+        encoding="utf-8"
+    )
+
+    review_index = docs_dir / "REVIEW_INDEX.md"
+    review_index_text = review_index.read_text(encoding="utf-8")
+    assert "contracts/REVIEW_CI_RUNNER_01.md" in review_index_text
+    assert source_path.name not in review_index_text
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,6 +19,8 @@ import httpx
 
 from scribe_mcp.storage.base import ConflictError, RemoteUnavailableError, StorageBackend
 from scribe_mcp.storage.models import (
+    ApplyPreviewClaimResult,
+    ApplyPreviewReceiptRecord,
     CaseRegistryRecord,
     ProjectRecord,
     RepoScopeGrantRecord,
@@ -167,7 +170,17 @@ class RemoteStorageBackend(StorageBackend):
                     raise PermissionError(message)
                 raise RuntimeError(self._auth_failure_message(context, resp))
             resp.raise_for_status()
-            return resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise RemoteUnavailableError(
+                    f"Remote server returned malformed JSON for {context}"
+                ) from exc
+            if not isinstance(data, dict):
+                raise RemoteUnavailableError(
+                    f"Remote server returned malformed response for {context}"
+                )
+            return data
         except httpx.ConnectError as exc:
             raise RemoteUnavailableError(f"Cannot reach remote server: {exc}") from exc
         except httpx.TimeoutException as exc:
@@ -216,8 +229,145 @@ class RemoteStorageBackend(StorageBackend):
         return data.get("results", [])
 
     # ------------------------------------------------------------------
-    # ProjectRecord deserialization
+    # Record deserialization
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_remote_datetime(value: Any) -> datetime:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            text = value.strip()
+            if text.endswith("Z"):
+                text = f"{text[:-1]}+00:00"
+            parsed = datetime.fromisoformat(text)
+        else:
+            raise TypeError("expected datetime or ISO-8601 string")
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("expected timezone-aware datetime")
+        return parsed
+
+    @staticmethod
+    def _serialize_apply_preview_receipt(record: ApplyPreviewReceiptRecord) -> Dict[str, Any]:
+        return {
+            key: value.isoformat() if isinstance(value, datetime) else value
+            for key, value in asdict(record).items()
+        }
+
+    def _to_apply_preview_receipt_record(self, data: Any) -> ApplyPreviewReceiptRecord:
+        if isinstance(data, ApplyPreviewReceiptRecord):
+            return data
+        if not isinstance(data, dict):
+            raise RemoteUnavailableError("Remote server returned malformed apply-preview receipt")
+        try:
+            return ApplyPreviewReceiptRecord(
+                token_sha256=data["token_sha256"],
+                receipt_version=data["receipt_version"],
+                state=data["state"],
+                principal_id=data["principal_id"],
+                session_id=data["session_id"],
+                run_id=data["run_id"],
+                project_key=data["project_key"],
+                repo_id=data["repo_id"],
+                action=data["action"],
+                normalized_intent_json=data["normalized_intent_json"],
+                target_binding_json=data["target_binding_json"],
+                precondition_json=data["precondition_json"],
+                predicted_after_json=data["predicted_after_json"],
+                issued_at=self._parse_remote_datetime(data["issued_at"]),
+                expires_at=self._parse_remote_datetime(data["expires_at"]),
+                fence=data["fence"],
+                apply_lease_expires_at=(
+                    self._parse_remote_datetime(data["apply_lease_expires_at"])
+                    if data.get("apply_lease_expires_at") is not None
+                    else None
+                ),
+                terminal_result_code=data.get("terminal_result_code"),
+                terminal_result_json=data.get("terminal_result_json"),
+                terminal_at=(
+                    self._parse_remote_datetime(data["terminal_at"])
+                    if data.get("terminal_at") is not None
+                    else None
+                ),
+                audit_correlation_id=data["audit_correlation_id"],
+                updated_at=self._parse_remote_datetime(data["updated_at"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RemoteUnavailableError(
+                "Remote server returned malformed apply-preview receipt"
+            ) from exc
+
+    def _to_apply_preview_claim_result(self, data: Any) -> ApplyPreviewClaimResult:
+        if isinstance(data, ApplyPreviewClaimResult):
+            return data
+        if not isinstance(data, dict):
+            raise RemoteUnavailableError("Remote server returned malformed apply-preview claim result")
+        try:
+            record_data = data.get("record")
+            record = (
+                self._to_apply_preview_receipt_record(record_data)
+                if record_data is not None
+                else None
+            )
+            return ApplyPreviewClaimResult(status=data["status"], record=record)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RemoteUnavailableError(
+                "Remote server returned malformed apply-preview claim result"
+            ) from exc
+
+    async def issue_apply_preview_receipt(
+        self, record: ApplyPreviewReceiptRecord
+    ) -> ApplyPreviewReceiptRecord:
+        result = await self._call(
+            "issue_apply_preview_receipt",
+            record=self._serialize_apply_preview_receipt(record),
+        )
+        return self._to_apply_preview_receipt_record(result)
+
+    async def fetch_apply_preview_receipt(
+        self, token_sha256: str
+    ) -> ApplyPreviewReceiptRecord | None:
+        result = await self._call("fetch_apply_preview_receipt", token_sha256=token_sha256)
+        if result is None:
+            return None
+        return self._to_apply_preview_receipt_record(result)
+
+    async def claim_apply_preview_receipt(
+        self, token_sha256: str, *, lease_seconds: int
+    ) -> ApplyPreviewClaimResult:
+        result = await self._call(
+            "claim_apply_preview_receipt",
+            token_sha256=token_sha256,
+            lease_seconds=lease_seconds,
+        )
+        return self._to_apply_preview_claim_result(result)
+
+    async def finalize_apply_preview_receipt(
+        self,
+        token_sha256: str,
+        *,
+        fence: int,
+        terminal_state: str,
+        result_code: str,
+        result_json: str,
+    ) -> ApplyPreviewReceiptRecord:
+        result = await self._call(
+            "finalize_apply_preview_receipt",
+            token_sha256=token_sha256,
+            fence=fence,
+            terminal_state=terminal_state,
+            result_code=result_code,
+            result_json=result_json,
+        )
+        return self._to_apply_preview_receipt_record(result)
+
+    async def cleanup_apply_preview_receipts(self) -> int:
+        result = await self._call("cleanup_apply_preview_receipts")
+        if not isinstance(result, int) or isinstance(result, bool) or result < 0:
+            raise RemoteUnavailableError(
+                "Remote server returned malformed apply-preview cleanup result"
+            )
+        return result
 
     def _to_project_record(self, data: Any) -> Optional[ProjectRecord]:
         """Convert a dict from the remote server to a ProjectRecord."""

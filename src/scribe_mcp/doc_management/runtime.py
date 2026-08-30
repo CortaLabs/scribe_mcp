@@ -8,12 +8,28 @@ import inspect
 import json
 import logging
 import re
-import shutil
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from scribe_mcp.log_intelligence import build_report_from_path
-from scribe_mcp.doc_management.manager import apply_doc_change, resolve_registered_doc_key, _resolve_doc_path
+from scribe_mcp.doc_management.apply_preview import (
+    ApplyPreviewBinding,
+    ApplyPreviewError,
+    ApplyPreviewService,
+)
+from scribe_mcp.doc_management.manager import (
+    MutationLockTarget,
+    _apply_doc_change_unlocked,
+    apply_doc_change,
+    resolve_registered_doc_key,
+    _resolve_doc_path,
+)
+from scribe_mcp.doc_management.rehome_transaction import (
+    RehomeCompositeBinding,
+    capture_rehome_binding,
+    classify_rehome_transaction_state,
+    execute_rehome_transaction,
+)
 from scribe_mcp.doc_management.scaffold_quality import (
     collect_managed_doc_quality_warnings,
     configured_log_quality_exclusion_paths,
@@ -48,10 +64,12 @@ from scribe_mcp.shared.logging_utils import (
 )
 from scribe_mcp.shared.write_barrier import assert_writes_allowed
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
+from scribe_mcp.utils.files import async_atomic_write
 from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input
 
 
 PRIMARY_ACTIONS = {
+    "apply_preview",
     "create",
     "replace_section",
     "apply_patch",
@@ -114,6 +132,7 @@ _CLEANUP_ACTIONS = {"project_health", "rehome_doc"}
 _ADVANCED_ACTIONS = HIDDEN_ACTIONS - _CLEANUP_ACTIONS
 
 ACTION_ROUTER = {
+    "apply_preview": "apply_preview",
     "create": "edit",
     "create_doc": "edit",
     "replace_section": "edit",
@@ -148,6 +167,326 @@ def build_manage_docs_action_manifest() -> Dict[str, Any]:
         "cleanup_actions": sorted(_CLEANUP_ACTIONS),
         "advanced_actions": sorted(_ADVANCED_ACTIONS),
         "all_actions": sorted(VALID_ACTIONS),
+    }
+
+
+def _validate_apply_preview_request(
+    *,
+    metadata: Optional[Dict[str, Any]],
+    doc_name: Optional[str],
+    doc_category: str,
+    section: Optional[str],
+    content: Optional[str],
+    patch: Optional[str],
+    patch_source_hash: Optional[str],
+    expected_anchor_sha256: Optional[str],
+    edit: Optional[Dict[str, Any] | str],
+    patch_mode: Optional[str],
+    start_line: Optional[int],
+    end_line: Optional[int],
+    template: Optional[str],
+    target_dir: Optional[str],
+    project: Optional[str],
+    dry_run: bool,
+) -> Optional[str]:
+    """Return the opaque receipt only when no caller-retained intent is supplied."""
+
+    if not isinstance(metadata, dict) or set(metadata) != {"receipt"}:
+        return None
+    receipt = metadata.get("receipt")
+    if not isinstance(receipt, str) or not receipt.strip():
+        return None
+    if any(
+        value not in (None, "")
+        for value in (
+            doc_name,
+            doc_category,
+            section,
+            content,
+            patch,
+            patch_source_hash,
+            expected_anchor_sha256,
+            edit,
+            patch_mode,
+            start_line,
+            end_line,
+            template,
+            target_dir,
+            project,
+        )
+    ) or dry_run:
+        return None
+    return receipt.strip()
+
+
+def _path_state(path: Path) -> Dict[str, Any]:
+    resolved = path.expanduser().resolve()
+    exists = resolved.is_file()
+    return {
+        "path": str(resolved),
+        "exists": exists,
+        "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest() if exists else None,
+    }
+
+
+def _preview_target_paths(response: Dict[str, Any]) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for key in ("source_path", "target_path", "final_path", "path"):
+        value = response.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        path = Path(value).expanduser().resolve()
+        if path not in paths:
+            paths.append(path)
+    return tuple(paths)
+
+
+def _predicted_preview_state(
+    *,
+    action: str,
+    response: Dict[str, Any],
+    paths: tuple[Path, ...],
+) -> Dict[str, Any]:
+    predicted = [_path_state(path) for path in paths]
+    if action == "rehome_doc" and len(predicted) >= 2:
+        source_sha = predicted[0]["sha256"]
+        predicted[0] = {
+            **predicted[0],
+            "exists": not bool(response.get("moved")),
+            "sha256": None if response.get("moved") else source_sha,
+        }
+        predicted[1] = {**predicted[1], "exists": True, "sha256": source_sha}
+    elif predicted:
+        sha_after = response.get("sha_after")
+        if not isinstance(sha_after, str):
+            hashes = response.get("hashes")
+            sha_after = hashes.get("after") if isinstance(hashes, dict) else None
+        if not isinstance(sha_after, str):
+            extra = response.get("extra")
+            sha_after = extra.get("sha_after") if isinstance(extra, dict) else None
+        if not isinstance(sha_after, str) and action == "create":
+            preview = response.get("preview")
+            if isinstance(preview, str):
+                sha_after = hashlib.sha256(preview.encode("utf-8")).hexdigest()
+        if not isinstance(sha_after, str) or len(sha_after) != 64:
+            raise ApplyPreviewError("APPLY_RECEIPT_INAPPLICABLE")
+        predicted[-1] = {**predicted[-1], "exists": True, "sha256": sha_after}
+    return {"paths": predicted}
+
+
+async def _attach_apply_preview_affordance(
+    response: Dict[str, Any],
+    *,
+    action: str,
+    normalized_intent: Dict[str, Any],
+    active_project: Dict[str, Any],
+    scope: Dict[str, str],
+    service: ApplyPreviewService,
+    rehome_binding: Optional[RehomeCompositeBinding] = None,
+) -> Dict[str, Any]:
+    """Issue the compact public apply affordance for one eligible successful preview."""
+
+    if not response.get("ok") or not response.get("dry_run", True):
+        return response
+    if action == "apply_preview" or action not in (_MUTATION_ACTIONS | {"create", "rehome_doc"}):
+        return response
+    paths = _preview_target_paths(response)
+    if not paths:
+        return response
+    root = Path(str(active_project.get("root") or "")).expanduser().resolve()
+    try:
+        if action == "rehome_doc":
+            if rehome_binding is None:
+                raise ApplyPreviewError("APPLY_RECEIPT_INAPPLICABLE")
+            before = {"rehome_state": "BEFORE"}
+            after = {"rehome_state": "AFTER"}
+            targets = rehome_binding.lock_targets
+            target_binding: Dict[str, object] = {
+                "action": action,
+                "project": str(active_project.get("name") or ""),
+                "paths": [str(path) for path in paths],
+                "rehome": rehome_binding.as_storage_payload(),
+            }
+        else:
+            before = {"paths": [_path_state(path) for path in paths]}
+            after = _predicted_preview_state(action=action, response=response, paths=paths)
+            targets = tuple(
+                MutationLockTarget(repo_root=str(root), path=path) for path in paths
+            )
+            target_binding = {
+                "action": action,
+                "project": str(active_project.get("name") or ""),
+                "paths": [str(path) for path in paths],
+            }
+        binding = ApplyPreviewBinding(
+            principal_id=scope["principal_id"],
+            session_id=scope["session_id"],
+            run_id=scope["run_id"],
+            project_key=scope["project_key"],
+            repo_id=scope["repo_id"],
+            repo_root=str(root),
+            targets=targets,
+            target_binding=target_binding,
+        )
+        affordance = await service.issue(
+            action=action,
+            normalized_intent=normalized_intent,
+            binding=binding,
+            precondition=before,
+            predicted_after=after,
+        )
+    except (ApplyPreviewError, KeyError, OSError, ValueError):
+        response.setdefault("warnings", []).append(
+            "Apply-preview receipt was not issued because a complete durable binding was unavailable."
+        )
+        return response
+    response["apply"] = affordance.as_public_dict()
+    return response
+
+
+def _receipt_scope(
+    *,
+    active_project: Dict[str, Any],
+    execution_context: Any,
+    agent_id: str,
+) -> Optional[Dict[str, str]]:
+    authority = resolve_authoritative_write_scope(
+        context=execution_context,
+        agent_session_id=None,
+    )
+    session_id = str(authority.get("authoritative_session_id") or "").strip()
+    run_id = str(getattr(execution_context, "run_id", None) or session_id).strip()
+    project_key = str(
+        active_project.get("project_key") or active_project.get("name") or ""
+    ).strip()
+    repo_root = str(Path(str(active_project.get("root") or "")).expanduser().resolve())
+    repo_id = str(active_project.get("repo_id") or "").strip()
+    if not repo_id and repo_root:
+        repo_id = hashlib.sha256(repo_root.encode("utf-8")).hexdigest()
+    scope = {
+        "principal_id": str(agent_id).strip(),
+        "session_id": session_id,
+        "run_id": run_id,
+        "project_key": project_key,
+        "repo_id": repo_id,
+        "repo_root": repo_root,
+    }
+    return scope if all(scope.values()) else None
+
+
+class _RuntimeRetainedIntentExecutor:
+    """Adapter from the receipt engine back to the normal manage-docs runtime."""
+
+    def __init__(
+        self,
+        *,
+        scope: Dict[str, str],
+        execute: Callable[
+            [Dict[str, Any], int, Optional[RehomeCompositeBinding]],
+            Awaitable[Dict[str, Any]],
+        ],
+        inspect: Callable[[RehomeCompositeBinding], Awaitable[Dict[str, object]]],
+    ) -> None:
+        self._scope = dict(scope)
+        self._execute = execute
+        self._inspect = inspect
+
+    async def authorize_apply_preview(
+        self, *, execution_context: object, binding: Dict[str, object]
+    ) -> bool:
+        del execution_context
+        bound_root = binding.get("repo_root")
+        return isinstance(bound_root, str) and Path(bound_root).resolve() == Path(
+            self._scope["repo_root"]
+        ).resolve()
+
+    async def resolve_apply_preview_targets(
+        self, *, execution_context: object, binding: Dict[str, object]
+    ) -> tuple[MutationLockTarget, ...]:
+        del execution_context
+        raw_targets = binding.get("targets")
+        if not isinstance(raw_targets, list):
+            return ()
+        targets: list[MutationLockTarget] = []
+        for item in raw_targets:
+            if not isinstance(item, dict):
+                return ()
+            targets.append(MutationLockTarget(**item))
+        return tuple(targets)
+
+    async def inspect_apply_preview_state(
+        self, *, execution_context: object, binding: Dict[str, object]
+    ) -> Dict[str, object]:
+        del execution_context
+        target_binding = binding.get("target")
+        if isinstance(target_binding, dict) and "rehome" in target_binding:
+            rehome_binding = RehomeCompositeBinding.from_storage_payload(
+                target_binding["rehome"]
+            )
+            return await self._inspect(rehome_binding)
+        targets = await self.resolve_apply_preview_targets(
+            execution_context={}, binding=binding
+        )
+        return {"paths": [_path_state(Path(target.path)) for target in targets]}
+
+    async def execute_retained_intent(
+        self,
+        *,
+        action: str,
+        normalized_intent: Dict[str, object],
+        execution_context: object,
+        binding: Dict[str, object],
+        fence: int,
+    ) -> Dict[str, object]:
+        del action, execution_context
+        target_binding = binding.get("target")
+        rehome_binding = None
+        if isinstance(target_binding, dict) and "rehome" in target_binding:
+            rehome_binding = RehomeCompositeBinding.from_storage_payload(
+                target_binding["rehome"]
+            )
+        return await self._execute(dict(normalized_intent), fence, rehome_binding)
+
+
+def _normalized_manage_docs_intent(
+    *,
+    action: str,
+    doc_category: str,
+    section: Optional[str],
+    content: Optional[str],
+    patch: Optional[str],
+    patch_source_hash: Optional[str],
+    expected_anchor_sha256: Optional[str],
+    edit: Optional[Dict[str, Any] | str],
+    patch_mode: Optional[str],
+    start_line: Optional[int],
+    end_line: Optional[int],
+    template: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    doc_name: Optional[str],
+    target_dir: Optional[str],
+) -> Dict[str, Any]:
+    values: Dict[str, Any] = {
+        "action": action,
+        "doc_category": doc_category,
+        "section": section,
+        "content": content,
+        "patch": patch,
+        "patch_source_hash": patch_source_hash,
+        "expected_anchor_sha256": expected_anchor_sha256,
+        "edit": edit,
+        "patch_mode": patch_mode,
+        "start_line": start_line,
+        "end_line": end_line,
+        "template": template,
+        "metadata": metadata,
+        "doc_name": doc_name,
+        "target_dir": target_dir,
+    }
+    return {
+        key: value
+        for key, value in values.items()
+        if value not in (None, "")
     }
 
 _MUTATION_ACTIONS = {
@@ -347,6 +686,53 @@ def _default_rehome_relative_path(source_path: Path, project_root: Path) -> Path
     if source_path.parent.name == "research" or source_path.name.startswith("RESEARCH_"):
         return Path("research") / source_path.name
     return Path(source_path.name)
+
+
+def _resolve_unique_nested_doc_path(project: Dict[str, Any], doc_name: str) -> Optional[Path]:
+    """Recover an exact canonical-name target when a rebind lost its custom mapping."""
+    if _looks_like_path(doc_name):
+        return None
+    docs_dir_raw = str(project.get("docs_dir") or "").strip()
+    if not docs_dir_raw:
+        return None
+    docs_dir = Path(docs_dir_raw).expanduser().resolve()
+    if not docs_dir.is_dir():
+        return None
+    matches = [
+        candidate.resolve()
+        for candidate in docs_dir.rglob(f"{Path(doc_name).stem}.md")
+        if candidate.is_file()
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+async def _rewrite_same_project_rehome_review_index(
+    *,
+    docs_dir: Path,
+    source_path: Path,
+    target_path: Path,
+    project_root: Path,
+) -> bool:
+    """Retarget an existing review-index entry after an exact same-project move."""
+    index_path = docs_dir / "REVIEW_INDEX.md"
+    if not index_path.is_file():
+        return False
+    source_relative = source_path.relative_to(docs_dir).as_posix()
+    target_relative = target_path.relative_to(docs_dir).as_posix()
+    index_text = index_path.read_text(encoding="utf-8")
+    if source_path.name not in index_text and source_relative not in index_text:
+        return False
+    updated_text = index_text.replace(
+        f"]({source_relative})",
+        f"]({target_relative})",
+    ).replace(
+        f"[{source_path.stem}]",
+        f"[{target_path.stem}]",
+    )
+    if updated_text == index_text:
+        return False
+    await async_atomic_write(index_path, updated_text, repo_root=project_root)
+    return True
 
 
 def _coerce_rehome_relative_path(
@@ -1571,6 +1957,155 @@ async def _handle_quality_handoff_check(*, active_project: Dict[str, Any], agent
     return helper.apply_context_payload(response, context)
 
 
+async def _apply_rehome_mutation_steps(
+    *,
+    active_project: Dict[str, Any],
+    target_project: Dict[str, Any],
+    target_project_name: str,
+    source_docs: Dict[str, Any],
+    target_docs: Dict[str, Any],
+    removed_doc_keys: list[str],
+    source_registered: bool,
+    source_path: Path,
+    target_path: Path,
+    source_docs_dir: Path,
+    target_docs_dir: Path,
+    target_project_root: Path,
+    target_doc_key: str,
+    same_project_rehome: bool,
+    move_mode: bool,
+    server_module: Any,
+    execution_context: Any,
+    agent_id: str,
+    checkpoint_registry_mapping: Dict[str, Any],
+    checkpoint_index_freshness: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Apply every durable rehome component while the composite locks are held."""
+
+    source_bytes = source_path.read_bytes() if source_path.is_file() else b""
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    target_sha = (
+        hashlib.sha256(target_path.read_bytes()).hexdigest()
+        if target_path.is_file()
+        else None
+    )
+    if target_sha != source_sha:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        await async_atomic_write(
+            target_path,
+            source_bytes.decode("utf-8"),
+            repo_root=target_project_root,
+        )
+
+    if same_project_rehome:
+        source_docs = dict(target_docs)
+    else:
+        for key in removed_doc_keys:
+            source_docs.pop(key, None)
+    checkpoint_registry_mapping["source_mapping_removed"] = (
+        not source_registered
+        or all(
+            key not in source_docs
+            or Path(str(source_docs[key])).expanduser().resolve() != source_path
+            for key in removed_doc_keys
+        )
+    )
+    active_project["docs"] = source_docs
+    target_project["docs"] = target_docs
+    checkpoint_registry_mapping["target_mapping_written"] = (
+        target_docs.get(target_doc_key) == str(target_path)
+    )
+
+    backend = getattr(server_module, "storage_backend", None)
+    if backend and hasattr(backend, "update_project_docs"):
+        if same_project_rehome:
+            await backend.update_project_docs(
+                target_project_name,
+                json.dumps(target_docs),
+                repo_root=target_project.get("root"),
+            )
+        else:
+            await backend.update_project_docs(
+                active_project.get("name"),
+                json.dumps(source_docs),
+                repo_root=active_project.get("root"),
+            )
+            await backend.update_project_docs(
+                target_project_name,
+                json.dumps(target_docs),
+                repo_root=target_project.get("root"),
+            )
+
+    state_refresh_warnings: list[str] = []
+    state_manager = getattr(server_module, "state_manager", None)
+    if state_manager and hasattr(state_manager, "update_project_metadata"):
+        project_refreshes = (
+            ((target_project_name, target_project),)
+            if same_project_rehome
+            else (
+                (active_project.get("name"), active_project),
+                (target_project_name, target_project),
+            )
+        )
+        for project_name, project_payload in project_refreshes:
+            if not project_name:
+                continue
+            try:
+                await state_manager.update_project_metadata(
+                    str(project_name),
+                    {
+                        "root": project_payload.get("root"),
+                        "docs_dir": project_payload.get("docs_dir"),
+                        "progress_log": project_payload.get("progress_log"),
+                        "docs": project_payload.get("docs") or {},
+                        "repo_id": project_payload.get("repo_id"),
+                        "project_key": project_payload.get("project_key"),
+                    },
+                )
+            except Exception as exc:
+                state_refresh_warnings.append(
+                    f"Rehome persisted docs mapping for '{project_name}', but state cache refresh failed: {exc}"
+                )
+
+    authoritative_scope = resolve_authoritative_write_scope(
+        context=execution_context,
+        agent_session_id=None,
+    )
+    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+    if state_manager and hasattr(state_manager, "set_current_project") and authoritative_session_id:
+        await state_manager.set_current_project(
+            active_project.get("name"),
+            active_project,
+            agent_id=agent_id,
+            session_id=authoritative_session_id,
+            resolved_scope=authoritative_scope.get("resolved_scope"),
+            mirror_global=False,
+        )
+
+    source_research_dir = source_docs_dir / "research"
+    if source_research_dir.exists() and source_path.is_relative_to(source_research_dir):
+        await special_indexes_shared.update_research_index(source_research_dir, agent_id)
+        checkpoint_index_freshness["source_research_index_refresh"] = "updated"
+    target_research_dir = target_docs_dir / "research"
+    if target_research_dir.exists() and target_path.is_relative_to(target_research_dir):
+        await special_indexes_shared.update_research_index(target_research_dir, agent_id)
+        checkpoint_index_freshness["target_research_index_refresh"] = "updated"
+    if same_project_rehome and source_docs_dir == target_docs_dir:
+        review_index_updated = await _rewrite_same_project_rehome_review_index(
+            docs_dir=target_docs_dir,
+            source_path=source_path,
+            target_path=target_path,
+            project_root=target_project_root,
+        )
+        checkpoint_index_freshness["review_index_refresh"] = (
+            "updated" if review_index_updated else "not_applicable"
+        )
+
+    if move_mode and source_path.exists():
+        source_path.unlink()
+    return {"ok": True, "state_refresh_warnings": state_refresh_warnings}
+
+
 async def _handle_rehome_doc(
     *,
     active_project: Dict[str, Any],
@@ -1582,6 +2117,7 @@ async def _handle_rehome_doc(
     execution_context: Any,
     server_module: Any,
     agent_id: str,
+    retained_binding: Optional[RehomeCompositeBinding] = None,
 ) -> Dict[str, Any]:
     metadata_mapping = metadata if isinstance(metadata, dict) else {}
     requested_target_dir = str(metadata_mapping.get("target_dir") or "").strip()
@@ -1734,7 +2270,20 @@ async def _handle_rehome_doc(
             context,
         )
 
-    if target_path.exists() and not overwrite:
+    retained_partial_target = (
+        bool(
+            retained_binding is not None
+            and str(target_path) == retained_binding.target_path
+            and str(source_path) == retained_binding.source_path
+            and hashlib.sha256(target_path.read_bytes()).hexdigest()
+            == retained_binding.source_sha256
+            and hashlib.sha256(source_path.read_bytes()).hexdigest()
+            == retained_binding.source_sha256
+        )
+        if target_path.is_file() and source_path.is_file()
+        else False
+    )
+    if target_path.exists() and not overwrite and not retained_partial_target:
         return helper.apply_context_payload(
             helper.error_response(
                 "rehome_doc target already exists (set metadata.overwrite=true to replace).",
@@ -1747,7 +2296,16 @@ async def _handle_rehome_doc(
         key for key, value in source_docs.items()
         if Path(str(value)).expanduser().resolve() == source_path
     ]
-    target_docs = dict(target_project.get("docs") or {})
+    same_project_rehome = (
+        str(active_project.get("name") or "").strip()
+        == str(target_project.get("name") or target_project_name).strip()
+    )
+    target_docs = dict(
+        source_docs if same_project_rehome else target_project.get("docs") or {}
+    )
+    if same_project_rehome:
+        for key in removed_doc_keys:
+            target_docs.pop(key, None)
     target_docs[target_doc_key] = str(target_path)
 
     checkpoint_file_location = {
@@ -1784,99 +2342,114 @@ async def _handle_rehome_doc(
     checkpoint_index_freshness = {
         "source_research_index_refresh": "not_applicable",
         "target_research_index_refresh": "not_applicable",
+        "review_index_refresh": "not_applicable",
         "index_freshness_reported_separately": True,
     }
 
-    if not dry_run:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        if move_mode:
-            if overwrite and target_path.exists():
-                target_path.unlink()
-            shutil.move(str(source_path), str(target_path))
-        else:
-            shutil.copy2(source_path, target_path)
-
+    index_paths = tuple(
+        path
+        for path in (
+            source_docs_dir / "research" / "INDEX.md",
+            target_docs_dir / "research" / "INDEX.md",
+            target_docs_dir / "REVIEW_INDEX.md",
+        )
+        if path.exists()
+    )
+    source_docs_after = dict(target_docs) if same_project_rehome else dict(source_docs)
+    if not same_project_rehome:
         for key in removed_doc_keys:
-            source_docs.pop(key, None)
-        checkpoint_registry_mapping["source_mapping_removed"] = (
-            not source_registered
-            or all(key not in source_docs for key in removed_doc_keys)
+            source_docs_after.pop(key, None)
+    captured_binding = capture_rehome_binding(
+        source_project=active_project,
+        target_project=target_project,
+        source_doc_keys=removed_doc_keys,
+        target_doc_key=target_doc_key,
+        source_path=source_path,
+        target_path=target_path,
+        move=move_mode,
+        overwrite=overwrite,
+        index_paths=index_paths,
+        source_registry_after=source_docs_after,
+        target_registry_after=target_docs,
+    )
+    binding = retained_binding or captured_binding
+    immutable_fields = (
+        "source_project",
+        "target_project",
+        "source_repo_root",
+        "target_repo_root",
+        "source_docs_dir",
+        "target_docs_dir",
+        "source_doc_keys",
+        "target_doc_key",
+        "source_path",
+        "target_path",
+        "move",
+        "overwrite",
+        "source_authority_digest",
+        "target_authority_digest",
+    )
+    if retained_binding is not None and any(
+        getattr(retained_binding, name) != getattr(captured_binding, name)
+        for name in immutable_fields
+    ):
+        return helper.apply_context_payload(
+            {
+                "ok": False,
+                "code": "APPLY_RECEIPT_RECOVERY_REQUIRED",
+                "recovery_state": "OTHER",
+            },
+            context,
         )
-        active_project["docs"] = source_docs
-        target_project["docs"] = target_docs
-        checkpoint_registry_mapping["target_mapping_written"] = target_docs.get(target_doc_key) == str(target_path)
 
-        backend = getattr(server_module, "storage_backend", None)
-        if backend and hasattr(backend, "update_project_docs"):
-            await backend.update_project_docs(
-                active_project.get("name"),
-                json.dumps(source_docs),
-                repo_root=active_project.get("root"),
-            )
-            await backend.update_project_docs(
-                target_project_name,
-                json.dumps(target_docs),
-                repo_root=target_project.get("root"),
-            )
+    state_refresh_warnings: list[str] = []
+    if not dry_run:
 
-        state_refresh_warnings: list[str] = []
-        state_manager = getattr(server_module, "state_manager", None)
-        if state_manager and hasattr(state_manager, "update_project_metadata"):
-            for project_name, project_payload in (
-                (active_project.get("name"), active_project),
-                (target_project_name, target_project),
-            ):
-                if not project_name:
-                    continue
-                try:
-                    await state_manager.update_project_metadata(
-                        str(project_name),
-                        {
-                            "root": project_payload.get("root"),
-                            "docs_dir": project_payload.get("docs_dir"),
-                            "progress_log": project_payload.get("progress_log"),
-                            "docs": project_payload.get("docs") or {},
-                            "repo_id": project_payload.get("repo_id"),
-                            "project_key": project_payload.get("project_key"),
-                        },
-                    )
-                except Exception as exc:
-                    state_refresh_warnings.append(
-                        f"Rehome persisted docs mapping for '{project_name}', but state cache refresh failed: {exc}"
-                    )
-
-        authoritative_scope = resolve_authoritative_write_scope(
-            context=execution_context,
-            agent_session_id=None,
-        )
-        authoritative_session_id = authoritative_scope.get("authoritative_session_id")
-        if state_manager and hasattr(state_manager, "set_current_project") and authoritative_session_id:
-            await state_manager.set_current_project(
-                active_project.get("name"),
-                active_project,
+        async def _operation() -> Dict[str, Any]:
+            return await _apply_rehome_mutation_steps(
+                active_project=active_project,
+                target_project=target_project,
+                target_project_name=target_project_name,
+                source_docs=source_docs,
+                target_docs=target_docs,
+                removed_doc_keys=removed_doc_keys,
+                source_registered=source_registered,
+                source_path=source_path,
+                target_path=target_path,
+                source_docs_dir=source_docs_dir,
+                target_docs_dir=target_docs_dir,
+                target_project_root=target_project_root,
+                target_doc_key=target_doc_key,
+                same_project_rehome=same_project_rehome,
+                move_mode=move_mode,
+                server_module=server_module,
+                execution_context=execution_context,
                 agent_id=agent_id,
-                session_id=authoritative_session_id,
-                resolved_scope=authoritative_scope.get("resolved_scope"),
-                mirror_global=False,
+                checkpoint_registry_mapping=checkpoint_registry_mapping,
+                checkpoint_index_freshness=checkpoint_index_freshness,
             )
 
-        # Keep research indexes truthful on move/copy flows without introducing a second writer.
-        try:
-            source_research_dir = source_docs_dir / "research"
-            if source_research_dir.exists() and source_path.is_relative_to(source_research_dir):
-                await special_indexes_shared.update_research_index(source_research_dir, agent_id)
-                checkpoint_index_freshness["source_research_index_refresh"] = "updated"
-        except Exception:
-            checkpoint_index_freshness["source_research_index_refresh"] = "refresh_failed"
-        try:
-            target_research_dir = target_docs_dir / "research"
-            if target_research_dir.exists() and target_path.is_relative_to(target_research_dir):
-                await special_indexes_shared.update_research_index(target_research_dir, agent_id)
-                checkpoint_index_freshness["target_research_index_refresh"] = "updated"
-        except Exception:
-            checkpoint_index_freshness["target_research_index_refresh"] = "refresh_failed"
+        transaction_result = await execute_rehome_transaction(
+            binding,
+            operation=_operation,
+            receipt_fence=(
+                int(metadata_mapping["_receipt_fence"])
+                if isinstance(metadata_mapping.get("_receipt_fence"), int)
+                else None
+            ),
+            locks_already_held=bool(metadata_mapping.get("_locks_already_held")),
+            source_project=active_project,
+            target_project=target_project,
+        )
+        if transaction_result.get("ok") is False:
+            return helper.apply_context_payload(transaction_result, context)
+        warnings = transaction_result.get("state_refresh_warnings")
+        if isinstance(warnings, list):
+            state_refresh_warnings.extend(str(item) for item in warnings)
 
-        checkpoint_file_location["ok"] = target_path.exists() and (not move_mode or not source_path.exists())
+        checkpoint_file_location["ok"] = target_path.exists() and (
+            not move_mode or not source_path.exists()
+        )
         checkpoint_file_location["source_exists_after"] = source_path.exists()
         checkpoint_file_location["target_exists_after"] = target_path.exists()
 
@@ -1890,10 +2463,15 @@ async def _handle_rehome_doc(
                 project=target_project,
             )
             warning_summary = summarize_quality_warnings(quality_warnings)
-            readiness_blocker_count = int(warning_summary.get("readiness_blocker_count") or 0)
+            readiness_blocker_count = int(
+                warning_summary.get("readiness_blocker_count") or 0
+            )
             total_warnings = int(warning_summary.get("total") or 0)
-            quality_status = "pass" if total_warnings == 0 else ("fail" if readiness_blocker_count > 0 else "warn")
-
+            quality_status = (
+                "pass"
+                if total_warnings == 0
+                else ("fail" if readiness_blocker_count > 0 else "warn")
+            )
             checkpoint_quality_binding["attempted"] = True
             checkpoint_quality_binding["ok"] = readiness_blocker_count == 0
             checkpoint_quality_binding["summary"] = {
@@ -1901,23 +2479,24 @@ async def _handle_rehome_doc(
                 "total_warnings": total_warnings,
                 "readiness_blocker_count": readiness_blocker_count,
             }
-
-            checkpoint_readiness["attempted"] = True
-            checkpoint_readiness["ok"] = readiness_blocker_count == 0
-            checkpoint_readiness["status"] = quality_status
-            checkpoint_readiness["readiness_blocker_count"] = readiness_blocker_count
-            checkpoint_readiness["total_warnings"] = total_warnings
-            checkpoint_readiness["quality_status"] = quality_status
+            checkpoint_readiness.update(
+                {
+                    "attempted": True,
+                    "ok": readiness_blocker_count == 0,
+                    "status": quality_status,
+                    "readiness_blocker_count": readiness_blocker_count,
+                    "total_warnings": total_warnings,
+                    "quality_status": quality_status,
+                }
+            )
         except Exception as exc:
             error_text = str(exc)
-            checkpoint_quality_binding["attempted"] = True
-            checkpoint_quality_binding["ok"] = False
-            checkpoint_quality_binding["error"] = error_text
-
-            checkpoint_readiness["attempted"] = True
-            checkpoint_readiness["ok"] = False
-            checkpoint_readiness["status"] = "error"
-            checkpoint_readiness["error"] = error_text
+            checkpoint_quality_binding.update(
+                {"attempted": True, "ok": False, "error": error_text}
+            )
+            checkpoint_readiness.update(
+                {"attempted": True, "ok": False, "status": "error", "error": error_text}
+            )
     else:
         checkpoint_quality_binding["ok"] = "deferred_dry_run"
         checkpoint_quality_binding["summary"] = {"quality_status": "deferred_dry_run"}
@@ -1927,7 +2506,6 @@ async def _handle_rehome_doc(
             checkpoint_index_freshness["source_research_index_refresh"] = "would_refresh"
         if target_path.is_relative_to(target_docs_dir / "research"):
             checkpoint_index_freshness["target_research_index_refresh"] = "would_refresh"
-
     response = {
         "ok": True,
         "action": "rehome_doc",
@@ -1949,6 +2527,7 @@ async def _handle_rehome_doc(
             "readiness": checkpoint_readiness,
             "index_freshness": checkpoint_index_freshness,
         },
+        "_rehome_binding": binding,
     }
     if not dry_run and "state_refresh_warnings" in locals() and state_refresh_warnings:
         response["warnings"] = state_refresh_warnings
@@ -2435,6 +3014,8 @@ async def handle_manage_docs_request(
     action_router: Dict[str, str] = ACTION_ROUTER,
     caller_agent: Optional[str] = None,
     expected_anchor_sha256: Optional[str] = None,
+    apply_doc_change_impl: Callable[..., Awaitable[Any]] = apply_doc_change,
+    retained_rehome_binding: Optional[RehomeCompositeBinding] = None,
 ) -> Dict[str, Any]:
     """Execute manage_docs runtime flow after thin-router argument collection."""
     try:
@@ -2564,6 +3145,32 @@ async def handle_manage_docs_request(
             )
         if isinstance(fallback_project, dict) and fallback_project:
             active_project = fallback_project
+    recovered_nested_target: Optional[Path] = None
+    recovered_nested_key: Optional[str] = None
+    if doc_name and action in _DOC_TARGETED_REGISTRATION_ACTIONS:
+        registered_docs = (
+            active_project.get("docs")
+            if isinstance(active_project.get("docs"), dict)
+            else {}
+        )
+        recovered_nested_key = (
+            resolve_registered_doc_key(active_project, doc_name) or str(doc_name)
+        )
+        registered_path = registered_docs.get(recovered_nested_key)
+        registered_target_exists = bool(
+            registered_path
+            and Path(str(registered_path)).expanduser().resolve().is_file()
+        )
+        if not registered_target_exists:
+            recovered_nested_target = _resolve_unique_nested_doc_path(
+                active_project,
+                str(doc_name),
+            )
+            if recovered_nested_target is not None:
+                active_project = dict(active_project)
+                recovered_docs = dict(registered_docs)
+                recovered_docs[recovered_nested_key] = str(recovered_nested_target)
+                active_project["docs"] = recovered_docs
     original_doc_name = doc_name
     doc_name_is_case_path = (
         bool(doc_name)
@@ -2598,6 +3205,147 @@ async def handle_manage_docs_request(
         execution_context=execution_context,
         server_module=server_module,
     )
+    receipt_scope = _receipt_scope(
+        active_project=active_project,
+        execution_context=execution_context,
+        agent_id=str(agent_id),
+    )
+
+    async def _execute_retained(
+        retained: Dict[str, Any],
+        fence: int,
+        rehome_binding: Optional[RehomeCompositeBinding],
+    ) -> Dict[str, Any]:
+        retained_action = str(retained.pop("action", ""))
+        retained_metadata = retained.get("metadata")
+        if retained_action == "rehome_doc":
+            retained_metadata = (
+                dict(retained_metadata) if isinstance(retained_metadata, dict) else {}
+            )
+            retained_metadata["_receipt_fence"] = fence
+            retained_metadata["_locks_already_held"] = True
+        return await handle_manage_docs_request(
+            action=retained_action,
+            doc_category=str(retained.pop("doc_category", "") or ""),
+            section=retained.pop("section", None),
+            content=retained.pop("content", None),
+            patch=retained.pop("patch", None),
+            patch_source_hash=retained.pop("patch_source_hash", None),
+            expected_anchor_sha256=retained.pop("expected_anchor_sha256", None),
+            edit=retained.pop("edit", None),
+            patch_mode=retained.pop("patch_mode", None),
+            start_line=retained.pop("start_line", None),
+            end_line=retained.pop("end_line", None),
+            template=retained.pop("template", None),
+            metadata=retained_metadata,
+            dry_run=False,
+            doc_name=retained.pop("doc_name", None),
+            target_dir=retained.pop("target_dir", None),
+            project=None,
+            state_snapshot=state_snapshot,
+            helper=helper,
+            context=context,
+            server_module=server_module,
+            append_entry=append_entry,
+            project_registry=project_registry,
+            logger=logger,
+            handle_special_document_creation=handle_special_document_creation,
+            get_or_create_storage_project=get_or_create_storage_project,
+            get_index_updater_for_path=get_index_updater_for_path,
+            auto_register_document=auto_register_document,
+            valid_actions=valid_actions,
+            action_router=action_router,
+            caller_agent=str(agent_id),
+            apply_doc_change_impl=_apply_doc_change_unlocked,
+            retained_rehome_binding=rehome_binding,
+        )
+
+    async def _inspect_retained_rehome(
+        rehome_binding: RehomeCompositeBinding,
+    ) -> Dict[str, object]:
+        source_project = await _load_project_record(
+            project_name=rehome_binding.source_project,
+            server_module=server_module,
+        )
+        target_project = await _load_project_record(
+            project_name=rehome_binding.target_project,
+            server_module=server_module,
+        )
+        if not source_project or not target_project:
+            return {"rehome_state": "OTHER"}
+        return {
+            "rehome_state": classify_rehome_transaction_state(
+                rehome_binding,
+                source_project=source_project,
+                target_project=target_project,
+            )
+        }
+
+    receipt_service = ApplyPreviewService(backend) if receipt_scope is not None else None
+    receipt_executor = (
+        _RuntimeRetainedIntentExecutor(
+            scope=receipt_scope,
+            execute=_execute_retained,
+            inspect=_inspect_retained_rehome,
+        )
+        if receipt_scope is not None
+        else None
+    )
+    if action == "apply_preview":
+        receipt = _validate_apply_preview_request(
+            metadata=metadata,
+            doc_name=doc_name,
+            doc_category=doc_category,
+            section=section,
+            content=content,
+            patch=patch,
+            patch_source_hash=patch_source_hash,
+            expected_anchor_sha256=expected_anchor_sha256,
+            edit=edit,
+            patch_mode=patch_mode,
+            start_line=start_line,
+            end_line=end_line,
+            template=template,
+            target_dir=target_dir,
+            project=project,
+            dry_run=dry_run,
+        )
+        if receipt is None or receipt_service is None or receipt_executor is None:
+            return helper.apply_context_payload(
+                {
+                    "ok": False,
+                    "code": "APPLY_RECEIPT_INVALID",
+                    "error": "apply_preview accepts only metadata.receipt in a verified request scope.",
+                },
+                context,
+            )
+        applied = await receipt_service.apply(
+            receipt=receipt,
+            execution_context=receipt_scope,
+            executor=receipt_executor,
+        )
+        return _attach_manage_docs_project_context(
+            helper.apply_context_payload(applied, context),
+            context=context,
+        )
+    if recovered_nested_target is not None and recovered_nested_key is not None:
+        runtime_warnings.append(
+            "Recovered the unique nested canonical document target after project rebind: "
+            f"'{recovered_nested_key}' -> '{recovered_nested_target}'."
+        )
+        if not dry_run:
+            try:
+                await auto_register_document(active_project, recovered_nested_key)
+            except Exception as exc:
+                error_payload = helper.error_response(
+                    f"Failed to persist recovered nested target for '{recovered_nested_key}'",
+                    suggestion=str(exc),
+                    extra={
+                        "doc_name": recovered_nested_key,
+                        "recovered_path": str(recovered_nested_target),
+                    },
+                )
+                return helper.apply_context_payload(error_payload, context)
 
     if doc_name:
         docs_mapping = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
@@ -2783,8 +3531,41 @@ async def handle_manage_docs_request(
             execution_context=execution_context,
             server_module=server_module,
             agent_id=str(agent_id),
+            retained_binding=retained_rehome_binding,
         )
-        return _attach_manage_docs_project_context(response, context=context)
+        rehome_binding = response.pop("_rehome_binding", None)
+        response = _attach_manage_docs_project_context(response, context=context)
+        if dry_run and receipt_service is not None and receipt_scope is not None:
+            response = await _attach_apply_preview_affordance(
+                response,
+                action="rehome_doc",
+                normalized_intent=_normalized_manage_docs_intent(
+                    action="rehome_doc",
+                    doc_category=doc_category,
+                    section=section,
+                    content=content,
+                    patch=patch,
+                    patch_source_hash=patch_source_hash,
+                    expected_anchor_sha256=expected_anchor_sha256,
+                    edit=edit,
+                    patch_mode=patch_mode,
+                    start_line=start_line,
+                    end_line=end_line,
+                    template=template,
+                    metadata=rehome_metadata,
+                    doc_name=doc_name,
+                    target_dir=target_dir,
+                ),
+                active_project=active_project,
+                scope=receipt_scope,
+                service=receipt_service,
+                rehome_binding=(
+                    rehome_binding
+                    if isinstance(rehome_binding, RehomeCompositeBinding)
+                    else None
+                ),
+            )
+        return response
 
     docs_for_target = active_project.get("docs", {}) if isinstance(active_project.get("docs"), dict) else {}
     registered_case_alias = (
@@ -2961,6 +3742,33 @@ async def handle_manage_docs_request(
         enriched_create = _attach_manage_docs_project_context(create_response, context=context)
         if isinstance(enriched_create, dict) and enriched_create.get("ok"):
             enriched_create = await _attach_create_section_inventory(enriched_create)
+            if dry_run and isinstance(enriched_create.get("content"), str):
+                enriched_create.setdefault("preview", enriched_create.pop("content"))
+            if dry_run and receipt_service is not None and receipt_scope is not None:
+                enriched_create = await _attach_apply_preview_affordance(
+                    enriched_create,
+                    action="create",
+                    normalized_intent=_normalized_manage_docs_intent(
+                        action="create",
+                        doc_category=doc_category,
+                        section=section,
+                        content=content,
+                        patch=patch,
+                        patch_source_hash=patch_source_hash,
+                        expected_anchor_sha256=expected_anchor_sha256,
+                        edit=edit,
+                        patch_mode=patch_mode,
+                        start_line=start_line,
+                        end_line=end_line,
+                        template=template,
+                        metadata=metadata_mapping,
+                        doc_name=doc_name,
+                        target_dir=target_dir,
+                    ),
+                    active_project=active_project,
+                    scope=receipt_scope,
+                    service=receipt_service,
+                )
         return enriched_create
 
     route_key = action_router.get(action)
@@ -2989,7 +3797,7 @@ async def handle_manage_docs_request(
         "context": context,
         "execution_context": execution_context,
         "deprecation_warning": deprecation_warning,
-        "apply_doc_change": apply_doc_change,
+        "apply_doc_change": apply_doc_change_impl,
         "get_or_create_storage_project": get_or_create_storage_project,
         "append_entry": append_entry,
         "normalize_metadata_with_healing": healing_shared.normalize_metadata_with_healing,
@@ -3083,6 +3891,36 @@ async def handle_manage_docs_request(
                 )
                 if case_registry_warning:
                     response.setdefault("warnings", []).append(case_registry_warning)
+            if (
+                response.get("ok")
+                and dry_run
+                and receipt_service is not None
+                and receipt_scope is not None
+            ):
+                response = await _attach_apply_preview_affordance(
+                    response,
+                    action=action,
+                    normalized_intent=_normalized_manage_docs_intent(
+                        action=action,
+                        doc_category=doc_category,
+                        section=section,
+                        content=content,
+                        patch=patch,
+                        patch_source_hash=patch_source_hash,
+                        expected_anchor_sha256=expected_anchor_sha256,
+                        edit=edit,
+                        patch_mode=patch_mode,
+                        start_line=start_line,
+                        end_line=end_line,
+                        template=template,
+                        metadata=metadata_mapping,
+                        doc_name=doc_name,
+                        target_dir=target_dir,
+                    ),
+                    active_project=active_project,
+                    scope=receipt_scope,
+                    service=receipt_service,
+                )
         if runtime_warnings and isinstance(response, dict) and response.get("ok") is not False:
             response.setdefault("warnings", []).extend(runtime_warnings)
         return response

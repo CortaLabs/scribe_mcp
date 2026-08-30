@@ -398,6 +398,39 @@ ARCHIVE_TABLE_STATEMENTS = [
     );
     """,
 ]
+APPLY_PREVIEW_RECEIPT_TABLE_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS apply_preview_receipts (
+        token_sha256 TEXT PRIMARY KEY
+            CHECK (
+                length(token_sha256) = 64
+                AND token_sha256 NOT GLOB '*[^0-9a-f]*'
+            ),
+        receipt_version INTEGER NOT NULL CHECK (receipt_version >= 1),
+        state TEXT NOT NULL
+            CHECK (state IN ('issued', 'applying', 'applied', 'failed_terminal')),
+        principal_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        project_key TEXT NOT NULL,
+        repo_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        normalized_intent_json TEXT NOT NULL,
+        target_binding_json TEXT NOT NULL,
+        precondition_json TEXT NOT NULL,
+        predicted_after_json TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        fence INTEGER NOT NULL DEFAULT 0 CHECK (fence >= 0),
+        apply_lease_expires_at TEXT,
+        terminal_result_code TEXT,
+        terminal_result_json TEXT,
+        terminal_at TEXT,
+        audit_correlation_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
+]
 FTS_TABLE_STATEMENTS = [
     """
     CREATE VIRTUAL TABLE IF NOT EXISTS document_sections_fts
@@ -494,6 +527,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at);",
     "CREATE INDEX IF NOT EXISTS idx_archive_project_ts ON scribe_entries_archive(project_id, ts_iso DESC);",
     "CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON scribe_entries_archive(archived_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_expiry ON apply_preview_receipts(expires_at);",
+    "CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_state_lease ON apply_preview_receipts(state, apply_lease_expires_at);",
 ]
 async def create_migration_table(execute_fn: ExecuteFn) -> None:
     await execute_fn(MIGRATION_TABLE_STATEMENT, ())
@@ -530,6 +565,8 @@ async def create_bridge_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(BRIDGE_TABLE_STATEMENTS)
 async def create_archive_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(ARCHIVE_TABLE_STATEMENTS)
+async def create_apply_preview_receipt_tables(execute_many_fn: ExecuteManyFn) -> None:
+    await execute_many_fn(APPLY_PREVIEW_RECEIPT_TABLE_STATEMENTS)
 async def create_fts_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(FTS_TABLE_STATEMENTS)
 async def create_all_indexes(execute_many_fn: ExecuteManyFn) -> None:
@@ -549,6 +586,7 @@ async def create_schema(
     await create_telemetry_tables(execute_many_fn)
     await create_bridge_tables(execute_many_fn)
     await create_archive_tables(execute_many_fn)
+    await create_apply_preview_receipt_tables(execute_many_fn)
     await create_fts_tables(execute_many_fn)
     await ensure_telemetry_index_columns(execute_fn)
     await create_all_indexes(execute_many_fn)
