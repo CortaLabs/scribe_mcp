@@ -1128,7 +1128,7 @@ async def _startup(*, startup_profile: str = "full_server") -> None:
     if storage_backend:
         storage_setup_started = perf_counter()
         await storage_backend.setup()
-        logger.warning(
+        logger.info(
             "PERF storage.setup completed in %.1fms",
             (perf_counter() - storage_setup_started) * 1000.0,
         )
@@ -1201,7 +1201,7 @@ async def _startup(*, startup_profile: str = "full_server") -> None:
         document_store = create_document_store(settings)
         await document_store.setup()
         app.state.document_store = document_store
-        logger.warning(
+        logger.info(
             "PERF document_store.setup completed in %.1fms",
             (perf_counter() - doc_store_started) * 1000.0,
         )
@@ -1218,7 +1218,7 @@ async def _startup(*, startup_profile: str = "full_server") -> None:
         )
 
     total_startup_ms = (perf_counter() - startup_started) * 1000.0
-    logger.warning(
+    logger.info(
         "PERF startup total=%.1fms (deferred services=%d, mode=%s, startup_profile=%s)",
         total_startup_ms,
         len(background_tasks),
