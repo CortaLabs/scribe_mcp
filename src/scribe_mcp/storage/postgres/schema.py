@@ -35,11 +35,22 @@ def _quote_ident(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
+_CREATE_INDEX_RE = re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", re.IGNORECASE)
+
+
 def _is_duplicate_index_race(statement: str, exc: asyncpg.PostgresError) -> bool:
-    """Allow idempotent index create races during startup schema bootstrap."""
-    if "CREATE INDEX" not in statement.upper():
+    """Allow idempotent index create races during startup schema bootstrap.
+
+    Matches ``CREATE [UNIQUE] INDEX``: the unique spelling used to fall through
+    and exit the server (BUG-2026-09-13-0002).
+    """
+    if not _CREATE_INDEX_RE.match(statement):
         return False
     return "pg_class_relname_nsp_index" in str(exc)
+
+
+def _bootstrap_lock_key(schema_name: str) -> str:
+    return f"scribe_mcp:schema_bootstrap:{schema_name}"
 
 
 def _is_additive_index_before_migration(statement: str, exc: asyncpg.PostgresError) -> bool:
@@ -108,6 +119,31 @@ async def ensure_schema_on_connection(
 ) -> None:
     """Apply idempotent schema DDL using an already-open connection."""
     schema_name = _validate_schema_name(schema_name)
+    # Every scribe-server process bootstraps the same schema on start, and Codex
+    # starts one per subagent thread. Concurrent DDL raced and killed the loser
+    # before MCP initialize (BUG-2026-09-13-0002), so bootstrap is serialized
+    # across processes with a session advisory lock keyed on the schema. The
+    # schema_lock in ensure_schema only ever covered one process.
+    lock_key = _bootstrap_lock_key(schema_name)
+    await conn.execute("SELECT pg_advisory_lock(hashtext($1));", lock_key)
+    try:
+        await _ensure_schema_locked(
+            conn=conn,
+            schema_name=schema_name,
+            schema_path=schema_path,
+            migrations_path=migrations_path,
+        )
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock(hashtext($1));", lock_key)
+
+
+async def _ensure_schema_locked(
+    *,
+    conn: asyncpg.Connection,
+    schema_name: str,
+    schema_path: Path,
+    migrations_path: Path,
+) -> None:
     quoted_schema = _quote_ident(schema_name)
 
     await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema};")
