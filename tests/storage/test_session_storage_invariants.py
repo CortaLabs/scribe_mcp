@@ -21,6 +21,7 @@ def _sid(prefix: str) -> str:
 
 
 @pytest.mark.core
+@pytest.mark.regression
 def test_session_binding_record_v2_contract() -> None:
     updated_at = datetime.now(timezone.utc)
     valid = {
@@ -62,8 +63,11 @@ def test_session_binding_record_v2_contract() -> None:
         SessionBindingRecordV2(**{**valid, "updated_at": datetime.now()})
 
     for field_name in ("project_key", "project_name", "canonical_repo_root"):
-        with pytest.raises(ValueError, match=rf"{field_name} must be a non-empty string"):
-            SessionBindingRecordV2(**{**valid, field_name: ""})
+        for invalid_identity in ("", None, 123):
+            with pytest.raises(ValueError, match=rf"{field_name} must be a non-empty string"):
+                SessionBindingRecordV2(
+                    **{**valid, field_name: invalid_identity}  # type: ignore[arg-type]
+                )
 
     for malformed_digest in ("", "a" * 63, "a" * 65, "A" * 64, "z" * 64, None, 123):
         with pytest.raises((TypeError, ValueError)):

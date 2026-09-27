@@ -1,16 +1,18 @@
 # Review Reports Index
 
-*Last Updated: 2026-09-27 08:57:06 UTC*
+*Last Updated: 2026-09-27 19:18:13 UTC*
 
 This directory contains review reports generated during the development quality assurance process.
 
 ## Review Statistics
 
-- **Total Reports:** 11
+- **Total Reports:** 13
 - **Stages Reviewed:** 2
 
 ## Recent Review Reports
 
+- **[REVIEW_REPORT_post_implementation_2026-09-27_2313](REVIEW_REPORT_post_implementation_2026-09-27_2313.md)** - post - 2026-09-27 19:18
+- **[REVIEW_REPORT_truth_check_2026-09-27_2256](REVIEW_REPORT_truth_check_2026-09-27_2256.md)** - truth - 2026-09-27 18:59
 - **[REVIEW_REPORT_post_implementation_2026-09-27_1256](REVIEW_REPORT_post_implementation_2026-09-27_1256.md)** - post - 2026-09-27 08:57
 - **[REVIEW_REPORT_truth_check_2026-09-27_1248](REVIEW_REPORT_truth_check_2026-09-27_1248.md)** - truth - 2026-09-27 08:50
 - **[REVIEW_REPORT_post_implementation_2026-09-27_1201](REVIEW_REPORT_post_implementation_2026-09-27_1201.md)** - post - 2026-09-27 08:02
@@ -25,19 +27,20 @@ This directory contains review reports generated during the development quality 
 
 ## Browse by Stage
 
-### Post (4 reports)
+### Post (5 reports)
+- [REVIEW_REPORT_post_implementation_2026-09-27_2313](REVIEW_REPORT_post_implementation_2026-09-27_2313.md)
 - [REVIEW_REPORT_post_implementation_2026-09-27_1256](REVIEW_REPORT_post_implementation_2026-09-27_1256.md)
 - [REVIEW_REPORT_post_implementation_2026-09-27_1201](REVIEW_REPORT_post_implementation_2026-09-27_1201.md)
 - [REVIEW_REPORT_post_implementation_2026-09-27_1139](REVIEW_REPORT_post_implementation_2026-09-27_1139.md)
 - [REVIEW_REPORT_post_implementation_2026-09-27_1003](REVIEW_REPORT_post_implementation_2026-09-27_1003.md)
 
-### Truth (7 reports)
+### Truth (8 reports)
+- [REVIEW_REPORT_truth_check_2026-09-27_2256](REVIEW_REPORT_truth_check_2026-09-27_2256.md)
 - [REVIEW_REPORT_truth_check_2026-09-27_1248](REVIEW_REPORT_truth_check_2026-09-27_1248.md)
 - [REVIEW_REPORT_truth_check_2026-09-27_1137](REVIEW_REPORT_truth_check_2026-09-27_1137.md)
 - [REVIEW_REPORT_truth_check_2026-09-27_1129](REVIEW_REPORT_truth_check_2026-09-27_1129.md)
 - [REVIEW_REPORT_truth_check_2026-09-27_1113](REVIEW_REPORT_truth_check_2026-09-27_1113.md)
-- [REVIEW_REPORT_truth_check_2026-09-27_1041](REVIEW_REPORT_truth_check_2026-09-27_1041.md)
-- ... and 2 more
+- ... and 3 more
 
 
 
@@ -45,7 +48,7 @@ This directory contains review reports generated during the development quality 
 
 - **Index Location:** `/home/austin/projects/MCP_SPINE/scribe_mcp/.scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/REVIEW_INDEX.md`
 - **Total Stages:** 2
-- **Last Scan:** 2026-09-27 08:57:06 UTC
+- **Last Scan:** 2026-09-27 19:18:13 UTC
 
 ---
 

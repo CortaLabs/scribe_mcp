@@ -3,47 +3,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from time import perf_counter
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from scribe_mcp.object_store.base import RemoteProvider
 from scribe_mcp.object_store.filesystem import FilesystemStore
 from scribe_mcp.object_store.hybrid import HybridStore
 from scribe_mcp.object_store.providers.corta import CortaStoreProvider
 from scribe_mcp.scripts import scribe_probe
-
-
-class _UnavailableRemote(RemoteProvider):
-    def __init__(self) -> None:
-        self.health_requests = 0
-
-    async def setup(self) -> None:
-        return None
-
-    async def close(self) -> None:
-        return None
-
-    async def probe_health(self, *, timeout_seconds: float = 2.0) -> bool:
-        self.health_requests += 1
-        await asyncio.sleep(min(timeout_seconds, 0.1))
-        return False
-
-    async def put(self, key: str, content: str) -> None:
-        raise httpx.ConnectError(f"remote unavailable for {key}")
-
-    async def get(self, key: str) -> str | None:
-        return None
-
-    async def head(self, key: str) -> bool:
-        return False
-
-    async def list(self, prefix: str = "") -> list[str]:
-        return []
-
-    async def delete(self, key: str) -> None:
-        return None
 
 
 @pytest.mark.asyncio
@@ -180,27 +148,66 @@ async def test_optional_object_store_outage_adds_at_most_50_ms_and_preserves_loc
     baseline_ms = (perf_counter() - baseline_started) * 1000
 
     local = FilesystemStore(tmp_path / "outage")
-    remote = _UnavailableRemote()
-    store = HybridStore(local=local, remote=remote)
-    outage_started = perf_counter()
-    await store.setup()
-    outage_ms = (perf_counter() - outage_started) * 1000
-    outage_delta_ms = max(0.0, outage_ms - baseline_ms)
+    remote = CortaStoreProvider(
+        base_url="http://object-store.invalid",
+        hmac_key="key",
+        project="project",
+    )
+    client = MagicMock()
+    client.get = AsyncMock()
+    client.request = AsyncMock(side_effect=httpx.ConnectError("unavailable"))
+    client.aclose = AsyncMock()
+    backoff_started = asyncio.Event()
+    release_backoff = asyncio.Event()
+    backoff_calls: list[float] = []
 
-    assert outage_delta_ms <= 50.0, {
-        "baseline_ms": baseline_ms,
-        "outage_ms": outage_ms,
-        "outage_delta_ms": outage_delta_ms,
-    }
-    assert remote.health_requests == 0
+    async def _controlled_backoff(seconds: float) -> None:
+        backoff_calls.append(seconds)
+        backoff_started.set()
+        await release_backoff.wait()
 
-    from scribe_mcp import server
+    with (
+        patch(
+            "scribe_mcp.object_store.providers.corta.httpx.AsyncClient",
+            return_value=client,
+        ) as client_factory,
+        patch(
+            "scribe_mcp.object_store.providers.corta._async_sleep",
+            new=_controlled_backoff,
+        ),
+    ):
+        store = HybridStore(local=local, remote=remote)
+        outage_started = perf_counter()
+        await store.setup()
+        outage_ms = (perf_counter() - outage_started) * 1000
+        outage_delta_ms = max(0.0, outage_ms - baseline_ms)
 
-    listed_tools = await server.app.list_tools()
-    assert any(tool.name == "append_entry" for tool in listed_tools)
+        assert outage_delta_ms <= 50.0, {
+            "baseline_ms": baseline_ms,
+            "outage_ms": outage_ms,
+            "outage_delta_ms": outage_delta_ms,
+        }
+        client_factory.assert_called_once()
+        client.get.assert_not_awaited()
+        client.request.assert_not_awaited()
 
-    key = "scribe/docs/dev_plans/startup/PROGRESS_LOG.md"
-    await store.write(key, "[test-agent] locally durable under remote outage")
-    assert await local.read(key) == "[test-agent] locally durable under remote outage"
-    assert remote.health_requests == 0
-    await store.close()
+        from scribe_mcp import server
+
+        listed_tools = await server.app.list_tools()
+        assert any(tool.name == "append_entry" for tool in listed_tools)
+
+        key = "scribe/docs/dev_plans/startup/PROGRESS_LOG.md"
+        content = "[test-agent] locally durable under remote outage"
+        write_task = asyncio.create_task(store.write(key, content))
+        await asyncio.wait_for(backoff_started.wait(), timeout=1.0)
+
+        assert write_task.done() is False
+        assert await local.read(key) == content
+        assert client.request.await_count == 1
+
+        release_backoff.set()
+        await asyncio.wait_for(write_task, timeout=1.0)
+        assert client.request.await_count == 3
+        assert backoff_calls == [0.5, 1.0]
+        await store.close()
+        client.aclose.assert_awaited_once_with()
