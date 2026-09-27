@@ -132,16 +132,15 @@
         "tests/test_estimator.py"
       ],
       "verification": [
-        "PYTHONPATH=src ./.venv/bin/python -c 'import sys; import scribe_mcp.server; assert \"tiktoken\" not in sys.modules; from scribe_mcp.utils.tokens import TokenEstimator, token_estimator; assert token_estimator.encoder is None; assert TokenEstimator().estimate_tokens_cheap(\"abcd\") == 1'",
+        "PYTHONPATH=src ./.venv/bin/python -c \"import sys; import scribe_mcp.server; assert 'tiktoken' not in sys.modules; from scribe_mcp.utils.tokens import TokenEstimator, token_estimator; assert token_estimator.encoder is None; assert TokenEstimator().estimate_tokens_cheap('abcd') == 1\"",
         "./.venv/bin/pytest -q tests/test_estimator.py::TestTokenEstimator",
-        "./.venv/bin/pytest -q tests/test_release_startup_probe.py::test_server_import_is_token_lazy_and_filesystem_pure tests/test_release_startup_probe.py::test_server_import_and_all_tools_loaded_meet_time_and_rss_budgets",
-        "for i in 1 2 3 4 5; do /usr/bin/time -f \"run=$i elapsed_s=%e maxrss_kb=%M\" ./.venv/bin/python -c 'import scribe_mcp.server'; done"
+        "./.venv/bin/pytest -q tests/test_estimator.py"
       ],
       "acceptance": [
-        "Importing `scribe_mcp.server` or `scribe_mcp.utils.tokens` performs zero metrics-path writes and leaves tiktoken/encoder unloaded.",
+        "Importing scribe_mcp.server or scribe_mcp.utils.tokens performs zero metrics-path writes and leaves tiktoken/encoder unloaded.",
         "Cheap estimation is deterministic and encoder-free; the first exact request initializes one reusable encoder and preserves fallback behavior.",
-        "The existing `scribe_mcp.utils` export names and token metrics/budget result shapes remain compatible.",
-        "DA-10 evidence proves warm import p95 at most 1.0 s, cold import p95 at most 1.5 s, pre-tool-ready RSS at most 64 MiB, and all-tools-loaded steady RSS at most 80 MiB.",
+        "The existing scribe_mcp.utils export names and token metrics/budget result shapes remain compatible.",
+        "The owned utils import path adds no eager tiktoken, encoder, or metrics I/O; the original process-wide budgets remain mandatory and unchanged in SBR-STARTUP.3 and SBR-REL-VAL.4: warm import p95 at most 1.0 s, cold import p95 at most 1.5 s, pre-tool-ready RSS at most 64 MiB, and all-tools-loaded steady RSS at most 80 MiB.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
@@ -3283,8 +3282,14 @@
         "The full tests/test_object_store.py module exits zero without weakening existing inclusion or exclusion cases.",
         "The change is isolated from the SBR-STARTUP.2 setup/probe implementation and adds no Council-specific behavior."
       ],
-      "evidence_requirements": ["behavioral", "truth"],
-      "gates": ["crucible", "witness"],
+      "evidence_requirements": [
+        "behavioral",
+        "truth"
+      ],
+      "gates": [
+        "crucible",
+        "witness"
+      ],
       "suggested_specialist": "mantis"
     }
   ]
