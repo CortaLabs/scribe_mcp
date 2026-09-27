@@ -12,6 +12,7 @@ from scribe_mcp.storage.models import (
     CaseRegistryRecord,
     ProjectRecord,
     RepoScopeGrantRecord,
+    SessionBindingRecordV2,
 )
 
 
@@ -450,12 +451,28 @@ class StorageBackend(ABC):
         """Get the operating mode for a session."""
         raise NotImplementedError
 
-    async def set_session_project(self, session_id: str, project_name: str) -> None:
-        """Associate a session with a project."""
+    async def set_session_project(
+        self,
+        session_id: str,
+        project_key: str,
+        expected_generation: int | None = None,
+    ) -> SessionBindingRecordV2:
+        """Persist or reuse a caller-session default under generation CAS.
+
+        The first binding has generation 1. Changing the target increments the
+        current generation exactly once, while rebinding the current target
+        returns the existing record unchanged and performs no persistent write.
+
+        When ``expected_generation`` is supplied, backends must compare it with
+        current storage truth before any write, including for a same-target
+        request. A stale expectation, unknown session, or unknown project raises
+        :class:`ConflictError`; translation to an MCP error envelope is owned by
+        the request layer. Omitting the expectation uses current storage truth.
+        """
         raise NotImplementedError
 
-    async def get_session_project(self, session_id: str) -> Optional[str]:
-        """Get the project name associated with a session."""
+    async def get_session_project(self, session_id: str) -> SessionBindingRecordV2 | None:
+        """Return the caller-session default binding record, if one exists."""
         raise NotImplementedError
 
     async def get_session_by_transport(self, transport_session_id: str) -> Optional[dict]:
