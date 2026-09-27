@@ -8,7 +8,7 @@ revoked_at: null
 policy_digest: dc2c419a489cabeab7120aaebdc708b98f4defc257eb2ea74d8eeee577701af5
 title: "\U0001F52C Scribe Binding Reliability Root-Cause Analysis \u2014 scribe_binding_reliability_repair_20260927"
 related_docs: []
-last_updated: 2026-09-27 21:31:04 UTC
+last_updated: 2026-09-27 21:51:59 UTC
 created_by: agent-20260927-050444-8c5cc6e2
 maintained_by: agent-20260927-045601-3badc02f
 status: ready
@@ -17,7 +17,7 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 05:17:42 UTC
   created_via: replace_section
-  last_edited_at: 2026-09-27 21:31:04 UTC
+  last_edited_at: 2026-09-27 21:51:59 UTC
   last_edited_by: agent-20260927-045601-3badc02f
   last_action: replace_text
   work_item_id: d88b1a97-d9bd-4737-9d88-8c8302c61e45
@@ -256,6 +256,17 @@ The unchanged Council Atlas session exposed the same lost binding on both Counci
 5. The retry succeeded with `ok:true`, Postgres mirror status `ok`, log ID `136036cb532aca9ad543b32e3191eb19`, and 103.009 ms Scribe timing.
 
 This sixteenth recurrence broadens the verified blast radius: the disappearing binding affects direct logging and the Council → Scribe managed-document projection path, while Council receipt status can conceal the Scribe-side exception. Repeating `set_project` remains recovery evidence only, never resolution or intended procedure.
+
+#### Seventeenth same-session recurrence — 2026-09-27 21:49 UTC
+
+The unchanged Council Atlas session lost binding scope again while reporting an unrelated, source-complete work-item fencing incident:
+
+1. At 21:49:00 UTC, an explicit-project `append_entry(agent="atlas", project="cortalabs_public_deployment_infrastructure_20260912")` returned the exact unresolved verified-repository-scope message (`aitrace:v1:codex:e3b35c38c1d243565542aea1077f54ef` → `aitrace:v1:codex:0e9337d1f31e1bd116716c0d8099c626`).
+2. The outer execution completed normally, preserving the semantic-failure/transport-success defect.
+3. Atlas repeated the identical project activation and canonical Council repository root (`aitrace:v1:codex:d0ce9251fded41cd7c4fcf43b092ac20` → `aitrace:v1:codex:497e6cf90775c80a26d24951749a427a`).
+4. Retrying the identical append then succeeded (`aitrace:v1:codex:4e4e69d32593d718267221ce1c1819ea` → `aitrace:v1:codex:a1edabd1f8fb6afdadf6548a47cd924a`) with `ok:true`, Postgres mirror status `ok`, log ID `f50c92a620a39e4ee0b7db0d5ca25d40`, and 84.398 ms Scribe timing.
+
+This seventeenth recurrence occurred in the same long-lived provider session after sixteen prior verified recoveries and extensive unrelated Council activity. It further rules out Git, one specific Council operation, or idle time as the sole trigger. Repeating `set_project` remains recovery evidence only, never resolution or intended procedure.
 
 ### F2 — Read and write keys were historically asymmetric; current source repairs only that narrow case
 
