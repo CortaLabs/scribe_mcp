@@ -8,7 +8,7 @@ revoked_at: null
 policy_digest: dc2c419a489cabeab7120aaebdc708b98f4defc257eb2ea74d8eeee577701af5
 title: "\U0001F52C Scribe Binding Reliability Root-Cause Analysis \u2014 scribe_binding_reliability_repair_20260927"
 related_docs: []
-last_updated: 2026-09-27 21:51:59 UTC
+last_updated: 2026-09-27 22:10:53 UTC
 created_by: agent-20260927-050444-8c5cc6e2
 maintained_by: agent-20260927-045601-3badc02f
 status: ready
@@ -17,7 +17,7 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 05:17:42 UTC
   created_via: replace_section
-  last_edited_at: 2026-09-27 21:51:59 UTC
+  last_edited_at: 2026-09-27 22:10:53 UTC
   last_edited_by: agent-20260927-045601-3badc02f
   last_action: replace_text
   work_item_id: d88b1a97-d9bd-4737-9d88-8c8302c61e45
@@ -267,6 +267,18 @@ The unchanged Council Atlas session lost binding scope again while reporting an 
 4. Retrying the identical append then succeeded (`aitrace:v1:codex:4e4e69d32593d718267221ce1c1819ea` → `aitrace:v1:codex:a1edabd1f8fb6afdadf6548a47cd924a`) with `ok:true`, Postgres mirror status `ok`, log ID `f50c92a620a39e4ee0b7db0d5ca25d40`, and 84.398 ms Scribe timing.
 
 This seventeenth recurrence occurred in the same long-lived provider session after sixteen prior verified recoveries and extensive unrelated Council activity. It further rules out Git, one specific Council operation, or idle time as the sole trigger. Repeating `set_project` remains recovery evidence only, never resolution or intended procedure.
+
+#### Eighteenth same-session recurrence — 2026-09-27 22:07 UTC
+
+The unchanged Council Atlas session lost verified repository scope again while both native Codex TUI delivery and Council messaging were healthy:
+
+1. The explicit-project `append_entry(agent="atlas", project="cortalabs_public_deployment_infrastructure_20260912")` call is `aitrace:v1:codex:8379d5e57c6c90b56090864a1617f5f2`; its paired result `aitrace:v1:codex:31fab53d1c86fb4a3d86b816520d222b` returned only `ExecutionContext repo scope unresolved: no verified project binding for this request/session was available.`
+2. The outer execution completed normally in 1.2 seconds, again preserving the semantic-failure/transport-success defect instead of returning a structured MCP error.
+3. Atlas repeated the identical project activation for the canonical Council repository root (`aitrace:v1:codex:6bc9d3c6ace551f6db3385ade0a979c3` → `aitrace:v1:codex:d3b6f660b173b0b110b7c475a0d59ef2`). The recovery took 3.6 seconds and re-rendered the full project inventory.
+4. Retrying the identical append then succeeded (`aitrace:v1:codex:279eafd5896a38d24412c1d64ef941c2` → `aitrace:v1:codex:9a0548e1fc06da641884105979ee1ac1`) with `ok:true`, Postgres mirror status `ok`, log ID `8b70996f4316ac2486f87ad73ad0c03c`, and 78.713 ms internal Scribe timing.
+5. The successful retry's outer tool execution still took 7.8 seconds, separating Scribe's measured write path from connection/harness overhead and reinforcing the need for a cheap reconnect adoption path.
+
+This eighteenth recurrence happened immediately after the same Atlas session received and relayed exact cross-Council scope evidence. Healthy native messaging did not preserve Scribe scope. Repeating `set_project` remains recovery evidence only, never resolution or intended procedure.
 
 ### F2 — Read and write keys were historically asymmetric; current source repairs only that narrow case
 
