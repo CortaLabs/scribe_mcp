@@ -3,8 +3,11 @@
 
 import asyncio
 import gc
+import hashlib
+from dataclasses import FrozenInstanceError, fields, replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import get_type_hints
 
 import pytest
 
@@ -18,9 +21,477 @@ from scribe_mcp.cli.main import (
 )
 from scribe_mcp.config.paths import templates_dir
 from scribe_mcp.cli.session_store import build_scoped_reuse_key, build_transport_session_id
-from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.shared.execution_context import (
+    AgentAttributionV1,
+    AuthorizationEvidenceV1,
+    BindingReceiptV1,
+    ProjectTargetV1,
+    ResolvedProjectTargetV1,
+    ResolvedRequestContextV1,
+    RouterContextManager,
+    build_resolved_request_context,
+)
 from scribe_mcp.shared.tool_runtime import execute_tool_call, resolve_context_authoritative_session_key
 from scribe_mcp.template_engine import Jinja2TemplateEngine
+
+
+def _resolved_target(
+    repo_root: Path,
+    *,
+    resolution_source: str = "project_key",
+    generation: int = 3,
+) -> ResolvedProjectTargetV1:
+    return ResolvedProjectTargetV1(
+        project_key="project-key",
+        project_name="project-name",
+        canonical_repo_root=str(repo_root),
+        repository_id="repository-id",
+        resolution_source=resolution_source,  # type: ignore[arg-type]
+        default_binding_generation=generation,
+    )
+
+
+@pytest.mark.regression
+def test_request_binding_contract_field_surfaces_are_frozen() -> None:
+    assert [field.name for field in fields(ProjectTargetV1)] == [
+        "project_key",
+        "project",
+        "repo_root",
+    ]
+    assert [field.name for field in fields(ResolvedProjectTargetV1)] == [
+        "project_key",
+        "project_name",
+        "canonical_repo_root",
+        "repository_id",
+        "resolution_source",
+        "default_binding_generation",
+    ]
+    assert [field.name for field in fields(AgentAttributionV1)] == ["agent", "agent_id"]
+    assert [field.name for field in fields(AuthorizationEvidenceV1)] == [
+        "source",
+        "verified",
+        "scope_refs",
+    ]
+    authorization_hints = get_type_hints(AuthorizationEvidenceV1)
+    assert authorization_hints["source"] is str
+    assert authorization_hints["verified"] is bool
+    assert authorization_hints["scope_refs"] == tuple[str, ...]
+    assert [field.name for field in fields(BindingReceiptV1)] == [
+        "ok",
+        "caller_session_key_hash",
+        "project_key",
+        "project_name",
+        "canonical_repo_root",
+        "binding_generation",
+        "binding_reused",
+        "persistent_write_performed",
+        "resolution_source",
+        "correlation_id",
+    ]
+    assert [field.name for field in fields(ResolvedRequestContextV1)] == [
+        "caller_session_key_hash",
+        "resolved_target",
+        "default_binding_generation",
+        "agent_attribution",
+        "correlation_id",
+        "operating_mode",
+        "authorization_evidence",
+    ]
+
+
+@pytest.mark.regression
+def test_project_target_v1_is_frozen_and_normalizes_selectors(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    assert ProjectTargetV1() == ProjectTargetV1()
+    target = ProjectTargetV1(
+        project_key=" project-key ",
+        project=" project-name ",
+        repo_root=str(repo_root / "."),
+    )
+
+    assert target.project_key == "project-key"
+    assert target.project == "project-name"
+    assert target.repo_root == str(repo_root.resolve())
+    with pytest.raises(FrozenInstanceError):
+        target.project = "other"  # type: ignore[misc]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("kwargs", "error_type"),
+    [
+        ({"project_key": " "}, ValueError),
+        ({"project": " "}, ValueError),
+        ({"repo_root": "/tmp/repo"}, ValueError),
+        ({"project": "demo", "repo_root": "relative/repo"}, ValueError),
+        ({"project_key": 7}, TypeError),
+    ],
+)
+def test_project_target_v1_rejects_invalid_selectors(kwargs, error_type) -> None:
+    with pytest.raises(error_type):
+        ProjectTargetV1(**kwargs)
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "resolution_source",
+    ["project_key", "name_and_root", "unique_name", "caller_default"],
+)
+def test_resolved_project_target_v1_accepts_only_frozen_sources(
+    tmp_path: Path,
+    resolution_source: str,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    target = _resolved_target(repo_root / ".", resolution_source=resolution_source)
+
+    assert target.canonical_repo_root == str(repo_root.resolve())
+    assert target.resolution_source == resolution_source
+    assert target.default_binding_generation == 3
+    with pytest.raises(FrozenInstanceError):
+        target.project_key = "other"  # type: ignore[misc]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("generation", [0, -1, True, 1.5])
+def test_resolved_project_target_v1_rejects_invalid_generations(
+    tmp_path: Path,
+    generation,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        _resolved_target(tmp_path, generation=generation)
+
+
+@pytest.mark.regression
+def test_resolved_project_target_v1_rejects_invalid_source_and_identifiers(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="resolution_source"):
+        _resolved_target(tmp_path, resolution_source="ambient")
+    with pytest.raises(ValueError, match="project_key"):
+        ResolvedProjectTargetV1(" ", "name", str(tmp_path), "repo", "project_key", 1)
+    with pytest.raises(ValueError, match="project_name"):
+        ResolvedProjectTargetV1("key", " ", str(tmp_path), "repo", "project_key", 1)
+    with pytest.raises(ValueError, match="repository_id"):
+        ResolvedProjectTargetV1("key", "name", str(tmp_path), " ", "project_key", 1)
+    with pytest.raises(ValueError, match="absolute"):
+        ResolvedProjectTargetV1("key", "name", "relative", "repo", "project_key", 1)
+
+
+@pytest.mark.regression
+def test_attribution_and_authorization_values_are_frozen_and_finalized() -> None:
+    first = AgentAttributionV1(agent=" forge ", agent_id=" display ")
+    second = AgentAttributionV1(agent="quill", agent_id="different")
+    scope_refs = [" scope:one ", "scope:two"]
+    evidence = AuthorizationEvidenceV1(" server ", True, scope_refs)  # type: ignore[arg-type]
+
+    assert first.agent == "forge"
+    assert first.agent_id == "display"
+    assert first == second
+    assert hash(first) == hash(second)
+    assert evidence.source == "server"
+    assert evidence.scope_refs == ("scope:one", "scope:two")
+    scope_refs.append("scope:three")
+    assert evidence.scope_refs == ("scope:one", "scope:two")
+    with pytest.raises(FrozenInstanceError):
+        first.agent = "other"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        evidence.verified = False  # type: ignore[misc]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: AgentAttributionV1(" "),
+        lambda: AgentAttributionV1("forge", " "),
+        lambda: AuthorizationEvidenceV1(" ", True, ()),
+        lambda: AuthorizationEvidenceV1("server", 1, ()),
+        lambda: AuthorizationEvidenceV1("server", True, "scope"),
+        lambda: AuthorizationEvidenceV1("server", True, (" ",)),
+    ],
+)
+def test_attribution_and_authorization_reject_invalid_values(factory) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        factory()
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("source", "scope_refs"),
+    [
+        ("Bearer live-access-token", ()),
+        ("Basic dXNlcjpwYXNzd29yZA==", ()),
+        ("api_key=live-secret", ()),
+        ("server", ("scope=live-secret",)),
+        ("server", (f"scope:sk-{'a' * 24}",)),
+        ("server", (f"scope:AKIA{'A' * 16}",)),
+        ("server", (f"scope:AIza{'a' * 35}",)),
+        ("server", (f"scope:ghp_{'a' * 24}",)),
+        ("server", (f"scope:glpat-{'a' * 24}",)),
+        ("server", (f"scope:xoxb-{'a' * 24}",)),
+        ("server", ("scope:eyJhbGciOiJIUzI1NiJ9.payload.signature",)),
+    ],
+)
+def test_authorization_evidence_rejects_credential_shaped_material(
+    source: str,
+    scope_refs: tuple[str, ...],
+) -> None:
+    rejected_value = source if source != "server" else scope_refs[0]
+    with pytest.raises(ValueError, match="opaque authorization reference") as exc_info:
+        AuthorizationEvidenceV1(source, True, scope_refs)
+
+    assert rejected_value not in str(exc_info.value)
+    assert rejected_value not in repr(exc_info.value)
+
+
+@pytest.mark.regression
+def test_authorization_evidence_rejection_does_not_echo_secret() -> None:
+    secret = "Bearer do-not-echo-this-secret"
+    with pytest.raises(ValueError) as exc_info:
+        AuthorizationEvidenceV1(secret, True, ())
+
+    assert secret not in str(exc_info.value)
+
+
+@pytest.mark.regression
+def test_authorization_evidence_valid_references_are_repr_hidden(tmp_path: Path) -> None:
+    evidence = AuthorizationEvidenceV1(
+        "server_verified",
+        True,
+        (
+            "scope:project",
+            "scope:key",
+            "grant:abc-123",
+            "policy:read/key",
+            "metadata:value",
+        ),
+    )
+    context = build_resolved_request_context(
+        caller_session_key="caller",
+        resolved_target=_resolved_target(tmp_path),
+        agent_attribution=AgentAttributionV1("forge"),
+        correlation_id="correlation",
+        operating_mode="project",
+        authorization_evidence=evidence,
+    )
+
+    assert evidence.source == "server_verified"
+    assert isinstance(evidence.source, str)
+    assert evidence.scope_refs == (
+        "scope:project",
+        "scope:key",
+        "grant:abc-123",
+        "policy:read/key",
+        "metadata:value",
+    )
+    assert repr(evidence) == "AuthorizationEvidenceV1(verified=True)"
+    assert "server_verified" not in repr(context)
+    assert "scope:project" not in repr(context)
+    assert "grant:abc-123" not in repr(context)
+    assert "policy:read/key" not in repr(context)
+    assert "metadata:value" not in repr(context)
+
+
+@pytest.mark.regression
+def test_binding_receipt_v1_is_frozen_normalized_and_redacted(tmp_path: Path) -> None:
+    digest = "AB" * 32
+    receipt = BindingReceiptV1(
+        ok=True,
+        caller_session_key_hash=digest,
+        project_key=" project-key ",
+        project_name=" project-name ",
+        canonical_repo_root=str(tmp_path),
+        binding_generation=1,
+        binding_reused=False,
+        persistent_write_performed=True,
+        resolution_source="set_project",
+        correlation_id=" correlation ",
+    )
+
+    assert receipt.caller_session_key_hash == digest.lower()
+    assert receipt.canonical_repo_root == str(tmp_path.resolve())
+    assert receipt.correlation_id == "correlation"
+    assert not hasattr(receipt, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        receipt.binding_generation = 2  # type: ignore[misc]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("ok", 1),
+        ("caller_session_key_hash", "not-a-digest"),
+        ("project_key", " "),
+        ("project_name", " "),
+        ("canonical_repo_root", "relative"),
+        ("binding_generation", 0),
+        ("binding_generation", True),
+        ("binding_reused", 1),
+        ("persistent_write_performed", 0),
+        ("resolution_source", "caller_default"),
+        ("correlation_id", " "),
+    ],
+)
+def test_binding_receipt_v1_rejects_invalid_values(
+    tmp_path: Path,
+    field_name: str,
+    value,
+) -> None:
+    values = {
+        "ok": True,
+        "caller_session_key_hash": "ab" * 32,
+        "project_key": "project-key",
+        "project_name": "project-name",
+        "canonical_repo_root": str(tmp_path),
+        "binding_generation": 1,
+        "binding_reused": False,
+        "persistent_write_performed": True,
+        "resolution_source": "set_project",
+        "correlation_id": "correlation",
+    }
+    values[field_name] = value
+    with pytest.raises((TypeError, ValueError)):
+        BindingReceiptV1(**values)
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("operating_mode", ["project", "sentinel"])
+def test_resolved_request_context_builder_hashes_once_and_preserves_identity(
+    tmp_path: Path,
+    operating_mode: str,
+) -> None:
+    caller_session_key = " raw server-owned caller key "
+    target = _resolved_target(tmp_path)
+    attribution = AgentAttributionV1("forge", "display-id")
+    evidence = AuthorizationEvidenceV1("server", True, ("scope:one",))
+
+    context = build_resolved_request_context(
+        caller_session_key=caller_session_key,
+        resolved_target=target,
+        agent_attribution=attribution,
+        correlation_id="correlation",
+        operating_mode=operating_mode,  # type: ignore[arg-type]
+        authorization_evidence=evidence,
+    )
+
+    assert context.caller_session_key_hash == hashlib.sha256(
+        caller_session_key.encode("utf-8")
+    ).hexdigest()
+    assert caller_session_key not in repr(context)
+    assert context.resolved_target is target
+    assert context.default_binding_generation == target.default_binding_generation
+    assert context.agent_attribution == attribution
+    assert context.agent_attribution is not attribution
+    assert context.authorization_evidence == evidence
+    assert context.authorization_evidence is not evidence
+    assert context.authorization_evidence.scope_refs is not evidence.scope_refs
+    with pytest.raises(FrozenInstanceError):
+        context.operating_mode = "sentinel"  # type: ignore[misc]
+
+
+@pytest.mark.regression
+def test_resolved_request_context_rejects_invalid_values(tmp_path: Path) -> None:
+    target = _resolved_target(tmp_path)
+    attribution = AgentAttributionV1("forge")
+    evidence = AuthorizationEvidenceV1("server", True, ())
+    valid = {
+        "caller_session_key_hash": "ab" * 32,
+        "resolved_target": target,
+        "default_binding_generation": target.default_binding_generation,
+        "agent_attribution": attribution,
+        "correlation_id": "correlation",
+        "operating_mode": "project",
+        "authorization_evidence": evidence,
+    }
+    invalid = [
+        {"caller_session_key_hash": "bad"},
+        {"resolved_target": object()},
+        {"default_binding_generation": target.default_binding_generation + 1},
+        {"agent_attribution": object()},
+        {"correlation_id": " "},
+        {"operating_mode": "ambient"},
+        {"authorization_evidence": object()},
+    ]
+
+    for replacement in invalid:
+        with pytest.raises((TypeError, ValueError)):
+            ResolvedRequestContextV1(**(valid | replacement))
+    with pytest.raises(ValueError, match="operating_mode"):
+        build_resolved_request_context(
+            caller_session_key="caller",
+            resolved_target=target,
+            agent_attribution=attribution,
+            correlation_id="correlation",
+            operating_mode="ambient",  # type: ignore[arg-type]
+            authorization_evidence=evidence,
+        )
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"caller_session_key": " "},
+        {"caller_session_key": 7},
+        {"resolved_target": object()},
+        {"agent_attribution": object()},
+        {"authorization_evidence": object()},
+    ],
+)
+def test_resolved_request_context_builder_rejects_invalid_inputs(
+    tmp_path: Path,
+    overrides,
+) -> None:
+    values = {
+        "caller_session_key": "caller",
+        "resolved_target": _resolved_target(tmp_path),
+        "agent_attribution": AgentAttributionV1("forge"),
+        "correlation_id": "correlation",
+        "operating_mode": "project",
+        "authorization_evidence": AuthorizationEvidenceV1("server", True, ()),
+    }
+    with pytest.raises((TypeError, ValueError)):
+        build_resolved_request_context(**(values | overrides))
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+async def test_execution_context_resolved_request_context_is_optional_and_stable(
+    tmp_path: Path,
+) -> None:
+    router = RouterContextManager()
+    execution_context = await router.build_execution_context(
+        {
+            "repo_root": str(tmp_path),
+            "mode": "project",
+            "intent": "tool:test",
+            "affected_dev_projects": [],
+            "session_id": "session-id",
+        }
+    )
+    resolved_context = build_resolved_request_context(
+        caller_session_key="caller",
+        resolved_target=_resolved_target(tmp_path),
+        agent_attribution=AgentAttributionV1("forge"),
+        correlation_id="correlation",
+        operating_mode="project",
+        authorization_evidence=AuthorizationEvidenceV1("server", True, ()),
+    )
+
+    assert execution_context.resolved_request_context is None
+    finalized = replace(execution_context, resolved_request_context=resolved_context)
+    assert finalized.resolved_request_context is resolved_context
+    token = router.set_current(finalized)
+    try:
+        assert router.get_current() is finalized
+        assert router.get_current().resolved_request_context is resolved_context
+    finally:
+        router.reset(token)
 
 
 @pytest.mark.asyncio

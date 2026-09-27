@@ -22,6 +22,7 @@ by session_id and requires a live scribe_sessions row.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -31,9 +32,13 @@ import pytest
 
 from scribe_mcp.mcp_adapter import ProtocolEra
 from scribe_mcp.shared.execution_context import (
+    AgentAttributionV1,
     ApplicationIdentity,
+    AuthorizationEvidenceV1,
     ExecutionContext,
+    ResolvedProjectTargetV1,
     RouterContextManager,
+    build_resolved_request_context,
     get_current_execution_context,
     resolve_application_identity,
 )
@@ -45,6 +50,50 @@ from scribe_mcp.shared.tool_runtime import execute_tool_call
 from scribe_mcp.state.manager import StateManager
 from scribe_mcp.storage.base import ConflictError
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
+
+
+@pytest.mark.regression
+def test_same_label_attribution_cannot_collapse_distinct_server_caller_keys(
+    repo_root: Path,
+) -> None:
+    target = ResolvedProjectTargetV1(
+        project_key="project-key",
+        project_name="project-name",
+        canonical_repo_root=str(repo_root),
+        repository_id="repository-id",
+        resolution_source="project_key",
+        default_binding_generation=1,
+    )
+    attribution = AgentAttributionV1("forge", "same-display-id")
+    evidence = AuthorizationEvidenceV1("server", True, ("scope:project",))
+
+    first = build_resolved_request_context(
+        caller_session_key="server-caller-one",
+        resolved_target=target,
+        agent_attribution=attribution,
+        correlation_id="correlation-one",
+        operating_mode="project",
+        authorization_evidence=evidence,
+    )
+    second = build_resolved_request_context(
+        caller_session_key="server-caller-two",
+        resolved_target=target,
+        agent_attribution=attribution,
+        correlation_id="correlation-two",
+        operating_mode="project",
+        authorization_evidence=evidence,
+    )
+
+    assert first.caller_session_key_hash == hashlib.sha256(b"server-caller-one").hexdigest()
+    assert second.caller_session_key_hash == hashlib.sha256(b"server-caller-two").hexdigest()
+    assert first.caller_session_key_hash != second.caller_session_key_hash
+    assert first.agent_attribution == second.agent_attribution == attribution
+    assert first.resolved_target is second.resolved_target is target
+    assert first.authorization_evidence == second.authorization_evidence == evidence
+    assert "server-caller-one" not in repr(first)
+    assert "server-caller-two" not in repr(second)
+    assert "scope:project" not in repr(first)
+    assert "scope:project" not in repr(second)
 
 
 class _InMemoryBackend:
