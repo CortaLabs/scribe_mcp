@@ -2,18 +2,78 @@ from __future__ import annotations
 
 import os
 import uuid
+from dataclasses import FrozenInstanceError, fields
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 import pytest_asyncio
 
 from scribe_mcp.storage.base import ConflictError
+from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.storage.postgres import PostgresStorage
 from scribe_mcp.storage.sqlite import SQLiteStorage
 
 
 def _sid(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
+
+
+@pytest.mark.core
+@pytest.mark.regression
+def test_session_binding_record_v2_contract() -> None:
+    updated_at = datetime.now(timezone.utc)
+    valid = {
+        "caller_session_key_hash": "a" * 64,
+        "project_key": "pk_example",
+        "project_name": "example",
+        "canonical_repo_root": "/tmp/example",
+        "binding_generation": 1,
+        "updated_at": updated_at,
+    }
+
+    record = SessionBindingRecordV2(**valid)
+
+    assert tuple(field.name for field in fields(record)) == (
+        "caller_session_key_hash",
+        "project_key",
+        "project_name",
+        "canonical_repo_root",
+        "binding_generation",
+        "updated_at",
+    )
+    assert get_type_hints(SessionBindingRecordV2) == {
+        "caller_session_key_hash": str,
+        "project_key": str,
+        "project_name": str,
+        "canonical_repo_root": str,
+        "binding_generation": int,
+        "updated_at": datetime,
+    }
+    assert record.updated_at is updated_at
+    with pytest.raises(FrozenInstanceError):
+        setattr(record, "project_name", "other")
+
+    for invalid_generation in (0, -1, True):
+        with pytest.raises(ValueError, match="binding_generation must be a positive integer"):
+            SessionBindingRecordV2(**{**valid, "binding_generation": invalid_generation})
+
+    with pytest.raises(ValueError, match="updated_at must be timezone-aware"):
+        SessionBindingRecordV2(**{**valid, "updated_at": datetime.now()})
+
+    for field_name in ("project_key", "project_name", "canonical_repo_root"):
+        for invalid_identity in ("", None, 123):
+            with pytest.raises(ValueError, match=rf"{field_name} must be a non-empty string"):
+                SessionBindingRecordV2(
+                    **{**valid, field_name: invalid_identity}  # type: ignore[arg-type]
+                )
+
+    for malformed_digest in ("", "a" * 63, "a" * 65, "A" * 64, "z" * 64, None, 123):
+        with pytest.raises((TypeError, ValueError)):
+            SessionBindingRecordV2(
+                **{**valid, "caller_session_key_hash": malformed_digest}  # type: ignore[arg-type]
+            )
 
 
 @pytest_asyncio.fixture

@@ -6,24 +6,20 @@ Provides accurate token counting using tiktoken, usage tracking,
 and budget management for response optimization.
 """
 
+import importlib
 import json
 import logging
 import time
 import os
+import threading
 from typing import Dict, Any, Optional, Union, List
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Try to import tiktoken, fall back to basic estimation if not available
-try:
-    import tiktoken
-    TIKTOKEN_AVAILABLE = True
-except ImportError:
-    TIKTOKEN_AVAILABLE = False
-    import warnings
-    warnings.warn("tiktoken not available, using basic token estimation. Install with: pip install tiktoken")
+# Availability is unknown until the first exact request attempts the lazy import.
+TIKTOKEN_AVAILABLE: Optional[bool] = None
 
 
 @dataclass
@@ -77,19 +73,11 @@ class TokenEstimator:
         self.metrics_history: list[TokenMetrics] = []
         self.max_history_size = 1000
 
-        # Initialize tiktoken encoder
-        if TIKTOKEN_AVAILABLE:
-            try:
-                self.encoder = tiktoken.encoding_for_model(model)
-            except KeyError:
-                # Fallback to cl100k_base (GPT-4) if model not found
-                self.encoder = tiktoken.get_encoding("cl100k_base")
-        else:
-            self.encoder = None
+        self.encoder = None
+        self._encoder_initialized = False
+        self._encoder_lock = threading.Lock()
 
-        # Create metrics directory if needed
         self.metrics_dir = Path.home() / ".scribe_metrics"
-        self.metrics_dir.mkdir(exist_ok=True)
         self.metrics_file = self.metrics_dir / "token_usage.json"
 
     def _load_budget_config(self, daily_limit: int = 100000, operation_limit: int = 8000) -> TokenBudget:
@@ -104,7 +92,44 @@ class TokenEstimator:
             warning_threshold=warning_threshold
         )
 
-    def estimate_tokens(self, data: Union[str, Dict, List, Any]) -> int:
+    def _get_encoder(self) -> Optional[Any]:
+        """Initialize and cache the model encoder on the first exact request."""
+        global TIKTOKEN_AVAILABLE
+
+        if self._encoder_initialized:
+            return self.encoder
+
+        with self._encoder_lock:
+            if self._encoder_initialized:
+                return self.encoder
+
+            try:
+                tiktoken = importlib.import_module("tiktoken")
+                TIKTOKEN_AVAILABLE = True
+                try:
+                    self.encoder = tiktoken.encoding_for_model(self.model)
+                except KeyError:
+                    self.encoder = tiktoken.get_encoding("cl100k_base")
+            except ImportError:
+                TIKTOKEN_AVAILABLE = False
+                self.encoder = None
+            finally:
+                self._encoder_initialized = True
+
+        return self.encoder
+
+    @staticmethod
+    def estimate_tokens_cheap(data: Union[str, Dict, List, Any]) -> int:
+        """Estimate tokens deterministically without importing tiktoken."""
+        if isinstance(data, str):
+            serialized = data
+        elif isinstance(data, (dict, list)):
+            serialized = json.dumps(data)
+        else:
+            serialized = str(data)
+        return len(serialized) // 4
+
+    def estimate_tokens(self, data: Union[str, Dict, List, Any], *, exact: bool = True) -> int:
         """
         Estimate token count for various data types using tiktoken.
 
@@ -114,26 +139,23 @@ class TokenEstimator:
         Returns:
             Estimated token count
         """
-        if self.encoder is not None:
+        if not exact:
+            return self.estimate_tokens_cheap(data)
+
+        encoder = self._get_encoder()
+        if encoder is not None:
             # Use tiktoken for accurate counting
             if isinstance(data, str):
-                return len(self.encoder.encode(data))
+                return len(encoder.encode(data))
             elif isinstance(data, (dict, list)):
                 # Convert to JSON string and count tokens
                 json_str = json.dumps(data, ensure_ascii=False)
-                return len(self.encoder.encode(json_str))
+                return len(encoder.encode(json_str))
             else:
                 # Convert to string and count tokens
-                return len(self.encoder.encode(str(data)))
-        else:
-            # Fallback to basic estimation if tiktoken not available
-            # Rough approximation: 1 token ≈ 4 characters for English text
-            if isinstance(data, str):
-                return len(data) // 4
-            elif isinstance(data, (dict, list)):
-                return len(json.dumps(data)) // 4
-            else:
-                return len(str(data)) // 4
+                return len(encoder.encode(str(data)))
+
+        return self.estimate_tokens_cheap(data)
 
     def estimate_response_tokens(self, response: Dict[str, Any]) -> Dict[str, int]:
         """
@@ -285,11 +307,11 @@ class TokenEstimator:
             "daily_limit": self.budget.daily_limit,
             "operation_limit": self.budget.operation_limit,
             "model": self.model,
-            "tiktoken_available": TIKTOKEN_AVAILABLE
+            "tiktoken_available": TIKTOKEN_AVAILABLE is not False
         }
 
         # Add tiktoken info if available
-        if TIKTOKEN_AVAILABLE and self.encoder:
+        if self.encoder is not None:
             stats["tokenizer"] = {
                 "name": self.encoder.name,
                 "vocab_size": self.encoder.n_vocab
@@ -299,31 +321,26 @@ class TokenEstimator:
 
     def get_tokenizer_info(self) -> Dict[str, Any]:
         """Get information about the tokenizer being used."""
-        if not TIKTOKEN_AVAILABLE:
+        encoder = self._get_encoder()
+        if encoder is None:
             return {
                 "available": False,
                 "message": "tiktoken not available. Install with: pip install tiktoken"
             }
 
-        if not self.encoder:
-            return {
-                "available": True,
-                "initialized": False,
-                "message": "Tokenizer failed to initialize"
-            }
-
         return {
             "available": True,
             "initialized": True,
-            "name": self.encoder.name,
+            "name": encoder.name,
             "model": self.model,
-            "vocab_size": self.encoder.n_vocab,
-            "max_token_value": self.encoder.max_token_value
+            "vocab_size": encoder.n_vocab,
+            "max_token_value": encoder.max_token_value
         }
 
     def save_metrics(self):
         """Save metrics history to file."""
         try:
+            self.metrics_dir.mkdir(exist_ok=True)
             metrics_data = []
             for m in self.metrics_history:
                 metrics_data.append({

@@ -9,6 +9,10 @@ identical behavior and proper edge case handling.
 import pytest
 import tempfile
 import math
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Dict, Any
 
@@ -23,6 +27,8 @@ from scribe_mcp.utils.estimator import (
     TokenEstimator,
     EstimatorUtilities
 )
+import scribe_mcp.utils.tokens as token_utils
+from scribe_mcp.utils.tokens import TokenEstimator as MetricsTokenEstimator, TokenMetrics
 
 
 class TestEntryCountEstimate:
@@ -414,8 +420,8 @@ class TestBulkProcessingCalculator:
         assert result == 40  # 200 / 5 = 40
 
 
-class TestTokenEstimator:
-    """Test TokenEstimator class."""
+class TestApproximateTokenEstimator:
+    """Test the lightweight estimator used by response formatting."""
 
     def test_estimate_tokens_string(self):
         """Test token estimation for strings."""
@@ -474,6 +480,182 @@ class TestTokenEstimator:
         # Empty list
         result = estimator.estimate_response_tokens([])
         assert result == 0
+
+
+@pytest.mark.core
+@pytest.mark.regression
+class TestTokenEstimator:
+    """Permanent guards for lazy token metrics estimation and utility exports."""
+
+    def test_construction_and_cheap_estimation_are_encoder_and_filesystem_free(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        import_calls = []
+
+        def fail_import(name):
+            import_calls.append(name)
+            raise AssertionError("cheap estimation must not import tiktoken")
+
+        monkeypatch.setattr(token_utils.importlib, "import_module", fail_import)
+
+        estimator = MetricsTokenEstimator()
+        assert estimator.encoder is None
+        assert estimator.estimate_tokens_cheap("abcdefgh") == 2
+        assert estimator.estimate_tokens({"key": "value"}, exact=False) == (
+            len(token_utils.json.dumps({"key": "value"})) // 4
+        )
+        assert estimator.estimate_tokens([1, 2, 3], exact=False) == (
+            len(token_utils.json.dumps([1, 2, 3])) // 4
+        )
+        assert import_calls == []
+        assert not (tmp_path / ".scribe_metrics").exists()
+
+    def test_exact_estimation_initializes_one_reusable_encoder(self, monkeypatch):
+        monkeypatch.setattr(token_utils, "TIKTOKEN_AVAILABLE", None)
+
+        class FakeEncoder:
+            name = "fake"
+            n_vocab = 100
+            max_token_value = 99
+
+            @staticmethod
+            def encode(value):
+                return value.split()
+
+        encoder = FakeEncoder()
+        calls = {"import": 0, "model": 0}
+
+        def encoding_for_model(model):
+            calls["model"] += 1
+            assert model == "gpt-4"
+            return encoder
+
+        fake_tiktoken = SimpleNamespace(
+            encoding_for_model=encoding_for_model,
+            get_encoding=lambda name: pytest.fail(f"unexpected fallback: {name}"),
+        )
+
+        def import_module(name):
+            calls["import"] += 1
+            assert name == "tiktoken"
+            return fake_tiktoken
+
+        monkeypatch.setattr(token_utils.importlib, "import_module", import_module)
+        estimator = MetricsTokenEstimator()
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(estimator.estimate_tokens, ["one two"] * 16))
+
+        assert results == [2] * 16
+        assert estimator.encoder is encoder
+        assert estimator.estimate_tokens("three four") == 2
+        assert estimator.encoder is encoder
+        assert calls == {"import": 1, "model": 1}
+
+    def test_exact_estimation_preserves_unknown_model_and_import_fallbacks(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(token_utils, "TIKTOKEN_AVAILABLE", None)
+        fallback_encoder = SimpleNamespace(encode=lambda value: [value])
+        fallback_calls = []
+        fake_tiktoken = SimpleNamespace(
+            encoding_for_model=lambda model: (_ for _ in ()).throw(KeyError(model)),
+            get_encoding=lambda name: fallback_calls.append(name) or fallback_encoder,
+        )
+        monkeypatch.setattr(
+            token_utils.importlib,
+            "import_module",
+            lambda name: fake_tiktoken,
+        )
+
+        unknown_model = MetricsTokenEstimator(model="unknown-model")
+        assert unknown_model.estimate_tokens("value") == 1
+        assert fallback_calls == ["cl100k_base"]
+
+        unavailable = MetricsTokenEstimator()
+        monkeypatch.setattr(
+            token_utils.importlib,
+            "import_module",
+            lambda name: (_ for _ in ()).throw(ImportError(name)),
+        )
+        assert unavailable.estimate_tokens("abcdefgh") == 2
+        assert unavailable.encoder is None
+
+    def test_metrics_persistence_and_result_shapes_remain_compatible(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        estimator = MetricsTokenEstimator()
+        estimator.metrics_history.append(TokenMetrics("probe", 1, 2, 3))
+
+        assert not estimator.metrics_dir.exists()
+        estimator.save_metrics()
+        assert estimator.metrics_file.exists()
+
+        restored = MetricsTokenEstimator()
+        restored.load_metrics()
+        assert [metric.total_tokens for metric in restored.metrics_history] == [3]
+        assert set(restored.get_usage_stats()) == {
+            "total_operations",
+            "total_tokens_used",
+            "average_tokens_per_operation",
+            "compact_mode_average",
+            "full_mode_average",
+            "recent_average",
+            "compact_savings",
+            "daily_usage",
+            "daily_limit",
+            "operation_limit",
+            "model",
+            "tiktoken_available",
+        }
+
+    def test_utils_package_defers_export_modules_until_attribute_access(self):
+        script = """
+import json
+import sys
+import scribe_mcp.utils as utils
+
+deferred = {
+    "scribe_mcp.utils.files",
+    "scribe_mcp.utils.slug",
+    "scribe_mcp.utils.time",
+    "scribe_mcp.utils.response",
+    "scribe_mcp.utils.tokens",
+}
+assert deferred.isdisjoint(sys.modules)
+assert callable(utils.append_line)
+assert "scribe_mcp.utils.files" in sys.modules
+assert "scribe_mcp.utils.response" not in sys.modules
+assert "scribe_mcp.utils.tokens" not in sys.modules
+print(json.dumps(utils.__all__))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert token_utils.json.loads(result.stdout) == [
+            "append_line",
+            "ensure_parent",
+            "read_tail",
+            "rotate_file",
+            "slugify_project_name",
+            "slugify_filename",
+            "format_utc",
+            "utcnow",
+            "ResponseFormatter",
+            "default_formatter",
+            "create_pagination_info",
+            "PaginationInfo",
+            "TokenEstimator",
+            "TokenMetrics",
+            "TokenBudget",
+            "token_estimator",
+        ]
 
 
 class TestEstimatorUtilities:

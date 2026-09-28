@@ -7,6 +7,7 @@ import contextvars
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import threading
 import uuid
@@ -14,7 +15,7 @@ from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
-from typing import Any, Dict, Mapping, Optional, Set
+from typing import Any, Dict, Literal, Mapping, Optional, Set
 
 from scribe_mcp.mcp_adapter import ProtocolEra
 from scribe_mcp.shared.session_scope import ResolvedScope, ScopeProvenance, build_resolved_scope
@@ -215,6 +216,350 @@ def revoke_application_identity(identity_key: str) -> bool:
     return False
 
 
+_PROJECT_RESOLUTION_SOURCES = frozenset(
+    {"project_key", "name_and_root", "unique_name", "caller_default"}
+)
+_OPERATING_MODES = frozenset({"project", "sentinel"})
+_CALLER_SESSION_KEY_HASH_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+_AUTHORIZATION_SOURCE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_AUTHORIZATION_SCOPE_REF_PATTERN = re.compile(
+    r"^[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+)
+_CREDENTIAL_PAYLOAD_PATTERNS = (
+    re.compile(r"^AKIA[A-Z0-9]{16}$"),
+    re.compile(r"^AIza[A-Za-z0-9_-]{35}$"),
+    re.compile(r"^sk-[A-Za-z0-9_-]{20,}$"),
+    re.compile(r"^gh[pousr]_[A-Za-z0-9]{20,}$"),
+    re.compile(r"^glpat-[A-Za-z0-9_-]{20,}$"),
+    re.compile(r"^xox[baprs]-[A-Za-z0-9-]{20,}$"),
+    re.compile(r"^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}$"),
+)
+
+
+def _required_identifier(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be blank")
+    return normalized
+
+
+def _optional_identifier(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _required_identifier(value, field_name=field_name)
+
+
+def _canonical_repo_root(value: str) -> str:
+    from scribe_mcp.config.paths import map_client_root
+
+    repo_root = _required_identifier(value, field_name="canonical_repo_root")
+    mapped_root, _ = map_client_root(repo_root)
+    mapped_path = Path(mapped_root).expanduser()
+    if not mapped_path.is_absolute():
+        raise ValueError("canonical_repo_root must be an absolute path")
+    return str(mapped_path.resolve())
+
+
+def _positive_generation(value: int, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field_name} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{field_name} must be positive")
+    return value
+
+
+def _caller_session_key_hash(caller_session_key: str) -> str:
+    if not isinstance(caller_session_key, str):
+        raise TypeError("caller_session_key must be a string")
+    if not caller_session_key.strip():
+        raise ValueError("caller_session_key must not be blank")
+    return hashlib.sha256(caller_session_key.encode("utf-8")).hexdigest()
+
+
+def _validated_caller_session_key_hash(value: str) -> str:
+    normalized_hash = _required_identifier(
+        value,
+        field_name="caller_session_key_hash",
+    )
+    if _CALLER_SESSION_KEY_HASH_PATTERN.fullmatch(normalized_hash) is None:
+        raise ValueError("caller_session_key_hash must be a 64-character hexadecimal digest")
+    return normalized_hash.lower()
+
+
+def _opaque_authorization_reference(
+    value: str,
+    *,
+    field_name: str,
+    require_namespace: bool,
+) -> str:
+    normalized = _required_identifier(value, field_name=field_name)
+    grammar = (
+        _AUTHORIZATION_SCOPE_REF_PATTERN
+        if require_namespace
+        else _AUTHORIZATION_SOURCE_PATTERN
+    )
+    payload = normalized.split(":", 1)[-1]
+    credential_shaped = (
+        grammar.fullmatch(normalized) is None
+        or any(pattern.fullmatch(payload) is not None for pattern in _CREDENTIAL_PAYLOAD_PATTERNS)
+    )
+    if credential_shaped:
+        raise ValueError(f"{field_name} must be an opaque authorization reference")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectTargetV1:
+    """Optional request-local project selectors, before target resolution."""
+
+    project_key: str | None = None
+    project: str | None = None
+    repo_root: str | None = None
+
+    def __post_init__(self) -> None:
+        project_key = _optional_identifier(self.project_key, field_name="project_key")
+        project = _optional_identifier(self.project, field_name="project")
+        repo_root = self.repo_root
+        if repo_root is not None:
+            if project is None:
+                raise ValueError("repo_root requires project")
+            repo_root = _canonical_repo_root(repo_root)
+        object.__setattr__(self, "project_key", project_key)
+        object.__setattr__(self, "project", project)
+        object.__setattr__(self, "repo_root", repo_root)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedProjectTargetV1:
+    """Canonical registered project selected for one request."""
+
+    project_key: str
+    project_name: str
+    canonical_repo_root: str
+    repository_id: str
+    resolution_source: Literal[
+        "project_key",
+        "name_and_root",
+        "unique_name",
+        "caller_default",
+    ]
+    default_binding_generation: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "project_key",
+            _required_identifier(self.project_key, field_name="project_key"),
+        )
+        object.__setattr__(
+            self,
+            "project_name",
+            _required_identifier(self.project_name, field_name="project_name"),
+        )
+        object.__setattr__(
+            self,
+            "canonical_repo_root",
+            _canonical_repo_root(self.canonical_repo_root),
+        )
+        object.__setattr__(
+            self,
+            "repository_id",
+            _required_identifier(self.repository_id, field_name="repository_id"),
+        )
+        if self.resolution_source not in _PROJECT_RESOLUTION_SOURCES:
+            raise ValueError("resolution_source is not valid for a resolved project target")
+        _positive_generation(
+            self.default_binding_generation,
+            field_name="default_binding_generation",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentAttributionV1:
+    """Human-facing attribution that carries no caller or target authority."""
+
+    agent: str = dataclass_field(compare=False)
+    agent_id: str | None = dataclass_field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "agent",
+            _required_identifier(self.agent, field_name="agent"),
+        )
+        object.__setattr__(
+            self,
+            "agent_id",
+            _optional_identifier(self.agent_id, field_name="agent_id"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizationEvidenceV1:
+    """Opaque references to server-verified authorization evidence."""
+
+    source: str = dataclass_field(repr=False)
+    verified: bool
+    scope_refs: tuple[str, ...] = dataclass_field(repr=False)
+
+    def __post_init__(self) -> None:
+        source = _opaque_authorization_reference(
+            self.source,
+            field_name="authorization source",
+            require_namespace=False,
+        )
+        if not isinstance(self.verified, bool):
+            raise TypeError("verified must be a boolean")
+        if isinstance(self.scope_refs, (str, bytes)):
+            raise TypeError("scope_refs must be an iterable of opaque references")
+        try:
+            scope_refs = tuple(
+                _opaque_authorization_reference(
+                    ref,
+                    field_name="scope_ref",
+                    require_namespace=True,
+                )
+                for ref in self.scope_refs
+            )
+        except TypeError as exc:
+            raise TypeError("scope_refs must be an iterable of opaque references") from exc
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "scope_refs", scope_refs)
+
+
+@dataclass(frozen=True, slots=True)
+class BindingReceiptV1:
+    """Public result of one authoritative default-binding operation."""
+
+    ok: bool
+    caller_session_key_hash: str
+    project_key: str
+    project_name: str
+    canonical_repo_root: str
+    binding_generation: int
+    binding_reused: bool
+    persistent_write_performed: bool
+    resolution_source: str
+    correlation_id: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("ok", "binding_reused", "persistent_write_performed"):
+            if not isinstance(getattr(self, field_name), bool):
+                raise TypeError(f"{field_name} must be a boolean")
+        object.__setattr__(
+            self,
+            "caller_session_key_hash",
+            _validated_caller_session_key_hash(self.caller_session_key_hash),
+        )
+        object.__setattr__(
+            self,
+            "project_key",
+            _required_identifier(self.project_key, field_name="project_key"),
+        )
+        object.__setattr__(
+            self,
+            "project_name",
+            _required_identifier(self.project_name, field_name="project_name"),
+        )
+        object.__setattr__(
+            self,
+            "canonical_repo_root",
+            _canonical_repo_root(self.canonical_repo_root),
+        )
+        _positive_generation(self.binding_generation, field_name="binding_generation")
+        resolution_source = _required_identifier(
+            self.resolution_source,
+            field_name="resolution_source",
+        )
+        if resolution_source != "set_project":
+            raise ValueError("resolution_source is not valid for a binding receipt")
+        object.__setattr__(self, "resolution_source", resolution_source)
+        object.__setattr__(
+            self,
+            "correlation_id",
+            _required_identifier(self.correlation_id, field_name="correlation_id"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedRequestContextV1:
+    """Immutable request context created once after project resolution."""
+
+    caller_session_key_hash: str
+    resolved_target: ResolvedProjectTargetV1
+    default_binding_generation: int
+    agent_attribution: AgentAttributionV1
+    correlation_id: str
+    operating_mode: Literal["project", "sentinel"]
+    authorization_evidence: AuthorizationEvidenceV1 = dataclass_field(repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "caller_session_key_hash",
+            _validated_caller_session_key_hash(self.caller_session_key_hash),
+        )
+        if not isinstance(self.resolved_target, ResolvedProjectTargetV1):
+            raise TypeError("resolved_target must be ResolvedProjectTargetV1")
+        generation = _positive_generation(
+            self.default_binding_generation,
+            field_name="default_binding_generation",
+        )
+        if generation != self.resolved_target.default_binding_generation:
+            raise ValueError("default_binding_generation must match resolved_target")
+        if not isinstance(self.agent_attribution, AgentAttributionV1):
+            raise TypeError("agent_attribution must be AgentAttributionV1")
+        object.__setattr__(
+            self,
+            "correlation_id",
+            _required_identifier(self.correlation_id, field_name="correlation_id"),
+        )
+        if self.operating_mode not in _OPERATING_MODES:
+            raise ValueError("operating_mode must be 'project' or 'sentinel'")
+        if not isinstance(self.authorization_evidence, AuthorizationEvidenceV1):
+            raise TypeError("authorization_evidence must be AuthorizationEvidenceV1")
+
+
+def build_resolved_request_context(
+    *,
+    caller_session_key: str,
+    resolved_target: ResolvedProjectTargetV1,
+    agent_attribution: AgentAttributionV1,
+    correlation_id: str,
+    operating_mode: Literal["project", "sentinel"],
+    authorization_evidence: AuthorizationEvidenceV1,
+) -> ResolvedRequestContextV1:
+    """Finalize one request context without retaining the raw caller key."""
+
+    if not isinstance(resolved_target, ResolvedProjectTargetV1):
+        raise TypeError("resolved_target must be ResolvedProjectTargetV1")
+    if not isinstance(agent_attribution, AgentAttributionV1):
+        raise TypeError("agent_attribution must be AgentAttributionV1")
+    if not isinstance(authorization_evidence, AuthorizationEvidenceV1):
+        raise TypeError("authorization_evidence must be AuthorizationEvidenceV1")
+
+    finalized_attribution = AgentAttributionV1(
+        agent=agent_attribution.agent,
+        agent_id=agent_attribution.agent_id,
+    )
+    finalized_evidence = AuthorizationEvidenceV1(
+        source=authorization_evidence.source,
+        verified=authorization_evidence.verified,
+        scope_refs=tuple(ref for ref in authorization_evidence.scope_refs),
+    )
+    return ResolvedRequestContextV1(
+        caller_session_key_hash=_caller_session_key_hash(caller_session_key),
+        resolved_target=resolved_target,
+        default_binding_generation=resolved_target.default_binding_generation,
+        agent_attribution=finalized_attribution,
+        correlation_id=correlation_id,
+        operating_mode=operating_mode,
+        authorization_evidence=finalized_evidence,
+    )
+
+
 @dataclass(frozen=True)
 class AgentIdentity:
     agent_kind: str
@@ -246,6 +591,7 @@ class ExecutionContext:
     toolchain: Optional[str] = None
     authoritative_session_key: Optional[str] = None
     application_identity: Optional[ApplicationIdentity] = None
+    resolved_request_context: ResolvedRequestContextV1 | None = None
 
 
 class RouterContextManager:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from scribe_mcp import server as server_module
+from scribe_mcp.doc_management import special_indexes
 from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
@@ -486,6 +488,86 @@ async def test_rehome_doc_same_project_nested_target_remains_canonical_after_reb
     review_index_text = review_index.read_text(encoding="utf-8")
     assert "contracts/REVIEW_CI_RUNNER_01.md" in review_index_text
     assert source_path.name not in review_index_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_rehome_special_case_preserves_target_and_converges_alias_case_and_index(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "cleanup_repo_special_case"
+    project = _project_payload(project_root, "active_project")
+    docs_dir = Path(project["docs_dir"])
+    target_key = "SECURITY_COUNCIL_SCRIBE_BORN_BOUND_SEAT_HANDOFF"
+    target_path = docs_dir / f"{target_key}.md"
+    target_path.write_text("# Protected decision\n\nDo not overwrite.\n", encoding="utf-8")
+    target_digest = hashlib.sha256(target_path.read_bytes()).hexdigest()
+
+    security_root = project_root / "docs" / "security"
+    source_path = security_root / "security" / "2026-09-28_sec_1790614809" / "report.md"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("# Accidental security report\n", encoding="utf-8")
+    for alias in (
+        "sec_1790614809",
+        target_key,
+        "security_report_report",
+        "security",
+    ):
+        project["docs"][alias] = str(source_path)
+
+    state_manager = StateManager(path=tmp_path / "special-case-state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
+    backend = getattr(state_manager, "_storage_backend", None)
+    assert backend is not None
+    await backend.upsert_case_registry_record(
+        case_id="sec_1790614809",
+        case_type="security",
+        project_name=project["name"],
+        repo_root=project["root"],
+        doc_type="security",
+        doc_name="sec_1790614809",
+        doc_path=str(source_path),
+        status="open",
+        source_tool="test",
+    )
+    await special_indexes.update_security_index(
+        security_root, "test-agent", repo_root=project_root
+    )
+    security_index = security_root / "INDEX.md"
+    assert "2026-09-28_sec_1790614809" in security_index.read_text(encoding="utf-8")
+
+    with _isolated_server(state_manager, project_root=project_root):
+        result = await manage_docs(
+            action="rehome_doc",
+            doc=target_key,
+            metadata={
+                "target_project": project["name"],
+                "target_relative_path": target_path.relative_to(docs_dir).as_posix(),
+                "target_doc_name": target_key,
+                "preserve_target": True,
+                "case_id": "sec_1790614809",
+                "case_disposition": "false_positive",
+            },
+            dry_run=False,
+        )
+
+    assert result["ok"] is True, result
+    assert not source_path.exists()
+    assert hashlib.sha256(target_path.read_bytes()).hexdigest() == target_digest
+    persisted = await backend.fetch_project(project["name"], repo_root=project["root"])
+    assert persisted is not None
+    persisted_docs = json.loads(persisted.docs_json or "{}")
+    assert persisted_docs[target_key] == str(target_path)
+    assert str(source_path) not in persisted_docs.values()
+    case = await backend.fetch_case_registry_record(
+        "sec_1790614809", repo_root=project["root"], project_name=project["name"]
+    )
+    assert case is not None
+    assert case.doc_name == target_key
+    assert case.doc_path == str(target_path)
+    assert case.status == "false_positive"
+    assert "2026-09-28_sec_1790614809" not in security_index.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

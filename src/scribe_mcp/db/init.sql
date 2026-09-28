@@ -229,6 +229,170 @@ CREATE TABLE IF NOT EXISTS scribe_sessions (
 CREATE TABLE IF NOT EXISTS session_projects (
     session_id TEXT PRIMARY KEY REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
     project_name TEXT,
+    project_key TEXT
+        CHECK (BTRIM(project_key) <> ''),
+    binding_generation BIGINT NOT NULL DEFAULT 1
+        CHECK (binding_generation >= 1),
+    binding_state TEXT NOT NULL DEFAULT 'unresolved',
+    binding_state_reason TEXT,
+    CHECK (
+        (
+            binding_state = 'resolved'
+            AND project_key IS NOT NULL
+            AND binding_state_reason IS NULL
+        )
+        OR (
+            binding_state = 'unresolved'
+            AND project_key IS NULL
+            AND BTRIM(COALESCE(binding_state_reason, '')) <> ''
+        )
+    ),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS background_receipts (
+    operation_id TEXT PRIMARY KEY
+        CHECK (BTRIM(operation_id) <> ''),
+    canonical_project_key TEXT NOT NULL
+        CHECK (BTRIM(canonical_project_key) <> ''),
+    lane TEXT NOT NULL
+        CHECK (lane IN ('control', 'durable', 'heavy')),
+    idempotency_key TEXT NOT NULL
+        CHECK (BTRIM(idempotency_key) <> ''),
+    payload_digest TEXT NOT NULL
+        CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+    payload_bytes BIGINT NOT NULL
+        CHECK (payload_bytes >= 0),
+    durability_class TEXT NOT NULL
+        CHECK (BTRIM(durability_class) <> ''),
+    state TEXT NOT NULL
+        CHECK (state IN (
+            'accepted',
+            'ready',
+            'leased',
+            'retry_wait',
+            'succeeded',
+            'failed_terminal',
+            'cancelled'
+        )),
+    state_version BIGINT NOT NULL DEFAULT 1
+        CHECK (state_version >= 1),
+    attempt_count BIGINT NOT NULL DEFAULT 0
+        CHECK (attempt_count >= 0),
+    next_attempt_at TIMESTAMPTZ,
+    lease_owner TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    fencing_token BIGINT NOT NULL DEFAULT 0
+        CHECK (fencing_token >= 0),
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    result_ref TEXT,
+    error_code TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (canonical_project_key, idempotency_key),
+    CHECK (updated_at >= created_at),
+    CHECK (attempt_count = fencing_token),
+    CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)),
+    CHECK (lease_owner IS NULL OR BTRIM(lease_owner) <> ''),
+    CHECK (result_ref IS NULL OR BTRIM(result_ref) <> ''),
+    CHECK (error_code IS NULL OR BTRIM(error_code) <> ''),
+    CHECK (
+        (
+            state = 'accepted'
+            AND state_version = 1
+            AND attempt_count = 0
+            AND fencing_token = 0
+            AND cancel_requested = FALSE
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'ready'
+            AND state_version >= 2
+            AND attempt_count = 0
+            AND fencing_token = 0
+            AND cancel_requested = FALSE
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'leased'
+            AND state_version >= 3
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NOT NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'retry_wait'
+            AND state_version >= 4
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NOT NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'succeeded'
+            AND state_version >= 4
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NOT NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'failed_terminal'
+            AND state_version >= 4
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NOT NULL
+        )
+        OR (
+            state = 'cancelled'
+            AND state_version >= 2
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_background_receipts_claim
+    ON background_receipts (
+        canonical_project_key,
+        lane,
+        state,
+        next_attempt_at,
+        created_at
+    );
+
+CREATE INDEX IF NOT EXISTS idx_background_receipts_state_lease
+    ON background_receipts (state, lease_expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_background_receipts_project_state
+    ON background_receipts (canonical_project_key, state)
+    INCLUDE (payload_bytes);
+
+CREATE TABLE IF NOT EXISTS scribe_schema_readiness (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE
+        CHECK (singleton),
+    schema_fingerprint TEXT NOT NULL
+        CHECK (schema_fingerprint ~ '^[0-9a-f]{64}$'),
+    migration_version TEXT NOT NULL
+        CHECK (BTRIM(migration_version) <> ''),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -503,24 +667,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_projects_updated_at ON agent_projects(updat
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_agent_id ON agent_project_events(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_created_at ON agent_project_events(created_at);
 
-WITH ranked AS (
-    SELECT
-        ctid,
-        ROW_NUMBER() OVER (
-            PARTITION BY transport_session_id
-            ORDER BY last_active_at DESC NULLS LAST, started_at DESC NULLS LAST, session_id DESC
-        ) AS rn
-    FROM scribe_sessions
-    WHERE transport_session_id IS NOT NULL
-)
-UPDATE scribe_sessions AS s
-SET transport_session_id = NULL
-FROM ranked
-WHERE s.ctid = ranked.ctid
-  AND ranked.rn > 1;
-
-DROP INDEX IF EXISTS idx_scribe_sessions_transport;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id) WHERE transport_session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_agent ON scribe_sessions(agent_id);
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_last_active ON scribe_sessions(last_active_at DESC);
 

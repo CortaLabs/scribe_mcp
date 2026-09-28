@@ -172,6 +172,56 @@ def _normalize_research_doc_name(doc_name: str) -> str:
     return normalize_research_doc_name(doc_name)
 
 
+def _resolve_special_case_target(
+    *,
+    project_root: Path,
+    doc_name: Optional[str],
+    target_dir: Optional[str],
+    metadata: Dict[str, Any],
+) -> Optional[Path]:
+    """Resolve an explicit bug/security target before any durable side effect."""
+
+    direct_target = str(target_dir or "").strip()
+    metadata_target = str(metadata.get("target_dir") or "").strip()
+    if direct_target and metadata_target:
+        direct_path = Path(direct_target).expanduser()
+        metadata_path = Path(metadata_target).expanduser()
+        if not direct_path.is_absolute():
+            direct_path = project_root / direct_path
+        if not metadata_path.is_absolute():
+            metadata_path = project_root / metadata_path
+        if direct_path.resolve() != metadata_path.resolve():
+            raise ValueError(
+                "Ambiguous special-document target_dir: the top-level and metadata values disagree."
+            )
+
+    requested = direct_target or metadata_target
+    if not requested:
+        return None
+    requested_name = str(doc_name or "").strip()
+    if not requested_name:
+        raise ValueError(
+            "doc_name is required when target_dir is provided for a bug or security document."
+        )
+    name_path = Path(requested_name)
+    if name_path.name != requested_name or requested_name in {".", ".."}:
+        raise ValueError(
+            "doc_name must be a single filename when target_dir is provided."
+        )
+    filename = requested_name if name_path.suffix.lower() == ".md" else f"{requested_name}.md"
+    requested_dir = Path(requested).expanduser()
+    if not requested_dir.is_absolute():
+        requested_dir = project_root / requested_dir
+    resolved_dir = requested_dir.resolve()
+    try:
+        resolved_dir.relative_to(project_root.resolve())
+    except ValueError as exc:
+        raise ValueError(
+            "Special-document target_dir must stay within the active project root."
+        ) from exc
+    return resolved_dir / filename
+
+
 async def _get_or_create_storage_project(backend: Any, project: Dict[str, Any]) -> Any:
     timeout = server_module.settings.storage_timeout_seconds
     async with asyncio.timeout(timeout):
@@ -538,6 +588,15 @@ async def handle_special_document_creation(
         )
         index_path = research_dir / "INDEX.md"
     elif action == "create_bug_report":
+        try:
+            explicit_target = _resolve_special_case_target(
+                project_root=project_root,
+                doc_name=doc_name,
+                target_dir=target_dir,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            return helper.apply_context_payload(helper.error_response(str(exc)), context)
         category = metadata.get("category")
         if not category or not category.strip():
             return helper.apply_context_payload(
@@ -561,20 +620,30 @@ async def handle_special_document_creation(
             / category
             / f"{now.strftime('%Y-%m-%d')}_{slug}"
         )
-        target_path = bug_dir / "report.md"
+        target_path = explicit_target or bug_dir / "report.md"
         template_name = "BUG_REPORT_TEMPLATE.md"
         doc_label = "bug_report"
-        primary_doc_key = slug
+        primary_doc_key = str(doc_name).strip() if explicit_target is not None else slug
         extra_metadata = {
             "slug": slug,
             "category": category,
             "reported_at": metadata.get("reported_at", timestamp_str),
         }
-        index_updater = lambda: _update_bug_index(
-            project_root / "docs" / "bugs", agent_id, project_root
-        )
-        index_path = project_root / "docs" / "bugs" / "INDEX.md"
+        if explicit_target is None:
+            index_updater = lambda: _update_bug_index(
+                project_root / "docs" / "bugs", agent_id, project_root
+            )
+            index_path = project_root / "docs" / "bugs" / "INDEX.md"
     elif action == "create_security_report":
+        try:
+            explicit_target = _resolve_special_case_target(
+                project_root=project_root,
+                doc_name=doc_name,
+                target_dir=target_dir,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            return helper.apply_context_payload(helper.error_response(str(exc)), context)
         category = metadata.get("category")
         if not category or not category.strip():
             return helper.apply_context_payload(
@@ -598,19 +667,20 @@ async def handle_special_document_creation(
             / category
             / f"{now.strftime('%Y-%m-%d')}_{slug}"
         )
-        target_path = security_dir / "report.md"
+        target_path = explicit_target or security_dir / "report.md"
         template_name = "SECURITY_REPORT_TEMPLATE.md"
         doc_label = "security_report"
-        primary_doc_key = slug
+        primary_doc_key = str(doc_name).strip() if explicit_target is not None else slug
         extra_metadata = {
             "slug": slug,
             "category": category,
             "reported_at": metadata.get("reported_at", timestamp_str),
         }
-        index_updater = lambda: _update_security_index(
-            project_root / "docs" / "security", agent_id, project_root
-        )
-        index_path = project_root / "docs" / "security" / "INDEX.md"
+        if explicit_target is None:
+            index_updater = lambda: _update_security_index(
+                project_root / "docs" / "security", agent_id, project_root
+            )
+            index_path = project_root / "docs" / "security" / "INDEX.md"
     elif action == "create_review_report":
         stage = _normalize_stage(metadata.get("stage"))
         target_path = (
