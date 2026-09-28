@@ -1,73 +1,110 @@
 -- Reliability schema upgrade for durable session bindings and background receipts.
 -- The numbered migration runner owns the corresponding scribe_migrations row.
+--
+-- Numbered migrations run at scribe-server startup, so nothing here may refuse
+-- the server over legacy data. A legacy binding whose (repo_root, project_name)
+-- matches zero or several projects is classified 'unresolved' with a reason and
+-- keeps a NULL project_key: it is never assigned a guessed project and never
+-- deleted. One trigger owns classification for the backfill below and for
+-- every later write, including writers that still send project_name only.
 
 ALTER TABLE session_projects
     ADD COLUMN IF NOT EXISTS project_key TEXT,
-    ADD COLUMN IF NOT EXISTS binding_generation BIGINT;
+    ADD COLUMN IF NOT EXISTS binding_generation BIGINT,
+    ADD COLUMN IF NOT EXISTS binding_state TEXT,
+    ADD COLUMN IF NOT EXISTS binding_state_reason TEXT;
 
-DO $$
+CREATE OR REPLACE FUNCTION session_projects_classify_binding()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
 DECLARE
-    unresolved RECORD;
+    session_repo_root TEXT;
+    session_found BOOLEAN;
+    match_count BIGINT;
+    usable_key_count BIGINT;
+    usable_key TEXT;
 BEGIN
-    SELECT
-        sp.session_id,
-        sp.project_name,
-        COUNT(p.id) AS match_count,
-        COUNT(p.project_key) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL)
-            AS usable_key_count
-    INTO unresolved
-    FROM session_projects AS sp
-    JOIN scribe_sessions AS ss
-      ON ss.session_id = sp.session_id
-    LEFT JOIN scribe_projects AS p
-      ON p.repo_root = ss.repo_root
-     AND p.name = sp.project_name
-    WHERE NULLIF(BTRIM(sp.project_key), '') IS NULL
-       OR sp.binding_generation IS NULL
-    GROUP BY sp.session_id, sp.project_name
-    HAVING COUNT(p.id) <> 1
-        OR COUNT(p.project_key) FILTER (
-            WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL
-        ) <> 1
-    LIMIT 1;
-
-    IF FOUND THEN
-        RAISE EXCEPTION
-            'session binding % has % project identity matches (% usable project keys)',
-            unresolved.session_id,
-            unresolved.match_count,
-            unresolved.usable_key_count;
+    IF TG_OP = 'UPDATE' THEN
+        NEW.binding_generation := COALESCE(NEW.binding_generation, OLD.binding_generation, 1);
+    ELSE
+        NEW.binding_generation := COALESCE(NEW.binding_generation, 1);
     END IF;
+
+    -- A writer that supplies the key owns the identity. On UPDATE the key only
+    -- counts as supplied when it changed or the project name did not.
+    IF NULLIF(BTRIM(NEW.project_key), '') IS NOT NULL
+       AND (
+           TG_OP = 'INSERT'
+           OR NEW.project_key IS DISTINCT FROM OLD.project_key
+           OR NEW.project_name IS NOT DISTINCT FROM OLD.project_name
+       ) THEN
+        NEW.binding_state := 'resolved';
+        NEW.binding_state_reason := NULL;
+    ELSE
+        NEW.project_key := NULL;
+        NEW.binding_state := 'unresolved';
+
+        SELECT ss.repo_root, TRUE
+        INTO session_repo_root, session_found
+        FROM scribe_sessions AS ss
+        WHERE ss.session_id = NEW.session_id;
+
+        IF NEW.project_name IS NULL THEN
+            NEW.binding_state_reason := 'project_name_absent';
+        ELSIF session_found IS NOT TRUE THEN
+            NEW.binding_state_reason := 'session_missing';
+        ELSE
+            SELECT
+                COUNT(*),
+                COUNT(*) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL),
+                MIN(p.project_key) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL)
+            INTO match_count, usable_key_count, usable_key
+            FROM scribe_projects AS p
+            WHERE p.repo_root = session_repo_root
+              AND p.name = NEW.project_name;
+
+            IF match_count = 0 THEN
+                NEW.binding_state_reason := 'project_identity_zero_matches';
+            ELSIF match_count > 1 THEN
+                NEW.binding_state_reason := 'project_identity_ambiguous';
+            ELSIF usable_key_count <> 1 THEN
+                NEW.binding_state_reason := 'project_key_missing';
+            ELSE
+                NEW.project_key := usable_key;
+                NEW.binding_state := 'resolved';
+                NEW.binding_state_reason := NULL;
+            END IF;
+        END IF;
+    END IF;
+
+    IF TG_OP = 'UPDATE'
+       AND NEW.project_key IS DISTINCT FROM OLD.project_key
+       AND OLD.binding_state IS NOT NULL
+       AND NEW.binding_generation = OLD.binding_generation THEN
+        NEW.binding_generation := OLD.binding_generation + 1;
+    END IF;
+
+    RETURN NEW;
 END
 $$;
 
-UPDATE session_projects AS sp
-SET project_key = resolved.project_key,
-    binding_generation = 1
-FROM (
-    SELECT
-        sp_inner.session_id,
-        MIN(p.project_key) AS project_key
-    FROM session_projects AS sp_inner
-    JOIN scribe_sessions AS ss
-      ON ss.session_id = sp_inner.session_id
-    JOIN scribe_projects AS p
-      ON p.repo_root = ss.repo_root
-     AND p.name = sp_inner.project_name
-    WHERE NULLIF(BTRIM(sp_inner.project_key), '') IS NULL
-       OR sp_inner.binding_generation IS NULL
-    GROUP BY sp_inner.session_id
-    HAVING COUNT(p.id) = 1
-       AND COUNT(p.project_key) FILTER (
-           WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL
-       ) = 1
-) AS resolved
-WHERE sp.session_id = resolved.session_id;
+DROP TRIGGER IF EXISTS session_projects_classify_binding ON session_projects;
+CREATE TRIGGER session_projects_classify_binding
+    BEFORE INSERT OR UPDATE ON session_projects
+    FOR EACH ROW
+    EXECUTE FUNCTION session_projects_classify_binding();
+
+-- Backfill: the trigger classifies every legacy row in place. updated_at and
+-- project_name are left untouched.
+UPDATE session_projects
+SET binding_state = NULL
+WHERE binding_state IS NULL;
 
 ALTER TABLE session_projects
-    ALTER COLUMN project_key SET NOT NULL,
+    ALTER COLUMN binding_generation SET DEFAULT 1,
     ALTER COLUMN binding_generation SET NOT NULL,
-    ALTER COLUMN binding_generation SET DEFAULT 1;
+    ALTER COLUMN binding_state SET NOT NULL;
 
 DO $$
 BEGIN
@@ -91,6 +128,30 @@ BEGIN
         ALTER TABLE session_projects
             ADD CONSTRAINT session_projects_binding_generation_positive
             CHECK (binding_generation >= 1);
+    END IF;
+
+    -- Only a resolved binding carries a project key; an unresolved one carries
+    -- a reason instead and is unusable for project-keyed writes.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'session_projects'::regclass
+          AND conname = 'session_projects_binding_state_consistent'
+    ) THEN
+        ALTER TABLE session_projects
+            ADD CONSTRAINT session_projects_binding_state_consistent
+            CHECK (
+                (
+                    binding_state = 'resolved'
+                    AND project_key IS NOT NULL
+                    AND binding_state_reason IS NULL
+                )
+                OR (
+                    binding_state = 'unresolved'
+                    AND project_key IS NULL
+                    AND BTRIM(COALESCE(binding_state_reason, '')) <> ''
+                )
+            );
     END IF;
 END
 $$;

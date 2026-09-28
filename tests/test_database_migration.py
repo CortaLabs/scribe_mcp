@@ -356,5 +356,257 @@ class TestIntegration:
                 conn.close()
 
 
+# --- Postgres migration 007: legacy session bindings -------------------------
+#
+# Migration 007 (c9a988b) raised inside a DO guard whenever a legacy
+# session_projects row matched zero or several scribe_projects rows. Numbered
+# migrations run at scribe-server startup, so one stale binding killed every
+# fresh server before MCP initialize. These tests run the real 007 file against
+# a disposable database seeded with the legacy shapes seen live.
+
+_M007_NAME = "sql:007_reliability_receipts.sql"
+_M007_ROOT = "/fixture/repo"
+
+
+def _replace_pg_db_name(dsn: str, db_name: str) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(dsn)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{db_name}", parts.query, parts.fragment))
+
+
+@pytest.fixture
+def m007_database():
+    """A freshly created, dropped-after Postgres database. Never a shared DB."""
+    import os
+    import uuid
+
+    asyncpg = pytest.importorskip("asyncpg")
+    base_dsn = os.getenv("SCRIBE_TEST_POSTGRES_URL")
+    if not base_dsn:
+        pytest.skip("Set SCRIBE_TEST_POSTGRES_URL to run the Postgres migration 007 regression")
+    admin_dsn = os.getenv(
+        "SCRIBE_TEST_POSTGRES_ADMIN_URL", _replace_pg_db_name(base_dsn, "postgres")
+    )
+    db_name = f"scribe_m007_{uuid.uuid4().hex[:10]}"
+
+    async def _admin(sql: str) -> None:
+        admin = await asyncpg.connect(admin_dsn)
+        try:
+            await admin.execute(sql)
+        finally:
+            await admin.close()
+
+    try:
+        run(_admin(f'CREATE DATABASE "{db_name}";'))
+    except asyncpg.InsufficientPrivilegeError:
+        pytest.skip("Migration 007 regression needs CREATEDB; it never runs against a shared DB")
+    try:
+        yield _replace_pg_db_name(base_dsn, db_name)
+    finally:
+        run(_admin(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE);'))
+
+
+async def _bootstrap_pre_007(conn, tmp_path: Path) -> None:
+    import shutil
+
+    from scribe_mcp.storage.postgres import schema as schema_mod
+
+    pre_dir = tmp_path / "pre_007_migrations"
+    pre_dir.mkdir()
+    for path in sorted(schema_mod.MIGRATIONS_PATH.iterdir()):
+        if path.suffix == ".sql" and path.name < "007_":
+            shutil.copy(path, pre_dir / path.name)
+    await schema_mod.ensure_schema_on_connection(
+        conn=conn, schema_name="scribe", migrations_path=pre_dir
+    )
+
+
+async def _seed_legacy_bindings(conn) -> None:
+    await conn.executemany(
+        """
+        INSERT INTO scribe_projects (name, repo_root, project_key, progress_log_path)
+        VALUES ($1, $2, $3, $4);
+        """,
+        [
+            ("normal", _M007_ROOT, "key-normal", "/fixture/normal.md"),
+            ("dup", _M007_ROOT, "key-dup-a", "/fixture/dup-a.md"),
+            ("dup", _M007_ROOT, "key-dup-b", "/fixture/dup-b.md"),
+        ],
+    )
+    await conn.executemany(
+        "INSERT INTO scribe_sessions (session_id, repo_root) VALUES ($1, $2);",
+        [(sid, _M007_ROOT) for sid in ("s-normal", "s-zero", "s-many", "s-unnamed", "s-new")],
+    )
+    await conn.executemany(
+        "INSERT INTO session_projects (session_id, project_name) VALUES ($1, $2);",
+        [
+            ("s-normal", "normal"),
+            ("s-zero", "ghost"),
+            ("s-many", "dup"),
+            ("s-unnamed", None),
+        ],
+    )
+
+
+async def _bindings(conn) -> dict:
+    rows = await conn.fetch(
+        """
+        SELECT session_id, project_name, project_key, binding_generation,
+               binding_state, binding_state_reason
+        FROM session_projects;
+        """
+    )
+    return {row["session_id"]: dict(row) for row in rows}
+
+
+@pytest.mark.postgres
+@pytest.mark.regression
+def test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing_startup(
+    m007_database, tmp_path
+):
+    import asyncpg
+
+    from scribe_mcp.storage.postgres import schema as schema_mod
+
+    async def body() -> None:
+        conn = await asyncpg.connect(m007_database)
+        try:
+            await _bootstrap_pre_007(conn, tmp_path)
+            await _seed_legacy_bindings(conn)
+
+            # The startup path: pending numbered migrations, 007 included.
+            await schema_mod.ensure_schema_on_connection(conn=conn, schema_name="scribe")
+            assert await conn.fetchval(
+                "SELECT 1 FROM scribe_migrations WHERE name = $1;", _M007_NAME
+            )
+
+            bindings = await _bindings(conn)
+            assert set(bindings) == {"s-normal", "s-zero", "s-many", "s-unnamed"}
+            assert bindings["s-normal"] == {
+                "session_id": "s-normal",
+                "project_name": "normal",
+                "project_key": "key-normal",
+                "binding_generation": 1,
+                "binding_state": "resolved",
+                "binding_state_reason": None,
+            }
+            # Unresolved bindings keep their legacy project_name and get no guessed key.
+            for session_id, name, reason in (
+                ("s-zero", "ghost", "project_identity_zero_matches"),
+                ("s-many", "dup", "project_identity_ambiguous"),
+                ("s-unnamed", None, "project_name_absent"),
+            ):
+                row = bindings[session_id]
+                assert row["project_name"] == name
+                assert row["project_key"] is None
+                assert row["binding_state"] == "unresolved"
+                assert row["binding_state_reason"] == reason
+                assert row["binding_generation"] == 1
+
+            # Unusable for writes: a forced promotion without a key is re-classified
+            # unresolved, the table refuses a keyed row marked unresolved, and a
+            # durable write keyed by the binding's project key cannot land.
+            await conn.execute(
+                "UPDATE session_projects SET binding_state = 'resolved', "
+                "binding_state_reason = NULL WHERE session_id = 's-zero';"
+            )
+            forced = (await _bindings(conn))["s-zero"]
+            assert forced["binding_state"] == "unresolved"
+            assert forced["project_key"] is None
+            await conn.execute(
+                "ALTER TABLE session_projects DISABLE TRIGGER session_projects_classify_binding;"
+            )
+            try:
+                with pytest.raises(asyncpg.CheckViolationError):
+                    await conn.execute(
+                        "UPDATE session_projects SET project_key = 'key-dup-a' "
+                        "WHERE session_id = 's-many';"
+                    )
+            finally:
+                await conn.execute(
+                    "ALTER TABLE session_projects ENABLE TRIGGER session_projects_classify_binding;"
+                )
+            with pytest.raises(asyncpg.NotNullViolationError):
+                await conn.execute(
+                    """
+                    INSERT INTO background_receipts (
+                        operation_id, canonical_project_key, lane, idempotency_key,
+                        payload_digest, payload_bytes, durability_class, state
+                    )
+                    SELECT 'op-1', project_key, 'durable', 'idem-1',
+                           repeat('0', 64), 0, 'durable', 'accepted'
+                    FROM session_projects WHERE session_id = 's-many';
+                    """
+                )
+
+            # Re-applying 007 (a crash between the SQL and its ledger row) is a no-op.
+            migration_sql = (schema_mod.MIGRATIONS_PATH / "007_reliability_receipts.sql").read_text(
+                encoding="utf-8"
+            )
+            await conn.execute(migration_sql)
+            assert await _bindings(conn) == bindings
+        finally:
+            await conn.close()
+
+    run(body())
+
+
+@pytest.mark.postgres
+@pytest.mark.regression
+def test_migration_007_keeps_the_legacy_postgres_binding_writer_working(
+    m007_database, tmp_path
+):
+    """The runtime writer still inserts project_name only; 007 must not reject it."""
+    import asyncpg
+
+    from scribe_mcp.storage.postgres import PostgresStorage
+
+    async def body() -> None:
+        conn = await asyncpg.connect(m007_database)
+        try:
+            await _bootstrap_pre_007(conn, tmp_path)
+            await _seed_legacy_bindings(conn)
+        finally:
+            await conn.close()
+
+        storage = PostgresStorage(m007_database, schema_name="scribe", pool_min_size=1, pool_max_size=2)
+        await storage.setup()
+        try:
+            await storage.set_session_project("s-new", "normal")
+            await storage.set_session_project("s-normal", "ghost")
+            await storage.set_session_project("s-zero", "normal")
+            assert await storage.get_session_project("s-normal") == "ghost"
+        finally:
+            await storage.close()
+
+        conn = await asyncpg.connect(m007_database)
+        try:
+            await conn.execute("SET search_path TO scribe, public;")
+            bindings = await _bindings(conn)
+            # setup() canonicalizes project keys after migrations run.
+            normal_key = await conn.fetchval(
+                "SELECT project_key FROM scribe_projects WHERE name = 'normal';"
+            )
+        finally:
+            await conn.close()
+
+        assert normal_key
+        assert bindings["s-new"]["binding_state"] == "resolved"
+        assert bindings["s-new"]["project_key"] == normal_key
+        assert bindings["s-new"]["binding_generation"] == 1
+        # A rebind to a name with no project demotes the binding instead of keeping a stale key.
+        assert bindings["s-normal"]["project_key"] is None
+        assert bindings["s-normal"]["binding_state"] == "unresolved"
+        assert bindings["s-normal"]["binding_state_reason"] == "project_identity_zero_matches"
+        assert bindings["s-normal"]["binding_generation"] == 2
+        # Rebinding an unresolved binding to a real project resolves it.
+        assert bindings["s-zero"]["project_key"] == normal_key
+        assert bindings["s-zero"]["binding_state"] == "resolved"
+        assert bindings["s-zero"]["binding_generation"] == 2
+
+    run(body())
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
