@@ -6,7 +6,7 @@ doc_name: checklist
 category: engineering
 status: in_progress
 version: '0.1'
-last_updated: 2026-09-28 13:10:22 UTC
+last_updated: 2026-09-28 13:18:21 UTC
 maintained_by: agent-20260928-071822-ee3c2094
 created_by: agent-20260927-061418-642053d3
 owners:
@@ -24,7 +24,7 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:36 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-28 13:10:22 UTC
+  last_edited_at: 2026-09-28 13:18:21 UTC
   last_edited_by: agent-20260928-071822-ee3c2094
   last_action: replace_text
   work_item_id: 5309eca6-4d91-477e-b0c8-7087b6d65338
@@ -40,16 +40,16 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 
 ## DA-01 — Binding persistence (`SBR-BIND-PERSIST.*`)
 <!-- ID: sbr-binding-persistence -->
-- [ ] `SBR-BIND-PERSIST.1` — Generation-bearing `SessionBindingRecordV2` exists with the frozen six fields; first generation is 1; C-05 migration input preserves session authority, backfills `project_key` plus generation, and leaves DDL to SS-04.
-- [ ] `SBR-BIND-PERSIST.2` — Abstract C-01 signatures return records; unchanged rebind is zero-write with stable timestamp/generation; stale `expected_generation` fails before a write.
+- [x] `SBR-BIND-PERSIST.1` — Generation-bearing `SessionBindingRecordV2` exists with the frozen six fields; first generation is 1; C-05 migration input preserves session authority, backfills `project_key` plus generation, and leaves DDL to SS-04. | Proof: Council item c7e2047d completed at revision 3c747918 with 4/4 current receipts and no content drift.
+- [ ] `SBR-BIND-PERSIST.2` — Abstract C-01 signatures return records; unchanged rebind is zero-write with stable timestamp/generation; stale `expected_generation` fails before a write. Current state: registry item 67c2e302 is completed, but all four receipts are content-stale because `base.py` changed after review. The post-review delta is the additive background-receipt interface block; keep unchecked until a current delta gate formalizes that non-overlap.
 - [ ] `SBR-BIND-PERSIST.3` — PostgreSQL atomically proves first/change/no-op/stale-CAS behavior and isolates concurrent same-label callers by session ID; exact persisted project identity is returned.
 - [ ] `SBR-BIND-PERSIST.4` — SQLite plus facade match PostgreSQL record, generation, zero-write, conflict, and concurrent same-label semantics without modifying schema ownership.
-- [ ] `SBR-BIND-PERSIST.5` — Remote delegates binding truth through durable transport and strictly decodes C-01 in source; `SBR-CORE-VAL.1` and `.5` retain mandatory swarm/parity/reconnect proof and the stale `tests/test_remote_backend.py` expectation update before release.
+- [x] `SBR-BIND-PERSIST.5` — Remote delegates binding truth through durable transport and strictly decodes C-01 in source; `SBR-CORE-VAL.1` and `.5` retain mandatory swarm/parity/reconnect proof and the stale `tests/test_remote_backend.py` expectation update before release. | Proof: Council item 398c8030 completed at revision 34c8b74f with 4/4 current receipts and no content drift.
 - [ ] `SBR-BIND-PERSIST.GATE` — DA-09 core swarm proves 32 concurrent same-label sessions, independent generations, zero cross-talk, and exact zero persistent writes on unchanged rebind; DA-10 reference lane proves live PostgreSQL/Remote parity; Sentinel and Arbiter PASS before SS-02 consumes C-01.
 ## DA-06 — Durable receipt store (`SBR-RECEIPT.*`)
 <!-- ID: sbr-receipt-store -->
 
-- [ ] `SBR-RECEIPT.1` — Add the host-neutral `background/models.py`, `BackgroundReceiptStoreV1`, and `StorageBackend#background_receipt_contract`; prove exact C-08 signatures, closed states, outcome/version/fence invariants, fail-closed defaults, import/compile and existing-neighbor checks; DA-09/Crucible still owns the mandatory named contract test before release.
+- [x] `SBR-RECEIPT.1` — Add the host-neutral `background/models.py`, `BackgroundReceiptStoreV1`, and `StorageBackend#background_receipt_contract`; prove exact C-08 signatures, closed states, outcome/version/fence invariants, fail-closed defaults, import/compile and existing-neighbor checks; DA-09/Crucible still owns the mandatory named contract test before release. | Proof: Council item 16a55120 completed at revision d48c8067 with 4/4 current receipts and no content drift.
 - [ ] `SBR-RECEIPT.2` — Add SQLite receipt operations plus the `SQLiteStorage` adapter; after DA-04 C-06 lands, prove atomic global/per-project item+byte admission, duplicate/digest-conflict zero mutation, deterministic claim/CAS/fencing, terminal release once, reopen recovery, import smoke, and the named SQLite/neighbor tests.
 - [ ] `SBR-RECEIPT.3` — Add the `PostgresStorage#background_receipt_storage` block; after DA-04 C-06 lands, prove transaction-safe capacity, idempotency races, `SKIP LOCKED` lease exclusivity, stale-fence/version rejection, restart recovery, normalized backend parity, import smoke, and the named PostgreSQL/neighbor tests.
 - [ ] `SBR-RECEIPT.REVIEWS` — Before SS-06 handoff, record Crucible behavioral evidence and mandatory Sentinel plus Arbiter PASS for all three packages; no completion claim before the C-06 schema dependency and DA-09/DA-10 proof owners land.
@@ -57,7 +57,7 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 ## DA-02 — Target resolution and typed errors (`SBR-BIND-RESOLVE.*`)
 <!-- ID: sbr-target-resolution -->
 
-- [ ] `SBR-BIND-RESOLVE.1` — Add frozen C-02/C-03/C-11 request, target, receipt, attribution, authorization-evidence, and immutable-context types in `execution_context.py`; prove raw-key non-disclosure, exact caller-session hashing, attribution-only labels, object identity preservation, import smoke, and the named DA-09/DA-10 contract tests.
+- [x] `SBR-BIND-RESOLVE.1` — Add frozen C-02/C-03/C-11 request, target, receipt, attribution, authorization-evidence, and immutable-context types in `execution_context.py`; prove raw-key non-disclosure, exact caller-session hashing, attribution-only labels, object identity preservation, import smoke, and the named DA-09/DA-10 contract tests. | Proof: Council item 6058f4c6 completed at revision 5a332102 with 4/4 current receipts and no content drift.
 - [ ] `SBR-BIND-RESOLVE.2` — Add the single persisted-project C-02 resolver in `logging_utils.py` plus `StateManager#registered_target_resolution`; prove key → name+root → unique-name → default precedence, authorized cross-repo targeting without default mutation, deterministic ambiguity/root-mismatch/missing/wrong-target errors, zero effects, import smoke, and neighbor tests.
 - [ ] `SBR-BIND-RESOLVE.3` — Make `set_project` the sole exact-session C-01 default writer and return C-03 for every successful format; prove first/change/unchanged generations, unchanged and stale-generation zero writes, receipt flags, no label/global authority, and the 05:57 trace-derived delayed second write after one bind without rebind.
 - [ ] `SBR-BIND-RESOLVE.4` — Integrate one C-02 resolution and one immutable C-11 in `tool_runtime.py`, plus C-04 normalization in `mcp_adapter.py`; prove structured `isError=true` parity, generic C-16 bind-once/external-adapter behavior, same-handle reconnect, same-label new-handle isolation, ambiguity/stale-generation/wrong-target denials, and no Council source vocabulary.
@@ -65,7 +65,7 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 
 ## DA-04 — Schema bootstrap (`SBR-SCHEMA.*`)
 <!-- ID: sbr-schema-bootstrap -->
-- [ ] SBR-SCHEMA.1 — Add the sole additive 007_reliability_receipts PostgreSQL migration source for exact C-05/C-06 plus readiness metadata; statically prove backfill/constraints/indexes and no destructive or direct-ledger SQL, while SBR-SCHEMA.GATE/DA-10 retain mandatory disposable-target apply, idempotency, ledger, backup, and restore proof.
+- [x] SBR-SCHEMA.1 — Add the sole additive 007_reliability_receipts PostgreSQL migration source for exact C-05/C-06 plus readiness metadata; statically prove backfill/constraints/indexes and no destructive or direct-ledger SQL, while SBR-SCHEMA.GATE/DA-10 retain mandatory disposable-target apply, idempotency, ledger, backup, and restore proof. | Proof: Council item 5309eca6 completed at revision a248358d with 4/4 current receipts and no content drift.
 - [ ] SBR-SCHEMA.2 — Mirror migration 007 into fresh PostgreSQL init and fresh/legacy SQLite schema; prove exact logical PostgreSQL/SQLite/init parity, additive reopen compatibility, project_name preservation, and side-effect-free schema imports. Current implementation evidence: behavioral PASS at schema.py 1e406d46f92ff10a725c9fc27a854e41c56c02f27ae4ae867d6499b18ea4b946 and init.sql 7b58753777c5e19552683cf4884a4bab602a5dc5dc93d2dd20a9481a75f9ee49 with 24 focused tests. Completion remains open: the fresh exact-seat Witness gate failed before review because COUNCIL_SEAT_JSON was absent (Council event 1224c45e), so current truth, security, and quality receipts are missing.
 - [ ] SBR-SCHEMA.3 — Implement SchemaReadinessV1, fingerprint fast check, pg_try_advisory_lock election, deadline-aware pool/retry, bounded <=500 ms peer wait, fail-closed mismatch, and setup compatibility; prove 32 simultaneous starts elect one bootstrapper with zero ledger drift.
 - [ ] SBR-SCHEMA.GATE — Run import smoke and focused neighbor tests, then the single DA-10 PostgreSQL/process lane; on an approved disposable target retain AgentKit status -> plan -> backup -> apply -> status plus restore receipts; require Sentinel and Arbiter PASS before C-07 handoff.
@@ -84,8 +84,8 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 - [ ] `SBR-BG.REVIEWS` — DA-09 records hermetic/manual-clock proof plus the 32 same-label caller × 100 mixed-call composition with zero wrong target/default drift/cross-talk/lost accepted receipts/duplicate effects/stale-fence acceptance, no HOL, bounds respected, and exact metrics; DA-10 records the single PostgreSQL/process lane; Sentinel and Arbiter PASS all four packages before C-09 handoff.
 ## DA-03 — Startup and import readiness (`SBR-STARTUP.*`)
 <!-- ID: sbr-startup-readiness -->
-- [ ] `SBR-STARTUP.1` — Make `utils/__init__.py` response/token exports lazy and `tokens.py` construction side-effect-free; preserve the public export set, deterministic cheap estimation, lazy one-time exact encoder, metrics shape, and zero tiktoken/metrics-path mutation during server import.
-- [ ] `SBR-STARTUP.2` — Split Hybrid/Corta client setup from one explicit bounded remote-health probe; preserve one client, local-first durability, normal remote operations, cancellation, and zero network I/O in foreground setup.
+- [x] `SBR-STARTUP.1` — Make `utils/__init__.py` response/token exports lazy and `tokens.py` construction side-effect-free; preserve the public export set, deterministic cheap estimation, lazy one-time exact encoder, metrics shape, and zero tiktoken/metrics-path mutation during server import. | Proof: Council item 2d48d2b5 completed at revision 610f818b with 3/3 current receipts and no content drift.
+- [x] `SBR-STARTUP.2` — Split Hybrid/Corta client setup from one explicit bounded remote-health probe; preserve one client, local-first durability, normal remote operations, cancellation, and zero network I/O in foreground setup. | Proof: Council item 81007204 completed at revision 40fb285c with 3/3 current receipts and no content drift.
 - [ ] `SBR-STARTUP.3` — Add exact C-10 service states in `server.py#startup_ready`; require successful C-07 plus recovered/running+accepting C-09 before ready, while optional object-store/bridge health runs in tracked background work and shutdown ordering remains unchanged.
 - [ ] `SBR-STARTUP.GATE` — DA-10 records same-revision raw proof for warm/cold import p95 <=1.0/1.5 s, pre-tool/all-tools RSS <=64/80 MiB, warm/cold ready p95 <=1.5/2.5 s, optional-outage delta <=50 ms, exact C-10 states, local durable logging/tool listing under outage, zero import-time mutation/false-ready/teardown leak; Arbiter PASSes all three packages.
 ## DA-08 — Document durability (`SBR-DOC-DUR.*`)
