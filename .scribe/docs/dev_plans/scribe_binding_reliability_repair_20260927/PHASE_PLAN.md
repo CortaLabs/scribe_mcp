@@ -6,7 +6,7 @@ doc_name: phase_plan
 category: engineering
 status: ready
 version: '0.1'
-last_updated: 2026-09-27 23:55:11 UTC
+last_updated: 2026-09-28 01:11:45 UTC
 maintained_by: agent-20260927-221758-c9bdffec
 created_by: agent-20260927-061418-642053d3
 owners:
@@ -17,17 +17,17 @@ tags:
 - reliability
 - phase-plan
 - detail-pass
-summary: Correct remote source package verification and preserve downstream DA-09
-  behavioral ownership.
+summary: Separate migration-source review from the held DA-10 disposable apply/restore
+  lane.
 canonical_doc_type: phase_plan
 edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:30 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-27 23:55:11 UTC
+  last_edited_at: 2026-09-28 01:11:45 UTC
   last_edited_by: agent-20260927-221758-c9bdffec
   last_action: replace_text
-  work_item_id: 398c8030-60a1-4346-bc38-b9b7f535f67e
+  work_item_id: 5309eca6-4d91-477e-b0c8-7087b6d65338
 ---
 # Scribe Binding Reliability Release — Detail Assignment Plan
 
@@ -942,20 +942,15 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 
 - PYTHONPATH=src ./.venv/bin/python -c 'from pathlib import Path; p=Path("src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql"); assert p.is_file() and p.read_text(encoding="utf-8").strip()'
 - ./.venv/bin/pytest -q tests/test_bootstrap_postgres_script.py tests/integration/storage/test_postgres_schema_bootstrap_concurrency.py
-- ./.venv/bin/pytest -q tests/migration/mcp_v2/test_compatibility_matrix.py::test_migration_007_reliability_receipts_upgrade_and_restore tests/migration/mcp_v2/test_compatibility_matrix.py::test_migration_007_refuses_ambiguous_binding_backfill_without_ledger_write (after DA-10 owns the tests).
-- On an approved disposable target only, run separately and retain redacted receipts:
-  - agentkit-schema status --redacted-json
-  - agentkit-schema plan --write-plan --backup-profile auto --redacted-json
-  - agentkit-schema backup create --label sbr-007-preapply
-  - agentkit-schema apply --backup-profile auto --redacted-json
-  - agentkit-schema status --redacted-json
+- git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql
+- DA-10/SBR-SCHEMA.GATE, not this source package, owns the two migration compatibility nodes and the approved disposable-target AgentKit status -> plan -> backup -> apply -> status plus restore receipts.
 
 **Acceptance Criteria**
 
-- [ ] One migration file supplies C-05/C-06 plus readiness metadata; migration identity is 007 and ledger records exactly once.
-- [ ] Legacy bindings backfill to canonical project_key/generation 1 or fail atomically on missing/ambiguous identity.
-- [ ] Receipt constraints, uniqueness, indexes, and state-nullability enforce the frozen C-06 shape.
-- [ ] Second apply is a no-op with zero ledger drift; backup restore proves rollback compatibility without destructive down SQL.
+- [ ] One additive migration source supplies exact C-05/C-06 plus readiness metadata; identity is 007 and only the numbered runner may write the ledger.
+- [ ] Migration SQL encodes canonical project_key/generation-1 backfill and fail-closed missing/ambiguous identity without destructive SQL.
+- [ ] Receipt constraints, uniqueness, indexes, and state-nullability encode the frozen C-06 shape.
+- [ ] DA-10/SBR-SCHEMA.GATE retains mandatory first/second apply, zero-ledger-drift, ambiguous-backfill, backup, and restore proof before release.
 
 **Out of Scope**
 

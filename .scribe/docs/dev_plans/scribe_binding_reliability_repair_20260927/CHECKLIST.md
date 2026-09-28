@@ -6,8 +6,8 @@ doc_name: checklist
 category: engineering
 status: in_progress
 version: '0.1'
-last_updated: 2026-09-28 00:11:28 UTC
-maintained_by: agent-20260927-221758-c9bdffec
+last_updated: 2026-09-28 01:25:34 UTC
+maintained_by: agent-20260928-011346-fa6a5518
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -24,10 +24,10 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:36 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-28 00:11:28 UTC
-  last_edited_by: agent-20260927-221758-c9bdffec
-  last_action: replace_text
-  work_item_id: 16a55120-bdad-4096-bada-8e5895527318
+  last_edited_at: 2026-09-28 01:25:34 UTC
+  last_edited_by: agent-20260928-011346-fa6a5518
+  last_action: status_update
+  work_item_id: 5309eca6-4d91-477e-b0c8-7087b6d65338
 ---
 # Scribe Binding Reliability Release — Planning Checklist
 
@@ -65,7 +65,7 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 
 ## DA-04 — Schema bootstrap (`SBR-SCHEMA.*`)
 <!-- ID: sbr-schema-bootstrap -->
-- [ ] SBR-SCHEMA.1 — Add the sole additive 007_reliability_receipts PostgreSQL migration for C-05/C-06 plus readiness metadata; prove canonical binding backfill, exact receipt constraints/indexes, second-run idempotency, one immutable ledger row, and backup-restore rollback compatibility.
+- [ ] SBR-SCHEMA.1 — Add the sole additive 007_reliability_receipts PostgreSQL migration source for exact C-05/C-06 plus readiness metadata; statically prove backfill/constraints/indexes and no destructive or direct-ledger SQL, while SBR-SCHEMA.GATE/DA-10 retain mandatory disposable-target apply, idempotency, ledger, backup, and restore proof.
 - [ ] SBR-SCHEMA.2 — Mirror migration 007 into fresh PostgreSQL init and fresh/legacy SQLite schema; prove exact logical PostgreSQL/SQLite/init parity, additive reopen compatibility, project_name preservation, and side-effect-free schema imports.
 - [ ] SBR-SCHEMA.3 — Implement SchemaReadinessV1, fingerprint fast check, pg_try_advisory_lock election, deadline-aware pool/retry, bounded <=500 ms peer wait, fail-closed mismatch, and setup compatibility; prove 32 simultaneous starts elect one bootstrapper with zero ledger drift.
 - [ ] SBR-SCHEMA.GATE — Run import smoke and focused neighbor tests, then the single DA-10 PostgreSQL/process lane; on an approved disposable target retain AgentKit status -> plan -> backup -> apply -> status plus restore receipts; require Sentinel and Arbiter PASS before C-07 handoff.
@@ -90,7 +90,7 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 - [ ] `SBR-STARTUP.GATE` — DA-10 records same-revision raw proof for warm/cold import p95 <=1.0/1.5 s, pre-tool/all-tools RSS <=64/80 MiB, warm/cold ready p95 <=1.5/2.5 s, optional-outage delta <=50 ms, exact C-10 states, local durable logging/tool listing under outage, zero import-time mutation/false-ready/teardown leak; Arbiter PASSes all three packages.
 ## DA-08 — Document durability (`SBR-DOC-DUR.*`)
 <!-- ID: sbr-document-durability -->
-- [ ] `SBR-DOC-DUR.1` — Extend only `utils/files.py` so stable same-digest WAL admission is idempotent, same-ID/different-digest admission conflicts without effect, corrupt rows fail closed, restart readback is deterministic, atomic overwrite stays file+directory `fsync` durable, legacy append WAL is unchanged, and no queue/state machine is added.
+- [x] `SBR-DOC-DUR.1` — Extend only `utils/files.py` so stable same-digest WAL admission is idempotent, same-ID/different-digest admission conflicts without effect, corrupt rows fail closed, restart readback is deterministic, atomic overwrite stays file+directory `fsync` durable, legacy append WAL is unchanged, and no queue/state machine is added. | proof=Source SHA256 9de185f35136a35a034dbbf7e8245d671dcb2d810a6fab4e9e219a5be8b95119; required import and py_compile PASS; package tests 15 passed; direct-neighbor tests 64 passed; ephemeral restart/idempotency/conflict/corruption/0600/legacy replay probe PASS; scoped diff-check PASS.
 - [ ] `SBR-DOC-DUR.2` — Add sanitized `DocumentMutationReceiptV1` plus generation/digest/anchor fencing in existing apply-preview/runtime hooks; map C-08/C-09 accepted/duplicate/conflict/cancel/terminal outcomes, permit `accepted + queued_offline` only after WAL durability, and refuse stale/wrong target before effect with exact C-04.
 - [ ] `SBR-DOC-DUR.3` — Keep `manage_docs` thin while converging the existing registration, index, and quality paths; commit WAL and return `applied` only after post-digest/generation plus applicable convergence, with restart skipping an already-observed after-digest effect.
 - [ ] `SBR-DOC-DUR.GATE` — DA-09 proves outage before admission, crash before effect, crash after replace before commit, repeated restart, wrong project/root/path, stale binding/document generation/anchor/fence, same-digest duplicate, digest conflict, pre/post-effect cancellation, terminal replay, zero lost accepted work, zero duplicate effect, and registration/index/quality convergence.

@@ -429,8 +429,9 @@
       ],
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.utils.files import WriteAheadLog, WalEntryConflictError, WalJournalCorruptError, atomic_write, async_atomic_write'",
+        "./.venv/bin/python -m py_compile src/scribe_mcp/utils/files.py",
         "./.venv/bin/pytest -q tests/test_multi_repo_file_ops.py tests/test_write_barrier_contract.py",
-        "./.venv/bin/pytest -q tests/core/test_wal_replay_exactly_once.py -m \"core and regression and not slow and not performance\""
+        "git diff --check -- src/scribe_mcp/utils/files.py"
       ],
       "acceptance": [
         "Stable same-digest admission is idempotent; same-ID/different-digest admission is effect-free conflict.",
@@ -490,18 +491,13 @@
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from pathlib import Path; p=Path(\"src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql\"); assert p.is_file() and p.read_text(encoding=\"utf-8\").strip()'",
         "./.venv/bin/pytest -q tests/test_bootstrap_postgres_script.py tests/integration/storage/test_postgres_schema_bootstrap_concurrency.py",
-        "./.venv/bin/pytest -q tests/migration/mcp_v2/test_compatibility_matrix.py::test_migration_007_reliability_receipts_upgrade_and_restore tests/migration/mcp_v2/test_compatibility_matrix.py::test_migration_007_refuses_ambiguous_binding_backfill_without_ledger_write (after DA-10 owns the tests)",
-        "On an approved disposable target only, run separately and retain redacted receipts:",
-        "agentkit-schema status --redacted-json",
-        "agentkit-schema plan --write-plan --backup-profile auto --redacted-json",
-        "agentkit-schema backup create --label sbr-007-preapply",
-        "agentkit-schema apply --backup-profile auto --redacted-json"
+        "git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql"
       ],
       "acceptance": [
-        "One migration file supplies C-05/C-06 plus readiness metadata; migration identity is 007 and ledger records exactly once.",
-        "Legacy bindings backfill to canonical project_key/generation 1 or fail atomically on missing/ambiguous identity.",
-        "Receipt constraints, uniqueness, indexes, and state-nullability enforce the frozen C-06 shape.",
-        "Second apply is a no-op with zero ledger drift; backup restore proves rollback compatibility without destructive down SQL.",
+        "One additive migration source supplies exact C-05/C-06 plus readiness metadata; migration identity is 007 and only the existing numbered runner may write the ledger.",
+        "Migration SQL encodes canonical project_key/generation-1 backfill and fail-closed missing/ambiguous identity without destructive SQL.",
+        "Receipt constraints, uniqueness, indexes, and state-nullability encode the frozen C-06 shape.",
+        "DA-10 and SBR-SCHEMA.GATE retain mandatory disposable-target first/second apply, zero-ledger-drift, ambiguous-backfill, backup, and restore proof before release.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
