@@ -3289,6 +3289,57 @@
         "witness"
       ],
       "suggested_specialist": "mantis"
+    },
+    {
+      "package_id": "SBR-BIND-RECONNECT.1",
+      "title": "Persisted actor binding survives application-handle reconstruction",
+      "goal": "Add the focused Scribe regression proving that one verified project bind remains usable after reconstructing the router/application handle, without a second set_project call and without sibling-session interference. This is test-only unless the regression fails.",
+      "wave": 1,
+      "depends_on": [
+        "SBR-BIND-PERSIST.1",
+        "SBR-BIND-PERSIST.2",
+        "SBR-BIND-RESOLVE.1"
+      ],
+      "owned_files": [
+        "tests/shared/test_actor_scoped_session_binding.py"
+      ],
+      "forbidden_files": [
+        "src/**",
+        "src/council_mcp/**",
+        "council_mcp/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        "benchmarks/**",
+        "pyproject.toml",
+        "README.md",
+        "docs/**"
+      ],
+      "verification": [
+        "PYTHONPATH=src ./.venv/bin/python -m py_compile tests/shared/test_actor_scoped_session_binding.py",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/shared/test_actor_scoped_session_binding.py",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/shared/test_session_repo_root_poisoning.py::test_modern_application_handle_reconnect_reuses_only_its_persisted_session tests/test_set_project_integration.py::test_set_project_reports_authoritative_session_id tests/test_tool_metadata_contract.py::test_direct_tool_schemas_require_operational_inputs",
+        "git diff --check -- tests/shared/test_actor_scoped_session_binding.py"
+      ],
+      "acceptance": [
+        "The test binds once, reconstructs RouterContextManager/application identity from persisted storage, then read_recent, append_entry, and manage_docs resolve the same project without another set_project call.",
+        "The authoritative caller-session key and binding generation remain unchanged across reconstruction, while sibling application handles remain distinct and cannot read, clear, or mutate the reconstructed caller default.",
+        "The test uses the existing _Harness, _InMemoryBackend, and RouterContextManager; it introduces no alternate binding store, retry loop, or Council-specific identity semantics.",
+        "No production source change is permitted unless the new regression first fails and the work item is explicitly amended with the proven root-cause boundary."
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-BIND-RESOLVE.1",
+      "evidence_requirements": [
+        "behavioral",
+        "truth",
+        "quality"
+      ],
+      "gates": [
+        "crucible",
+        "witness",
+        "arbiter"
+      ],
+      "suggested_specialist": "crucible",
+      "status": "planned"
     }
   ]
 }
