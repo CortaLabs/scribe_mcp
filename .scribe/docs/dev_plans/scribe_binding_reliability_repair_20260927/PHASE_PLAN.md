@@ -6,8 +6,8 @@ doc_name: phase_plan
 category: engineering
 status: ready
 version: '0.1'
-last_updated: 2026-09-27 09:34:59 UTC
-maintained_by: agent-20260927-092010-e6a1f8db
+last_updated: 2026-09-27 23:55:11 UTC
+maintained_by: agent-20260927-221758-c9bdffec
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -17,17 +17,17 @@ tags:
 - reliability
 - phase-plan
 - detail-pass
-summary: Accepted SS-01 through SS-11 plan with 39 registered dependency-ordered implementation
-  packages and a four-package first wave.
+summary: Correct remote source package verification and preserve downstream DA-09
+  behavioral ownership.
 canonical_doc_type: phase_plan
 edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:30 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-27 09:34:59 UTC
-  last_edited_by: agent-20260927-092010-e6a1f8db
-  last_action: frontmatter_update
-  work_item_id: c641aae1-e200-4043-8b5e-679a2ec4f1b3
+  last_edited_at: 2026-09-27 23:55:11 UTC
+  last_edited_by: agent-20260927-221758-c9bdffec
+  last_action: replace_text
+  work_item_id: 398c8030-60a1-4346-bc38-b9b7f535f67e
 ---
 # Scribe Binding Reliability Release — Detail Assignment Plan
 
@@ -256,16 +256,16 @@ Sections are ordered by the accepted DAG layers. They are stable custody regions
 - Use existing authenticated backend transport for C-01; local process map is never authoritative binding truth.
 
 **Depends On**
-- `.1`, `.2`, and Atlas ownership amendment for the stale Remote no-HTTP test.
+- `.1`, `.2`, and accepted `SBR-ARCH-AMEND-REMOTE-08`.
 
 **Files to Read**
-- `storage/remote.py:41-77,189-216,470-507`; conflicting `tests/test_remote_backend.py:138-167,367-381` read-only.
+- `storage/remote.py:41-77,189-216,470-507`; stale `tests/test_remote_backend.py:138-167,367-381` remains read-only context.
 
 **Files to Modify**
 - `src/scribe_mcp/storage/remote.py#session_binding_transport`: strict decoder, cache typing, two methods only.
 
 **Files Forbidden**
-- The conflicting test until assigned; other Remote methods/routes; Council paths.
+- Tests; other Remote methods/routes; Council paths.
 
 **Public Contracts / Signatures**
 - Exact C-01 methods; payload/response uses the six record field names.
@@ -278,26 +278,27 @@ Sections are ordered by the accepted DAG layers. They are stable custody regions
 5. Do not broaden endpoints or alter unrelated session behavior.
 
 **Required Tests**
-- Atlas first assigns stale test replacement. DA-09 owns hermetic Remote parity; DA-10 owns live adapter proof.
+- This is a source-only package. `SBR-CORE-VAL.1` creates the swarm proof and `SBR-CORE-VAL.5` replaces stale Remote binding expectations; both remain mandatory before release. DA-10 owns live adapter proof.
 
 **Verification Commands**
 - `./.venv/bin/python -c 'from scribe_mcp.storage.remote import RemoteStorageBackend; print(RemoteStorageBackend.set_session_project.__name__)'`
-- After amendment: `./.venv/bin/pytest -s tests/test_remote_backend.py::TestSessionMethods::test_session_project_get_set -q`
-- `./.venv/bin/pytest -s tests/core/test_swarm_binding_reliability.py -q`
+- `./.venv/bin/python -m py_compile src/scribe_mcp/storage/remote.py`
+- `./.venv/bin/pytest -q tests/test_remote_backend.py::TestRemoteAuth tests/test_remote_backend.py::TestErrorHandling`
+- `git diff --check -- src/scribe_mcp/storage/remote.py`
 
 **Acceptance Criteria**
-- [ ] Exact record and backend generation/CAS/no-write outcomes.
-- [ ] Restart/reconnect cannot replace durable truth with empty cache.
+- [ ] Remote source strictly decodes the six-field record and delegates generation/CAS/no-write to authenticated durable transport.
+- [ ] Restart/reconnect cannot replace durable truth with empty local cache.
 - [ ] Same-label sessions partition only by session key.
-- [ ] Test ownership conflict resolved before Forge starts.
+- [ ] Missing swarm and stale Remote expectations remain explicitly owned by mandatory downstream `SBR-CORE-VAL.1` and `.5`.
 
 **Out of Scope**
-- Other session methods, new routes, resolution, deployment.
+- Other session methods, new routes, resolution, deployment, test mutation.
 
 **Handoff Notes**
-- Forge: STOP until amendment; then anchor only.
+- Forge: source anchor only.
 - Mantis: own decoder/transport regressions after reproducer.
-- Crucible: replace stale test only under amended custody.
+- Crucible: execute current source checks; full parity remains in CORE-VAL.1/.5.
 - Sentinel: review auth, raw-key exposure, malformed response.
 - Arbiter: reject client-local authoritative truth.
 

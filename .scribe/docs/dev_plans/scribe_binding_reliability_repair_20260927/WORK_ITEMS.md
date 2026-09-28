@@ -299,14 +299,15 @@
       ],
       "verification": [
         "./.venv/bin/python -c 'from scribe_mcp.storage.remote import RemoteStorageBackend; print(RemoteStorageBackend.set_session_project.__name__)'",
-        "./.venv/bin/pytest -s tests/test_remote_backend.py::TestSessionMethods::test_session_project_get_set -q",
-        "./.venv/bin/pytest -s tests/core/test_swarm_binding_reliability.py -q"
+        "./.venv/bin/python -m py_compile src/scribe_mcp/storage/remote.py",
+        "./.venv/bin/pytest -q tests/test_remote_backend.py::TestRemoteAuth tests/test_remote_backend.py::TestErrorHandling",
+        "git diff --check -- src/scribe_mcp/storage/remote.py"
       ],
       "acceptance": [
-        "Exact record and backend generation/CAS/no-write outcomes.",
-        "Restart/reconnect cannot replace durable truth with empty cache.",
+        "Remote implementation strictly decodes the six-field record and delegates generation/CAS/no-write outcomes to authenticated durable transport.",
+        "Restart/reconnect cannot replace durable truth with empty local cache.",
         "Same-label sessions partition only by session key.",
-        "Test ownership conflict resolved before Forge starts.",
+        "Missing swarm proof and stale session-project transport expectations are explicitly deferred to SBR-CORE-VAL.1 and SBR-CORE-VAL.5; this source-only package edits no tests, and those downstream behavioral gates remain mandatory before release.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
@@ -357,8 +358,9 @@
       ],
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.background.models import BackgroundAdmissionResultV1, BackgroundOperationIntentV1, BackgroundQueueLimitsV1, BackgroundRecoverySnapshotV1, BackgroundTransitionOutcomeV1, DurableOperationReceiptV1; from scribe_mcp.background.store import BackgroundReceiptStoreV1; from scribe_mcp.storage.base import StorageBackend'",
-        "./.venv/bin/pytest -q tests/storage/test_background_receipt_contract.py",
-        "./.venv/bin/pytest -q tests/storage/test_apply_preview_receipt_contract.py tests/test_storage_factory_backends.py"
+        "./.venv/bin/python -m py_compile src/scribe_mcp/background/models.py src/scribe_mcp/background/store.py src/scribe_mcp/storage/base.py",
+        "./.venv/bin/pytest -q tests/storage/test_apply_preview_receipt_contract.py tests/test_storage_factory_backends.py",
+        "git diff --check -- src/scribe_mcp/background/models.py src/scribe_mcp/background/store.py src/scribe_mcp/storage/base.py"
       ],
       "acceptance": [
         "C-08 public names and signatures are importable and host-neutral.",

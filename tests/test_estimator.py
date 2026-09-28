@@ -420,8 +420,8 @@ class TestBulkProcessingCalculator:
         assert result == 40  # 200 / 5 = 40
 
 
-class TestTokenEstimator:
-    """Test TokenEstimator class."""
+class TestApproximateTokenEstimator:
+    """Test the lightweight estimator used by response formatting."""
 
     def test_estimate_tokens_string(self):
         """Test token estimation for strings."""
@@ -484,7 +484,7 @@ class TestTokenEstimator:
 
 @pytest.mark.core
 @pytest.mark.regression
-class TestMetricsTokenEstimator:
+class TestTokenEstimator:
     """Permanent guards for lazy token metrics estimation and utility exports."""
 
     def test_construction_and_cheap_estimation_are_encoder_and_filesystem_free(

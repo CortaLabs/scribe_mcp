@@ -6,8 +6,8 @@ doc_name: checklist
 category: engineering
 status: in_progress
 version: '0.1'
-last_updated: 2026-09-27 09:35:06 UTC
-maintained_by: agent-20260927-092010-e6a1f8db
+last_updated: 2026-09-28 00:11:28 UTC
+maintained_by: agent-20260927-221758-c9bdffec
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -24,10 +24,10 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:36 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-27 09:35:06 UTC
-  last_edited_by: agent-20260927-092010-e6a1f8db
-  last_action: frontmatter_update
-  work_item_id: c641aae1-e200-4043-8b5e-679a2ec4f1b3
+  last_edited_at: 2026-09-28 00:11:28 UTC
+  last_edited_by: agent-20260927-221758-c9bdffec
+  last_action: replace_text
+  work_item_id: 16a55120-bdad-4096-bada-8e5895527318
 ---
 # Scribe Binding Reliability Release — Planning Checklist
 
@@ -44,12 +44,12 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 - [ ] `SBR-BIND-PERSIST.2` — Abstract C-01 signatures return records; unchanged rebind is zero-write with stable timestamp/generation; stale `expected_generation` fails before a write.
 - [ ] `SBR-BIND-PERSIST.3` — PostgreSQL atomically proves first/change/no-op/stale-CAS behavior and isolates concurrent same-label callers by session ID; exact persisted project identity is returned.
 - [ ] `SBR-BIND-PERSIST.4` — SQLite plus facade match PostgreSQL record, generation, zero-write, conflict, and concurrent same-label semantics without modifying schema ownership.
-- [ ] `SBR-BIND-PERSIST.5` — Remote delegates binding truth through durable transport, strictly decodes C-01, and passes parity/reconnect proof; BLOCKED until Atlas assigns the stale `tests/test_remote_backend.py` no-HTTP expectation.
+- [ ] `SBR-BIND-PERSIST.5` — Remote delegates binding truth through durable transport and strictly decodes C-01 in source; `SBR-CORE-VAL.1` and `.5` retain mandatory swarm/parity/reconnect proof and the stale `tests/test_remote_backend.py` expectation update before release.
 - [ ] `SBR-BIND-PERSIST.GATE` — DA-09 core swarm proves 32 concurrent same-label sessions, independent generations, zero cross-talk, and exact zero persistent writes on unchanged rebind; DA-10 reference lane proves live PostgreSQL/Remote parity; Sentinel and Arbiter PASS before SS-02 consumes C-01.
 ## DA-06 — Durable receipt store (`SBR-RECEIPT.*`)
 <!-- ID: sbr-receipt-store -->
 
-- [ ] `SBR-RECEIPT.1` — Add the host-neutral `background/models.py`, `BackgroundReceiptStoreV1`, and `StorageBackend#background_receipt_contract`; prove the exact C-08 signatures, closed receipt states, atomic-outcome types, version/fence invariants, fail-closed defaults, import smoke, and named DA-09 contract test.
+- [ ] `SBR-RECEIPT.1` — Add the host-neutral `background/models.py`, `BackgroundReceiptStoreV1`, and `StorageBackend#background_receipt_contract`; prove exact C-08 signatures, closed states, outcome/version/fence invariants, fail-closed defaults, import/compile and existing-neighbor checks; DA-09/Crucible still owns the mandatory named contract test before release.
 - [ ] `SBR-RECEIPT.2` — Add SQLite receipt operations plus the `SQLiteStorage` adapter; after DA-04 C-06 lands, prove atomic global/per-project item+byte admission, duplicate/digest-conflict zero mutation, deterministic claim/CAS/fencing, terminal release once, reopen recovery, import smoke, and the named SQLite/neighbor tests.
 - [ ] `SBR-RECEIPT.3` — Add the `PostgresStorage#background_receipt_storage` block; after DA-04 C-06 lands, prove transaction-safe capacity, idempotency races, `SKIP LOCKED` lease exclusivity, stale-fence/version rejection, restart recovery, normalized backend parity, import smoke, and the named PostgreSQL/neighbor tests.
 - [ ] `SBR-RECEIPT.REVIEWS` — Before SS-06 handoff, record Crucible behavioral evidence and mandatory Sentinel plus Arbiter PASS for all three packages; no completion claim before the C-06 schema dependency and DA-09/DA-10 proof owners land.

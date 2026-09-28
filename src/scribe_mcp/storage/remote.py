@@ -24,6 +24,7 @@ from scribe_mcp.storage.models import (
     CaseRegistryRecord,
     ProjectRecord,
     RepoScopeGrantRecord,
+    SessionBindingRecordV2,
     normalize_repo_root,
 )
 from scribe_mcp.state.agent_manager import SessionLeaseExpired
@@ -64,7 +65,7 @@ class RemoteStorageBackend(StorageBackend):
 
         # In-memory session cache (zero network for middleware)
         self._sessions: Dict[str, dict] = {}                # session_id -> session_data
-        self._session_projects: Dict[str, str] = {}         # session_id -> project_name
+        self._session_projects: Dict[str, SessionBindingRecordV2] = {}
         self._session_modes: Dict[str, str] = {}            # session_id -> mode
         self._transport_sessions: Dict[str, str] = {}       # transport_session_id -> session_id
         self._agent_sessions: Dict[str, Dict[str, str]] = {}  # identity_key -> allocation record
@@ -140,6 +141,31 @@ class RemoteStorageBackend(StorageBackend):
         )
         return message
 
+    @staticmethod
+    def _raise_mapped_remote_error(data: Dict[str, Any], operation: str) -> None:
+        """Raise public exceptions for recognized structured remote errors."""
+        error_text = str(data.get("error") or "")
+        error_type = str(data.get("type") or "")
+        if error_type == "StaleSession":
+            raise SessionLeaseExpired(
+                error_text or f"Remote stale session in operation {operation}",
+                reason=str(data.get("stale_session_reason") or "stale_session"),
+                agent_id=str(data.get("agent_id") or ""),
+                session_id=(
+                    str(data.get("session_id"))
+                    if data.get("session_id") is not None
+                    else None
+                ),
+            )
+        if error_type == "ForbiddenOperation":
+            raise PermissionError(
+                f"Remote operation {operation} forbidden: {error_text or 'operation denied'}"
+            )
+        if error_type == "ConflictError":
+            raise ConflictError(
+                error_text or f"Remote conflict in operation {operation}"
+            )
+
     async def _post_json(self, path: str, payload: Dict[str, Any], *, context: str) -> Dict[str, Any]:
         """POST JSON to the remote backend with consistent auth/error handling."""
         if not self._client:
@@ -169,6 +195,14 @@ class RemoteStorageBackend(StorageBackend):
                         message += f" {response_error}"
                     raise PermissionError(message)
                 raise RuntimeError(self._auth_failure_message(context, resp))
+            if resp.status_code >= 400:
+                try:
+                    error_data = resp.json()
+                except ValueError:
+                    error_data = None
+                if isinstance(error_data, dict) and "error" in error_data:
+                    operation = context.removeprefix("backend/")
+                    self._raise_mapped_remote_error(error_data, operation)
             resp.raise_for_status()
             try:
                 data = resp.json()
@@ -200,18 +234,7 @@ class RemoteStorageBackend(StorageBackend):
         )
         if "error" in data:
             error_text = str(data.get("error") or "")
-            error_type = str(data.get("type") or "")
-            if error_type == "StaleSession":
-                raise SessionLeaseExpired(
-                    error_text or f"Remote stale session in operation {operation}",
-                    reason=str(data.get("stale_session_reason") or "stale_session"),
-                    agent_id=str(data.get("agent_id") or ""),
-                    session_id=(str(data.get("session_id")) if data.get("session_id") is not None else None),
-                )
-            if error_type == "ForbiddenOperation":
-                raise PermissionError(
-                    f"Remote operation {operation} forbidden: {error_text or 'operation denied'}"
-                )
+            self._raise_mapped_remote_error(data, operation)
             raise RuntimeError(f"Remote operation {operation} failed: {error_text}")
         return data.get("result")
 
@@ -246,6 +269,37 @@ class RemoteStorageBackend(StorageBackend):
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValueError("expected timezone-aware datetime")
         return parsed
+
+    def _to_session_binding_record(self, data: Any) -> SessionBindingRecordV2:
+        if isinstance(data, SessionBindingRecordV2):
+            return data
+        if not isinstance(data, dict):
+            raise RemoteUnavailableError("Remote server returned malformed session binding")
+
+        field_names = {
+            "caller_session_key_hash",
+            "project_key",
+            "project_name",
+            "canonical_repo_root",
+            "binding_generation",
+            "updated_at",
+        }
+        if set(data) != field_names:
+            raise RemoteUnavailableError("Remote server returned malformed session binding")
+
+        try:
+            return SessionBindingRecordV2(
+                caller_session_key_hash=data["caller_session_key_hash"],
+                project_key=data["project_key"],
+                project_name=data["project_name"],
+                canonical_repo_root=data["canonical_repo_root"],
+                binding_generation=data["binding_generation"],
+                updated_at=self._parse_remote_datetime(data["updated_at"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RemoteUnavailableError(
+                "Remote server returned malformed session binding"
+            ) from exc
 
     @staticmethod
     def _serialize_apply_preview_receipt(record: ApplyPreviewReceiptRecord) -> Dict[str, Any]:
@@ -500,11 +554,30 @@ class RemoteStorageBackend(StorageBackend):
     async def get_session_mode(self, session_id: str) -> Optional[str]:
         return self._session_modes.get(session_id)
 
-    async def set_session_project(self, session_id: str, project_name: str) -> None:
-        self._session_projects[session_id] = project_name
+    async def set_session_project(
+        self,
+        session_id: str,
+        project_key: str,
+        expected_generation: int | None = None,
+    ) -> SessionBindingRecordV2:
+        result = await self._call(
+            "set_session_project",
+            session_id=session_id,
+            project_key=project_key,
+            expected_generation=expected_generation,
+        )
+        record = self._to_session_binding_record(result)
+        self._session_projects[session_id] = record
+        return record
 
-    async def get_session_project(self, session_id: str) -> Optional[str]:
-        return self._session_projects.get(session_id)
+    async def get_session_project(self, session_id: str) -> SessionBindingRecordV2 | None:
+        result = await self._call("get_session_project", session_id=session_id)
+        if result is None:
+            self._session_projects.pop(session_id, None)
+            return None
+        record = self._to_session_binding_record(result)
+        self._session_projects[session_id] = record
+        return record
 
     async def create_repo_scope_grant(
         self,
