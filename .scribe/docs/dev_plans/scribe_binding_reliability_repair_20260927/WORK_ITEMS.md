@@ -3353,7 +3353,8 @@
         "The test binds once, reconstructs RouterContextManager/application identity from persisted storage, then read_recent, append_entry, and manage_docs resolve the same project without another set_project call.",
         "The authoritative caller-session key and binding generation remain unchanged across reconstruction, while sibling application handles remain distinct and cannot read, clear, or mutate the reconstructed caller default.",
         "The test uses the existing _Harness, _InMemoryBackend, and RouterContextManager; it introduces no alternate binding store, retry loop, or Council-specific identity semantics.",
-        "No production source change is permitted unless the new regression first fails and the work item is explicitly amended with the proven root-cause boundary."
+        "No production source change is permitted unless the new regression first fails and the work item is explicitly amended with the proven root-cause boundary.",
+        "Replace the stale same-name compatibility assumption in tests/shared/test_actor_scoped_session_binding.py: two exact application or seat identities carrying the same persona label must retain distinct authoritative caller-session keys and persisted default bindings; an authorized explicit project target may select another project for that call but must neither collapse those defaults nor mutate a sibling seat. Demonstrate the regression failing against the current defect before authorizing any production-source amendment."
       ],
       "doc_ref": "PHASE_PLAN.md#SBR-BIND-RESOLVE.1",
       "evidence_requirements": [
