@@ -432,11 +432,16 @@ async def _seed_legacy_bindings(conn) -> None:
             ("normal", _M007_ROOT, "key-normal", "/fixture/normal.md"),
             ("dup", _M007_ROOT, "key-dup-a", "/fixture/dup-a.md"),
             ("dup", _M007_ROOT, "key-dup-b", "/fixture/dup-b.md"),
+            ("nokey", _M007_ROOT, None, "/fixture/nokey.md"),
+            ("foreign", "/fixture/other", "key-foreign", "/fixture/foreign.md"),
         ],
     )
     await conn.executemany(
         "INSERT INTO scribe_sessions (session_id, repo_root) VALUES ($1, $2);",
-        [(sid, _M007_ROOT) for sid in ("s-normal", "s-zero", "s-many", "s-unnamed", "s-new")],
+        [
+            (sid, _M007_ROOT)
+            for sid in ("s-normal", "s-zero", "s-many", "s-unnamed", "s-nokey", "s-new")
+        ],
     )
     await conn.executemany(
         "INSERT INTO session_projects (session_id, project_name) VALUES ($1, $2);",
@@ -445,7 +450,14 @@ async def _seed_legacy_bindings(conn) -> None:
             ("s-zero", "ghost"),
             ("s-many", "dup"),
             ("s-unnamed", None),
+            ("s-nokey", "nokey"),
         ],
+    )
+    await conn.execute(
+        "ALTER TABLE session_projects DROP CONSTRAINT session_projects_session_id_fkey;"
+    )
+    await conn.execute(
+        "INSERT INTO session_projects (session_id, project_name) VALUES ('s-missing', 'normal');"
     )
 
 
@@ -477,12 +489,22 @@ def test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing
 
             # The startup path: pending numbered migrations, 007 included.
             await schema_mod.ensure_schema_on_connection(conn=conn, schema_name="scribe")
-            assert await conn.fetchval(
-                "SELECT 1 FROM scribe_migrations WHERE name = $1;", _M007_NAME
+            ledger_before = dict(
+                await conn.fetchrow(
+                    "SELECT name, completed_at FROM scribe_migrations WHERE name = $1;",
+                    _M007_NAME,
+                )
             )
 
             bindings = await _bindings(conn)
-            assert set(bindings) == {"s-normal", "s-zero", "s-many", "s-unnamed"}
+            assert set(bindings) == {
+                "s-normal",
+                "s-zero",
+                "s-many",
+                "s-unnamed",
+                "s-nokey",
+                "s-missing",
+            }
             assert bindings["s-normal"] == {
                 "session_id": "s-normal",
                 "project_name": "normal",
@@ -496,6 +518,8 @@ def test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing
                 ("s-zero", "ghost", "project_identity_zero_matches"),
                 ("s-many", "dup", "project_identity_ambiguous"),
                 ("s-unnamed", None, "project_name_absent"),
+                ("s-nokey", "nokey", "project_key_missing"),
+                ("s-missing", "normal", "session_missing"),
             ):
                 row = bindings[session_id]
                 assert row["project_name"] == name
@@ -544,8 +568,205 @@ def test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing
             migration_sql = (schema_mod.MIGRATIONS_PATH / "007_reliability_receipts.sql").read_text(
                 encoding="utf-8"
             )
+            assert "COALESCE(NEW.binding_generation" not in migration_sql
+            assert "NEW.binding_generation := 1;" in migration_sql
+            assert "NEW.binding_generation := OLD.binding_generation;" in migration_sql
+            assert "project_key_mismatch" in migration_sql
             await conn.execute(migration_sql)
             assert await _bindings(conn) == bindings
+            await schema_mod.ensure_schema_on_connection(conn=conn, schema_name="scribe")
+            ledger_after = dict(
+                await conn.fetchrow(
+                    "SELECT name, completed_at FROM scribe_migrations WHERE name = $1;",
+                    _M007_NAME,
+                )
+            )
+            assert ledger_after == ledger_before
+            assert await conn.fetchval(
+                "SELECT COUNT(*) FROM scribe_migrations WHERE name = $1;", _M007_NAME
+            ) == 1
+
+            # Caller identity fields are assertions, never authority. Generation is
+            # owned by the trigger, and keys must agree with the canonical project
+            # selected through the session repository.
+            await conn.execute(
+                "UPDATE session_projects SET binding_generation = 999 "
+                "WHERE session_id = 's-normal';"
+            )
+            assert (await _bindings(conn))["s-normal"]["binding_generation"] == 1
+
+            await conn.execute(
+                """
+                UPDATE session_projects
+                SET project_name = 'normal', project_key = 'key-dup-a',
+                    binding_generation = 999, binding_state = 'resolved',
+                    binding_state_reason = NULL
+                WHERE session_id = 's-zero';
+                """
+            )
+            forged = (await _bindings(conn))["s-zero"]
+            assert forged["project_key"] is None
+            assert forged["binding_state"] == "unresolved"
+            assert forged["binding_state_reason"] == "project_key_mismatch"
+            assert forged["binding_generation"] == 2
+
+            await conn.execute(
+                """
+                UPDATE session_projects
+                SET project_name = 'foreign', project_key = 'key-foreign',
+                    binding_generation = 1000, binding_state = 'resolved',
+                    binding_state_reason = NULL
+                WHERE session_id = 's-many';
+                """
+            )
+            foreign = (await _bindings(conn))["s-many"]
+            assert foreign["project_key"] is None
+            assert foreign["binding_state"] == "unresolved"
+            assert foreign["binding_state_reason"] == "project_identity_zero_matches"
+            assert foreign["binding_generation"] == 2
+
+            await conn.execute(
+                """
+                UPDATE session_projects
+                SET project_key = NULL, binding_generation = 1000
+                WHERE session_id = 's-zero';
+                """
+            )
+            rebound = (await _bindings(conn))["s-zero"]
+            assert rebound["project_key"] == "key-normal"
+            assert rebound["binding_state"] == "resolved"
+            assert rebound["binding_state_reason"] is None
+            assert rebound["binding_generation"] == 3
+
+            await conn.execute(
+                """
+                INSERT INTO session_projects (
+                    session_id, project_name, project_key, binding_generation,
+                    binding_state, binding_state_reason
+                ) VALUES ('s-new', 'normal', 'key-normal', 777, 'resolved', NULL);
+                """
+            )
+            inserted = (await _bindings(conn))["s-new"]
+            assert inserted["project_key"] == "key-normal"
+            assert inserted["binding_state"] == "resolved"
+            assert inserted["binding_generation"] == 1
+
+            expected_columns = [
+                "operation_id",
+                "canonical_project_key",
+                "lane",
+                "idempotency_key",
+                "payload_digest",
+                "payload_bytes",
+                "durability_class",
+                "state",
+                "state_version",
+                "attempt_count",
+                "next_attempt_at",
+                "lease_owner",
+                "lease_expires_at",
+                "fencing_token",
+                "cancel_requested",
+                "result_ref",
+                "error_code",
+                "created_at",
+                "updated_at",
+            ]
+            columns = await conn.fetch(
+                """
+                SELECT column_name, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'scribe' AND table_name = 'background_receipts'
+                ORDER BY ordinal_position;
+                """
+            )
+            assert [row["column_name"] for row in columns] == expected_columns
+            nullable = {row["column_name"] for row in columns if row["is_nullable"] == "YES"}
+            assert nullable == {
+                "next_attempt_at",
+                "lease_owner",
+                "lease_expires_at",
+                "result_ref",
+                "error_code",
+            }
+
+            constraints = await conn.fetch(
+                """
+                SELECT c.contype, array_agg(a.attname ORDER BY u.ordinality) AS columns
+                FROM pg_constraint AS c
+                JOIN unnest(c.conkey) WITH ORDINALITY AS u(attnum, ordinality) ON TRUE
+                JOIN pg_attribute AS a
+                  ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+                WHERE c.conrelid = 'background_receipts'::regclass
+                  AND c.contype IN ('p', 'u')
+                GROUP BY c.oid, c.contype;
+                """
+            )
+            keyed_constraints = {
+                (
+                    row["contype"].decode()
+                    if isinstance(row["contype"], bytes)
+                    else row["contype"],
+                    tuple(row["columns"]),
+                )
+                for row in constraints
+            }
+            assert ("p", ("operation_id",)) in keyed_constraints
+            assert ("u", ("canonical_project_key", "idempotency_key")) in keyed_constraints
+
+            index_defs = {
+                row["indexname"]: row["indexdef"]
+                for row in await conn.fetch(
+                    """
+                    SELECT indexname, indexdef
+                    FROM pg_indexes
+                    WHERE schemaname = 'scribe' AND tablename = 'background_receipts';
+                    """
+                )
+            }
+            for name, tokens in {
+                "idx_background_receipts_claim": (
+                    "canonical_project_key", "lane", "state", "next_attempt_at", "created_at"
+                ),
+                "idx_background_receipts_state_lease": ("state", "lease_expires_at"),
+                "idx_background_receipts_project_state": (
+                    "canonical_project_key", "state", "payload_bytes"
+                ),
+            }.items():
+                assert name in index_defs
+                assert all(token in index_defs[name] for token in tokens)
+
+            invalid_rows = [
+                ("accepted-next", "accepted", 1, 0, "NOW()", None, None, None),
+                ("leased-owner", "leased", 3, 1, None, None, None, None),
+                ("retry-next", "retry_wait", 4, 1, None, None, None, None),
+                ("success-result", "succeeded", 4, 1, None, None, None, None),
+                ("failed-error", "failed_terminal", 4, 1, None, None, None, None),
+            ]
+            for operation_id, state, version, attempts, next_sql, owner, result, error in invalid_rows:
+                with pytest.raises(asyncpg.CheckViolationError):
+                    await conn.execute(
+                        f"""
+                        INSERT INTO background_receipts (
+                            operation_id, canonical_project_key, lane, idempotency_key,
+                            payload_digest, payload_bytes, durability_class, state,
+                            state_version, attempt_count, next_attempt_at, lease_owner,
+                            lease_expires_at, fencing_token, result_ref, error_code
+                        ) VALUES (
+                            $1, 'key-normal', 'durable', $1, repeat('0', 64), 0,
+                            'durable', $2, $3, $4, {next_sql or 'NULL'}, $5::TEXT,
+                            CASE WHEN $5::TEXT IS NULL THEN NULL ELSE NOW() END,
+                            $4, $6::TEXT, $7::TEXT
+                        );
+                        """,
+                        operation_id,
+                        state,
+                        version,
+                        attempts,
+                        owner,
+                        result,
+                        error,
+                    )
         finally:
             await conn.close()
 

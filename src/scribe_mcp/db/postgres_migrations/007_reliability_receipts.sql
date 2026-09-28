@@ -24,64 +24,74 @@ DECLARE
     match_count BIGINT;
     usable_key_count BIGINT;
     usable_key TEXT;
+    supplied_key TEXT;
 BEGIN
+    supplied_key := NULLIF(BTRIM(NEW.project_key), '');
+
     IF TG_OP = 'UPDATE' THEN
-        NEW.binding_generation := COALESCE(NEW.binding_generation, OLD.binding_generation, 1);
+        NEW.binding_generation := OLD.binding_generation;
+        IF NEW.binding_generation IS NULL THEN
+            NEW.binding_generation := 1;
+        END IF;
+
+        -- An unchanged key is merely the stored value when a legacy writer
+        -- rebinds by project_name. Derive the new canonical key in that case.
+        IF NEW.project_name IS DISTINCT FROM OLD.project_name
+           AND NEW.project_key IS NOT DISTINCT FROM OLD.project_key THEN
+            supplied_key := NULL;
+        END IF;
     ELSE
-        NEW.binding_generation := COALESCE(NEW.binding_generation, 1);
+        NEW.binding_generation := 1;
     END IF;
 
-    -- A writer that supplies the key owns the identity. On UPDATE the key only
-    -- counts as supplied when it changed or the project name did not.
-    IF NULLIF(BTRIM(NEW.project_key), '') IS NOT NULL
-       AND (
-           TG_OP = 'INSERT'
-           OR NEW.project_key IS DISTINCT FROM OLD.project_key
-           OR NEW.project_name IS NOT DISTINCT FROM OLD.project_name
-       ) THEN
-        NEW.binding_state := 'resolved';
-        NEW.binding_state_reason := NULL;
+    -- Classification always starts unresolved. A caller-supplied key is only
+    -- accepted after it agrees with the canonical project selected by the
+    -- session's repository and project name.
+    NEW.project_key := NULL;
+    NEW.binding_state := 'unresolved';
+
+    SELECT ss.repo_root, TRUE
+    INTO session_repo_root, session_found
+    FROM scribe_sessions AS ss
+    WHERE ss.session_id = NEW.session_id;
+
+    IF NEW.project_name IS NULL THEN
+        NEW.binding_state_reason := 'project_name_absent';
+    ELSIF session_found IS NOT TRUE THEN
+        NEW.binding_state_reason := 'session_missing';
     ELSE
-        NEW.project_key := NULL;
-        NEW.binding_state := 'unresolved';
+        SELECT
+            COUNT(*),
+            COUNT(*) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL),
+            MIN(p.project_key) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL)
+        INTO match_count, usable_key_count, usable_key
+        FROM scribe_projects AS p
+        WHERE p.repo_root = session_repo_root
+          AND p.name = NEW.project_name;
 
-        SELECT ss.repo_root, TRUE
-        INTO session_repo_root, session_found
-        FROM scribe_sessions AS ss
-        WHERE ss.session_id = NEW.session_id;
-
-        IF NEW.project_name IS NULL THEN
-            NEW.binding_state_reason := 'project_name_absent';
-        ELSIF session_found IS NOT TRUE THEN
-            NEW.binding_state_reason := 'session_missing';
+        IF match_count = 0 THEN
+            NEW.binding_state_reason := 'project_identity_zero_matches';
+        ELSIF match_count > 1 THEN
+            NEW.binding_state_reason := 'project_identity_ambiguous';
+        ELSIF usable_key_count <> 1 THEN
+            NEW.binding_state_reason := 'project_key_missing';
+        ELSIF supplied_key IS NOT NULL AND supplied_key IS DISTINCT FROM usable_key THEN
+            NEW.binding_state_reason := 'project_key_mismatch';
         ELSE
-            SELECT
-                COUNT(*),
-                COUNT(*) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL),
-                MIN(p.project_key) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL)
-            INTO match_count, usable_key_count, usable_key
-            FROM scribe_projects AS p
-            WHERE p.repo_root = session_repo_root
-              AND p.name = NEW.project_name;
-
-            IF match_count = 0 THEN
-                NEW.binding_state_reason := 'project_identity_zero_matches';
-            ELSIF match_count > 1 THEN
-                NEW.binding_state_reason := 'project_identity_ambiguous';
-            ELSIF usable_key_count <> 1 THEN
-                NEW.binding_state_reason := 'project_key_missing';
-            ELSE
-                NEW.project_key := usable_key;
-                NEW.binding_state := 'resolved';
-                NEW.binding_state_reason := NULL;
-            END IF;
+            NEW.project_key := usable_key;
+            NEW.binding_state := 'resolved';
+            NEW.binding_state_reason := NULL;
         END IF;
     END IF;
 
     IF TG_OP = 'UPDATE'
-       AND NEW.project_key IS DISTINCT FROM OLD.project_key
        AND OLD.binding_state IS NOT NULL
-       AND NEW.binding_generation = OLD.binding_generation THEN
+       AND (
+           NEW.project_name IS DISTINCT FROM OLD.project_name
+           OR NEW.project_key IS DISTINCT FROM OLD.project_key
+           OR NEW.binding_state IS DISTINCT FROM OLD.binding_state
+           OR NEW.binding_state_reason IS DISTINCT FROM OLD.binding_state_reason
+       ) THEN
         NEW.binding_generation := OLD.binding_generation + 1;
     END IF;
 

@@ -484,7 +484,7 @@
     {
       "package_id": "SBR-SCHEMA.1",
       "title": "Migration 007 reliability upgrade",
-      "goal": "Create the sole numbered PostgreSQL upgrade that materializes C-05, C-06, and the readiness record required by C-07; classify unresolved legacy bindings without guessing or refusing server startup; and preserve runtime receipt behavior.",
+      "goal": "Create the sole numbered PostgreSQL upgrade that materializes C-05, C-06, and the readiness record required by C-07; classify unresolved legacy bindings without guessing or refusing server startup; validate every supplied project identity against canonical repository truth; and preserve runtime receipt behavior.",
       "owned_files": [
         "src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql",
         "tests/test_database_migration.py"
@@ -501,6 +501,7 @@
         "Exactly-one legacy project identity resolves to its canonical project_key at generation 1; zero-match, ambiguous, absent-name, missing-session, or missing-key legacy rows remain preserved but unresolved with NULL project_key and a stable reason code, so no project is guessed and one bad row cannot refuse server startup.",
         "Receipt constraints, uniqueness, indexes, and state-nullability encode the frozen C-06 shape.",
         "The binding-state invariant is enforced on backfill and later INSERT/UPDATE writes; unresolved rows cannot become project-keyed writes, a valid rebind resolves and advances generation, and replaying 007 is idempotent.",
+        "Caller-supplied project_key never self-authorizes a resolved binding: the trigger derives or validates it against the session repository plus canonical project identity; binding_generation is trigger-owned and monotonic, and disposable PostgreSQL negatives cover forged resolved tuples, caller generation jumps, session_missing, project_key_missing, and the frozen background_receipts columns/constraints/indexes/state-nullability contract.",
         "DA-10 and SBR-SCHEMA.GATE retain mandatory disposable-target first/second apply, zero-ledger-drift, row-count preservation, ambiguous/zero-match classification, backup, and restore proof before release.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
@@ -538,6 +539,7 @@
         "Ledger identity is exactly sql:007_reliability_receipts.sql in scribe_migrations.",
         "session_projects retains session_id PRIMARY KEY and project_name; adds nullable project_key TEXT, binding_generation BIGINT with generation >= 1, binding_state resolved|unresolved, and binding_state_reason.",
         "A resolved binding has a nonempty project_key and no reason; an unresolved binding has NULL project_key and a nonempty stable reason. One trigger owns this classification for migration backfill and later writes.",
+        "The trigger validates or derives every supplied project_key against scribe_sessions.repo_root plus scribe_projects; callers cannot select a foreign key or choose binding_generation, which advances monotonically from stored truth.",
         "background_receipts persists exactly: operation_id, canonical_project_key, lane, idempotency_key, payload_digest, payload_bytes, durability_class, state, state_version, attempt_count, next_attempt_at, lease_owner, lease_expires_at, fencing_token, cancel_requested, result_ref, error_code, created_at, updated_at.",
         "background_receipts has PRIMARY KEY (operation_id) and UNIQUE (canonical_project_key, idempotency_key).",
         "scribe_schema_readiness is a singleton readiness record with schema_fingerprint, migration_version, and updated_at; it is coordination metadata, never the migration ledger."
@@ -3380,6 +3382,49 @@
         "The SS-01 migration input and SBR-SCHEMA.1 sections say exactly-one legacy identity resolves while zero/many/absent-name/missing-session/missing-key cases remain preserved, unresolved, reason-coded, keyless, and unusable without refusing server startup.",
         "The SBR-SCHEMA.1 required tests name the committed tests/test_database_migration.py regressions and retain disposable first/second-apply, row-count, zero-ledger-drift, backup, and restore proof as downstream release gates.",
         "The delta changes no frozen Council boundary, background-receipt contract, release version, unrelated phase, source, or test file.",
+        "The managed PHASE_PLAN passes Scribe quality_check after the surgical update."
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-SCHEMA.1",
+      "evidence_requirements": [],
+      "gates": [],
+      "suggested_specialist": "blueprint",
+      "status": "planned"
+    },
+    {
+      "package_id": "SBR-ARCH-AMEND-SCHEMA-SCOPE-15",
+      "title": "Align migration 007 ownership and non-destructive trigger DDL",
+      "goal": "Repair the remaining SBR-SCHEMA.1 PHASE_PLAN scope contradictions found by Witness: the package owns its focused PostgreSQL regressions, and idempotent replacement of the named classification trigger is distinct from forbidden destructive table/data DROP behavior.",
+      "wave": 4,
+      "depends_on": [
+        "SBR-ARCH-AMEND-SCHEMA-STARTUP-14",
+        "SBR-SCHEMA-007-STARTUP-SAFE"
+      ],
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "benchmarks/**",
+        "pyproject.toml",
+        "README.md",
+        "docs/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/ARCHITECTURE_GUIDE.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/CHECKLIST.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/WORK_ITEMS.md"
+      ],
+      "verification": [
+        "rg -n 'tests/test_database_migration.py|DROP TRIGGER IF EXISTS|destructive table|destructive data' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "! rg -n 'author only migration 007|test-file edits|SQL contains no DROP' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "git diff --check -- .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "SBR-SCHEMA.1 owned-files, out-of-scope, and handoff language explicitly permits only migration 007 plus tests/test_database_migration.py and forbids every unrelated source/test path.",
+        "The no-destructive-DDL invariant forbids table/schema/data DROP, TRUNCATE, destructive rename, and data deletion while explicitly allowing idempotent DROP TRIGGER IF EXISTS plus recreation of the single named classification trigger.",
+        "The delta preserves the startup-safe classification, C-05/C-06, DA-10 release gates, generic Scribe-only boundary, and every unrelated phase.",
         "The managed PHASE_PLAN passes Scribe quality_check after the surgical update."
       ],
       "doc_ref": "PHASE_PLAN.md#SBR-SCHEMA.1",

@@ -6,8 +6,8 @@ doc_name: phase_plan
 category: engineering
 status: ready
 version: '0.1'
-last_updated: 2026-09-28 03:18:32 UTC
-maintained_by: agent-20260928-031001-a8f2997e
+last_updated: 2026-09-28 04:01:15 UTC
+maintained_by: agent-20260928-035826-9a2ad4bc
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -23,10 +23,10 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:30 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-28 03:18:32 UTC
-  last_edited_by: agent-20260928-031001-a8f2997e
+  last_edited_at: 2026-09-28 04:01:15 UTC
+  last_edited_by: agent-20260928-035826-9a2ad4bc
   last_action: apply_patch
-  work_item_id: 79214097-cf6a-45d7-be29-5bf95e282e39
+  work_item_id: fc313529-f9ca-4a46-a18c-fb3427a6694f
 ---
 # Scribe Binding Reliability Release — Detail Assignment Plan
 
@@ -877,11 +877,11 @@ Frozen surfaces: C-01 is the only input. C-02 resolves `ProjectTargetV1` by proj
 ### APPROACH_SUMMARY
 
 - Goal: materialize frozen C-05/C-06 in one numbered reliability migration plus fresh/legacy baseline parity, then expose frozen C-07 as a bounded PostgreSQL readiness result.
-- Files to modify: exactly the six SS-04 paths, partitioned across SBR-SCHEMA.1 through .3.
-- Files forbidden: every unlisted source/test/config/generated/Council path; especially binding-store behavior owned by DA-01, receipt-store behavior owned by DA-06, startup orchestration owned by DA-03, and validation files owned by DA-09/DA-10.
-- Out of scope: receipt CRUD/state transitions, request routing, queue scheduling, Council/provider semantics, production apply/deploy, release/version surfaces, and test-file edits.
+- Files to modify: exactly the six SS-04 source paths partitioned across SBR-SCHEMA.1 through .3, plus only the focused test paths explicitly owned by an individual package.
+- Files forbidden: every unlisted source/test/config/generated/Council path; especially binding-store behavior owned by DA-01, receipt-store behavior owned by DA-06, startup orchestration owned by DA-03, and validation files owned by DA-09/DA-10 except where an individual package explicitly owns a focused regression.
+- Out of scope: receipt CRUD/state transitions, request routing, queue scheduling, Council/provider semantics, production apply/deploy, release/version surfaces, and every test change not explicitly owned by an individual package.
 - Verification plan: migration contract and restore compatibility first; PostgreSQL/SQLite/fresh-init parity second; readiness fingerprint/election/deadline proof third. The only schema mutation lane is AgentKit status -> plan -> apply against an approved disposable target, never ad hoc SQL.
-- Readiness: all three packages are READY because C-05 and C-06 are frozen. Behavioral completion remains dependent on DA-09/DA-10-owned tests and mandatory Sentinel plus Arbiter review.
+- Readiness: all three packages are READY because C-05 and C-06 are frozen. Behavioral completion remains dependent on each package's owned focused regressions, DA-09/DA-10-owned release validation, and mandatory Sentinel plus Arbiter review.
 
 Frozen surfaces: C-05 adds project_key and binding_generation to session_projects, preserves project_name for display/compatibility and session_id as the unique caller-session authority, and backfills live bindings to generation 1. C-06 materializes the exact durable receipt columns and unique (canonical_project_key, idempotency_key) identity. C-07 is ensure_schema_ready(deadline_ms: int) -> SchemaReadinessV1 with schema_fingerprint, migration_version, bootstrap_role, wait_ms, ready, error_code, and retryable; one elected bootstrapper may write DDL, peers wait within a bound, and mismatches fail closed.
 
@@ -907,11 +907,14 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 **Files to Modify**
 
 - src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql — new, additive migration only.
+- tests/test_database_migration.py — only the two focused PostgreSQL regressions named under Required Tests for migration 007 classification, legacy-writer compatibility, generation advancement, and idempotent replay.
 
 **Files Forbidden**
 
 - The other five SS-04 paths until their packages run.
-- Every storage behavior, scheduler, server, MCP, Council, config, version, generated, and test path.
+- Every source path other than src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql.
+- Every test path other than tests/test_database_migration.py, and every change in that file outside the two focused migration 007 regressions named under Required Tests.
+- Every storage behavior, scheduler, server, MCP, Council, config, version, and generated path.
 
 **Public Contracts / Signatures**
 
@@ -927,7 +930,7 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 2. Backfilled bindings receive `binding_generation=1`. The migration-owned classification trigger governs both backfill and later legacy-name writes: resolved rows require a non-empty `project_key` and no reason; unresolved rows require a NULL key and stable reason. Rebinding may resolve or demote a row and advances its generation. Agent/persona labels never participate in keys, uniqueness, or classification.
 3. background_receipts uses the closed DA-06 state domain accepted, ready, leased, retry_wait, succeeded, failed_terminal, cancelled; state_version starts >=1, attempt_count/payload_bytes/fencing_token are non-negative, payload_digest is lowercase SHA-256, and lease/result/error nullability matches the state machine.
 4. Create claim/recovery/capacity indexes for (canonical_project_key, lane, state, next_attempt_at, created_at), (state, lease_expires_at), and canonical project/state accounting. Do not duplicate apply-preview tables or introduce host/Council fields.
-5. The SQL contains no DROP, TRUNCATE, destructive rename, data deletion, direct migration-ledger write, or down migration. The existing numbered runner records completion only after the whole migration succeeds.
+5. The migration forbids destructive table, schema, or data DROP; TRUNCATE; destructive rename; and data deletion. The sole DROP allowlist is idempotent `DROP TRIGGER IF EXISTS session_projects_classify_binding ON session_projects`, immediately followed by recreation of that single named classification trigger; no other DROP is permitted. The SQL contains no direct migration-ledger write or down migration. The existing numbered runner records completion only after the whole migration succeeds.
 6. Rollback is backup restore on an approved disposable target, not reverse DDL. A pre-apply AgentKit backup plus restored ledger/shape readback is required before release approval; inability to restore is a hard stop.
 7. Production/live apply is outside Forge authority. The controlled migration gate is exact and ordered: agentkit-schema status, agentkit-schema plan --write-plan, agentkit-schema backup create, agentkit-schema apply, then agentkit-schema status. No psql or direct SQL execution is accepted as proof.
 
@@ -943,7 +946,7 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 - PYTHONPATH=src ./.venv/bin/python -c 'from pathlib import Path; p=Path("src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql"); assert p.is_file() and p.read_text(encoding="utf-8").strip()'
 - PYTHONPATH=src ./.venv/bin/pytest -q tests/test_database_migration.py::test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing_startup tests/test_database_migration.py::test_migration_007_keeps_the_legacy_postgres_binding_writer_working
 - ./.venv/bin/pytest -q tests/test_bootstrap_postgres_script.py tests/integration/storage/test_postgres_schema_bootstrap_concurrency.py
-- git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql
+- git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql tests/test_database_migration.py
 - DA-10/SBR-SCHEMA.GATE, not this source package, owns the approved disposable-target first/second-apply, row-count, zero-ledger-drift, AgentKit status -> plan -> backup -> apply -> status, and restore receipts.
 
 **Acceptance Criteria**
@@ -955,11 +958,11 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 
 **Out of Scope**
 
-- Baseline schema copies, runtime bootstrap/election, receipt CRUD, live/prod mutation, deployment, and test-file edits.
+- Baseline schema copies, runtime bootstrap/election, receipt CRUD, live/prod mutation, deployment, every unrelated source/test path, and every tests/test_database_migration.py change outside the two focused migration 007 regressions named under Required Tests.
 
 **Handoff Notes**
 
-- Forge: author only migration 007; stop if any other path or destructive SQL appears necessary.
+- Forge: modify only migration 007 and the two focused tests/test_database_migration.py regressions named under Required Tests; stop if any unrelated source/test path or destructive table, schema, or data DROP, TRUNCATE, destructive rename, or data deletion appears necessary. Idempotent `DROP TRIGGER IF EXISTS session_projects_classify_binding ON session_projects` plus immediate recreation of that single named trigger is required trigger replacement, not destructive table/data DDL.
 - Crucible: run the two committed `tests/test_database_migration.py` regressions and own the downstream approved-disposable-target first/second-apply, row-count, zero-ledger-drift, backup, restore-ledger, and schema-shape evidence.
 - Sentinel: mandatory review of backfill isolation, digest/idempotency constraints, stored references, denial-of-service indexes, and no-secret redacted receipts.
 - Arbiter: mandatory review for one migration authority, additive compatibility, exact C-05/C-06 parity, and zero ledger drift.
