@@ -484,20 +484,24 @@
     {
       "package_id": "SBR-SCHEMA.1",
       "title": "Migration 007 reliability upgrade",
-      "goal": "Create the sole numbered PostgreSQL upgrade that materializes C-05, C-06, and the readiness record required by C-07 without changing runtime receipt behavior.",
+      "goal": "Create the sole numbered PostgreSQL upgrade that materializes C-05, C-06, and the readiness record required by C-07; classify unresolved legacy bindings without guessing or refusing server startup; and preserve runtime receipt behavior.",
       "owned_files": [
-        "src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql"
+        "src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql",
+        "tests/test_database_migration.py"
       ],
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from pathlib import Path; p=Path(\"src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql\"); assert p.is_file() and p.read_text(encoding=\"utf-8\").strip()'",
-        "./.venv/bin/pytest -q tests/test_bootstrap_postgres_script.py tests/integration/storage/test_postgres_schema_bootstrap_concurrency.py",
-        "git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql"
+        "PYTHONPATH=src ./.venv/bin/python -m py_compile tests/test_database_migration.py",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_database_migration.py",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/integration/storage/test_postgres_schema_bootstrap_concurrency.py tests/storage/test_session_storage_invariants.py",
+        "git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql tests/test_database_migration.py"
       ],
       "acceptance": [
-        "One additive migration source supplies exact C-05/C-06 plus readiness metadata; migration identity is 007 and only the existing numbered runner may write the ledger.",
-        "Migration SQL encodes canonical project_key/generation-1 backfill and fail-closed missing/ambiguous identity without destructive SQL.",
+        "One additive migration source supplies exact C-05/C-06 plus readiness metadata; migration identity is 007, only the existing numbered runner writes the ledger, and a fresh stdio server reaches MCP initialize after applying it.",
+        "Exactly-one legacy project identity resolves to its canonical project_key at generation 1; zero-match, ambiguous, absent-name, missing-session, or missing-key legacy rows remain preserved but unresolved with NULL project_key and a stable reason code, so no project is guessed and one bad row cannot refuse server startup.",
         "Receipt constraints, uniqueness, indexes, and state-nullability encode the frozen C-06 shape.",
-        "DA-10 and SBR-SCHEMA.GATE retain mandatory disposable-target first/second apply, zero-ledger-drift, ambiguous-backfill, backup, and restore proof before release.",
+        "The binding-state invariant is enforced on backfill and later INSERT/UPDATE writes; unresolved rows cannot become project-keyed writes, a valid rebind resolves and advances generation, and replaying 007 is idempotent.",
+        "DA-10 and SBR-SCHEMA.GATE retain mandatory disposable-target first/second apply, zero-ledger-drift, row-count preservation, ambiguous/zero-match classification, backup, and restore proof before release.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
@@ -523,17 +527,17 @@
         ".council/**",
         ".claude/**",
         ".codex/**",
-        "tests/**",
         "benchmarks/**",
         "pyproject.toml",
         "README.md",
         "docs/**"
       ],
       "wave": 4,
-      "suggested_specialist": "forge",
+      "suggested_specialist": "mantis",
       "contracts": [
         "Ledger identity is exactly sql:007_reliability_receipts.sql in scribe_migrations.",
-        "session_projects retains session_id PRIMARY KEY and project_name; adds project_key TEXT and binding_generation BIGINT with generation >= 1.",
+        "session_projects retains session_id PRIMARY KEY and project_name; adds nullable project_key TEXT, binding_generation BIGINT with generation >= 1, binding_state resolved|unresolved, and binding_state_reason.",
+        "A resolved binding has a nonempty project_key and no reason; an unresolved binding has NULL project_key and a nonempty stable reason. One trigger owns this classification for migration backfill and later writes.",
         "background_receipts persists exactly: operation_id, canonical_project_key, lane, idempotency_key, payload_digest, payload_bytes, durability_class, state, state_version, attempt_count, next_attempt_at, lease_owner, lease_expires_at, fencing_token, cancel_requested, result_ref, error_code, created_at, updated_at.",
         "background_receipts has PRIMARY KEY (operation_id) and UNIQUE (canonical_project_key, idempotency_key).",
         "scribe_schema_readiness is a singleton readiness record with schema_fingerprint, migration_version, and updated_at; it is coordination metadata, never the migration ledger."
@@ -3339,6 +3343,49 @@
         "arbiter"
       ],
       "suggested_specialist": "crucible",
+      "status": "planned"
+    },
+    {
+      "package_id": "SBR-ARCH-AMEND-SCHEMA-STARTUP-14",
+      "title": "Align migration 007 plan with startup-safe legacy classification",
+      "goal": "Repair only the stale PHASE_PLAN migration-007 language disproved by live startup: unresolved legacy bindings must remain preserved, reason-coded, keyless, and unusable without aborting Scribe startup or guessing a project.",
+      "wave": 4,
+      "depends_on": [
+        "SBR-PLAN-SYNTH-12",
+        "SBR-SCHEMA-007-STARTUP-SAFE"
+      ],
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "benchmarks/**",
+        "pyproject.toml",
+        "README.md",
+        "docs/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/ARCHITECTURE_GUIDE.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/CHECKLIST.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/WORK_ITEMS.md"
+      ],
+      "verification": [
+        "rg -n 'project_identity_zero_matches|project_identity_ambiguous|test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing_startup|test_migration_007_keeps_the_legacy_postgres_binding_writer_working' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "! rg -n 'refuses_ambiguous_binding_backfill_without_ledger_write|missing/ambiguous project identity fails readiness closed' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "git diff --check -- .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "The SS-01 migration input and SBR-SCHEMA.1 sections say exactly-one legacy identity resolves while zero/many/absent-name/missing-session/missing-key cases remain preserved, unresolved, reason-coded, keyless, and unusable without refusing server startup.",
+        "The SBR-SCHEMA.1 required tests name the committed tests/test_database_migration.py regressions and retain disposable first/second-apply, row-count, zero-ledger-drift, backup, and restore proof as downstream release gates.",
+        "The delta changes no frozen Council boundary, background-receipt contract, release version, unrelated phase, source, or test file.",
+        "The managed PHASE_PLAN passes Scribe quality_check after the surgical update."
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-SCHEMA.1",
+      "evidence_requirements": [],
+      "gates": [],
+      "suggested_specialist": "blueprint",
       "status": "planned"
     }
   ]

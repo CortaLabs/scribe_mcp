@@ -6,8 +6,8 @@ doc_name: phase_plan
 category: engineering
 status: ready
 version: '0.1'
-last_updated: 2026-09-28 01:11:45 UTC
-maintained_by: agent-20260927-221758-c9bdffec
+last_updated: 2026-09-28 03:18:32 UTC
+maintained_by: agent-20260928-031001-a8f2997e
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -17,17 +17,16 @@ tags:
 - reliability
 - phase-plan
 - detail-pass
-summary: Separate migration-source review from the held DA-10 disposable apply/restore
-  lane.
+summary: Align migration 007 planning contract with startup-safe legacy binding classification.
 canonical_doc_type: phase_plan
 edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:30 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-28 01:11:45 UTC
-  last_edited_by: agent-20260927-221758-c9bdffec
-  last_action: replace_text
-  work_item_id: 5309eca6-4d91-477e-b0c8-7087b6d65338
+  last_edited_at: 2026-09-28 03:18:32 UTC
+  last_edited_by: agent-20260928-031001-a8f2997e
+  last_action: apply_patch
+  work_item_id: 79214097-cf6a-45d7-be29-5bf95e282e39
 ---
 # Scribe Binding Reliability Release — Detail Assignment Plan
 
@@ -72,7 +71,7 @@ Sections are ordered by the accepted DAG layers. They are stable custody regions
 
 **Migration Inputs**
 - Migration 007 adds `project_key` and `binding_generation` to `session_projects`, preserves `project_name` for display/compatibility and `session_id` as unique authority, and backfills live rows to generation 1.
-- Backfill resolves canonical repository root plus project name; missing/ambiguous project identity fails readiness closed. This package emits no DDL.
+- Backfill resolves a legacy row only when its session identity, canonical repository root, and project name identify exactly one project. Zero matches, multiple matches, absent project name, missing session identity, or missing resolved project key remain preserved with `project_key=NULL`, `binding_state='unresolved'`, and stable reasons `project_identity_zero_matches`, `project_identity_ambiguous`, `project_name_absent`, `session_missing`, or `project_key_missing`; they cannot drive keyed writes, do not abort server startup, and never guess a project. This package emits no DDL.
 
 **Implementation Constraints**
 1. Reuse the model module/validation helpers; no parallel model.
@@ -924,8 +923,8 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 
 **Implementation Constraints**
 
-1. Migration 007 is additive and idempotent. Add C-05 columns in a nullable/backfill/validate/finalize sequence; preserve project_name and all existing session_id values. Resolve project_key by session_projects.session_id -> scribe_sessions.repo_root plus project_name -> the single matching scribe_projects row. Missing or ambiguous identity raises and leaves the migration ledger unadvanced.
-2. Backfilled live bindings receive binding_generation=1. New/updated bound rows require non-empty project_key and generation >= 1. Agent/persona labels never participate in keys, uniqueness, or backfill.
+1. Migration 007 is additive and idempotent. Add C-05 columns in a nullable/backfill/validate/finalize sequence and preserve every legacy row, `project_name`, and `session_id`. Resolve `project_key` only when `session_projects.session_id -> scribe_sessions.repo_root` plus `project_name` identifies exactly one `scribe_projects` row. Zero matches, multiple matches, absent project name, missing session identity, or missing resolved project key remain `binding_state='unresolved'`, retain the stable reason `project_identity_zero_matches`, `project_identity_ambiguous`, `project_name_absent`, `session_missing`, or `project_key_missing`, keep `project_key=NULL`, cannot drive keyed writes, and do not abort migration or server startup.
+2. Backfilled bindings receive `binding_generation=1`. The migration-owned classification trigger governs both backfill and later legacy-name writes: resolved rows require a non-empty `project_key` and no reason; unresolved rows require a NULL key and stable reason. Rebinding may resolve or demote a row and advances its generation. Agent/persona labels never participate in keys, uniqueness, or classification.
 3. background_receipts uses the closed DA-06 state domain accepted, ready, leased, retry_wait, succeeded, failed_terminal, cancelled; state_version starts >=1, attempt_count/payload_bytes/fencing_token are non-negative, payload_digest is lowercase SHA-256, and lease/result/error nullability matches the state machine.
 4. Create claim/recovery/capacity indexes for (canonical_project_key, lane, state, next_attempt_at, created_at), (state, lease_expires_at), and canonical project/state accounting. Do not duplicate apply-preview tables or introduce host/Council fields.
 5. The SQL contains no DROP, TRUNCATE, destructive rename, data deletion, direct migration-ledger write, or down migration. The existing numbered runner records completion only after the whole migration succeeds.
@@ -934,23 +933,25 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 
 **Required Tests**
 
-- DA-10/Crucible adds tests/migration/mcp_v2/test_compatibility_matrix.py::test_migration_007_reliability_receipts_upgrade_and_restore proving legacy upgrade, C-05 backfill, C-06 constraints/indexes, one immutable ledger row, second-run idempotency, pre-007 reader compatibility through project_name, and restored pre-apply shape/ledger on a disposable target.
-- DA-10/Crucible adds tests/migration/mcp_v2/test_compatibility_matrix.py::test_migration_007_refuses_ambiguous_binding_backfill_without_ledger_write.
+- Committed regression `tests/test_database_migration.py::test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing_startup` proves exactly-one resolution; preserved, reason-coded, keyless zero/many/absent-name classifications; inability to drive keyed writes; successful ledger advancement; and idempotent 007 SQL replay.
+- Committed regression `tests/test_database_migration.py::test_migration_007_keeps_the_legacy_postgres_binding_writer_working` proves later legacy-name writes remain compatible, the trigger owns reclassification, rebind can resolve or demote a binding, and generation advances.
+- DA-10/Crucible retains `tests/migration/mcp_v2/test_compatibility_matrix.py::test_migration_007_reliability_receipts_upgrade_and_restore` as the downstream approved-disposable-target release gate proving first apply, preserved row count, C-05/C-06 constraints and indexes, one immutable ledger row with zero drift after second apply, pre-007 reader compatibility through `project_name`, pre-apply backup, and restored shape/ledger.
 - Existing neighbors tests/test_bootstrap_postgres_script.py and tests/integration/storage/test_postgres_schema_bootstrap_concurrency.py remain green.
 
 **Verification Commands**
 
 - PYTHONPATH=src ./.venv/bin/python -c 'from pathlib import Path; p=Path("src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql"); assert p.is_file() and p.read_text(encoding="utf-8").strip()'
+- PYTHONPATH=src ./.venv/bin/pytest -q tests/test_database_migration.py::test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing_startup tests/test_database_migration.py::test_migration_007_keeps_the_legacy_postgres_binding_writer_working
 - ./.venv/bin/pytest -q tests/test_bootstrap_postgres_script.py tests/integration/storage/test_postgres_schema_bootstrap_concurrency.py
 - git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql
-- DA-10/SBR-SCHEMA.GATE, not this source package, owns the two migration compatibility nodes and the approved disposable-target AgentKit status -> plan -> backup -> apply -> status plus restore receipts.
+- DA-10/SBR-SCHEMA.GATE, not this source package, owns the approved disposable-target first/second-apply, row-count, zero-ledger-drift, AgentKit status -> plan -> backup -> apply -> status, and restore receipts.
 
 **Acceptance Criteria**
 
 - [ ] One additive migration source supplies exact C-05/C-06 plus readiness metadata; identity is 007 and only the numbered runner may write the ledger.
-- [ ] Migration SQL encodes canonical project_key/generation-1 backfill and fail-closed missing/ambiguous identity without destructive SQL.
+- [ ] Migration SQL resolves exactly-one legacy identity while preserving zero/many/absent-name/missing-session/missing-key rows as reason-coded, keyless, unusable unresolved bindings without destructive SQL, startup refusal, or project guessing.
 - [ ] Receipt constraints, uniqueness, indexes, and state-nullability encode the frozen C-06 shape.
-- [ ] DA-10/SBR-SCHEMA.GATE retains mandatory first/second apply, zero-ledger-drift, ambiguous-backfill, backup, and restore proof before release.
+- [ ] DA-10/SBR-SCHEMA.GATE retains mandatory first/second apply, row-count preservation, zero-ledger-drift, backup, and restore proof before release.
 
 **Out of Scope**
 
@@ -959,7 +960,7 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 **Handoff Notes**
 
 - Forge: author only migration 007; stop if any other path or destructive SQL appears necessary.
-- Crucible: own the two exact DA-10 compatibility tests and retain before/after/restore ledger plus schema-shape evidence.
+- Crucible: run the two committed `tests/test_database_migration.py` regressions and own the downstream approved-disposable-target first/second-apply, row-count, zero-ledger-drift, backup, restore-ledger, and schema-shape evidence.
 - Sentinel: mandatory review of backfill isolation, digest/idempotency constraints, stored references, denial-of-service indexes, and no-secret redacted receipts.
 - Arbiter: mandatory review for one migration authority, additive compatibility, exact C-05/C-06 parity, and zero ledger drift.
 
