@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 
 from scribe_mcp.doc_management import preflight as preflight_shared
 from scribe_mcp.doc_management import intelligence_exports as intelligence_exports_shared
@@ -107,8 +107,10 @@ async def _update_case_report_index(
     heading: str,
     singular_label: str,
     repo_root: Path | None = None,
+    exclude_paths: Iterable[Path] = (),
 ) -> None:
     index_path = reports_dir / "INDEX.md"
+    excluded = {Path(path).expanduser().resolve() for path in exclude_paths}
 
     reports = []
     if reports_dir.exists():
@@ -117,7 +119,7 @@ async def _update_case_report_index(
                 for bug_dir in category_dir.iterdir():
                     if bug_dir.is_dir():
                         report_path = bug_dir / "report.md"
-                        if report_path.exists():
+                        if report_path.exists() and report_path.resolve() not in excluded:
                             stat = report_path.stat()
                             reports.append(
                                 {
@@ -188,24 +190,88 @@ This directory contains {heading.lower()} generated during development and testi
     )
 
 
-async def update_bug_index(bugs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+async def update_bug_index(
+    bugs_dir: Path,
+    agent_id: str,
+    repo_root: Path | None = None,
+    *,
+    exclude_paths: Iterable[Path] = (),
+) -> None:
     await _update_case_report_index(
         bugs_dir,
         agent_id,
         heading="Bug Reports",
         singular_label="Bug",
         repo_root=repo_root,
+        exclude_paths=exclude_paths,
     )
 
 
-async def update_security_index(security_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+async def update_security_index(
+    security_dir: Path,
+    agent_id: str,
+    repo_root: Path | None = None,
+    *,
+    exclude_paths: Iterable[Path] = (),
+) -> None:
     await _update_case_report_index(
         security_dir,
         agent_id,
         heading="Security Reports",
         singular_label="Security",
         repo_root=repo_root,
+        exclude_paths=exclude_paths,
     )
+
+
+def case_index_roots_for_paths(
+    paths: Iterable[Path], *, project_root: Path
+) -> tuple[tuple[str, Path], ...]:
+    """Return canonical bug/security roots touched by a set of managed paths."""
+
+    resolved_root = project_root.expanduser().resolve()
+    candidates = {
+        "bug": (resolved_root / "docs" / "bugs").resolve(),
+        "security": (resolved_root / "docs" / "security").resolve(),
+    }
+    found: dict[tuple[str, str], tuple[str, Path]] = {}
+    for raw_path in paths:
+        resolved = Path(raw_path).expanduser().resolve()
+        for case_type, case_root in candidates.items():
+            if resolved.is_relative_to(case_root):
+                found[(case_type, str(case_root))] = (case_type, case_root)
+    return tuple(found[key] for key in sorted(found))
+
+
+async def refresh_case_indexes_for_rehome(
+    *,
+    paths: Iterable[Path],
+    project_root: Path,
+    agent_id: str,
+    exclude_paths: Iterable[Path] = (),
+) -> Dict[str, str]:
+    """Refresh every canonical case index touched by a rehome operation."""
+
+    refreshed: Dict[str, str] = {}
+    for case_type, case_root in case_index_roots_for_paths(
+        paths, project_root=project_root
+    ):
+        if case_type == "bug":
+            await update_bug_index(
+                case_root,
+                agent_id,
+                repo_root=project_root,
+                exclude_paths=exclude_paths,
+            )
+        else:
+            await update_security_index(
+                case_root,
+                agent_id,
+                repo_root=project_root,
+                exclude_paths=exclude_paths,
+            )
+        refreshed[case_type] = str(case_root / "INDEX.md")
+    return refreshed
 
 
 async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:

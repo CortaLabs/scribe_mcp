@@ -13,6 +13,22 @@ from scribe_mcp.doc_management.manager import MutationLockTarget, document_mutat
 
 
 _RECOVERY_REQUIRED = "APPLY_RECEIPT_RECOVERY_REQUIRED"
+REHOME_RECOVERY_REMEDY = (
+    "Use the original receipt only after restoring its immutable source, target, "
+    "registry, and index preimages; do not reconstruct or guess a replacement "
+    "rehome request."
+)
+
+
+def _recovery_required(state: str) -> dict[str, object]:
+    response: dict[str, object] = {
+        "ok": False,
+        "code": _RECOVERY_REQUIRED,
+        "recovery_state": state,
+    }
+    if state == "OTHER":
+        response["remedy"] = REHOME_RECOVERY_REMEDY
+    return response
 
 
 def _sha256(path: Path) -> str | None:
@@ -61,6 +77,7 @@ class RehomeCompositeBinding:
     source_registry_after_digest: str = ""
     target_registry_after_digest: str = ""
     index_preimages: tuple[tuple[str, str | None], ...] = ()
+    preserve_target: bool = False
 
     @property
     def lock_targets(self) -> tuple[MutationLockTarget, ...]:
@@ -102,6 +119,7 @@ class RehomeCompositeBinding:
             "source_registry_after_digest": self.source_registry_after_digest,
             "target_registry_after_digest": self.target_registry_after_digest,
             "index_preimages": [list(item) for item in self.index_preimages],
+            "preserve_target": self.preserve_target,
         }
 
     @classmethod
@@ -111,6 +129,7 @@ class RehomeCompositeBinding:
         if not isinstance(payload, Mapping):
             raise ValueError("stored rehome binding must be an object")
         values = dict(payload)
+        preserve_target = bool(values.pop("preserve_target", False))
         try:
             source_doc_keys = values.pop("source_doc_keys")
             index_paths = values.pop("index_paths")
@@ -140,7 +159,13 @@ class RehomeCompositeBinding:
         expected_names = {
             field_name
             for field_name in cls.__dataclass_fields__
-            if field_name not in {"source_doc_keys", "index_paths", "index_preimages"}
+            if field_name
+            not in {
+                "source_doc_keys",
+                "index_paths",
+                "index_preimages",
+                "preserve_target",
+            }
         }
         if set(values) != expected_names:
             raise ValueError("stored rehome binding fields are invalid")
@@ -149,6 +174,7 @@ class RehomeCompositeBinding:
             source_doc_keys=tuple(source_doc_keys),
             index_paths=tuple(index_paths),
             index_preimages=tuple(parsed_preimages),
+            preserve_target=preserve_target,
         )
 
 
@@ -162,6 +188,7 @@ def capture_rehome_binding(
     target_path: Path,
     move: bool,
     overwrite: bool,
+    preserve_target: bool = False,
     index_paths: Sequence[Path] = (),
     source_registry_after: Mapping[str, object] | None = None,
     target_registry_after: Mapping[str, object] | None = None,
@@ -215,12 +242,26 @@ def capture_rehome_binding(
         index_preimages=tuple(
             (path, _sha256(Path(path))) for path in resolved_index_paths
         ),
+        preserve_target=bool(preserve_target),
     )
 
 
 def _classify_file_state(binding: RehomeCompositeBinding) -> str:
     source_sha = _sha256(Path(binding.source_path))
     target_sha = _sha256(Path(binding.target_path))
+    if binding.preserve_target:
+        before = (
+            source_sha == binding.source_sha256
+            and target_sha == binding.target_sha256
+        )
+        after = target_sha == binding.target_sha256 and (
+            source_sha is None if binding.move else source_sha == binding.source_sha256
+        )
+        if after:
+            return "AFTER"
+        if before:
+            return "BEFORE"
+        return "OTHER"
     before = source_sha == binding.source_sha256 and target_sha == binding.target_sha256
     after = target_sha == binding.source_sha256 and (
         source_sha is None if binding.move else source_sha == binding.source_sha256
@@ -293,11 +334,7 @@ def classify_rehome_transaction_state(
         return "OTHER"
     if file_state == "AFTER" and registry_after:
         return "AFTER"
-    if (
-        file_state in {"BEFORE", "PARTIAL", "AFTER"}
-        and registry_partial
-        and indexes_before
-    ):
+    if file_state in {"BEFORE", "PARTIAL", "AFTER"} and registry_partial:
         return "PARTIAL"
     return "OTHER"
 
@@ -332,19 +369,17 @@ async def execute_rehome_transaction(
         if state == "AFTER":
             return {"ok": True, "code": "APPLY_RECEIPT_REPLAYED", "replayed": True}
         if state == "OTHER":
-            return {"ok": False, "code": _RECOVERY_REQUIRED, "recovery_state": state}
+            return _recovery_required(state)
         try:
             result = await operation()
         except Exception:
-            return {
-                "ok": False,
-                "code": _RECOVERY_REQUIRED,
-                "recovery_state": classify_rehome_transaction_state(
+            return _recovery_required(
+                classify_rehome_transaction_state(
                     binding,
                     source_project=source_project,
                     target_project=target_project,
-                ),
-            }
+                )
+            )
         if not isinstance(result, dict) or result.get("ok") is False:
             return result
         final_state = classify_rehome_transaction_state(
@@ -384,6 +419,7 @@ async def recover_rehome_transaction(
 
 __all__ = [
     "RehomeCompositeBinding",
+    "REHOME_RECOVERY_REMEDY",
     "capture_rehome_binding",
     "classify_rehome_transaction_state",
     "execute_rehome_transaction",

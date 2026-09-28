@@ -6,8 +6,8 @@ doc_name: checklist
 category: engineering
 status: in_progress
 version: '0.1'
-last_updated: 2026-09-28 13:18:21 UTC
-maintained_by: agent-20260928-071822-ee3c2094
+last_updated: 2026-09-28 17:02:41 UTC
+maintained_by: agent-20260928-170236-294a8702
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -24,9 +24,9 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:36 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-28 13:18:21 UTC
-  last_edited_by: agent-20260928-071822-ee3c2094
-  last_action: replace_text
+  last_edited_at: 2026-09-28 17:02:41 UTC
+  last_edited_by: agent-20260928-170236-294a8702
+  last_action: replace_section
   work_item_id: 5309eca6-4d91-477e-b0c8-7087b6d65338
 ---
 # Scribe Binding Reliability Release — Planning Checklist
@@ -162,3 +162,76 @@ Completion gate: run every package command separately, then acquire `SBR_REFEREN
 - [x] Hold `SBR-RELEASE.1` behind `SBR-PLAN-SYNTH-12` and all 38 preceding executable package completions/current-revision PASS receipts. <!-- id: SBR-REGISTRY.RELEASE-HOLD -->
 - [x] Validate and apply the full manifest through direct Council MCP: 59 rows, 39 created, 0 updated, 0 orphaned, 0 errors. <!-- id: SBR-REGISTRY.IMPORT -->
 - [ ] After `SBR-PLAN-SYNTH-12` completes, dispatch the first wave only: `SBR-BIND-PERSIST.1`, `SBR-BIND-RESOLVE.1`, `SBR-STARTUP.1`, and `SBR-STARTUP.2`. <!-- id: SBR-REGISTRY.FIRST-WAVE -->
+
+<!-- ID: work_packages_checklist -->
+> **Generated section — do not hand-edit.** Rendered from the `WORK_ITEMS.md` manifest by `render_plan_projection`; hand edits are overwritten on the next `council work render-plan`.
+
+- [x] SBR-BIND-PERSIST.1 — SBR BIND PERSIST.1
+- [ ] SBR-BIND-RECONNECT.1 — Persisted actor binding survives application-handle reconstruction
+- [x] SBR-BIND-RESOLVE.1 — SBR BIND RESOLVE.1
+- [x] SBR-OBJKEY-BUG-13 — Restore Scribe backup sync policy
+- [x] SBR-STARTUP.1 — SBR STARTUP.1
+- [x] SBR-STARTUP.2 — SBR STARTUP.2
+- [x] SBR-BIND-PERSIST.2 — Abstract generation/CAS contract
+- [x] SBR-BIND-PERSIST.5 — Remote durable transport parity
+- [x] SBR-RECEIPT.1 — Host-neutral receipt models and storage contract
+- [x] SBR-ARCH-AMEND-SCHEMA-SCOPE-15 — Align migration 007 ownership and non-destructive trigger DDL
+- [x] SBR-ARCH-AMEND-SCHEMA-STARTUP-14 — Align migration 007 plan with startup-safe legacy classification
+- [x] SBR-DOC-DUR.1 — Idempotent WAL and atomic document-write substrate
+- [x] SBR-SCHEMA.1 — Migration 007 reliability upgrade
+- [x] SBR-ARCH-AMEND-SCHEMA2-16 — SBR ARCH AMEND SCHEMA2 16
+- [ ] SBR-SCHEMA.2 — Fresh and legacy SQLite/PostgreSQL baseline parity
+- [ ] SBR-BIND-PERSIST.4 — SQLite parity and facade
+- [ ] SBR-RECEIPT.2 — SQLite atomic receipt persistence
+- [ ] SBR-SCHEMA.3 — Fingerprinted elected bootstrap and bounded readiness
+- [ ] SBR-BIND-PERSIST.3 — PostgreSQL atomic persistence
+- [ ] SBR-REL-VAL.1 — Disposable PostgreSQL reference fixture
+- [ ] SBR-BIND-RESOLVE.2 — Registered project target resolution and default preservation
+- [ ] SBR-RECEIPT.3 — PostgreSQL atomic persistence and backend parity
+- [ ] SBR-BG.1 — Canonical partition and lane-fair scheduler
+- [ ] SBR-BIND-RESOLVE.3 — One-time default binding and BindingReceiptV1
+- [x] SBR-ARCH-AMEND-TOKEN-EFFICIENCY-19 — SBR ARCH AMEND TOKEN EFFICIENCY 19
+- [ ] SBR-BG.2 — Fenced worker, finite retry, and cancellation protocol
+- [ ] SBR-BIND-RESOLVE.4 — One-pass runtime context, typed MCP errors, and generic external adapter
+- [x] SBR-TOKEN-RESEARCH-18 — SBR TOKEN RESEARCH 18
+- [ ] CSBH-S1 — Generic Scribe bootstrap and durable caller adoption
+- [ ] SBR-BG.3 — BackgroundJobServiceV1 admission, recovery, metrics, and API
+- [ ] SBR-HOTPATH.1 — C-12 timing model and context-aware response finalization
+- [ ] CSBH-S2 — Scribe transport ingress and reconnect
+- [ ] SBR-BG.4 — Server lifecycle integration and bounded health projection
+- [ ] SBR-DOC-DUR.2 — C-13 generation-fenced admission and restart replay
+- [ ] SBR-HOTPATH.2 — Single-context logging helper and get-project read path
+- [ ] SBR-DOC-DUR.3 — `manage_docs` readback and registration/index/quality convergence
+- [ ] SBR-HOTPATH.3 — Read-recent/query single-record execution and timing closure
+- [ ] SBR-STARTUP.3 — C-10 core-ready and optional-service states
+- [ ] SBR-CORE-VAL.1 — Shared swarm fixture and 32-session binding oracle
+- [ ] SBR-REL-VAL.4 — Import, RSS, ready, schema, and hot-path budgets
+- [ ] SBR-CORE-VAL.2 — Bounded queue, fairness, cancellation, and shutdown contract
+- [ ] SBR-CORE-VAL.5 — Remote C-01 durable binding expectation
+- [ ] SBR-CORE-VAL.3 — WAL and document replay exactly-once oracle
+- [ ] SBR-CORE-VAL.4 — Typed runtime and managed-document refusal regressions
+- [ ] SBR-REL-VAL.2 — 32-caller PostgreSQL/process stress and queue proof
+- [ ] SBR-REL-VAL.3 — Provider-neutral public adapter parity
+- [ ] SBR-REL-VAL.5 — Single-lane release runner and C-15 evidence
+- [ ] SBR-RELEASE.1 — Synchronize 2.15.0 release truth and open the governed dev PR
+- [x] SBR-ARCH-06 — Scribe Reliability Release Seam Map
+- [x] SBR-ARCH-AMEND-REMOTE-08 — Remote Binding Test Ownership Amendment
+- [ ] SBR-CONC-04 — Scribe Swarm Concurrency Validation Research
+- [x] SBR-CONC-A5-05 — Scribe Background Queue Validation Delta
+- [x] SBR-DETAIL-DA01 — Binding Persistence Detail Plan
+- [x] SBR-DETAIL-DA02 — Target Resolution And Typed Errors Detail Plan
+- [x] SBR-DETAIL-DA03 — Startup And Import Readiness Detail Plan
+- [x] SBR-DETAIL-DA04 — Schema Bootstrap Detail Plan
+- [x] SBR-DETAIL-DA05 — Hot Path And Telemetry Detail Plan
+- [x] SBR-DETAIL-DA06 — Durable Receipt Store Detail Plan
+- [x] SBR-DETAIL-DA07 — Background Scheduler And Lifecycle Detail Plan
+- [x] SBR-DETAIL-DA08 — Managed Document Durability Detail Plan
+- [x] SBR-DETAIL-DA09 — Core Reliability Validation Detail Plan
+- [x] SBR-DETAIL-DA10 — Reference Stress And Release Evidence Detail Plan
+- [x] SBR-DETAIL-DA11 — Release Surfaces Detail Plan
+- [x] SBR-EFF-02 — Scribe Binding Efficiency And Ownership Research
+- [x] SBR-PERF-03 — Scribe Server Weight And Latency RCA
+- [x] SBR-PLAN-SCAFFOLD-07 — Scribe Reliability Detail Planning Scaffold
+- [x] SBR-PLAN-SYNTH-12 — Implementation Registry Synthesis
+- [x] SBR-RCA-01 — SBR RCA 01
+- [ ] SBR-SCHEMA-007-STARTUP-SAFE — SBR SCHEMA 007 STARTUP SAFE

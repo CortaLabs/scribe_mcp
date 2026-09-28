@@ -25,6 +25,7 @@ from scribe_mcp.doc_management.manager import (
     _resolve_doc_path,
 )
 from scribe_mcp.doc_management.rehome_transaction import (
+    REHOME_RECOVERY_REMEDY,
     RehomeCompositeBinding,
     capture_rehome_binding,
     classify_rehome_transaction_state,
@@ -891,6 +892,59 @@ async def _refresh_case_registry_for_mutation(
         await _call_case_registry_method(register_method, upsert_kwargs)
     except Exception as exc:
         return f"Case registry refresh failed after mutation: {exc}"
+    return None
+
+
+async def _rehome_case_registry_binding(
+    *,
+    storage_backend: Any,
+    project: Dict[str, Any],
+    source_path: Path,
+    target_path: Path,
+    target_doc_key: str,
+    case_id: Optional[str],
+    case_disposition: Optional[str],
+) -> Optional[str]:
+    """Retarget one special-case record as part of the composite rehome operation."""
+
+    if not storage_backend:
+        return None
+    register_method = _case_registry_method(storage_backend)
+    fetch_method = getattr(storage_backend, "fetch_case_registry_record", None)
+    if register_method is None or not callable(fetch_method):
+        return None
+
+    extracted = None
+    if source_path.is_file():
+        extracted = utils_shared.extract_case_registry_metadata_from_report(
+            source_path,
+            project_root=Path(str(project.get("root") or "")),
+            project=project,
+        )
+    resolved_case_id = str(case_id or (extracted or {}).get("case_id") or "").strip()
+    if not resolved_case_id:
+        return None
+    existing = await fetch_method(
+        case_id=resolved_case_id,
+        repo_root=str(project.get("root") or ""),
+        project_name=str(project.get("name") or ""),
+    )
+    upsert_kwargs = utils_shared.build_case_registry_upsert_kwargs(
+        extracted=extracted,
+        existing_record=existing,
+        overrides={
+            "case_id": resolved_case_id,
+            "project_name": str(project.get("name") or ""),
+            "repo_root": str(project.get("root") or ""),
+            "doc_name": target_doc_key,
+            "doc_path": str(target_path),
+            "status": case_disposition,
+            "source_tool": "manage_docs.rehome_doc",
+        },
+    )
+    if upsert_kwargs is None:
+        return "Case registry rehome skipped: unable to derive the existing case binding."
+    await _call_case_registry_method(register_method, upsert_kwargs)
     return None
 
 
@@ -1972,6 +2026,10 @@ async def _apply_rehome_mutation_steps(
     target_docs_dir: Path,
     target_project_root: Path,
     target_doc_key: str,
+    source_sha256: str,
+    preserve_target: bool,
+    case_id: Optional[str],
+    case_disposition: Optional[str],
     same_project_rehome: bool,
     move_mode: bool,
     server_module: Any,
@@ -1982,14 +2040,18 @@ async def _apply_rehome_mutation_steps(
 ) -> Dict[str, Any]:
     """Apply every durable rehome component while the composite locks are held."""
 
-    source_bytes = source_path.read_bytes() if source_path.is_file() else b""
-    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    source_bytes = source_path.read_bytes() if source_path.is_file() else None
+    source_sha = hashlib.sha256(source_bytes).hexdigest() if source_bytes is not None else None
     target_sha = (
         hashlib.sha256(target_path.read_bytes()).hexdigest()
         if target_path.is_file()
         else None
     )
-    if target_sha != source_sha:
+    if not preserve_target and target_sha != source_sha256:
+        if source_bytes is None or source_sha != source_sha256:
+            raise RuntimeError(
+                "Rehome recovery cannot restore target bytes from the immutable source digest."
+            )
         target_path.parent.mkdir(parents=True, exist_ok=True)
         await async_atomic_write(
             target_path,
@@ -2082,6 +2144,18 @@ async def _apply_rehome_mutation_steps(
             mirror_global=False,
         )
 
+    case_registry_warning = await _rehome_case_registry_binding(
+        storage_backend=backend,
+        project=target_project,
+        source_path=source_path,
+        target_path=target_path,
+        target_doc_key=target_doc_key,
+        case_id=case_id,
+        case_disposition=case_disposition,
+    )
+    if case_registry_warning:
+        state_refresh_warnings.append(case_registry_warning)
+
     source_research_dir = source_docs_dir / "research"
     if source_research_dir.exists() and source_path.is_relative_to(source_research_dir):
         await special_indexes_shared.update_research_index(source_research_dir, agent_id)
@@ -2100,6 +2174,33 @@ async def _apply_rehome_mutation_steps(
         checkpoint_index_freshness["review_index_refresh"] = (
             "updated" if review_index_updated else "not_applicable"
         )
+
+    source_project_root = Path(str(active_project.get("root") or "")).resolve()
+    if source_project_root == target_project_root:
+        case_indexes = await special_indexes_shared.refresh_case_indexes_for_rehome(
+            paths=(source_path, target_path),
+            project_root=target_project_root,
+            agent_id=agent_id,
+            exclude_paths=(source_path,) if move_mode else (),
+        )
+        for case_type in case_indexes:
+            checkpoint_index_freshness[f"{case_type}_index_refresh"] = "updated"
+    else:
+        source_case_indexes = await special_indexes_shared.refresh_case_indexes_for_rehome(
+            paths=(source_path,),
+            project_root=source_project_root,
+            agent_id=agent_id,
+            exclude_paths=(source_path,) if move_mode else (),
+        )
+        target_case_indexes = await special_indexes_shared.refresh_case_indexes_for_rehome(
+            paths=(target_path,),
+            project_root=target_project_root,
+            agent_id=agent_id,
+        )
+        for case_type in source_case_indexes:
+            checkpoint_index_freshness[f"source_{case_type}_index_refresh"] = "updated"
+        for case_type in target_case_indexes:
+            checkpoint_index_freshness[f"target_{case_type}_index_refresh"] = "updated"
 
     if move_mode and source_path.exists():
         source_path.unlink()
@@ -2121,6 +2222,26 @@ async def _handle_rehome_doc(
 ) -> Dict[str, Any]:
     metadata_mapping = metadata if isinstance(metadata, dict) else {}
     requested_target_dir = str(metadata_mapping.get("target_dir") or "").strip()
+    raw_preserve_target = metadata_mapping.get("preserve_target", False)
+    preserve_target = (
+        bool(raw_preserve_target)
+        if not isinstance(raw_preserve_target, str)
+        else raw_preserve_target.strip().lower() in {"1", "true", "yes", "on"}
+    )
+    raw_case_disposition = str(metadata_mapping.get("case_disposition") or "").strip()
+    case_disposition = (
+        utils_shared.normalize_case_status(raw_case_disposition)
+        if raw_case_disposition
+        else None
+    )
+    if case_disposition not in {None, "false_positive"}:
+        return helper.apply_context_payload(
+            helper.error_response(
+                "rehome_doc metadata.case_disposition currently supports only false_positive."
+            ),
+            context,
+        )
+    case_id = str(metadata_mapping.get("case_id") or "").strip() or None
     target_project_name = str(metadata_mapping.get("target_project") or "").strip()
     if not target_project_name:
         return helper.apply_context_payload(
@@ -2135,9 +2256,18 @@ async def _handle_rehome_doc(
 
     project_root = Path(str(active_project.get("root") or "")).expanduser().resolve()
     source_docs = dict(active_project.get("docs") or {})
-    source_doc_key = resolve_registered_doc_key(active_project, doc_name)
-    source_path_str = source_docs.get(source_doc_key)
-    source_registered = bool(source_path_str)
+    if retained_binding is not None:
+        source_doc_key = (
+            retained_binding.source_doc_keys[0]
+            if retained_binding.source_doc_keys
+            else retained_binding.target_doc_key
+        )
+        source_path_str = retained_binding.source_path
+        source_registered = bool(retained_binding.source_doc_keys)
+    else:
+        source_doc_key = resolve_registered_doc_key(active_project, doc_name)
+        source_path_str = source_docs.get(source_doc_key)
+        source_registered = bool(source_path_str)
     if not source_path_str:
         raw_source_path = metadata_mapping.get("source_path")
         if not raw_source_path and _looks_like_path(str(doc_name)):
@@ -2208,42 +2338,48 @@ async def _handle_rehome_doc(
         )
 
     target_doc_key = str(metadata_mapping.get("target_doc_name") or source_doc_key).strip() or source_doc_key
-    try:
-        relative_path = source_path.relative_to(source_docs_dir)
-    except ValueError:
-        relative_path = _default_rehome_relative_path(source_path, project_root)
-    if ".scribe" in relative_path.parts:
-        relative_path = _default_rehome_relative_path(source_path, project_root)
-
-    target_relative_path = metadata_mapping.get("target_relative_path")
-    try:
-        if isinstance(target_relative_path, str) and target_relative_path.strip():
-            relative_path = _coerce_rehome_relative_path(
-                Path(target_relative_path.strip()),
-                target_docs_dir=target_docs_dir,
-                target_project_root=target_project_root,
-            )
-        elif requested_target_dir:
-            requested_dir = _coerce_rehome_relative_path(
-                Path(requested_target_dir),
-                target_docs_dir=target_docs_dir,
-                target_project_root=target_project_root,
-            )
-            relative_path = requested_dir / source_path.name
-        else:
-            relative_path = _coerce_rehome_relative_path(
-                relative_path,
-                target_docs_dir=target_docs_dir,
-                target_project_root=target_project_root,
-            )
-    except ValueError as exc:
-        return helper.apply_context_payload(
-            helper.error_response(
-                str(exc),
-                extra={"target_docs_dir": str(target_docs_dir)},
-            ),
-            context,
+    if retained_binding is not None:
+        target_doc_key = retained_binding.target_doc_key
+        relative_path = Path(retained_binding.target_path).resolve().relative_to(
+            target_docs_dir
         )
+    else:
+        try:
+            relative_path = source_path.relative_to(source_docs_dir)
+        except ValueError:
+            relative_path = _default_rehome_relative_path(source_path, project_root)
+        if ".scribe" in relative_path.parts:
+            relative_path = _default_rehome_relative_path(source_path, project_root)
+
+        target_relative_path = metadata_mapping.get("target_relative_path")
+        try:
+            if isinstance(target_relative_path, str) and target_relative_path.strip():
+                relative_path = _coerce_rehome_relative_path(
+                    Path(target_relative_path.strip()),
+                    target_docs_dir=target_docs_dir,
+                    target_project_root=target_project_root,
+                )
+            elif requested_target_dir:
+                requested_dir = _coerce_rehome_relative_path(
+                    Path(requested_target_dir),
+                    target_docs_dir=target_docs_dir,
+                    target_project_root=target_project_root,
+                )
+                relative_path = requested_dir / source_path.name
+            else:
+                relative_path = _coerce_rehome_relative_path(
+                    relative_path,
+                    target_docs_dir=target_docs_dir,
+                    target_project_root=target_project_root,
+                )
+        except ValueError as exc:
+            return helper.apply_context_payload(
+                helper.error_response(
+                    str(exc),
+                    extra={"target_docs_dir": str(target_docs_dir)},
+                ),
+                context,
+            )
 
     if ".scribe" in relative_path.parts:
         return helper.apply_context_payload(
@@ -2258,6 +2394,17 @@ async def _handle_rehome_doc(
     overwrite = bool(metadata_mapping.get("overwrite"))
     raw_move_mode = metadata_mapping.get("move", True)
     move_mode = bool(raw_move_mode) if not isinstance(raw_move_mode, str) else raw_move_mode.strip().lower() in {"1", "true", "yes", "on"}
+    if retained_binding is not None:
+        move_mode = retained_binding.move
+        overwrite = retained_binding.overwrite
+        preserve_target = retained_binding.preserve_target
+    if preserve_target and not move_mode:
+        return helper.apply_context_payload(
+            helper.error_response(
+                "rehome_doc preserve_target requires move=true so the duplicate source is removed."
+            ),
+            context,
+        )
 
     try:
         target_path.relative_to(target_docs_dir)
@@ -2283,7 +2430,7 @@ async def _handle_rehome_doc(
         if target_path.is_file() and source_path.is_file()
         else False
     )
-    if target_path.exists() and not overwrite and not retained_partial_target:
+    if target_path.exists() and not overwrite and not preserve_target and not retained_partial_target:
         return helper.apply_context_payload(
             helper.error_response(
                 "rehome_doc target already exists (set metadata.overwrite=true to replace).",
@@ -2292,10 +2439,15 @@ async def _handle_rehome_doc(
             context,
         )
 
-    removed_doc_keys = [
-        key for key, value in source_docs.items()
-        if Path(str(value)).expanduser().resolve() == source_path
-    ]
+    removed_doc_keys = (
+        list(retained_binding.source_doc_keys)
+        if retained_binding is not None
+        else [
+            key
+            for key, value in source_docs.items()
+            if Path(str(value)).expanduser().resolve() == source_path
+        ]
+    )
     same_project_rehome = (
         str(active_project.get("name") or "").strip()
         == str(target_project.get("name") or target_project_name).strip()
@@ -2355,49 +2507,56 @@ async def _handle_rehome_doc(
         )
         if path.exists()
     )
+    case_index_paths = tuple(
+        case_root / "INDEX.md"
+        for path_group, root in (
+            ((source_path,), project_root),
+            ((target_path,), target_project_root),
+        )
+        for _, case_root in special_indexes_shared.case_index_roots_for_paths(
+            path_group, project_root=root
+        )
+    )
+    index_paths = tuple(dict.fromkeys((*index_paths, *case_index_paths)))
     source_docs_after = dict(target_docs) if same_project_rehome else dict(source_docs)
     if not same_project_rehome:
         for key in removed_doc_keys:
             source_docs_after.pop(key, None)
-    captured_binding = capture_rehome_binding(
-        source_project=active_project,
-        target_project=target_project,
-        source_doc_keys=removed_doc_keys,
-        target_doc_key=target_doc_key,
-        source_path=source_path,
-        target_path=target_path,
-        move=move_mode,
-        overwrite=overwrite,
-        index_paths=index_paths,
-        source_registry_after=source_docs_after,
-        target_registry_after=target_docs,
-    )
+    captured_binding = None
+    if retained_binding is None:
+        captured_binding = capture_rehome_binding(
+            source_project=active_project,
+            target_project=target_project,
+            source_doc_keys=removed_doc_keys,
+            target_doc_key=target_doc_key,
+            source_path=source_path,
+            target_path=target_path,
+            move=move_mode,
+            overwrite=overwrite,
+            preserve_target=preserve_target,
+            index_paths=index_paths,
+            source_registry_after=source_docs_after,
+            target_registry_after=target_docs,
+        )
     binding = retained_binding or captured_binding
-    immutable_fields = (
-        "source_project",
-        "target_project",
-        "source_repo_root",
-        "target_repo_root",
-        "source_docs_dir",
-        "target_docs_dir",
-        "source_doc_keys",
-        "target_doc_key",
-        "source_path",
-        "target_path",
-        "move",
-        "overwrite",
-        "source_authority_digest",
-        "target_authority_digest",
-    )
-    if retained_binding is not None and any(
-        getattr(retained_binding, name) != getattr(captured_binding, name)
-        for name in immutable_fields
+    if binding is None:
+        return helper.apply_context_payload(
+            helper.error_response("rehome_doc could not capture an immutable transaction binding."),
+            context,
+        )
+    if retained_binding is not None and (
+        retained_binding.source_project != str(active_project.get("name") or "")
+        or retained_binding.target_project
+        != str(target_project.get("name") or target_project_name)
+        or retained_binding.source_repo_root != str(project_root)
+        or retained_binding.target_repo_root != str(target_project_root)
     ):
         return helper.apply_context_payload(
             {
                 "ok": False,
                 "code": "APPLY_RECEIPT_RECOVERY_REQUIRED",
                 "recovery_state": "OTHER",
+                "remedy": REHOME_RECOVERY_REMEDY,
             },
             context,
         )
@@ -2420,6 +2579,10 @@ async def _handle_rehome_doc(
                 target_docs_dir=target_docs_dir,
                 target_project_root=target_project_root,
                 target_doc_key=target_doc_key,
+                source_sha256=binding.source_sha256,
+                preserve_target=binding.preserve_target,
+                case_id=case_id,
+                case_disposition=case_disposition,
                 same_project_rehome=same_project_rehome,
                 move_mode=move_mode,
                 server_module=server_module,

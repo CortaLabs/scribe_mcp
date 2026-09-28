@@ -23,6 +23,7 @@ from scribe_mcp.doc_management.apply_preview import (
 from scribe_mcp.doc_management.manager import MutationLockTarget
 from scribe_mcp.doc_management.rehome_transaction import (
     RehomeCompositeBinding,
+    capture_rehome_binding,
     execute_rehome_transaction,
     recover_rehome_transaction,
 )
@@ -571,6 +572,78 @@ async def test_public_rehome_receipt_recovers_partial_crash_exactly_once(
         await storage.close()
 
 
+async def test_public_rehome_receipt_recovers_after_aliases_changed_before_crash(
+    tmp_path: Path, test_agent: str
+) -> None:
+    project, architecture, storage, state_manager, execution = await _lifecycle_setup(
+        tmp_path
+    )
+    target = Path(str(project["docs_dir"])) / "archive" / "ARCHITECTURE_GUIDE.md"
+    original_service = runtime.ApplyPreviewService
+    original_operation = runtime._apply_rehome_mutation_steps  # noqa: SLF001
+    operation_calls = 0
+
+    async def _crash_after_alias_update(**kwargs):
+        nonlocal operation_calls
+        operation_calls += 1
+        if operation_calls == 1:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(architecture.read_bytes())
+            desired_docs = dict(kwargs["target_docs"])
+            kwargs["active_project"]["docs"] = desired_docs
+            kwargs["target_project"]["docs"] = desired_docs
+            await storage.update_project_docs(
+                "lifecycle", json.dumps(desired_docs), repo_root=str(project["root"])
+            )
+            raise RuntimeError("simulated crash after alias persistence")
+        return await original_operation(**kwargs)
+
+    try:
+        with (
+            _isolated_runtime(state_manager, storage, project, execution),
+            patch.object(
+                runtime,
+                "ApplyPreviewService",
+                side_effect=lambda backend: original_service(
+                    backend, claim_lease_seconds=1
+                ),
+            ),
+            patch.object(
+                runtime, "_apply_rehome_mutation_steps", _crash_after_alias_update
+            ),
+        ):
+            preview = await manage_docs(
+                action="rehome_doc",
+                doc="architecture",
+                metadata={
+                    "target_project": "lifecycle",
+                    "target_relative_path": "archive/ARCHITECTURE_GUIDE.md",
+                },
+                dry_run=True,
+                agent=test_agent,
+            )
+            receipt = preview["apply"]["receipt"]
+            partial = await manage_docs(
+                action="apply_preview", metadata={"receipt": receipt}, agent=test_agent
+            )
+            await asyncio.sleep(1.1)
+            recovered = await manage_docs(
+                action="apply_preview", metadata={"receipt": receipt}, agent=test_agent
+            )
+            replayed = await manage_docs(
+                action="apply_preview", metadata={"receipt": receipt}, agent=test_agent
+            )
+
+        assert partial["code"] == "APPLY_RECEIPT_RECOVERY_REQUIRED"
+        assert recovered["code"] == "APPLY_RECEIPT_APPLIED", recovered
+        assert replayed["code"] == "APPLY_RECEIPT_REPLAYED"
+        assert operation_calls == 2
+        assert not architecture.exists()
+        assert target.read_text(encoding="utf-8") == "# Architecture\n\nbefore-value\n"
+    finally:
+        await storage.close()
+
+
 def _rehome_binding(root: Path, source: Path, target: Path) -> RehomeCompositeBinding:
     return RehomeCompositeBinding(
         source_project="source",
@@ -651,9 +724,88 @@ async def test_composite_rehome_partial_crash_recovers_once_and_unknown_state_st
     stopped = await recover_rehome_transaction(
         unknown_binding, operation=_unsafe_operation
     )
-    assert stopped == {
-        "ok": False,
-        "code": "APPLY_RECEIPT_RECOVERY_REQUIRED",
-        "recovery_state": "OTHER",
+    assert stopped["ok"] is False
+    assert stopped["code"] == "APPLY_RECEIPT_RECOVERY_REQUIRED"
+    assert stopped["recovery_state"] == "OTHER"
+    assert "original receipt" in stopped["remedy"]
+    assert operation_called is False
+
+
+async def test_composite_rehome_preserve_target_keeps_digest_and_replays_once(
+    tmp_path: Path, test_agent: str
+) -> None:
+    assert test_agent == "test-agent"
+    root = tmp_path / "preserve-target"
+    docs_dir = root / "docs"
+    docs_dir.mkdir(parents=True)
+    source = root / "stray-report.md"
+    target = docs_dir / "owned-decision.md"
+    source.write_text("stray", encoding="utf-8")
+    target.write_text("owned decision", encoding="utf-8")
+    target_digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    project = {
+        "name": "project",
+        "root": str(root),
+        "docs_dir": str(docs_dir),
+        "docs": {"stray": str(source)},
     }
+    after_docs = {"owned": str(target)}
+    binding = capture_rehome_binding(
+        source_project=project,
+        target_project=project,
+        source_doc_keys=("stray",),
+        target_doc_key="owned",
+        source_path=source,
+        target_path=target,
+        move=True,
+        overwrite=False,
+        preserve_target=True,
+        source_registry_after=after_docs,
+        target_registry_after=after_docs,
+    )
+    calls = 0
+
+    async def _remove_stray() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        project["docs"] = dict(after_docs)
+        source.unlink()
+        return {"ok": True}
+
+    applied = await execute_rehome_transaction(
+        binding,
+        operation=_remove_stray,
+        source_project=project,
+        target_project=project,
+    )
+    replayed = await recover_rehome_transaction(
+        binding,
+        operation=_remove_stray,
+        source_project=project,
+        target_project=project,
+    )
+
+    assert applied == {"ok": True}
+    assert replayed == {"ok": True, "code": "APPLY_RECEIPT_REPLAYED", "replayed": True}
+    assert calls == 1
+    assert not source.exists()
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == target_digest
+
+    target.write_text("unexpected drift", encoding="utf-8")
+    operation_called = False
+
+    async def _unsafe() -> dict[str, object]:
+        nonlocal operation_called
+        operation_called = True
+        return {"ok": True}
+
+    stopped = await recover_rehome_transaction(
+        binding,
+        operation=_unsafe,
+        source_project=project,
+        target_project=project,
+    )
+    assert stopped["code"] == "APPLY_RECEIPT_RECOVERY_REQUIRED"
+    assert stopped["recovery_state"] == "OTHER"
+    assert "original receipt" in stopped["remedy"]
     assert operation_called is False

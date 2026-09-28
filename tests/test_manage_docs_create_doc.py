@@ -666,6 +666,89 @@ async def test_manage_docs_create_uses_repo_config_doc_type_alias_and_transparen
 
 
 @pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize("doc_type", ["bug", "security"])
+async def test_special_case_create_honors_safe_target_dir_and_caller_name(
+    tmp_path: Path, doc_type: str
+) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / f"{doc_type}-state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+    target_dir = Path(project["docs_dir"]) / "governed"
+    doc_name = f"{doc_type.upper()}_CALLER_NAMED"
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        result = await manage_docs(
+            action="create",
+            doc=doc_name,
+            target_dir=str(target_dir),
+            metadata={
+                "doc_type": doc_type,
+                "doc_name": doc_name,
+                "category": doc_type,
+            },
+            dry_run=False,
+        )
+
+    expected = target_dir / f"{doc_name}.md"
+    assert result["ok"] is True, result
+    assert Path(result["path"]) == expected
+    assert result["doc_name"] == doc_name
+    assert expected.is_file()
+    assert not (Path(project["root"]) / "docs" / f"{doc_type}s").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_special_case_create_rejects_escaping_or_ambiguous_target_before_mutation(
+    tmp_path: Path,
+) -> None:
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "rejected-target-state.json")
+    await state_manager.set_current_project(project["name"], project)
+    await _seed_runtime_session(state_manager, project["root"])
+    root = Path(project["root"])
+    docs_before = dict(project["docs"])
+
+    with _isolated_server(state_manager, project_root=project["root"]):
+        escaped = await manage_docs(
+            action="create",
+            doc="SEC_ESCAPE",
+            target_dir=str(tmp_path / "outside"),
+            metadata={
+                "doc_type": "security",
+                "doc_name": "SEC_ESCAPE",
+                "category": "security",
+            },
+            dry_run=False,
+        )
+        ambiguous = await manage_docs(
+            action="create",
+            doc="BUG_AMBIGUOUS",
+            target_dir=str(Path(project["docs_dir"]) / "one"),
+            metadata={
+                "doc_type": "bug",
+                "doc_name": "BUG_AMBIGUOUS",
+                "category": "logic",
+                "target_dir": str(Path(project["docs_dir"]) / "two"),
+            },
+            dry_run=False,
+        )
+
+    assert escaped["ok"] is False
+    assert ambiguous["ok"] is False
+    assert not (tmp_path / "outside").exists()
+    assert not (Path(project["docs_dir"]) / "one").exists()
+    assert not (Path(project["docs_dir"]) / "two").exists()
+    assert not (root / "docs" / "bugs").exists()
+    assert not (root / "docs" / "security").exists()
+    rebound = (await state_manager.load()).get_project(project["name"])
+    assert rebound is not None
+    assert rebound["docs"] == docs_before
+
+
+@pytest.mark.asyncio
 async def test_manage_docs_create_reserved_alias_config_fails_closed_with_warning(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")

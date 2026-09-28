@@ -5,8 +5,8 @@
   "v": 1,
   "project": "scribe_binding_reliability_repair_20260927",
   "generated_by": "work_sync.render_manifest_projection",
-  "generated_at": "2026-09-27T10:13:19.561404+00:00",
-  "projection_digest": "42fe555edf269c54aecaa91acaf7db159730d26925daa7faba3b82848c4d4a48",
+  "generated_at": "2026-09-28T17:21:54.628157+00:00",
+  "projection_digest": "4cb9a345137cfc872c7b4fcf02af38499fd432d6cb0f8f401e52cd7ca3f6b66e",
   "items": [
     {
       "package_id": "SBR-BIND-PERSIST.1",
@@ -59,7 +59,59 @@
         "`SessionBindingRecordV2(caller_session_key_hash: str, project_key: str, project_name: str, canonical_repo_root: str, binding_generation: int, updated_at: datetime)`.",
         "First generation is `1`; generation is at least 1; timestamp is timezone-aware."
       ],
-      "status": "in_progress"
+      "status": "completed"
+    },
+    {
+      "package_id": "SBR-BIND-RECONNECT.1",
+      "title": "Persisted actor binding survives application-handle reconstruction",
+      "goal": "Add the focused Scribe regression proving that one verified project bind remains usable after reconstructing the router/application handle, without a second set_project call and without sibling-session interference. This is test-only unless the regression fails.",
+      "owned_files": [
+        "tests/shared/test_actor_scoped_session_binding.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src ./.venv/bin/python -m py_compile tests/shared/test_actor_scoped_session_binding.py",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/shared/test_actor_scoped_session_binding.py",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/shared/test_session_repo_root_poisoning.py::test_modern_application_handle_reconnect_reuses_only_its_persisted_session tests/test_set_project_integration.py::test_set_project_reports_authoritative_session_id tests/test_tool_metadata_contract.py::test_direct_tool_schemas_require_operational_inputs",
+        "git diff --check -- tests/shared/test_actor_scoped_session_binding.py"
+      ],
+      "acceptance": [
+        "The test binds once, reconstructs RouterContextManager/application identity from persisted storage, then read_recent, append_entry, and manage_docs resolve the same project without another set_project call.",
+        "The authoritative caller-session key and binding generation remain unchanged across reconstruction, while sibling application handles remain distinct and cannot read, clear, or mutate the reconstructed caller default.",
+        "The test uses the existing _Harness, _InMemoryBackend, and RouterContextManager; it introduces no alternate binding store, retry loop, or Council-specific identity semantics.",
+        "No production source change is permitted unless the new regression first fails and the work item is explicitly amended with the proven root-cause boundary.",
+        "Replace the stale same-name compatibility assumption in tests/shared/test_actor_scoped_session_binding.py: two exact application or seat identities carrying the same persona label must retain distinct authoritative caller-session keys and persisted default bindings; an authorized explicit project target may select another project for that call but must neither collapse those defaults nor mutate a sibling seat. Demonstrate the regression failing against the current defect before authorizing any production-source amendment."
+      ],
+      "depends_on": [
+        "SBR-BIND-PERSIST.1",
+        "SBR-BIND-PERSIST.2",
+        "SBR-BIND-RESOLVE.1"
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-BIND-RECONNECT.1",
+      "evidence_requirements": [
+        "behavioral",
+        "truth",
+        "quality"
+      ],
+      "gates": [
+        "crucible",
+        "witness",
+        "arbiter"
+      ],
+      "forbidden_files": [
+        "src/**",
+        "src/council_mcp/**",
+        "council_mcp/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        "benchmarks/**",
+        "pyproject.toml",
+        "README.md",
+        "docs/**"
+      ],
+      "wave": 1,
+      "suggested_specialist": "crucible",
+      "status": "blocked"
     },
     {
       "package_id": "SBR-BIND-RESOLVE.1",
@@ -120,7 +172,48 @@
         "`build_resolved_request_context(*, caller_session_key: str, resolved_target: ResolvedProjectTargetV1, agent_attribution: AgentAttributionV1, correlation_id: str, operating_mode: Literal[\"project\", \"sentinel\"], authorization_evidence: AuthorizationEvidenceV1) -> ResolvedRequestContextV1`.",
         "`ExecutionContext.resolved_request_context: ResolvedRequestContextV1 | None`."
       ],
-      "status": "planned"
+      "status": "completed"
+    },
+    {
+      "package_id": "SBR-OBJKEY-BUG-13",
+      "title": "Restore Scribe backup sync policy",
+      "goal": "Diagnose and repair the pre-existing should_sync regression where .scribe/backups/*.bak is rejected despite the repository contract requiring backup artifacts to sync.",
+      "owned_files": [
+        "src/scribe_mcp/object_store/keys.py",
+        "tests/test_object_store.py"
+      ],
+      "verification": [
+        "./.venv/bin/pytest -q tests/test_object_store.py",
+        "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.object_store.keys import should_sync'"
+      ],
+      "acceptance": [
+        "A repository-local .scribe/backups/file.bak is accepted by should_sync while unrelated .bak files remain rejected unless already promised by the existing contract.",
+        "The full tests/test_object_store.py module exits zero without weakening existing inclusion or exclusion cases.",
+        "The change is isolated from the SBR-STARTUP.2 setup/probe implementation and adds no Council-specific behavior."
+      ],
+      "depends_on": [],
+      "doc_ref": "PHASE_PLAN.md#SBR-OBJKEY-BUG-13",
+      "evidence_requirements": [
+        "behavioral",
+        "truth"
+      ],
+      "gates": [
+        "crucible",
+        "witness"
+      ],
+      "forbidden_files": [
+        "src/council_mcp/**",
+        "council_mcp/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        "pyproject.toml",
+        "README.md",
+        "docs/**"
+      ],
+      "wave": 1,
+      "suggested_specialist": "mantis",
+      "status": "completed"
     },
     {
       "package_id": "SBR-STARTUP.1",
@@ -177,7 +270,7 @@
         "Preserve `TokenEstimator.estimate_response_tokens`, `record_operation`, `get_usage_stats`, `get_tokenizer_info`, `save_metrics`, and `load_metrics`.",
         "Preserve `token_estimator: TokenEstimator` and the current `scribe_mcp.utils.__all__` names. Add module `__getattr__(name: str) -> Any` only as the lazy compatibility seam."
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "package_id": "SBR-STARTUP.2",
@@ -237,7 +330,7 @@
         "Preserve `CortaStoreProvider.setup(self) -> None` and `close`.",
         "Add `CortaStoreProvider.probe_health(self, *, timeout_seconds: float = 2.0) -> bool`."
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "package_id": "SBR-BIND-PERSIST.2",
@@ -288,7 +381,7 @@
         "`async set_session_project(self, session_id: str, project_key: str, expected_generation: int | None = None) -> SessionBindingRecordV2`.",
         "`async get_session_project(self, session_id: str) -> SessionBindingRecordV2 | None`."
       ],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "package_id": "SBR-BIND-PERSIST.5",
@@ -345,7 +438,7 @@
       "contracts": [
         "Exact C-01 methods; payload/response uses the six record field names."
       ],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "package_id": "SBR-RECEIPT.1",
@@ -418,7 +511,93 @@
         "`BackgroundReceiptStoreV1.recover(now: datetime) -> BackgroundRecoverySnapshotV1`.",
         "`StorageBackend` adds matching `admit_background_receipt(..., now)`, `get_background_receipt(...)`, `claim_background_receipt(..., now)`, `transition_background_receipt(..., now)`, and `recover_background_receipts(now)` async methods; defaults raise `NotImplementedError` exactly as apply-preview storage does."
       ],
-      "status": "planned"
+      "status": "completed"
+    },
+    {
+      "package_id": "SBR-ARCH-AMEND-SCHEMA-SCOPE-15",
+      "title": "Align migration 007 ownership and non-destructive trigger DDL",
+      "goal": "Repair the remaining SBR-SCHEMA.1 PHASE_PLAN scope contradictions found by Witness: the package owns its focused PostgreSQL regressions, and idempotent replacement of the named classification trigger is distinct from forbidden destructive table/data DROP behavior.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "verification": [
+        "rg -n 'tests/test_database_migration.py|DROP TRIGGER IF EXISTS|destructive table|destructive data' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "! rg -n 'author only migration 007|test-file edits|SQL contains no DROP' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "git diff --check -- .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "SBR-SCHEMA.1 owned-files, out-of-scope, and handoff language explicitly permits only migration 007 plus tests/test_database_migration.py and forbids every unrelated source/test path.",
+        "The no-destructive-DDL invariant forbids table/schema/data DROP, TRUNCATE, destructive rename, and data deletion while explicitly allowing idempotent DROP TRIGGER IF EXISTS plus recreation of the single named classification trigger.",
+        "The delta preserves the startup-safe classification, C-05/C-06, DA-10 release gates, generic Scribe-only boundary, and every unrelated phase.",
+        "The managed PHASE_PLAN passes Scribe quality_check after the surgical update."
+      ],
+      "depends_on": [
+        "SBR-ARCH-AMEND-SCHEMA-STARTUP-14",
+        "SBR-SCHEMA-007-STARTUP-SAFE"
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-ARCH-AMEND-SCHEMA-SCOPE-15",
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "benchmarks/**",
+        "pyproject.toml",
+        "README.md",
+        "docs/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/ARCHITECTURE_GUIDE.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/CHECKLIST.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/WORK_ITEMS.md"
+      ],
+      "wave": 4,
+      "suggested_specialist": "blueprint",
+      "status": "completed"
+    },
+    {
+      "package_id": "SBR-ARCH-AMEND-SCHEMA-STARTUP-14",
+      "title": "Align migration 007 plan with startup-safe legacy classification",
+      "goal": "Repair only the stale PHASE_PLAN migration-007 language disproved by live startup: unresolved legacy bindings must remain preserved, reason-coded, keyless, and unusable without aborting Scribe startup or guessing a project.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "verification": [
+        "rg -n 'project_identity_zero_matches|project_identity_ambiguous|test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing_startup|test_migration_007_keeps_the_legacy_postgres_binding_writer_working' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "! rg -n 'refuses_ambiguous_binding_backfill_without_ledger_write|missing/ambiguous project identity fails readiness closed' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
+        "git diff --check -- .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "The SS-01 migration input and SBR-SCHEMA.1 sections say exactly-one legacy identity resolves while zero/many/absent-name/missing-session/missing-key cases remain preserved, unresolved, reason-coded, keyless, and unusable without refusing server startup.",
+        "The SBR-SCHEMA.1 required tests name the committed tests/test_database_migration.py regressions and retain disposable first/second-apply, row-count, zero-ledger-drift, backup, and restore proof as downstream release gates.",
+        "The delta changes no frozen Council boundary, background-receipt contract, release version, unrelated phase, source, or test file.",
+        "The managed PHASE_PLAN passes Scribe quality_check after the surgical update."
+      ],
+      "depends_on": [
+        "SBR-PLAN-SYNTH-12",
+        "SBR-SCHEMA-007-STARTUP-SAFE"
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-ARCH-AMEND-SCHEMA-STARTUP-14",
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "benchmarks/**",
+        "pyproject.toml",
+        "README.md",
+        "docs/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/ARCHITECTURE_GUIDE.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/CHECKLIST.md",
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/WORK_ITEMS.md"
+      ],
+      "wave": 4,
+      "suggested_specialist": "blueprint",
+      "status": "completed"
     },
     {
       "package_id": "SBR-DOC-DUR.1",
@@ -479,7 +658,7 @@
         "Add `WalEntryConflictError(AtomicFileError)` and `WalJournalCorruptError(AtomicFileError)`.",
         "Preserve `atomic_write(...) -> None`, `async_atomic_write(...) -> None`, `append_line(...) -> None`, and `_write_line_with_wal(...) -> None`."
       ],
-      "status": "planned"
+      "status": "completed"
     },
     {
       "package_id": "SBR-SCHEMA.1",
@@ -544,7 +723,36 @@
         "background_receipts has PRIMARY KEY (operation_id) and UNIQUE (canonical_project_key, idempotency_key).",
         "scribe_schema_readiness is a singleton readiness record with schema_fingerprint, migration_version, and updated_at; it is coordination metadata, never the migration ledger."
       ],
-      "status": "planned"
+      "status": "completed"
+    },
+    {
+      "package_id": "SBR-ARCH-AMEND-SCHEMA2-16",
+      "title": "SBR ARCH AMEND SCHEMA2 16",
+      "goal": "Resolve the SBR-SCHEMA.2 truth-gate contract conflict by authorizing only the bounded transactional SQLite table rebuild required to enforce frozen C-05/C-06 constraints, while correcting the package verification lane so it does not require an unmarked non-hermetic PostgreSQL neighbor.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "verification": [
+        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "PHASE_PLAN explicitly permits a transaction-scoped idempotent rebuild of session_projects and background_receipts only when SQLite introspection proves frozen constraints are absent, with row/timestamp/FK/index/trigger/authoritative-binding preservation and fail-closed rollback.",
+        "PHASE_PLAN continues to forbid destructive or generic rebuilds, data loss, repository authority changes, and any Council-specific logic.",
+        "SBR-SCHEMA.2 verification no longer treats the unmarked configured-PostgreSQL neighbor as a required local command; disposable PostgreSQL coverage remains assigned to DA-10 and the package retains hermetic SQLite/import/diff checks.",
+        "The amended plan aligns current SBR-SCHEMA.2 source scope without changing source or tests and names the exact registry contract delta the coordinator must apply."
+      ],
+      "depends_on": [],
+      "doc_ref": "PHASE_PLAN.md#SBR-ARCH-AMEND-SCHEMA2-16",
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "pyproject.toml"
+      ],
+      "wave": 5,
+      "suggested_specialist": "blueprint",
+      "status": "completed"
     },
     {
       "package_id": "SBR-SCHEMA.2",
@@ -605,7 +813,7 @@
         "create_schema(...) invokes ensure_reliability_schema exactly once before create_all_indexes.",
         "Fresh init.sql and SQLite schema expose the same C-05/C-06 column names, state domain, uniqueness, and logical defaults; backend-specific types are limited to TIMESTAMPTZ/JSONB/BOOLEAN versus TEXT/INTEGER representations."
       ],
-      "status": "planned"
+      "status": "awaiting_review"
     },
     {
       "package_id": "SBR-BIND-PERSIST.4",
@@ -1139,6 +1347,39 @@
       "status": "planned"
     },
     {
+      "package_id": "SBR-ARCH-AMEND-TOKEN-EFFICIENCY-19",
+      "title": "SBR ARCH AMEND TOKEN EFFICIENCY 19",
+      "goal": "Amend the Scribe reliability architecture so agent-preferred structured responses are concise typed receipts by default while complete structured depth remains explicitly requestable for diagnostics and compatibility, using one shared projection seam and measured byte/token budgets.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "verification": [
+        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "Plan defines default structured as a concise typed receipt preserving operation identity, project plus binding ID/generation, authoritative file/DB durability, affected artifact, correlation ID, and queued/retry state; typed errors always preserve code/message/retry/remedy/candidates.",
+        "Plan defines explicit full-depth structured diagnostics/compatibility mode that preserves current detail on request, while readable remains human-facing; no caller must switch away from structured JSON merely to avoid bloat.",
+        "Plan changes response projection only: stored audit rows, WAL/file commits, DB mirrors, quality/indexing, authorization, and content requested by read operations remain complete.",
+        "Plan assigns source ownership across existing SBR-HOTPATH packages or one justified new package without overlapping files, and keeps Council wrapper/projection amplification upstream in council_mcp.",
+        "Plan freezes measurable budgets: append/log default structured success <=512 bytes; one-page read_recent/query metadata <=1024 bytes excluding requested content; get_project/manage_docs/set_project budgets justified from research; default structured metadata at least 50 percent smaller than full-depth mode; full depth explicitly bounded.",
+        "Plan names regression coverage for no default written_line/content echo, reminders/recent_projects/timing/inventory omission, singular path projection, required receipt keys, complete typed errors, explicit full-depth structured compatibility, unchanged durable side effects, and wrapper-level duplication owned upstream."
+      ],
+      "depends_on": [
+        "SBR-TOKEN-RESEARCH-18"
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-ARCH-AMEND-TOKEN-EFFICIENCY-19",
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "pyproject.toml"
+      ],
+      "wave": 10,
+      "suggested_specialist": "blueprint",
+      "status": "completed"
+    },
+    {
       "package_id": "SBR-BG.2",
       "title": "Fenced worker, finite retry, and cancellation protocol",
       "goal": "Execute one claimed receipt through a host-injected idempotent handler, preserving C-08 state-version/fence authority across success, finite seeded retry, permanent failure, cancellation, worker death, and restart.",
@@ -1263,6 +1504,96 @@
       "status": "planned"
     },
     {
+      "package_id": "SBR-TOKEN-RESEARCH-18",
+      "title": "SBR TOKEN RESEARCH 18",
+      "goal": "Measure and map token-heavy Scribe tool responses, especially append_entry, so hot-path packages can return compact durable receipts by default without losing binding identity, durability truth, typed failures, audit provenance, or opt-in diagnostics.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/research/RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md"
+      ],
+      "verification": [
+        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/research/RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md"
+      ],
+      "acceptance": [
+        "Report measures serialized response bytes and estimated tokens for representative append_entry, read_recent, query_entries, manage_docs, get_project, and set_project calls across readable/structured/compact modes and identifies duplicated or nonessential hot-path fields.",
+        "Report traces each payload contributor to its source formatter/tool/runtime path, including echoed written content, reminders, inventories/recents, timing trees, mirror details, path duplication, and Council projection wrappers where observable.",
+        "Report defines a minimal success receipt that preserves ok, operation/entry identity, project/binding identity and generation, authoritative durability/DB mirror state, affected artifact/path, correlation ID, and retry/error semantics, with verbose diagnostics opt-in.",
+        "Report proposes measurable default and verbose serialized-byte/token budgets, regression tests, and compatibility rules; format=compact must materially reduce output and errors must retain full typed remediation.",
+        "Research introduces no production implementation and keeps generic Scribe ownership separate from Council wrapper/projection amplification."
+      ],
+      "depends_on": [],
+      "doc_ref": "PHASE_PLAN.md#SBR-TOKEN-RESEARCH-18",
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "pyproject.toml"
+      ],
+      "wave": 10,
+      "suggested_specialist": "lens",
+      "status": "completed"
+    },
+    {
+      "package_id": "CSBH-S1",
+      "title": "Generic Scribe bootstrap and durable caller adoption",
+      "goal": "Expose the internal verified-caller adoption operation through the existing default writer, not a Council-specific binding system.",
+      "owned_files": [
+        "src/scribe_mcp/shared/execution_context.py",
+        "src/scribe_mcp/state/manager.py",
+        "src/scribe_mcp/tools/set_project.py",
+        "tests/test_execution_context.py",
+        "tests/test_set_project_runtime_scope_contract.py",
+        "tests/security/test_project_binding_policy.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_execution_context.py tests/test_set_project_runtime_scope_contract.py tests/security/test_project_binding_policy.py tests/test_set_project_integration.py"
+      ],
+      "acceptance": [
+        "Authenticate the verified caller before project resolution and reuse the frozen C-02, C-03, and C-11 contracts.",
+        "An identical adoption performs one idempotent default-writer operation and does not create a second binding generation.",
+        "A conflicting target fails closed and never overwrites the caller's persisted binding.",
+        "The existing binding receipt format remains unchanged and continues to identify the exact caller, target, and generation.",
+        "The implementation adds zero Council imports, Council schema columns, persona authority, or Council-specific policy.",
+        "No schema delta is authorized; inability to reuse the existing persistence store returns to the architecture owner with the concrete invariant failure."
+      ],
+      "depends_on": [
+        "SBR-BIND-RESOLVE.3"
+      ],
+      "doc_ref": "PHASE_PLAN.md#CSBH-S1",
+      "evidence_requirements": [
+        "behavioral",
+        "truth",
+        "quality",
+        "security"
+      ],
+      "gates": [
+        "crucible",
+        "witness",
+        "arbiter",
+        "sentinel"
+      ],
+      "forbidden_files": [
+        "src/council_mcp/**",
+        "council_mcp/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "pyproject.toml",
+        "README.md",
+        "docs/**"
+      ],
+      "wave": 11,
+      "suggested_specialist": "forge",
+      "contracts": [
+        "Consume the existing SBR-BIND-PERSIST C-01 store and SBR-BIND-RESOLVE C-02/C-03/C-11 contracts without duplicating them.",
+        "Verified-caller adoption is generic Scribe behavior and contains no Council vocabulary or persona-based authority.",
+        "Parent Council evidence row 3a8d58d5-da3d-431a-abd1-99187482eb08; accepted design 697a4cf1-5a98-4607-bd89-1140f5a76d79 at revision 3def2a31286592a15197eddd589726bde3a9dd233685cdf47d08973b93f90461 and truth event fd0de0a0."
+      ],
+      "status": "planned"
+    },
+    {
       "package_id": "SBR-BG.3",
       "title": "BackgroundJobServiceV1 admission, recovery, metrics, and API",
       "goal": "Compose C-08, the scheduler, and workers behind the frozen C-09 API, with typed non-admission, zero-lost restart recovery, bounded metrics, and idempotent start/stop.",
@@ -1323,6 +1654,66 @@
         "`submit(intent: BackgroundIntentV1) -> DurableOperationReceiptV1`, `get_status(operation_id: str) -> DurableOperationReceiptV1`, `cancel(operation_id: str, expected_state_version: int) -> DurableOperationReceiptV1`, `start() -> None`, `stop(admission_close: bool = True, drain_deadline_ms: int | None = None) -> BackgroundShutdownReceiptV1`, and `health_snapshot() -> BackgroundServiceHealthV1` are async methods."
       ],
       "status": "planned"
+    },
+    {
+      "package_id": "SBR-DOC-SPECIAL-RECOVERY.1",
+      "title": "SBR DOC SPECIAL RECOVERY.1",
+      "goal": "Repair special bug/security managed-document creation and rehome convergence so an in-project target_dir is honored and partial recovery updates document aliases, case bindings, and canonical indexes without manual filesystem deletion.",
+      "owned_files": [
+        "src/scribe_mcp/doc_management/special_create.py",
+        "src/scribe_mcp/doc_management/runtime.py",
+        "src/scribe_mcp/doc_management/special_indexes.py",
+        "tests/test_manage_docs_create_doc.py",
+        "tests/test_manage_docs_cleanup_support.py",
+        "tests/integration/test_manage_docs_apply_preview_lifecycle.py",
+        "src/scribe_mcp/doc_management/rehome_transaction.py",
+        "docs/bugs/managed-doc-recovery/2026-09-28_BUG-2026-09-28-0004/report.md"
+      ],
+      "verification": [
+        "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.doc_management import runtime, special_create, special_indexes'",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_manage_docs_create_doc.py tests/test_manage_docs_cleanup_support.py tests/integration/test_manage_docs_apply_preview_lifecycle.py",
+        "git diff --check -- src/scribe_mcp/doc_management/special_create.py src/scribe_mcp/doc_management/runtime.py src/scribe_mcp/doc_management/special_indexes.py tests/test_manage_docs_create_doc.py tests/test_manage_docs_cleanup_support.py tests/integration/test_manage_docs_apply_preview_lifecycle.py"
+      ],
+      "acceptance": [
+        "create with doc_type bug or security honors a safe target_dir inside the active repository and writes the caller-named document there; an escaping or ambiguous target fails before file, registry, case, or index mutation.",
+        "A special-document rehome atomically converges the project document aliases, shared case-registry doc binding and optional false-positive disposition, and source/target bug or security indexes using the existing rehome/apply-receipt transaction.",
+        "A retained PARTIAL rehome is idempotently recoverable exactly once; an OTHER state returns APPLY_RECEIPT_RECOVERY_REQUIRED with zero guessed mutation and an exact governed remedy.",
+        "The live sec_1790614809 incident is recoverable without shell deletion: the stray docs/security/security/2026-09-28_sec_1790614809/report.md is removed from the live tree, its accidental aliases and open case are closed or rehomed consistently, the security index contains no stale path, and SECURITY_COUNCIL_SCRIBE_BORN_BOUND_SEAT_HANDOFF resolves only to the owned project document.",
+        "The owned Council security decision document is never overwritten by cleanup and its verified content digest remains unchanged.",
+        "The repair is generic standalone Scribe behavior and adds no Council imports, seat policy, work-item logic, or persona authority."
+      ],
+      "depends_on": [
+        "SBR-DOC-DUR.1"
+      ],
+      "doc_ref": "PHASE_PLAN.md#SBR-DOC-SPECIAL-RECOVERY.1",
+      "evidence_requirements": [
+        "behavioral",
+        "truth",
+        "quality"
+      ],
+      "gates": [
+        "crucible",
+        "witness",
+        "arbiter"
+      ],
+      "forbidden_files": [
+        "src/council_mcp/**",
+        "council_mcp/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "pyproject.toml",
+        "README.md"
+      ],
+      "wave": 11,
+      "suggested_specialist": "mantis",
+      "contracts": [
+        "Preserve the existing manage_docs public action set; repair create and rehome behavior through the current special-document, apply-preview, registry, and index owners.",
+        "Incident evidence: create aitrace:v1:codex:b4f778daf86ca858c4f966b74ee58bba -> aitrace:v1:codex:a08a0321ed530908e4c80a3ab399482b; PARTIAL rehome aitrace:v1:codex:04322f8d533414b79bbb8348eeca95a9 -> aitrace:v1:codex:63c94ebb41740ccf46ee01490c01b923; fail-closed OTHER aitrace:v1:codex:aded798376cdaf7dd300dde4d02730c0 -> aitrace:v1:codex:b8c5c46ce26f86e7eb6579d5445a3f00."
+      ],
+      "status": "in_progress"
     },
     {
       "package_id": "SBR-HOTPATH.1",
@@ -1387,6 +1778,71 @@
         "`build_call_timing_envelope_v2(*, correlation_id: str, phases_ms: Mapping[str, float], total_ms: float) -> CallTimingEnvelopeV2`.",
         "Preserve `build_runtime_efficiency_budget_status(...)`, `build_timing_envelope(...)`, and `build_timing_envelope_from_entries(...)`; their V1 schema/readers remain compatible.",
         "Extend only the internal formatter interface: `FormatterDispatcher.finalize_tool_response(data: Dict[str, Any], format: str = \"readable\", tool_name: str = \"\", telemetry: Optional[Dict[str, Any]] = None, resolved_request_context: ResolvedRequestContextV1 | None = None) -> Union[Dict[str, Any], CallToolResult]`."
+      ],
+      "status": "planned"
+    },
+    {
+      "package_id": "CSBH-S2",
+      "title": "Scribe transport ingress and reconnect",
+      "goal": "Adopt the generic verified caller before any task handler and recover its durable context across reconnections.",
+      "owned_files": [
+        "src/scribe_mcp/shared/tool_runtime.py",
+        "src/scribe_mcp/server.py",
+        "src/scribe_mcp/shared/session_scope.py",
+        "tests/test_tool_runtime_repo_scope.py",
+        "tests/shared/test_actor_scoped_session_binding.py",
+        "tests/security/test_session_provenance.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/shared/test_actor_scoped_session_binding.py tests/shared/test_session_repo_root_poisoning.py tests/security/test_session_provenance.py"
+      ],
+      "acceptance": [
+        "Request-local trusted caller identity wins over transport labels and agent or persona labels.",
+        "The package satisfies positive replay cases P4 through P7 and negative cases N4 through N6 from the accepted Council design.",
+        "A verified caller is adopted before the first task handler runs and the same durable context is recovered after transport or MCP reconnection.",
+        "Legacy generic callers retain their existing explicit-binding behavior without weakening public-release provenance.",
+        "A first read_recent on an admitted exact seat succeeds without a manual set_project call; a missing or conflicting handoff returns the accepted typed failure and preserves any persisted binding."
+      ],
+      "depends_on": [
+        "CSBH-S1",
+        "SBR-BIND-RECONNECT.1",
+        "SBR-BIND-RESOLVE.4",
+        "SBR-BG.4",
+        "SBR-STARTUP.3",
+        "SBR-CORE-VAL.4",
+        "SBR-REL-VAL.3"
+      ],
+      "doc_ref": "PHASE_PLAN.md#CSBH-S2",
+      "evidence_requirements": [
+        "behavioral",
+        "truth",
+        "quality",
+        "security"
+      ],
+      "gates": [
+        "crucible",
+        "witness",
+        "arbiter",
+        "sentinel"
+      ],
+      "forbidden_files": [
+        "src/council_mcp/**",
+        "council_mcp/**",
+        ".council/**",
+        ".claude/**",
+        ".codex/**",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "pyproject.toml",
+        "README.md",
+        "docs/**"
+      ],
+      "wave": 12,
+      "suggested_specialist": "forge",
+      "contracts": [
+        "Ingress adopts only a request-local authenticated verified-caller handoff before dispatching the task handler.",
+        "Reconnect recovery reuses the durable generic binding; unsupported, partial, foreign, stale, or conflicting handoffs fail closed without ambient-state mutation.",
+        "Parent Council evidence row 3a8d58d5-da3d-431a-abd1-99187482eb08; accepted design 697a4cf1-5a98-4607-bd89-1140f5a76d79 at revision 3def2a31286592a15197eddd589726bde3a9dd233685cdf47d08973b93f90461 and truth event fd0de0a0."
       ],
       "status": "planned"
     },
@@ -1603,7 +2059,8 @@
       "depends_on": [
         "SBR-DOC-DUR.2",
         "SBR-BG.4",
-        "SBR-HOTPATH.1"
+        "SBR-HOTPATH.1",
+        "SBR-DOC-SPECIAL-RECOVERY.1"
       ],
       "doc_ref": "PHASE_PLAN.md#SBR-DOC-DUR.3",
       "evidence_requirements": [
@@ -2548,7 +3005,7 @@
         ".codex/**"
       ],
       "suggested_specialist": "crucible",
-      "status": "in_progress"
+      "status": "dispatched"
     },
     {
       "package_id": "SBR-CONC-A5-05",
@@ -3280,267 +3737,27 @@
       "status": "completed"
     },
     {
-      "package_id": "SBR-OBJKEY-BUG-13",
-      "title": "Restore Scribe backup sync policy",
-      "goal": "Diagnose and repair the pre-existing should_sync regression where .scribe/backups/*.bak is rejected despite the repository contract requiring backup artifacts to sync.",
-      "wave": 1,
-      "depends_on": [],
+      "package_id": "SBR-SCHEMA-007-STARTUP-SAFE",
+      "title": "SBR SCHEMA 007 STARTUP SAFE",
+      "goal": "Fleet P0 since 21:18 EDT 2026-09-27: every fresh scribe-server exits at startup because migration 007_reliability_receipts.sql, committed in c9a988b, has a DO guard at lines 8-36 that raises when legacy session binding 04396ca4-0ed0-400b-a0fc-c306bbd4946a has 0 project identity matches. Pending numbered migrations run at startup, so the raise kills the process before initialize and every newly spawned seat on any provider has no Scribe tools. Make 007 safe for legacy bindings that resolve to zero or many projects without refusing the server",
       "owned_files": [
-        "src/scribe_mcp/object_store/keys.py",
-        "tests/test_object_store.py"
-      ],
-      "forbidden_files": [
-        "src/council_mcp/**",
-        "council_mcp/**",
-        ".council/**",
-        ".claude/**",
-        ".codex/**",
-        "pyproject.toml",
-        "README.md",
-        "docs/**"
+        "src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql",
+        "tests/test_database_migration.py"
       ],
       "verification": [
-        "./.venv/bin/pytest -q tests/test_object_store.py",
-        "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.object_store.keys import should_sync'"
+        "tests/test_database_migration.py"
       ],
       "acceptance": [
-        "A repository-local .scribe/backups/file.bak is accepted by should_sync while unrelated .bak files remain rejected unless already promised by the existing contract.",
-        "The full tests/test_object_store.py module exits zero without weakening existing inclusion or exclusion cases.",
-        "The change is isolated from the SBR-STARTUP.2 setup/probe implementation and adds no Council-specific behavior."
-      ],
-      "evidence_requirements": [
-        "behavioral",
-        "truth"
-      ],
-      "gates": [
-        "crucible",
-        "witness"
-      ],
-      "suggested_specialist": "mantis"
-    },
-    {
-      "package_id": "SBR-BIND-RECONNECT.1",
-      "title": "Persisted actor binding survives application-handle reconstruction",
-      "goal": "Add the focused Scribe regression proving that one verified project bind remains usable after reconstructing the router/application handle, without a second set_project call and without sibling-session interference. This is test-only unless the regression fails.",
-      "wave": 1,
-      "depends_on": [
-        "SBR-BIND-PERSIST.1",
-        "SBR-BIND-PERSIST.2",
-        "SBR-BIND-RESOLVE.1"
-      ],
-      "owned_files": [
-        "tests/shared/test_actor_scoped_session_binding.py"
-      ],
-      "forbidden_files": [
-        "src/**",
-        "src/council_mcp/**",
-        "council_mcp/**",
-        ".council/**",
-        ".claude/**",
-        ".codex/**",
-        "benchmarks/**",
-        "pyproject.toml",
-        "README.md",
-        "docs/**"
-      ],
-      "verification": [
-        "PYTHONPATH=src ./.venv/bin/python -m py_compile tests/shared/test_actor_scoped_session_binding.py",
-        "PYTHONPATH=src ./.venv/bin/pytest -q tests/shared/test_actor_scoped_session_binding.py",
-        "PYTHONPATH=src ./.venv/bin/pytest -q tests/shared/test_session_repo_root_poisoning.py::test_modern_application_handle_reconnect_reuses_only_its_persisted_session tests/test_set_project_integration.py::test_set_project_reports_authoritative_session_id tests/test_tool_metadata_contract.py::test_direct_tool_schemas_require_operational_inputs",
-        "git diff --check -- tests/shared/test_actor_scoped_session_binding.py"
-      ],
-      "acceptance": [
-        "The test binds once, reconstructs RouterContextManager/application identity from persisted storage, then read_recent, append_entry, and manage_docs resolve the same project without another set_project call.",
-        "The authoritative caller-session key and binding generation remain unchanged across reconstruction, while sibling application handles remain distinct and cannot read, clear, or mutate the reconstructed caller default.",
-        "The test uses the existing _Harness, _InMemoryBackend, and RouterContextManager; it introduces no alternate binding store, retry loop, or Council-specific identity semantics.",
-        "No production source change is permitted unless the new regression first fails and the work item is explicitly amended with the proven root-cause boundary.",
-        "Replace the stale same-name compatibility assumption in tests/shared/test_actor_scoped_session_binding.py: two exact application or seat identities carrying the same persona label must retain distinct authoritative caller-session keys and persisted default bindings; an authorized explicit project target may select another project for that call but must neither collapse those defaults nor mutate a sibling seat. Demonstrate the regression failing against the current defect before authorizing any production-source amendment."
-      ],
-      "doc_ref": "PHASE_PLAN.md#SBR-BIND-RESOLVE.1",
-      "evidence_requirements": [
-        "behavioral",
-        "truth",
-        "quality"
-      ],
-      "gates": [
-        "crucible",
-        "witness",
-        "arbiter"
-      ],
-      "suggested_specialist": "crucible",
-      "status": "planned"
-    },
-    {
-      "package_id": "SBR-ARCH-AMEND-SCHEMA-STARTUP-14",
-      "title": "Align migration 007 plan with startup-safe legacy classification",
-      "goal": "Repair only the stale PHASE_PLAN migration-007 language disproved by live startup: unresolved legacy bindings must remain preserved, reason-coded, keyless, and unusable without aborting Scribe startup or guessing a project.",
-      "wave": 4,
-      "depends_on": [
-        "SBR-PLAN-SYNTH-12",
-        "SBR-SCHEMA-007-STARTUP-SAFE"
-      ],
-      "owned_files": [
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "forbidden_files": [
-        "src/**",
-        "tests/**",
-        "benchmarks/**",
-        "pyproject.toml",
-        "README.md",
-        "docs/**",
-        ".council/**",
-        ".claude/**",
-        ".codex/**",
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/ARCHITECTURE_GUIDE.md",
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/CHECKLIST.md",
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/WORK_ITEMS.md"
-      ],
-      "verification": [
-        "rg -n 'project_identity_zero_matches|project_identity_ambiguous|test_migration_007_classifies_unresolved_legacy_bindings_instead_of_refusing_startup|test_migration_007_keeps_the_legacy_postgres_binding_writer_working' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
-        "! rg -n 'refuses_ambiguous_binding_backfill_without_ledger_write|missing/ambiguous project identity fails readiness closed' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
-        "git diff --check -- .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "acceptance": [
-        "The SS-01 migration input and SBR-SCHEMA.1 sections say exactly-one legacy identity resolves while zero/many/absent-name/missing-session/missing-key cases remain preserved, unresolved, reason-coded, keyless, and unusable without refusing server startup.",
-        "The SBR-SCHEMA.1 required tests name the committed tests/test_database_migration.py regressions and retain disposable first/second-apply, row-count, zero-ledger-drift, backup, and restore proof as downstream release gates.",
-        "The delta changes no frozen Council boundary, background-receipt contract, release version, unrelated phase, source, or test file.",
-        "The managed PHASE_PLAN passes Scribe quality_check after the surgical update."
-      ],
-      "doc_ref": "PHASE_PLAN.md#SBR-SCHEMA.1",
-      "evidence_requirements": [],
-      "gates": [],
-      "suggested_specialist": "blueprint",
-      "status": "planned"
-    },
-    {
-      "package_id": "SBR-ARCH-AMEND-SCHEMA-SCOPE-15",
-      "title": "Align migration 007 ownership and non-destructive trigger DDL",
-      "goal": "Repair the remaining SBR-SCHEMA.1 PHASE_PLAN scope contradictions found by Witness: the package owns its focused PostgreSQL regressions, and idempotent replacement of the named classification trigger is distinct from forbidden destructive table/data DROP behavior.",
-      "wave": 4,
-      "depends_on": [
-        "SBR-ARCH-AMEND-SCHEMA-STARTUP-14",
-        "SBR-SCHEMA-007-STARTUP-SAFE"
-      ],
-      "owned_files": [
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "forbidden_files": [
-        "src/**",
-        "tests/**",
-        "benchmarks/**",
-        "pyproject.toml",
-        "README.md",
-        "docs/**",
-        ".council/**",
-        ".claude/**",
-        ".codex/**",
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/ARCHITECTURE_GUIDE.md",
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/CHECKLIST.md",
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/WORK_ITEMS.md"
-      ],
-      "verification": [
-        "rg -n 'tests/test_database_migration.py|DROP TRIGGER IF EXISTS|destructive table|destructive data' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
-        "! rg -n 'author only migration 007|test-file edits|SQL contains no DROP' .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md",
-        "git diff --check -- .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "acceptance": [
-        "SBR-SCHEMA.1 owned-files, out-of-scope, and handoff language explicitly permits only migration 007 plus tests/test_database_migration.py and forbids every unrelated source/test path.",
-        "The no-destructive-DDL invariant forbids table/schema/data DROP, TRUNCATE, destructive rename, and data deletion while explicitly allowing idempotent DROP TRIGGER IF EXISTS plus recreation of the single named classification trigger.",
-        "The delta preserves the startup-safe classification, C-05/C-06, DA-10 release gates, generic Scribe-only boundary, and every unrelated phase.",
-        "The managed PHASE_PLAN passes Scribe quality_check after the surgical update."
-      ],
-      "doc_ref": "PHASE_PLAN.md#SBR-SCHEMA.1",
-      "evidence_requirements": [],
-      "gates": [],
-      "suggested_specialist": "blueprint",
-      "status": "planned"
-    },
-    {
-      "package_id": "SBR-ARCH-AMEND-SCHEMA2-16",
-      "title": "SBR ARCH AMEND SCHEMA2 16",
-      "goal": "Resolve the SBR-SCHEMA.2 truth-gate contract conflict by authorizing only the bounded transactional SQLite table rebuild required to enforce frozen C-05/C-06 constraints, while correcting the package verification lane so it does not require an unmarked non-hermetic PostgreSQL neighbor.",
-      "owned_files": [
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "verification": [
-        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "acceptance": [
-        "PHASE_PLAN explicitly permits a transaction-scoped idempotent rebuild of session_projects and background_receipts only when SQLite introspection proves frozen constraints are absent, with row/timestamp/FK/index/trigger/authoritative-binding preservation and fail-closed rollback.",
-        "PHASE_PLAN continues to forbid destructive or generic rebuilds, data loss, repository authority changes, and any Council-specific logic.",
-        "SBR-SCHEMA.2 verification no longer treats the unmarked configured-PostgreSQL neighbor as a required local command; disposable PostgreSQL coverage remains assigned to DA-10 and the package retains hermetic SQLite/import/diff checks.",
-        "The amended plan aligns current SBR-SCHEMA.2 source scope without changing source or tests and names the exact registry contract delta the coordinator must apply."
+        "A1 a stdio initialize probe with the exact .mcp.json scribe command returns an initialize result against the live database that holds binding 04396ca4",
+        "A2 legacy bindings with zero or many project identity matches are classified durably, for example marked unresolved or retired with a reason, never silently assigned a project; a binding that resolves to exactly one project still gets its key and generation as 007 intends",
+        "A3 a regression runs 007 against a fixture with a zero-match and a many-match binding and proves the migration completes, those bindings are classified and unusable for writes, and a normal binding migrates; it goes red against the c9a988b guard"
       ],
       "depends_on": [],
+      "doc_ref": "PHASE_PLAN.md#SBR-SCHEMA-007-STARTUP-SAFE",
       "evidence_requirements": [],
       "gates": [],
-      "forbidden_files": [
-        "src/**",
-        "tests/**",
-        "pyproject.toml"
-      ],
-      "wave": 5,
-      "suggested_specialist": "blueprint"
-    },
-    {
-      "package_id": "SBR-TOKEN-RESEARCH-18",
-      "title": "SBR TOKEN RESEARCH 18",
-      "goal": "Measure and map token-heavy Scribe tool responses, especially append_entry, so hot-path packages can return compact durable receipts by default without losing binding identity, durability truth, typed failures, audit provenance, or opt-in diagnostics.",
-      "owned_files": [
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/research/RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md"
-      ],
-      "verification": [
-        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/research/RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md"
-      ],
-      "acceptance": [
-        "Report measures serialized response bytes and estimated tokens for representative append_entry, read_recent, query_entries, manage_docs, get_project, and set_project calls across readable/structured/compact modes and identifies duplicated or nonessential hot-path fields.",
-        "Report traces each payload contributor to its source formatter/tool/runtime path, including echoed written content, reminders, inventories/recents, timing trees, mirror details, path duplication, and Council projection wrappers where observable.",
-        "Report defines a minimal success receipt that preserves ok, operation/entry identity, project/binding identity and generation, authoritative durability/DB mirror state, affected artifact/path, correlation ID, and retry/error semantics, with verbose diagnostics opt-in.",
-        "Report proposes measurable default and verbose serialized-byte/token budgets, regression tests, and compatibility rules; format=compact must materially reduce output and errors must retain full typed remediation.",
-        "Research introduces no production implementation and keeps generic Scribe ownership separate from Council wrapper/projection amplification."
-      ],
-      "depends_on": [],
-      "evidence_requirements": [],
-      "gates": [],
-      "forbidden_files": [
-        "src/**",
-        "tests/**",
-        "pyproject.toml"
-      ],
-      "wave": 10,
-      "suggested_specialist": "lens"
-    },
-    {
-      "package_id": "SBR-ARCH-AMEND-TOKEN-EFFICIENCY-19",
-      "title": "SBR ARCH AMEND TOKEN EFFICIENCY 19",
-      "goal": "Amend the Scribe reliability architecture so agent-preferred structured responses are concise typed receipts by default while complete structured depth remains explicitly requestable for diagnostics and compatibility, using one shared projection seam and measured byte/token budgets.",
-      "owned_files": [
-        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "verification": [
-        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
-      ],
-      "acceptance": [
-        "Plan defines default structured as a concise typed receipt preserving operation identity, project plus binding ID/generation, authoritative file/DB durability, affected artifact, correlation ID, and queued/retry state; typed errors always preserve code/message/retry/remedy/candidates.",
-        "Plan defines explicit full-depth structured diagnostics/compatibility mode that preserves current detail on request, while readable remains human-facing; no caller must switch away from structured JSON merely to avoid bloat.",
-        "Plan changes response projection only: stored audit rows, WAL/file commits, DB mirrors, quality/indexing, authorization, and content requested by read operations remain complete.",
-        "Plan assigns source ownership across existing SBR-HOTPATH packages or one justified new package without overlapping files, and keeps Council wrapper/projection amplification upstream in council_mcp.",
-        "Plan freezes measurable budgets: append/log default structured success <=512 bytes; one-page read_recent/query metadata <=1024 bytes excluding requested content; get_project/manage_docs/set_project budgets justified from research; default structured metadata at least 50 percent smaller than full-depth mode; full depth explicitly bounded.",
-        "Plan names regression coverage for no default written_line/content echo, reminders/recent_projects/timing/inventory omission, singular path projection, required receipt keys, complete typed errors, explicit full-depth structured compatibility, unchanged durable side effects, and wrapper-level duplication owned upstream."
-      ],
-      "depends_on": [
-        "SBR-TOKEN-RESEARCH-18"
-      ],
-      "evidence_requirements": [],
-      "gates": [],
-      "forbidden_files": [
-        "src/**",
-        "tests/**",
-        "pyproject.toml"
-      ],
-      "wave": 10,
-      "suggested_specialist": "blueprint"
+      "suggested_specialist": "mantis",
+      "status": "completed"
     }
   ]
 }
