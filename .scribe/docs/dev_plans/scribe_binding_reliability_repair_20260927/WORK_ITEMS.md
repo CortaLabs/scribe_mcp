@@ -555,14 +555,16 @@
         "src/scribe_mcp/db/init.sql"
       ],
       "verification": [
+        "PYTHONPATH=src ./.venv/bin/python -m py_compile src/scribe_mcp/storage/sqlite/schema.py",
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.storage.sqlite.schema import create_background_receipt_tables, ensure_reliability_schema; from scribe_mcp.storage.postgres.schema import SCHEMA_PATH'",
-        "./.venv/bin/pytest -q tests/storage/test_session_storage_invariants.py tests/storage/test_sqlite_apply_preview_receipts.py tests/test_bootstrap_postgres_script.py",
+        "./.venv/bin/pytest -q tests/storage/test_session_storage_invariants.py::test_session_binding_record_v2_contract tests/storage/test_session_storage_invariants.py::test_sqlite_session_linkage_invariants tests/storage/test_sqlite_apply_preview_receipts.py tests/test_bootstrap_postgres_script.py",
         "./.venv/bin/pytest -q tests/core/test_swarm_binding_reliability.py::test_sqlite_reliability_schema_upgrades_legacy_binding_without_default_drift tests/core/test_background_queue_contract.py::test_sqlite_background_receipt_schema_enforces_c06 (after DA-09 owns the tests)",
-        "./.venv/bin/pytest -q tests/migration/mcp_v2/test_compatibility_matrix.py::test_reliability_schema_postgres_sqlite_init_parity (after DA-10 owns the test)"
+        "./.venv/bin/pytest -q tests/migration/mcp_v2/test_compatibility_matrix.py::test_reliability_schema_postgres_sqlite_init_parity (after DA-10 owns the test)",
+        "git diff --check -- src/scribe_mcp/storage/sqlite/schema.py src/scribe_mcp/db/init.sql"
       ],
       "acceptance": [
         "Fresh PostgreSQL, fresh SQLite, and legacy SQLite upgrade expose one logical C-05/C-06 schema.",
-        "Fresh init plus migration 007 is idempotent; reopening SQLite is non-destructive and preserves existing bindings/receipts.",
+        "Non-destructive means zero committed data loss or authority drift: SQLite may transactionally rebuild only session_projects/background_receipts when introspection proves frozen C-05/C-06 constraints absent or non-equivalent; matching schemas are no-op; any preservation or validation mismatch rolls back and fails closed.",
         "Compatibility project_name remains readable while project_key/generation are authoritative for new binding behavior.",
         "Schema modules import without database/filesystem side effects.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
@@ -1095,6 +1097,7 @@
         "Every successful bind returns a complete C-03 receipt tied to the exact caller-session hash and stable project key.",
         "Unchanged bind and stale-generation failure perform zero persistent writes; changed target increments exactly once.",
         "The trace-derived delayed second write succeeds after one bind with no rebind/default drift.",
+        "Default structured, compact, and both success project the complete C-03 identity through the shared receipt seam within 1024 bytes; structured_full and both_full retain current deep detail.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
@@ -1212,9 +1215,10 @@
       ],
       "acceptance": [
         "Every project-bound call uses one exact server-verified caller key and one immutable C-11; attribution cannot affect identity or routing.",
-        "All expected binding/project failures return C-04 `isError=true` with identical structured content across protocol eras; no expected failure escapes as a raw transport exception.",
+        "All expected binding/project failures return C-04 isError=true with identical structured content across protocol eras; no expected failure escapes as a raw transport exception.",
+        "Every response mode preserves C-04 error_code, message, retryability and backoff, target, candidates, remediation, and correlation_id without success-receipt compaction.",
         "The generic C-16 flow supports bind-once, authorized explicit cross-repo calls, reconnect, ambiguity/stale-generation/wrong-target denials, and default preservation without Council logic.",
-        "The 32-session × 100-call oracle reports zero wrong target, default drift, cross-talk, duplicate effect, or untyped ambiguity.",
+        "The 32-session x 100-call oracle reports zero wrong target, default drift, cross-talk, duplicate effect, or untyped ambiguity.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
@@ -1331,14 +1335,17 @@
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.runtime_timing_envelope import CALL_TIMING_PHASES_V2, CallTimingEnvelopeV2, CallTimingRecorderV2, build_call_timing_envelope_v2, build_timing_envelope; from scribe_mcp.utils.formatters.dispatcher import FormatterDispatcher'",
         "./.venv/bin/pytest -q tests/test_dispatcher.py tests/test_log_intelligence.py tests/test_doctor_telemetry.py",
+        "./.venv/bin/pytest -q tests/test_dispatcher.py -k 'structured or compact or both or error'",
         "./.venv/bin/pytest -q tests/core/test_swarm_binding_reliability.py",
         "./.venv/bin/pytest -q tests/integration/test_swarm_concurrency_stress.py"
       ],
       "acceptance": [
-        "C-12 has the exact frozen phases/fields, honest `unaccounted`, >=0.95 measured coverage in passing calls, and deterministic strict >100/>500 tripwires sharing C-11 correlation.",
-        "Formatter performs zero session-binding/project-record reads and zero ambient target selection; `fetch_project_sync` is absent from its call path.",
+        "C-12 has the exact frozen phases/fields, honest unaccounted, at least 0.95 measured coverage in passing calls, and deterministic strict greater-than-100/500 tripwires sharing C-11 correlation.",
+        "Formatter performs zero session-binding/project-record reads and zero ambient target selection; fetch_project_sync is absent from its call path.",
         "Local authoritative audit durability remains foreground; only analytics/derived metrics defer.",
-        "V1 timing consumers and all response formats remain compatible.",
+        "FormatterDispatcher is the sole success projector: structured and compact emit StructuredReceiptV1, structured_full preserves current detail, both modes match their structured depth, and readable stays human-facing.",
+        "Default append_entry success is at most 512 bytes and omits written_line/content echo, reminders, recent_projects, timing, inventories, duplicate paths, and narration while retaining operation/project/binding/durability/artifact/correlation/retry truth.",
+        "V1 timing consumers and all response formats remain compatible under the amended mode semantics.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
@@ -1522,13 +1529,15 @@
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.shared.base_logging_tool import LoggingToolMixin; from scribe_mcp.tools.get_project import get_project'",
         "./.venv/bin/pytest -q tests/test_base_logging_tool.py tests/test_get_project_integration.py tests/test_get_project_sitrep.py tests/test_session_resolution_advisories.py",
+        "./.venv/bin/pytest -q tests/test_get_project_integration.py tests/test_get_project_sitrep.py -k 'structured or compact or verbose or format'",
         "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/core/test_swarm_binding_reliability.py"
       ],
       "acceptance": [
-        "`get_project` and its helper/formatter chain observe the same C-11 object and C-11 correlation ID.",
+        "get_project and its helper/formatter chain observe the same C-11 object and C-11 correlation ID.",
         "One complete call performs at most one binding read and one project-record read in total; the SS-05 portion performs neither again.",
-        "Attribution-only `agent`, recents, ambient root, and process/global state cannot select or mutate the operational target/default.",
-        "Existing get-project content and formats remain correct; non-verbose operation does not add derived recent-entry work.",
+        "Attribution-only agent, recents, ambient root, and process/global state cannot select or mutate the operational target/default.",
+        "Default get_project structured metadata is at most 1536 bytes and omits recent-entry/inventory/reminder/timing narration; structured_full preserves the complete current project detail.",
+        "Requested project truth, durable state, binding generation, and response-mode compatibility remain correct.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
@@ -1579,19 +1588,22 @@
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.doc_management import runtime; from scribe_mcp.tools.manage_docs import manage_docs'",
         "./.venv/bin/pytest -q tests/test_auto_registration.py tests/test_manage_docs_quality_check.py tests/test_manage_docs_apply_preview.py tests/test_manage_docs_anchor_cas.py tests/security/test_project_binding_policy.py",
-        "./.venv/bin/pytest -q tests/core/test_wal_replay_exactly_once.py tests/test_tool_runtime_repo_scope.py -m \"core and regression and not slow and not performance\""
+        "./.venv/bin/pytest -q tests/test_manage_docs_quality_check.py tests/test_manage_docs_apply_preview.py -k 'structured or format or diff or content or quality'",
+        "./.venv/bin/pytest -q tests/core/test_wal_replay_exactly_once.py tests/test_tool_runtime_repo_scope.py -m 'core and regression and not slow and not performance'"
       ],
       "acceptance": [
         "Every committed managed-document mutation has one C-13 readback, one WAL lineage generation, the predicted final digest, one canonical registration/index presence, and current-generation quality evidence.",
-        "Backend or convergence outage returns WAL-durable `accepted + queued_offline`; restart converges it to `applied` exactly once without a second file effect.",
+        "Backend or convergence outage returns WAL-durable accepted plus queued_offline; restart converges it to applied exactly once without a second file effect.",
         "Duplicate, conflict, terminal, and cancelled outcomes remain stable; wrong-target status/cancel/replay discloses nothing and performs no effect.",
-        "Existing actions, dry-run/apply-preview behavior, anchor CAS, quality warnings, and response compatibility remain intact.",
-        "No second mutation engine, queue, registry, indexer, quality engine, or persistence layer is introduced.",
+        "manage_docs accepts final optional format with structured default, uses the sole HOTPATH.1 projector, meets 1536-byte default metadata budget excluding requested bodies, and preserves current detail in structured_full.",
+        "Requested diff/content/read bodies and quality findings remain complete; projection changes no WAL/file/DB/registration/index/quality side effect.",
+        "No second mutation engine, queue, registry, indexer, quality engine, response projector, or persistence layer is introduced.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
       "depends_on": [
         "SBR-DOC-DUR.2",
-        "SBR-BG.4"
+        "SBR-BG.4",
+        "SBR-HOTPATH.1"
       ],
       "doc_ref": "PHASE_PLAN.md#SBR-DOC-DUR.3",
       "evidence_requirements": [
@@ -1641,13 +1653,16 @@
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.tools.read_recent import read_recent; from scribe_mcp.tools.query_entries import query_entries, _build_search_query, _execute_search_with_fallbacks'",
         "./.venv/bin/pytest -q tests/test_consumer_resolution_contract.py tests/test_read_recent_limit.py tests/test_read_recent_supplement_gate.py",
         "./.venv/bin/pytest -q tests/test_query_entries_db.py tests/test_query_entries_pagination_contract.py tests/test_query_entries_explicit_project_resolution.py tests/test_query_entries_dead_engine_honest_envelopes.py",
+        "./.venv/bin/pytest -q tests/test_read_recent_limit.py tests/test_query_entries_pagination_contract.py -k 'structured or compact or pagination or content'",
         "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/core/test_swarm_binding_reliability.py",
         "./.venv/bin/pytest -q tests/integration/test_swarm_concurrency_stress.py"
       ],
       "acceptance": [
         "Both tools reuse one C-11 and one ProjectRecord end to end; no body/helper/formatter repeats session binding or project-record reads.",
         "Immediate read/query snapshots, pagination/filter parity, explicit target/default preservation, and typed C-04 errors remain correct.",
-        "Every completed call produces one correlated C-12 with >=0.95 accounting and deterministic stage/total tripwire evidence.",
+        "Default one-page read_recent/query_entries structured metadata is at most 1024 bytes excluding complete requested entries/content and omits reminders, recent_projects, planning/timing/inventory narration, and duplicate paths.",
+        "structured_full and both_full preserve current complete diagnostics; compact aliases the concise structured receipt without changing entry-selection semantics.",
+        "Every completed call produces one correlated C-12 with at least 0.95 accounting and deterministic stage/total tripwire evidence.",
         "DA-09's 32 x 100 oracle reports zero wrong target, default drift, cross-talk, duplicate effect, or excess binding/project reads.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
@@ -1830,11 +1845,14 @@
       ],
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -m py_compile tests/test_release_startup_probe.py",
-        "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_release_startup_probe.py"
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_release_startup_probe.py",
+        "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_release_startup_probe.py -k 'response_projection or token or budget'"
       ],
       "acceptance": [
-        "Every budget emits raw samples and explicit PASS/FAIL.",
-        "Mixed revisions, missing evidence, excessive reads, unexplained time, and absent tripwires fail.",
+        "Every startup, schema, timing, and response budget emits raw samples and explicit PASS/FAIL.",
+        "Response evidence enforces append/log <=512 bytes, read_recent/query metadata <=1024 bytes, set_project <=1024 bytes, get_project/manage_docs metadata <=1536 bytes, default metadata at least 50 percent smaller than full depth in bytes and local-token count, and full-depth metadata <=16 KiB.",
+        "Artifacts identify the exact local tokenizer/version and separate requested-content bytes/tokens, direct Scribe metadata, and upstream wrapper bytes.",
+        "Mixed revisions, missing evidence, missing exact local tokenizer, excessive reads, unexplained time, absent tripwires, ambiguous content exclusion, and wrapper duplication fail.",
         "No production contact or teardown leak.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
       ],
@@ -1845,7 +1863,8 @@
         "SBR-SCHEMA.3",
         "SBR-HOTPATH.1",
         "SBR-HOTPATH.2",
-        "SBR-HOTPATH.3"
+        "SBR-HOTPATH.3",
+        "SBR-DOC-DUR.3"
       ],
       "doc_ref": "PHASE_PLAN.md#SBR-REL-VAL.4",
       "evidence_requirements": [
@@ -2069,12 +2088,15 @@
       "verification": [
         "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.shared.tool_runtime import execute_tool_call, resolve_context_authoritative_session_key; from scribe_mcp.shared.execution_context import ResolvedRequestContextV1; from scribe_mcp.mcp_adapter import ScribeErrorV1, normalize_tool_result; from scribe_mcp.tools.manage_docs import manage_docs'",
         "./.venv/bin/python -m py_compile tests/test_tool_runtime_repo_scope.py tests/test_manage_docs_anchor_cas.py",
-        "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/test_manage_docs_anchor_cas.py -m \"core and regression and not integration and not slow and not performance\"",
+        "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/test_manage_docs_anchor_cas.py -m 'core and regression and not integration and not slow and not performance'",
+        "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/test_manage_docs_anchor_cas.py -k 'structured_receipt or structured_full or typed_errors or requested_diff or durable_effects'",
         "./.venv/bin/pytest -q tests/test_mcp_adapter.py tests/test_logging_utils.py tests/test_append_entry_explicit_project_resolution.py tests/test_query_entries_explicit_project_resolution.py tests/test_manage_docs_apply_preview.py tests/test_manage_docs_quality_check.py tests/security/test_project_binding_policy.py"
       ],
       "acceptance": [
-        "Every expected failure returns exact typed MCP/C-04 envelope with zero side effects.",
+        "Every expected failure returns exact typed MCP/C-04 envelope with code/message/retry/remediation/candidates/correlation and zero side effects in every response mode.",
         "Each call has one immutable C-11, at most one binding/project read, and one C-12.",
+        "Default structured receipts contain every required identity/durability/artifact/retry key, omit default echoes/reminders/timing/inventory/duplicate paths, and full-depth modes preserve current detail.",
+        "Structured versus structured_full projection leaves file, DB, audit, binding, WAL, registration, index, quality, and requested-content truth unchanged.",
         "Explicit target, CAS, generation, digest, recovery, and convergence preserve defaults and durable truth.",
         "Existing canonical-key/fallback, anchor-race, and schema-exposure regressions stay green.",
         "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
@@ -3432,6 +3454,92 @@
       "gates": [],
       "suggested_specialist": "blueprint",
       "status": "planned"
+    },
+    {
+      "package_id": "SBR-ARCH-AMEND-SCHEMA2-16",
+      "title": "SBR ARCH AMEND SCHEMA2 16",
+      "goal": "Resolve the SBR-SCHEMA.2 truth-gate contract conflict by authorizing only the bounded transactional SQLite table rebuild required to enforce frozen C-05/C-06 constraints, while correcting the package verification lane so it does not require an unmarked non-hermetic PostgreSQL neighbor.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "verification": [
+        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "PHASE_PLAN explicitly permits a transaction-scoped idempotent rebuild of session_projects and background_receipts only when SQLite introspection proves frozen constraints are absent, with row/timestamp/FK/index/trigger/authoritative-binding preservation and fail-closed rollback.",
+        "PHASE_PLAN continues to forbid destructive or generic rebuilds, data loss, repository authority changes, and any Council-specific logic.",
+        "SBR-SCHEMA.2 verification no longer treats the unmarked configured-PostgreSQL neighbor as a required local command; disposable PostgreSQL coverage remains assigned to DA-10 and the package retains hermetic SQLite/import/diff checks.",
+        "The amended plan aligns current SBR-SCHEMA.2 source scope without changing source or tests and names the exact registry contract delta the coordinator must apply."
+      ],
+      "depends_on": [],
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "pyproject.toml"
+      ],
+      "wave": 5,
+      "suggested_specialist": "blueprint"
+    },
+    {
+      "package_id": "SBR-TOKEN-RESEARCH-18",
+      "title": "SBR TOKEN RESEARCH 18",
+      "goal": "Measure and map token-heavy Scribe tool responses, especially append_entry, so hot-path packages can return compact durable receipts by default without losing binding identity, durability truth, typed failures, audit provenance, or opt-in diagnostics.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/research/RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md"
+      ],
+      "verification": [
+        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/research/RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md"
+      ],
+      "acceptance": [
+        "Report measures serialized response bytes and estimated tokens for representative append_entry, read_recent, query_entries, manage_docs, get_project, and set_project calls across readable/structured/compact modes and identifies duplicated or nonessential hot-path fields.",
+        "Report traces each payload contributor to its source formatter/tool/runtime path, including echoed written content, reminders, inventories/recents, timing trees, mirror details, path duplication, and Council projection wrappers where observable.",
+        "Report defines a minimal success receipt that preserves ok, operation/entry identity, project/binding identity and generation, authoritative durability/DB mirror state, affected artifact/path, correlation ID, and retry/error semantics, with verbose diagnostics opt-in.",
+        "Report proposes measurable default and verbose serialized-byte/token budgets, regression tests, and compatibility rules; format=compact must materially reduce output and errors must retain full typed remediation.",
+        "Research introduces no production implementation and keeps generic Scribe ownership separate from Council wrapper/projection amplification."
+      ],
+      "depends_on": [],
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "pyproject.toml"
+      ],
+      "wave": 10,
+      "suggested_specialist": "lens"
+    },
+    {
+      "package_id": "SBR-ARCH-AMEND-TOKEN-EFFICIENCY-19",
+      "title": "SBR ARCH AMEND TOKEN EFFICIENCY 19",
+      "goal": "Amend the Scribe reliability architecture so agent-preferred structured responses are concise typed receipts by default while complete structured depth remains explicitly requestable for diagnostics and compatibility, using one shared projection seam and measured byte/token budgets.",
+      "owned_files": [
+        ".scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "verification": [
+        "test -s .scribe/docs/dev_plans/scribe_binding_reliability_repair_20260927/PHASE_PLAN.md"
+      ],
+      "acceptance": [
+        "Plan defines default structured as a concise typed receipt preserving operation identity, project plus binding ID/generation, authoritative file/DB durability, affected artifact, correlation ID, and queued/retry state; typed errors always preserve code/message/retry/remedy/candidates.",
+        "Plan defines explicit full-depth structured diagnostics/compatibility mode that preserves current detail on request, while readable remains human-facing; no caller must switch away from structured JSON merely to avoid bloat.",
+        "Plan changes response projection only: stored audit rows, WAL/file commits, DB mirrors, quality/indexing, authorization, and content requested by read operations remain complete.",
+        "Plan assigns source ownership across existing SBR-HOTPATH packages or one justified new package without overlapping files, and keeps Council wrapper/projection amplification upstream in council_mcp.",
+        "Plan freezes measurable budgets: append/log default structured success <=512 bytes; one-page read_recent/query metadata <=1024 bytes excluding requested content; get_project/manage_docs/set_project budgets justified from research; default structured metadata at least 50 percent smaller than full-depth mode; full depth explicitly bounded.",
+        "Plan names regression coverage for no default written_line/content echo, reminders/recent_projects/timing/inventory omission, singular path projection, required receipt keys, complete typed errors, explicit full-depth structured compatibility, unchanged durable side effects, and wrapper-level duplication owned upstream."
+      ],
+      "depends_on": [
+        "SBR-TOKEN-RESEARCH-18"
+      ],
+      "evidence_requirements": [],
+      "gates": [],
+      "forbidden_files": [
+        "src/**",
+        "tests/**",
+        "pyproject.toml"
+      ],
+      "wave": 10,
+      "suggested_specialist": "blueprint"
     }
   ]
 }

@@ -1,11 +1,12 @@
 # Research Documents Index
 
-*Last Updated: 2026-09-27 18:10:54 UTC*
+*Last Updated: 2026-09-28 04:16:18 UTC*
 
 This directory contains research documents generated during the development process.
 
 ## Available Research Documents
 
+- **[RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY](RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md)** - 2026-09-28 04:16 (11426 bytes)
 - **[RESEARCH_BINDING_RCA](RESEARCH_BINDING_RCA.md)** - 2026-09-27 18:10 (58973 bytes)
 - **[RESEARCH_SWARM_CONCURRENCY_VALIDATION](RESEARCH_SWARM_CONCURRENCY_VALIDATION.md)** - 2026-09-27 16:15 (39200 bytes)
 - **[RESEARCH_BACKGROUND_QUEUE_VALIDATION_DELTA](RESEARCH_BACKGROUND_QUEUE_VALIDATION_DELTA.md)** - 2026-09-27 01:40 (35011 bytes)
@@ -15,7 +16,7 @@ This directory contains research documents generated during the development proc
 
 ## Index Information
 
-- **Total Documents:** 5
+- **Total Documents:** 6
 - **Index Location:** `scribe_binding_reliability_repair_20260927/research/INDEX.md`
 
 ---

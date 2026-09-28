@@ -6,8 +6,8 @@ doc_name: phase_plan
 category: engineering
 status: ready
 version: '0.1'
-last_updated: 2026-09-28 04:01:15 UTC
-maintained_by: agent-20260928-035826-9a2ad4bc
+last_updated: 2026-09-28 08:41:10 UTC
+maintained_by: agent-20260928-082338-d863ea20
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -17,16 +17,18 @@ tags:
 - reliability
 - phase-plan
 - detail-pass
-summary: Align migration 007 planning contract with startup-safe legacy binding classification.
+summary: Freeze concise typed structured receipts, explicit full-depth compatibility,
+  projection-only invariants, non-overlapping package ownership, and measured byte/token
+  budgets.
 canonical_doc_type: phase_plan
 edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:30 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-28 04:01:15 UTC
-  last_edited_by: agent-20260928-035826-9a2ad4bc
-  last_action: apply_patch
-  work_item_id: fc313529-f9ca-4a46-a18c-fb3427a6694f
+  last_edited_at: 2026-09-28 08:41:10 UTC
+  last_edited_by: agent-20260928-082338-d863ea20
+  last_action: replace_range
+  work_item_id: 320ae5b5-76e0-4c72-a62c-c8bf5b4561d3
 ---
 # Scribe Binding Reliability Release — Detail Assignment Plan
 
@@ -971,7 +973,7 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 
 **Goal**
 
-- Make fresh PostgreSQL init and SQLite creation/upgrade materialize the same C-05/C-06 logical schema as migration 007.
+- Make fresh PostgreSQL init and SQLite creation/upgrade materialize the same C-05/C-06 logical schema as migration 007, using a bounded introspection-triggered SQLite canonical rebuild only when SQLite cannot add an equivalent frozen constraint in place.
 
 **Depends On**
 
@@ -1004,43 +1006,89 @@ Frozen surfaces: C-05 adds project_key and binding_generation to session_project
 
 1. Treat migration 007 as the single schema contract. Do not create a second field list or alternate table name: both backends use session_projects, background_receipts, and the frozen C-05/C-06 names.
 2. Fresh PostgreSQL init includes final C-05/C-06 shape and scribe_schema_readiness. Migration 007 remains safe on that fresh shape and the numbered runner still owns its ledger row.
-3. SQLite fresh creation includes C-05 fields and the complete background_receipts table/index set. Its legacy upgrade helper adds missing C-05 columns idempotently, backfills project_key from the session repo root plus project name, sets existing bound rows to generation 1, and fails closed before behavior proceeds when identity cannot be resolved uniquely.
+3. SQLite fresh creation includes C-05 fields and the complete background_receipts table/index set. Its legacy upgrade helper adds missing C-05 columns idempotently, backfills project_key from the session repo root plus project name, sets existing bound rows to generation 1, and fails closed before behavior proceeds when identity cannot be resolved uniquely. Before any canonical replacement, SQLite introspection of table SQL, columns, primary/unique keys, foreign keys, indexes, and triggers must prove that the frozen C-05/C-06 constraints are absent or not equivalent; an already-matching schema is a strict no-op and must not rebuild.
 4. SQLite enforces lowercase 64-character payload_digest, closed lane/state domains, non-negative sizes/counts/fences, positive state_version/binding_generation, unique project/idempotency identity, and state-dependent lease/result/error nullability using CHECK/UNIQUE/indexes supported by SQLite.
 5. PostgreSQL and SQLite timestamp/boolean/JSON storage differences may vary, but normalized values consumed by DA-01/DA-06 must be identical. No backend-specific field enters the public models.
-6. Compatibility is additive: preserve project_name and current apply-preview/session tables, triggers, FTS, and indexes. Existing SQLite files reopen without rebuild/data loss; no side database, reset, or table-copy migration is introduced.
+6. Compatibility remains additive and preservation-first. Because SQLite cannot add equivalent CHECK constraints in place, the sole authorized exception is a transaction-scoped, idempotent canonical table rebuild of session_projects and/or background_receipts, and only for a table whose SQLite introspection proves the frozen constraints are absent or non-equivalent. The transaction must copy only into the canonical shape; preserve exact row counts and byte/value representations for project_name, project_key, binding_generation, binding_state, binding_state_reason, every valid receipt field, created_at/updated_at timestamps, and all other retained canonical values; recreate the table's foreign keys, indexes, and triggers; then validate row/value parity, PRAGMA foreign_key_check, required indexes, required triggers, and authoritative binding state before commit. Any copy, count, value, constraint, foreign-key, index, trigger, or binding-authority mismatch rolls back the whole rebuild and fails closed. A second ensure/reopen against the matching shape performs no copy, drop, rename, or data rewrite.
 7. Importing either schema module performs no I/O. Schema work occurs only through existing storage initialization and the governed AgentKit migration lane.
+8. No generic/destructive rebuild framework is authorized. Destructive or ad hoc table copies, data loss, side databases, resets, TRUNCATE, repository-authority changes, Council-specific schema/logic, and rebuilds of any table other than session_projects or background_receipts remain forbidden; this exception does not widen the two-file source boundary.
 
 **Required Tests**
 
 - DA-09/Crucible adds tests/core/test_swarm_binding_reliability.py::test_sqlite_reliability_schema_upgrades_legacy_binding_without_default_drift.
 - DA-09/Crucible adds tests/core/test_background_queue_contract.py::test_sqlite_background_receipt_schema_enforces_c06.
 - DA-10/Crucible adds tests/migration/mcp_v2/test_compatibility_matrix.py::test_reliability_schema_postgres_sqlite_init_parity, comparing exact logical fields, domains, uniqueness, and indexes against migration 007.
-- Existing neighbors tests/storage/test_session_storage_invariants.py, tests/storage/test_sqlite_apply_preview_receipts.py, and tests/test_bootstrap_postgres_script.py remain green.
+- The required local lane is hermetic: tests/storage/test_session_storage_invariants.py::test_session_binding_record_v2_contract, tests/storage/test_session_storage_invariants.py::test_sqlite_session_linkage_invariants, tests/storage/test_sqlite_apply_preview_receipts.py, and tests/test_bootstrap_postgres_script.py remain green. The configured-PostgreSQL test_session_storage_invariants.py::test_postgres_session_linkage_invariants is not a required local command because it is unmarked, non-disposable, and may mutate the database named by SCRIBE_TEST_POSTGRES_URL.
+- Disposable SQLite negative, legacy-upgrade, second-ensure, and full-reopen probes remain required evidence. They must prove invalid C-05/C-06 writes are rejected; valid rows, timestamps, foreign keys, indexes, triggers, and authoritative binding values survive; and a matching second ensure/reopen performs no rebuild.
+- Disposable PostgreSQL first/second application, cross-backend parity, backup/restore, and zero-ledger-drift proof remain owned by DA-10/SBR-SCHEMA.GATE, not this package's local lane.
 
 **Verification Commands**
 
+- PYTHONPATH=src ./.venv/bin/python -m py_compile src/scribe_mcp/storage/sqlite/schema.py
 - PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.storage.sqlite.schema import create_background_receipt_tables, ensure_reliability_schema; from scribe_mcp.storage.postgres.schema import SCHEMA_PATH'
-- ./.venv/bin/pytest -q tests/storage/test_session_storage_invariants.py tests/storage/test_sqlite_apply_preview_receipts.py tests/test_bootstrap_postgres_script.py
+- ./.venv/bin/pytest -q tests/storage/test_session_storage_invariants.py::test_session_binding_record_v2_contract tests/storage/test_session_storage_invariants.py::test_sqlite_session_linkage_invariants tests/storage/test_sqlite_apply_preview_receipts.py tests/test_bootstrap_postgres_script.py
 - ./.venv/bin/pytest -q tests/core/test_swarm_binding_reliability.py::test_sqlite_reliability_schema_upgrades_legacy_binding_without_default_drift tests/core/test_background_queue_contract.py::test_sqlite_background_receipt_schema_enforces_c06 (after DA-09 owns the tests).
 - ./.venv/bin/pytest -q tests/migration/mcp_v2/test_compatibility_matrix.py::test_reliability_schema_postgres_sqlite_init_parity (after DA-10 owns the test).
+- git diff --check -- src/scribe_mcp/storage/sqlite/schema.py src/scribe_mcp/db/init.sql
 
 **Acceptance Criteria**
 
 - [ ] Fresh PostgreSQL, fresh SQLite, and legacy SQLite upgrade expose one logical C-05/C-06 schema.
-- [ ] Fresh init plus migration 007 is idempotent; reopening SQLite is non-destructive and preserves existing bindings/receipts.
+- [ ] Fresh init plus migration 007 is idempotent; SQLite rebuild is skipped when introspection finds the frozen shape, and any required bounded rebuild commits only after exact preservation/constraint validation succeeds.
 - [ ] Compatibility project_name remains readable while project_key/generation are authoritative for new binding behavior.
 - [ ] Schema modules import without database/filesystem side effects.
 
 **Out of Scope**
 
-- PostgreSQL bootstrap election, pool deadlines, receipt storage methods, state transitions, live migration apply, and test-file edits.
+- PostgreSQL bootstrap election, pool deadlines, receipt storage methods, state transitions, live migration apply, test-file edits, repair of the unmarked configured-PostgreSQL neighbor, generic migration/rebuild infrastructure, Council-specific authority/schema/logic, and any source path beyond the two declared schema files.
 
 **Handoff Notes**
 
-- Forge: touch only the two declared schema regions and copy no receipt behavior into schema helpers.
-- Crucible: own DA-09 hermetic SQLite tests and DA-10 cross-backend parity test; prove reopen and legacy upgrade without sleeps.
+- Forge: touch only the two declared schema regions and copy no receipt behavior into schema helpers. The current schema.py hash 4d541f6e9ca849c6aac05a19147acf274dc47387cdf46402733117fe3b28d0c4 contains an unconditional rebuild call; repair it only to add the required introspection gate, transaction boundary, preservation validation, and fail-closed rollback. Preserve init.sql hash 7b58753777c5e19552683cf4884a4bab602a5dc5dc93d2dd20a9481a75f9ee49 unless parity evidence proves a bounded change is required.
+- Crucible: own DA-09 hermetic SQLite tests and DA-10 cross-backend parity test; prove negative writes, legacy upgrade, exact preservation, no-op second ensure/reopen, and rollback on mismatch without sleeps. Do not execute the configured-PostgreSQL neighbor as part of this local package.
 - Sentinel: mandatory review of constraints, backfill ambiguity, stored reference exposure, and malicious size/digest inputs.
 - Arbiter: mandatory review for one logical schema, minimal backend variance, no duplicate migration path, and unchanged neighboring tables.
+
+**Coordinator Registry Amendment**
+
+After this managed-plan update, Seshat must amend existing work item 769f4ed9-3c46-4b50-84a5-002d2eda02f7 from expected revision f96e7c46312370438388453e23d90cbd3eff6013275490f47437be3f5332c521 with the following exact contract delta; acceptance intent and owned_files remain unchanged:
+
+```json
+{
+  "work_item_id": "769f4ed9-3c46-4b50-84a5-002d2eda02f7",
+  "expected_contract_revision": "f96e7c46312370438388453e23d90cbd3eff6013275490f47437be3f5332c521",
+  "operations": {
+    "replace_verification": [
+      "PYTHONPATH=src ./.venv/bin/python -m py_compile src/scribe_mcp/storage/sqlite/schema.py",
+      "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.storage.sqlite.schema import create_background_receipt_tables, ensure_reliability_schema; from scribe_mcp.storage.postgres.schema import SCHEMA_PATH'",
+      "./.venv/bin/pytest -q tests/storage/test_session_storage_invariants.py::test_session_binding_record_v2_contract tests/storage/test_session_storage_invariants.py::test_sqlite_session_linkage_invariants tests/storage/test_sqlite_apply_preview_receipts.py tests/test_bootstrap_postgres_script.py",
+      "./.venv/bin/pytest -q tests/core/test_swarm_binding_reliability.py::test_sqlite_reliability_schema_upgrades_legacy_binding_without_default_drift tests/core/test_background_queue_contract.py::test_sqlite_background_receipt_schema_enforces_c06 (after DA-09 owns the tests)",
+      "./.venv/bin/pytest -q tests/migration/mcp_v2/test_compatibility_matrix.py::test_reliability_schema_postgres_sqlite_init_parity (after DA-10 owns the test)",
+      "git diff --check -- src/scribe_mcp/storage/sqlite/schema.py src/scribe_mcp/db/init.sql"
+    ],
+    "remove_required_local_command": "./.venv/bin/pytest -q tests/storage/test_session_storage_invariants.py tests/storage/test_sqlite_apply_preview_receipts.py tests/test_bootstrap_postgres_script.py",
+    "acceptance_change": "none",
+    "acceptance_clarification": {
+      "criterion_index": 2,
+      "text": "Non-destructive means zero committed data loss or authority drift: SQLite may transactionally rebuild only session_projects/background_receipts when introspection proves frozen C-05/C-06 constraints absent or non-equivalent; matching schemas are no-op; any preservation or validation mismatch rolls back and fails closed."
+    },
+    "required_sqlite_evidence": [
+      "negative C-05/C-06 writes rejected",
+      "legacy valid rows and exact values/timestamps preserved",
+      "foreign keys, indexes, and triggers preserved and validated",
+      "authoritative project_name/project_key/binding_generation/binding_state/binding_state_reason preserved",
+      "matching second ensure/reopen performs no rebuild",
+      "copy or validation mismatch rolls back and fails closed"
+    ],
+    "defer_postgresql_evidence_to": "DA-10/SBR-SCHEMA.GATE"
+  },
+  "owned_files_unchanged": [
+    "src/scribe_mcp/storage/sqlite/schema.py",
+    "src/scribe_mcp/db/init.sql"
+  ],
+  "acceptance_intent_unchanged": true
+}
+```
 
 ### Task Package: SBR-SCHEMA.3 — Fingerprinted elected bootstrap and bounded readiness
 
@@ -3126,3 +3174,458 @@ Version bump, release docs, commit/PR, deploy, publish, Council acceptance, or a
 - Heavy validation: `SBR-REL-VAL.2` precedes `SBR-REL-VAL.5`; `SBR-REL-VAL.5` remains the only final repository-saturating runner.
 - Release hold: `SBR-RELEASE.1` depends directly on `SBR-PLAN-SYNTH-12` plus all 38 preceding executable packages, so every declared same-revision evidence requirement must PASS before release custody.
 - Frozen boundary: every new row forbids `council_mcp` files/imports and Council/Aegis/seat/run/work-item/projection semantics; Scribe owns only the generic contracts frozen by the accepted seam SHA-256 `8c0091b53b70ae284b65eff73e674191bd29ec5f9eb3cd40386daa1a3c776f61`.
+## Architecture Amendment — Concise Structured Receipt Projection
+<!-- ID: sbr-structured-receipt-projection -->
+
+### APPROACH_SUMMARY
+
+- Goal: make agent-preferred structured responses concise typed receipts by default while preserving an explicit full-depth structured compatibility/diagnostic mode and all durable Scribe truth.
+- Research authority: research/RESEARCH_SCRIBE_RESPONSE_TOKEN_EFFICIENCY.md at SHA-256 25d07fc433aefc8679b16c7d6b82a926f76fd2ae6bd9c2530769ccf3699ff39f.
+- Files to modify: only the existing files already owned by SBR-BIND-RESOLVE.3/.4, SBR-HOTPATH.1/.2/.3, and SBR-DOC-DUR.3; tests remain owned by SBR-CORE-VAL.4 and SBR-REL-VAL.4. No new Scribe source package or module is authorized.
+- Files forbidden: every council_mcp path; every Scribe storage, schema, WAL, index, quality, authorization, reminder, configuration, packaging, version, generated, and release file not already owned by the named packages.
+- Out of scope: changing stored audit rows, file/WAL commits, DB mirrors, registry/index/quality truth, authorization, target selection, requested read content, deployment, restart, or Council wrapper behavior.
+- Verification: hermetic response-shape and side-effect tests run first; byte and local-tokenizer release probes run afterward; wrapper duplication is proven separately in council_mcp.
+- Normative precedence: this amendment replaces only response-format, response-shape, and response-budget clauses in the affected packages. Every unrelated goal, dependency, ownership rule, durability invariant, verification command, and acceptance criterion remains in force.
+
+### Reuse decision and single owner
+
+Current source proves that append_entry, set_project, get_project, read_recent, and query_entries already converge on FormatterDispatcher.finalize_tool_response. manage_docs is the only named operation that returns its result directly. Therefore:
+
+1. SBR-HOTPATH.1 owns the one shared success-projection seam in src/scribe_mcp/utils/formatters/dispatcher.py.
+2. No response_v2, compact_v2, new formatter, parallel registry, or second projection module may be created.
+3. Tool packages produce complete internal result dictionaries. The dispatcher logs/audits that complete result first and projects the caller response last.
+4. SBR-DOC-DUR.3 routes manage_docs through the same dispatcher after its complete runtime result and C-13 convergence evidence exist.
+5. src/scribe_mcp/utils/response.py and src/scribe_mcp/utils/formatters/entry.py remain read-only neighbors for this amendment; they are not alternate projection owners.
+6. Council MCP content/structuredContent forwarding remains upstream Council ownership and must not be implemented or imported in Scribe.
+
+This is a response projection change, not a new subsystem.
+
+### Canonical response modes
+
+The canonical format vocabulary is frozen as follows:
+
+| format value | behavior |
+|---|---|
+| readable | Human-facing TextContent only. It may use narration and UI formatting; it is not the agent-efficiency contract. |
+| structured | Default agent-facing concise typed success receipt plus caller-requested content. |
+| structured_full | Explicit compatibility/diagnostic mode returning the current complete structured success payload. |
+| compact | Backward-compatible alias of structured. It is not a separate schema and is not the only efficient agent mode. |
+| both | Human-readable text plus the same concise structured receipt used by structured. |
+| both_full | Human-readable text plus the same full-depth structured payload used by structured_full. |
+
+Unknown format values fail typed and effect-free; they never silently fall back to full depth. Public tool signatures keep format as a string for compatibility. manage_docs adds the final optional parameter format: str = "structured"; adding it at the end preserves all existing positional callers. No caller must leave structured JSON to avoid response bloat.
+
+SBR-HOTPATH.1 freezes the internal names:
+
+- ResponseFormatV2 = Literal["readable", "structured", "structured_full", "compact", "both", "both_full"].
+- StructuredResponseDepthV1 = Literal["receipt", "full"].
+- resolve_structured_response_depth(format: str) -> StructuredResponseDepthV1.
+- project_structured_success(data: Mapping[str, Any], *, tool_name: str, resolved_request_context: ResolvedRequestContextV1 | None, depth: StructuredResponseDepthV1) -> dict[str, Any].
+- FormatterDispatcher.finalize_tool_response retains its accepted public-compatible parameters, gains the accepted C-11 input from SBR-HOTPATH.1, and calls project_structured_success exactly once after complete audit capture.
+
+### StructuredReceiptV1
+
+Every successful receipt-depth structured response has these required top-level keys:
+
+    {
+      "schema_version": "scribe-structured-receipt.v1",
+      "ok": true,
+      "operation": "<stable tool/action identity>",
+      "project": {"key": "<stable project key>", "name": "<project name>"},
+      "binding": {"id": "<caller-session-key hash>", "generation": 7},
+      "durability": {
+        "file": "committed|observed|queued|not_applicable",
+        "db_mirror": "committed|observed|queued|not_applicable",
+        "audit_id": "<stable id or null>"
+      },
+      "artifact": {
+        "kind": "entry|project|document|query|log_page",
+        "id": "<stable affected id or null>",
+        "path": "<one canonical affected path or null>",
+        "affected_count": 1
+      },
+      "correlation_id": "<C-11 correlation id>",
+      "retry": {"queued": false, "retryable": false, "retry_after_ms": null}
+    }
+
+Derivation rules are exact:
+
+1. binding.id is the existing one-way caller-session-key hash carried by C-03/C-11; it is not a new persisted identifier and never exposes the raw caller key.
+2. binding.generation is the accepted C-01/C-03 generation. A project-bound success may not omit it or synthesize zero.
+3. project.key and project.name come only from C-11/C-02 or the completed C-03 set_project result.
+4. durability values project completed persistence truth. A file/DB failure, pending mirror, queued retry, or not-applicable state cannot be relabeled committed.
+5. artifact.path is singular. When more than one artifact is affected, receipt depth returns one deterministic primary canonical path plus affected_count; only full depth may return the complete paths inventory.
+6. correlation_id is the same C-11/C-03/C-04 ID used by audit and timing.
+7. retry.queued, retry.retryable, and retry.retry_after_ms reflect the actual receipt/error state; they are never optimistic defaults when the underlying operation is queued or retryable.
+8. Operation-specific stable IDs such as entry_id, document_id, operation_id, or binding receipt identity populate artifact.id without echoing caller content.
+9. Default structured success never includes written_line, written_lines, content echoes for writes, recent_projects, reminders, reminder_guidance, planning advisories, timing trees, generated/skipped inventories, duplicate path arrays, raw metadata, UI boxes, or human narration.
+10. Readable formatting may use those human-facing aids. structured_full and both_full preserve the current complete structured diagnostic/compatibility detail, subject to the full-depth bound below.
+
+### Typed errors are never compacted
+
+Receipt projection applies only to ok=true success. Every format that returns structured error data preserves the complete accepted C-04 error envelope:
+
+- ok=false and isError=true;
+- error_code and message;
+- retryable plus retry_after_ms/backoff when present;
+- target;
+- candidates in deterministic sanitized order;
+- remediation;
+- correlation_id.
+
+These existing field names are canonical. They satisfy the semantic code/message/retry/remedy/candidates contract without inventing a second error schema. No mode may remove candidates, remediation, retry truth, or correlation merely to meet a success budget. Readable errors are a human rendering of the same C-04 payload; structuredContent remains authoritative.
+
+### Requested-content and persistence boundary
+
+Projection occurs after complete tool execution and complete audit capture.
+
+- Stored audit rows, progress-log/WAL lines, file commits, DB mirror rows, background receipts, managed-document registrations, canonical indexes, quality findings, authorization evidence, and C-12 timing records remain complete.
+- The dispatcher measures/logs the complete pre-projection result for authoritative audit. It separately measures returned receipt/full payload bytes; the two measurements must not be conflated.
+- read_recent and query_entries retain all caller-requested entries and the required one-page pagination result. Only nonessential response metadata is projected.
+- manage_docs retains a caller-requested diff, preview, content body, section listing, checklist listing, quality findings, or other action result. A mutation request does not receive an echo of submitted content unless that action explicitly requests readback.
+- get_project retains the requested project read result required by its contract; receipt-depth metadata removes inventories, recent-entry narration, reminders, and timing.
+- Projection does not alter target resolution, authorization, validation, idempotency, storage calls, file bytes, DB writes, mirror status, registration, indexing, quality evaluation, or retry scheduling.
+- The same operation invoked as structured and structured_full against equivalent disposable state must leave byte-identical durable side effects and the same authoritative IDs/generations.
+- Requested content is never silently truncated to satisfy a metadata budget. Existing pagination is used where the public contract supports it; otherwise an explicit content body is excluded from metadata accounting and returned complete.
+
+### Frozen byte and token budgets
+
+Budget measurement serializes structuredContent alone as compact UTF-8 JSON using deterministic key ordering for fixtures. content text, MCP transport headers, and upstream Council envelopes are measured separately. For content-bearing operations, tests report metadata bytes/tokens after replacing the explicitly requested content body with a fixed placeholder; the actual content is separately checked for completeness.
+
+| operation | default receipt-depth structured metadata hard limit |
+|---|---:|
+| append_entry and append/log success | <=512 serialized UTF-8 bytes |
+| read_recent and query_entries, one page | <=1024 bytes excluding requested entries/content |
+| set_project | <=1024 bytes |
+| get_project | <=1536 bytes |
+| manage_docs | <=1536 bytes excluding explicitly requested diff/content/read body |
+
+Additional frozen rules:
+
+1. For every representative metadata-only success fixture, structured and compact are each at least 50 percent smaller than structured_full in both serialized bytes and local-tokenizer token count.
+2. REL-VAL.4 records exact local-tokenizer identity/version, exact token count, byte count, and ratio for every fixture. Byte ceilings are normative across tokenizers; a missing exact local tokenizer in the reference lane is a failed measurement, not an estimated PASS.
+3. Hermetic tests may use a deterministic injected tokenizer only to prove boundary arithmetic. The release evidence must use the locally installed production tokenizer path.
+4. structured_full and both_full metadata are bounded to <=16 KiB serialized UTF-8 and their exact local-token counts are retained. Explicit paged caller-requested content is outside that metadata cap and must be identified as such in the artifact.
+5. Full-depth mode may preserve current detail but may not become an unbounded dump. New diagnostic fields require either remaining inside 16 KiB or explicit pagination.
+6. Default receipt-depth budgets include the required receipt keys; tools may not meet a ceiling by dropping binding, durability, artifact, correlation, or retry truth.
+
+The research measurements justify these limits: current structured payloads are approximately 1,568 bytes for append_entry, 2,642 for read_recent, 2,340 for query_entries, 4,959 for get_project, and 4,007 for set_project. The receipt budgets retain the authoritative fields while removing repeated narration, inventory, and diagnostics. get_project and manage_docs receive 1536 bytes because their legitimate identity/convergence summaries are broader than append/log receipts; set_project remains at 1024 because C-03 is already a bounded binding receipt.
+
+### Existing package amendments and non-overlapping ownership
+
+#### SBR-BIND-RESOLVE.3 — set_project receipt input
+
+Owned files remain exactly src/scribe_mcp/tools/set_project.py and src/scribe_mcp/state/manager.py.
+
+- set_project continues to construct the complete C-03 result and one complete internal full payload.
+- Its default structured/compact/both success passes through the shared HOTPATH.1 projector and meets <=1024 bytes.
+- structured_full/both_full expose the current inventory/reminder/generated/skipped detail plus C-03.
+- No binding write, cache-authority, or generation behavior changes.
+
+#### SBR-BIND-RESOLVE.4 — typed error preservation
+
+Owned files remain exactly src/scribe_mcp/shared/tool_runtime.py and src/scribe_mcp/mcp_adapter.py.
+
+- normalize_scribe_error preserves the full C-04 fields for every format and both protocol eras.
+- Success projection may not run on ok=false/isError=true results.
+- The existing modern/legacy parity gate includes receipt/full mode error parity.
+
+#### SBR-HOTPATH.1 — one shared projection seam
+
+Owned files remain exactly src/scribe_mcp/runtime_timing_envelope.py and src/scribe_mcp/utils/formatters/dispatcher.py.
+
+- dispatcher.py is the sole success projection owner and implements the mode/depth and StructuredReceiptV1 contracts above.
+- Complete data is audited before projection; returned response size is separately measured after projection.
+- append_entry requires no new source package because it already calls the dispatcher with tool_name=append_entry.
+- Existing C-12 behavior stays complete in audit and full depth; timing is omitted from default receipt depth.
+- This package must not modify tool bodies, entry.py, response.py, storage, persistence, or tests.
+
+#### SBR-HOTPATH.2 — get_project receipt source
+
+Owned files remain exactly src/scribe_mcp/shared/base_logging_tool.py and src/scribe_mcp/tools/get_project.py.
+
+- Supply the exact C-11 project/binding/artifact facts to the dispatcher without adding a second lookup.
+- Default structured metadata meets <=1536 bytes and omits recent entries, inventories, reminders, resolution narration, and timing.
+- structured_full/both_full preserve the current detailed project read.
+- No requested project truth, C-11 identity, or read-count invariant changes.
+
+#### SBR-HOTPATH.3 — read_recent/query_entries content-preserving projection
+
+Owned files remain exactly src/scribe_mcp/tools/read_recent.py and src/scribe_mcp/tools/query_entries.py.
+
+- Preserve requested entries, pagination, filters, and snapshot semantics.
+- Default one-page metadata meets <=1024 bytes excluding requested entries/content.
+- Omit reminders, recent_projects, planning advisories, timing, observed-context inventory, raw search narration, and duplicate source/path metadata unless explicitly requested as content.
+- structured_full/both_full preserve current complete detail.
+- compact is the structured receipt alias; legacy compact entry-field selection remains an input/content-selection concern and cannot switch the top-level response to full depth.
+
+#### SBR-DOC-DUR.3 — manage_docs shared projection adoption
+
+Owned files remain exactly src/scribe_mcp/doc_management/runtime.py and src/scribe_mcp/tools/manage_docs.py.
+
+- Add final optional format: str = "structured" to manage_docs and route the completed result through the HOTPATH.1 dispatcher.
+- Preserve requested action result bodies, C-13, registration/index/quality convergence, and all durable side effects.
+- Default metadata meets <=1536 bytes excluding requested diff/content/read bodies.
+- structured_full/both_full preserve the current complete manage_docs response.
+- Add SBR-HOTPATH.1 as a dependency. No second document response formatter is authorized.
+
+#### SBR-CORE-VAL.4 — hermetic contract tests
+
+Owned test files remain exactly tests/test_tool_runtime_repo_scope.py and tests/test_manage_docs_anchor_cas.py. Add these regressions:
+
+- test_default_structured_success_is_typed_receipt_for_hotpath_tools;
+- test_default_receipts_omit_echoes_inventories_reminders_timing_and_duplicate_paths;
+- test_structured_full_preserves_legacy_detail_and_both_modes_match_depth;
+- test_compact_is_a_structured_receipt_alias;
+- test_typed_errors_preserve_code_message_retry_remediation_candidates_and_correlation;
+- test_projection_does_not_change_durable_file_db_audit_or_binding_effects;
+- test_manage_docs_default_receipt_and_structured_full_parity;
+- test_manage_docs_requested_diff_content_and_quality_findings_are_not_trimmed.
+
+Fixtures assert the required receipt keys, singular artifact path, exact C-04 keys, byte-identical durable effects, and no default written_line/content echo.
+
+#### SBR-REL-VAL.4 — measured budget evidence
+
+Owned test file remains exactly tests/test_release_startup_probe.py. Add:
+
+- test_response_projection_byte_budget_boundaries;
+- test_response_projection_local_token_counts_and_half_size_ratio;
+- test_response_projection_full_depth_metadata_bound;
+- test_response_projection_content_exclusion_accounting_is_explicit.
+
+The retained release artifact records tool, mode, fixture identity, requested-content bytes/tokens, metadata bytes/tokens, full-depth bytes/tokens, ratio, tokenizer identity/version, source revision, and PASS/FAIL. Add SBR-DOC-DUR.3 as a dependency so manage_docs participates in the same-revision budget gate.
+
+### Upstream Council wrapper obligation
+
+This Scribe project does not own a Council source package. After the direct Scribe gates pass, council_mcp must own a separate upstream package against its existing forwarding seam in src/council_mcp/ws_proxy.py and the existing adapter/parity tests. The joint acceptance test must invoke direct structured and structured_full Scribe results through the Council forwarding path and prove:
+
+1. structuredContent is forwarded once without reserializing the same JSON into content text;
+2. no nested result/structuredContent copy amplifies the payload;
+3. readable text is added only for readable/both modes;
+4. receipt keys and full-depth compatibility survive byte-for-byte at the structured boundary;
+5. Council wrapper bytes are measured separately from direct Scribe structuredContent.
+
+Canonical upstream test names are test_scribe_structured_receipt_is_forwarded_once_without_text_duplication and test_scribe_structured_full_is_forwarded_once_without_nested_wrapper_duplication. This is acceptance evidence for the joint system, not permission for any Scribe package to edit or import council_mcp.
+
+### Coordinator registry amendment JSON
+
+The following JSON is a machine-applicable amendment manifest for the current registered Scribe items. expected_contract_revision values were read from current Council truth. Each changes object is valid input to council work amend; each add_depends_on entry maps to council work add-depends-on. The coordinator must re-read a row if any expected revision has changed and must apply the dependency operation before the coupled changes when both target the same item.
+
+    {
+      "schema": "council-work-contract-amendments.v1",
+      "project": "scribe_binding_reliability_repair_20260927",
+      "reason": "Adopt concise typed structured receipts by default with explicit full-depth compatibility, projection-only invariants, and measured byte/token budgets.",
+      "new_work_items": [],
+      "operations": [
+        {
+          "verb": "amend",
+          "work_item_id": "98f33777-bd63-48cb-bba2-fcd8a46f060f",
+          "package_id": "SBR-BIND-RESOLVE.3",
+          "expected_contract_revision": "4f9f3581a4ae74af9e09d856899bf0da604dd848a973bb16f3ce83ab3a2efcc8",
+          "changes": {
+            "acceptance": [
+              "Every successful bind returns a complete C-03 receipt tied to the exact caller-session hash and stable project key.",
+              "Unchanged bind and stale-generation failure perform zero persistent writes; changed target increments exactly once.",
+              "The trace-derived delayed second write succeeds after one bind with no rebind/default drift.",
+              "Default structured, compact, and both success project the complete C-03 identity through the shared receipt seam within 1024 bytes; structured_full and both_full retain current deep detail.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ]
+          }
+        },
+        {
+          "verb": "amend",
+          "work_item_id": "95d0f2df-7319-4985-934f-6953ed40c84e",
+          "package_id": "SBR-BIND-RESOLVE.4",
+          "expected_contract_revision": "c8c97b3917a027c5e4837ee73a20010a2561583df321ba7c0fa5b9f89c8940be",
+          "changes": {
+            "acceptance": [
+              "Every project-bound call uses one exact server-verified caller key and one immutable C-11; attribution cannot affect identity or routing.",
+              "All expected binding/project failures return C-04 isError=true with identical structured content across protocol eras; no expected failure escapes as a raw transport exception.",
+              "Every response mode preserves C-04 error_code, message, retryability and backoff, target, candidates, remediation, and correlation_id without success-receipt compaction.",
+              "The generic C-16 flow supports bind-once, authorized explicit cross-repo calls, reconnect, ambiguity/stale-generation/wrong-target denials, and default preservation without Council logic.",
+              "The 32-session x 100-call oracle reports zero wrong target, default drift, cross-talk, duplicate effect, or untyped ambiguity.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ]
+          }
+        },
+        {
+          "verb": "amend",
+          "work_item_id": "79ee473b-4eda-4700-b987-806fda037e3c",
+          "package_id": "SBR-HOTPATH.1",
+          "expected_contract_revision": "0e38f60e619f105d7f1e4da578a05caf71cdb67814307d463ddd5a7baeb51e62",
+          "changes": {
+            "acceptance": [
+              "C-12 has the exact frozen phases/fields, honest unaccounted, at least 0.95 measured coverage in passing calls, and deterministic strict greater-than-100/500 tripwires sharing C-11 correlation.",
+              "Formatter performs zero session-binding/project-record reads and zero ambient target selection; fetch_project_sync is absent from its call path.",
+              "Local authoritative audit durability remains foreground; only analytics/derived metrics defer.",
+              "FormatterDispatcher is the sole success projector: structured and compact emit StructuredReceiptV1, structured_full preserves current detail, both modes match their structured depth, and readable stays human-facing.",
+              "Default append_entry success is at most 512 bytes and omits written_line/content echo, reminders, recent_projects, timing, inventories, duplicate paths, and narration while retaining operation/project/binding/durability/artifact/correlation/retry truth.",
+              "V1 timing consumers and all response formats remain compatible under the amended mode semantics.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ],
+            "verification": [
+              "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.runtime_timing_envelope import CALL_TIMING_PHASES_V2, CallTimingEnvelopeV2, CallTimingRecorderV2, build_call_timing_envelope_v2, build_timing_envelope; from scribe_mcp.utils.formatters.dispatcher import FormatterDispatcher'",
+              "./.venv/bin/pytest -q tests/test_dispatcher.py tests/test_log_intelligence.py tests/test_doctor_telemetry.py",
+              "./.venv/bin/pytest -q tests/test_dispatcher.py -k 'structured or compact or both or error'",
+              "./.venv/bin/pytest -q tests/core/test_swarm_binding_reliability.py",
+              "./.venv/bin/pytest -q tests/integration/test_swarm_concurrency_stress.py"
+            ]
+          }
+        },
+        {
+          "verb": "amend",
+          "work_item_id": "21de99e8-ce2b-4655-8b68-12b64ea8b9fb",
+          "package_id": "SBR-HOTPATH.2",
+          "expected_contract_revision": "1b44107113211c069c7d435203ae23a7ab55149db3a943351ecae4716f58818a",
+          "changes": {
+            "acceptance": [
+              "get_project and its helper/formatter chain observe the same C-11 object and C-11 correlation ID.",
+              "One complete call performs at most one binding read and one project-record read in total; the SS-05 portion performs neither again.",
+              "Attribution-only agent, recents, ambient root, and process/global state cannot select or mutate the operational target/default.",
+              "Default get_project structured metadata is at most 1536 bytes and omits recent-entry/inventory/reminder/timing narration; structured_full preserves the complete current project detail.",
+              "Requested project truth, durable state, binding generation, and response-mode compatibility remain correct.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ],
+            "verification": [
+              "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.shared.base_logging_tool import LoggingToolMixin; from scribe_mcp.tools.get_project import get_project'",
+              "./.venv/bin/pytest -q tests/test_base_logging_tool.py tests/test_get_project_integration.py tests/test_get_project_sitrep.py tests/test_session_resolution_advisories.py",
+              "./.venv/bin/pytest -q tests/test_get_project_integration.py tests/test_get_project_sitrep.py -k 'structured or compact or verbose or format'",
+              "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/core/test_swarm_binding_reliability.py"
+            ]
+          }
+        },
+        {
+          "verb": "amend",
+          "work_item_id": "2265f99f-3f3f-4d96-8d87-c35da3f5c1f8",
+          "package_id": "SBR-HOTPATH.3",
+          "expected_contract_revision": "0d7cf0955bcf25535599e858b57f0d7b0be8adc8cb41b061a4f554186f5598fb",
+          "changes": {
+            "acceptance": [
+              "Both tools reuse one C-11 and one ProjectRecord end to end; no body/helper/formatter repeats session binding or project-record reads.",
+              "Immediate read/query snapshots, pagination/filter parity, explicit target/default preservation, and typed C-04 errors remain correct.",
+              "Default one-page read_recent/query_entries structured metadata is at most 1024 bytes excluding complete requested entries/content and omits reminders, recent_projects, planning/timing/inventory narration, and duplicate paths.",
+              "structured_full and both_full preserve current complete diagnostics; compact aliases the concise structured receipt without changing entry-selection semantics.",
+              "Every completed call produces one correlated C-12 with at least 0.95 accounting and deterministic stage/total tripwire evidence.",
+              "DA-09's 32 x 100 oracle reports zero wrong target, default drift, cross-talk, duplicate effect, or excess binding/project reads.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ],
+            "verification": [
+              "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.tools.read_recent import read_recent; from scribe_mcp.tools.query_entries import query_entries, _build_search_query, _execute_search_with_fallbacks'",
+              "./.venv/bin/pytest -q tests/test_consumer_resolution_contract.py tests/test_read_recent_limit.py tests/test_read_recent_supplement_gate.py",
+              "./.venv/bin/pytest -q tests/test_query_entries_db.py tests/test_query_entries_pagination_contract.py tests/test_query_entries_explicit_project_resolution.py tests/test_query_entries_dead_engine_honest_envelopes.py",
+              "./.venv/bin/pytest -q tests/test_read_recent_limit.py tests/test_query_entries_pagination_contract.py -k 'structured or compact or pagination or content'",
+              "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/core/test_swarm_binding_reliability.py",
+              "./.venv/bin/pytest -q tests/integration/test_swarm_concurrency_stress.py"
+            ]
+          }
+        },
+        {
+          "verb": "add_depends_on",
+          "work_item_id": "876a9407-f299-4efa-b200-092b898166e7",
+          "package_id": "SBR-DOC-DUR.3",
+          "expected_contract_revision": "05586ccc58e70a395100e68fada2fe8949bdc85f9488259c7ef29c9b76ed23ba",
+          "value": "SBR-HOTPATH.1"
+        },
+        {
+          "verb": "amend",
+          "work_item_id": "876a9407-f299-4efa-b200-092b898166e7",
+          "package_id": "SBR-DOC-DUR.3",
+          "expected_contract_revision": "$previous.new_contract_revision",
+          "changes": {
+            "acceptance": [
+              "Every committed managed-document mutation has one C-13 readback, one WAL lineage generation, the predicted final digest, one canonical registration/index presence, and current-generation quality evidence.",
+              "Backend or convergence outage returns WAL-durable accepted plus queued_offline; restart converges it to applied exactly once without a second file effect.",
+              "Duplicate, conflict, terminal, and cancelled outcomes remain stable; wrong-target status/cancel/replay discloses nothing and performs no effect.",
+              "manage_docs accepts final optional format with structured default, uses the sole HOTPATH.1 projector, meets 1536-byte default metadata budget excluding requested bodies, and preserves current detail in structured_full.",
+              "Requested diff/content/read bodies and quality findings remain complete; projection changes no WAL/file/DB/registration/index/quality side effect.",
+              "No second mutation engine, queue, registry, indexer, quality engine, response projector, or persistence layer is introduced.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ],
+            "verification": [
+              "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.doc_management import runtime; from scribe_mcp.tools.manage_docs import manage_docs'",
+              "./.venv/bin/pytest -q tests/test_auto_registration.py tests/test_manage_docs_quality_check.py tests/test_manage_docs_apply_preview.py tests/test_manage_docs_anchor_cas.py tests/security/test_project_binding_policy.py",
+              "./.venv/bin/pytest -q tests/test_manage_docs_quality_check.py tests/test_manage_docs_apply_preview.py -k 'structured or format or diff or content or quality'",
+              "./.venv/bin/pytest -q tests/core/test_wal_replay_exactly_once.py tests/test_tool_runtime_repo_scope.py -m 'core and regression and not slow and not performance'"
+            ]
+          }
+        },
+        {
+          "verb": "amend",
+          "work_item_id": "850ec2b7-4a1f-4ccb-a52f-d52f442a7c49",
+          "package_id": "SBR-CORE-VAL.4",
+          "expected_contract_revision": "50f0390b125233967e83f0c02acf2ebc9b86b6f00a205c6e8a183b46d1347b1b",
+          "changes": {
+            "acceptance": [
+              "Every expected failure returns exact typed MCP/C-04 envelope with code/message/retry/remediation/candidates/correlation and zero side effects in every response mode.",
+              "Each call has one immutable C-11, at most one binding/project read, and one C-12.",
+              "Default structured receipts contain every required identity/durability/artifact/retry key, omit default echoes/reminders/timing/inventory/duplicate paths, and full-depth modes preserve current detail.",
+              "Structured versus structured_full projection leaves file, DB, audit, binding, WAL, registration, index, quality, and requested-content truth unchanged.",
+              "Explicit target, CAS, generation, digest, recovery, and convergence preserve defaults and durable truth.",
+              "Existing canonical-key/fallback, anchor-race, and schema-exposure regressions stay green.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ],
+            "verification": [
+              "PYTHONPATH=src ./.venv/bin/python -c 'from scribe_mcp.shared.tool_runtime import execute_tool_call, resolve_context_authoritative_session_key; from scribe_mcp.shared.execution_context import ResolvedRequestContextV1; from scribe_mcp.mcp_adapter import ScribeErrorV1, normalize_tool_result; from scribe_mcp.tools.manage_docs import manage_docs'",
+              "./.venv/bin/python -m py_compile tests/test_tool_runtime_repo_scope.py tests/test_manage_docs_anchor_cas.py",
+              "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/test_manage_docs_anchor_cas.py -m 'core and regression and not integration and not slow and not performance'",
+              "./.venv/bin/pytest -q tests/test_tool_runtime_repo_scope.py tests/test_manage_docs_anchor_cas.py -k 'structured_receipt or structured_full or typed_errors or requested_diff or durable_effects'",
+              "./.venv/bin/pytest -q tests/test_mcp_adapter.py tests/test_logging_utils.py tests/test_append_entry_explicit_project_resolution.py tests/test_query_entries_explicit_project_resolution.py tests/test_manage_docs_apply_preview.py tests/test_manage_docs_quality_check.py tests/security/test_project_binding_policy.py"
+            ]
+          }
+        },
+        {
+          "verb": "add_depends_on",
+          "work_item_id": "0883099a-401b-41be-8973-ff9b2d8ec0ce",
+          "package_id": "SBR-REL-VAL.4",
+          "expected_contract_revision": "7827a4b6e6f33be6ab5bf66d68b3c01fd846ab4c0148c8166c0fa74e8c6afab9",
+          "value": "SBR-DOC-DUR.3"
+        },
+        {
+          "verb": "amend",
+          "work_item_id": "0883099a-401b-41be-8973-ff9b2d8ec0ce",
+          "package_id": "SBR-REL-VAL.4",
+          "expected_contract_revision": "$previous.new_contract_revision",
+          "changes": {
+            "acceptance": [
+              "Every startup, schema, timing, and response budget emits raw samples and explicit PASS/FAIL.",
+              "Response evidence enforces append/log <=512 bytes, read_recent/query metadata <=1024 bytes, set_project <=1024 bytes, get_project/manage_docs metadata <=1536 bytes, default metadata at least 50 percent smaller than full depth in bytes and local-token count, and full-depth metadata <=16 KiB.",
+              "Artifacts identify the exact local tokenizer/version and separate requested-content bytes/tokens, direct Scribe metadata, and upstream wrapper bytes.",
+              "Mixed revisions, missing evidence, missing exact local tokenizer, excessive reads, unexplained time, absent tripwires, ambiguous content exclusion, and wrapper duplication fail.",
+              "No production contact or teardown leak.",
+              "The package changes only generic Scribe behavior: no council_mcp file or import, Council/Aegis/seat/run/work-item/projection authority, Council schema column, or Council execution replay is introduced."
+            ],
+            "verification": [
+              "PYTHONPATH=src ./.venv/bin/python -m py_compile tests/test_release_startup_probe.py",
+              "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_release_startup_probe.py",
+              "PYTHONPATH=src ./.venv/bin/pytest -q tests/test_release_startup_probe.py -k 'response_projection or token or budget'"
+            ]
+          }
+        }
+      ],
+      "upstream_council_handoff": {
+        "registry_scope": "council_mcp repository; not this Scribe project",
+        "source_owner": "src/council_mcp/ws_proxy.py existing forwarding seam",
+        "test_owners": [
+          "tests/migration/mcp_v2/test_stdio_http_parity.py",
+          "tests/runtime/test_mcp_client_compat.py"
+        ],
+        "required_joint_tests": [
+          "test_scribe_structured_receipt_is_forwarded_once_without_text_duplication",
+          "test_scribe_structured_full_is_forwarded_once_without_nested_wrapper_duplication"
+        ],
+        "forbidden": "No council_mcp path may be added to any Scribe work item's owned_files."
+      }
+    }
+
+### Package order and handoff gate
+
+1. Coordinator applies the exact registry amendments above and re-renders/reconciles the work-item projection before dispatch.
+2. SBR-BIND-RESOLVE.3 then .4 establish bounded C-03 success inputs and unabridged C-04 errors.
+3. SBR-HOTPATH.1 lands the sole projector; its dispatcher tests must pass before HOTPATH.2/.3 or DOC-DUR.3 consume the amended modes.
+4. SBR-HOTPATH.2 and .3 may proceed in their existing order. SBR-DOC-DUR.3 proceeds only after HOTPATH.1 and its existing document dependencies.
+5. SBR-CORE-VAL.4 proves shapes, omissions, full-depth compatibility, typed errors, requested-content completeness, and unchanged durable effects.
+6. SBR-REL-VAL.4 records byte and exact local-tokenizer evidence at one clean revision.
+7. The separate council_mcp upstream package proves wrapper no-duplication. Its PASS is joint-system evidence only; it does not expand Scribe ownership.
+8. Forge stops if any unlisted source file is needed. Crucible validates every named behavioral/budget case. Witness verifies signatures, keys, exact ownership, mode behavior, and unchanged persistence. Arbiter reviews single-seam reuse, compatibility, boundedness, and absence of duplicated projection logic.
+
+READY_FOR_COORDINATOR_APPLICATION only when this managed plan passes quality checks and the coordinator applies or deliberately rejects each revision-pinned registry operation.

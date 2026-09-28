@@ -8,23 +8,24 @@ revoked_at: null
 policy_digest: 4b92b66896c39d0cf4072a22968b3a90baa854ef4229398e2f52c8acd04027b5
 title: "\U0001F512 Migration 007 accepts forged resolved project keys \u2014 scribe_binding_reliability_repair_20260927"
 related_docs: []
-last_updated: 2026-09-28 04:21:51 UTC
+last_updated: 2026-09-28 05:32:58 UTC
 created_by: agent-20260928-032945-0d10794a
-maintained_by: agent-20260928-035855-dd245099
+maintained_by: agent-20260928-052402-66746c41
 status: ready
 canonical_doc_type: security
 edit_trace:
   tool: manage_docs
   created_at: 2026-09-28 03:37:26 UTC
   created_via: replace_section
-  last_edited_at: 2026-09-28 04:21:51 UTC
-  last_edited_by: agent-20260928-035855-dd245099
-  last_action: replace_section
+  last_edited_at: 2026-09-28 05:32:58 UTC
+  last_edited_by: agent-20260928-052402-66746c41
+  last_action: frontmatter_update
   work_item_id: 5309eca6-4d91-477e-b0c8-7087b6d65338
 id: SEC-2026-09-28-0001
 doc_type: security
-summary: 'High-severity SBR-SCHEMA.1 security FAIL: migration 007 accepts unvalidated
-  supplied project keys and caller-controlled generations.'
+summary: 'Resolved high-severity migration-007 authorization defect: exact-revision
+  Sentinel reacceptance confirms canonical repo/project validation and trigger-owned
+  monotonic generation.'
 owners:
 - Sentinel
 tags:
@@ -34,14 +35,18 @@ tags:
 - migration-007
 - SBR-SCHEMA.1
 category: security
+verdict: PASS
+revision: a248358d885add846304939eaac56841e35a0a29682e933ad823053d07f7d4bb
+evidence_type: security
+case_status: resolved
 ---
 
 
 # 🔒 Migration 007 accepts forged resolved project keys — scribe_binding_reliability_repair_20260927
 **Author:** Scribe
 **Version:** v0.1
-**Status:** OPEN — REPORT READY; REMEDIATION REQUIRED
-**Last Updated:** 2026-09-28 03:35:06 UTC
+**Status:** RESOLVED — SECURITY REACCEPTANCE PASS
+**Last Updated:** 2026-09-28 UTC
 
 > This report records the blocking security finding, source-level proof, remediation contract, and verification requirements for SBR-SCHEMA.1.
 
@@ -52,19 +57,21 @@ category: security
 
 **Reported By:** Sentinel (`sentinel_sbr_schema_007_review_1`)
 
+**Verified By:** Sentinel (`sentinel_sbr_schema_007_reaccept_3`)
+
 **Date Reported:** 2026-09-28 UTC
 
 **Severity:** HIGH
 
-**Status:** OPEN — SBR-SCHEMA.1 security gate FAIL
+**Status:** RESOLVED — exact-revision security reacceptance PASS
 
 **Component:** PostgreSQL migration 007 session-binding isolation
 
-**Reviewed Boundary:** Work item `5309eca6-4d91-477e-b0c8-7087b6d65338`, contract revision `40a626417efbf62903bb4a9cc759bf20cbb98579f823ad43bca01316cb88d4c8`, SQL SHA-256 `53e4af21e29c4930b96e4bd2e7a020de633997da7b9433f7030da35015e76bce`.
+**Reviewed Boundary:** Work item `5309eca6-4d91-477e-b0c8-7087b6d65338`, contract revision `a248358d885add846304939eaac56841e35a0a29682e933ad823053d07f7d4bb`, SQL SHA-256 `9eda9e27741c18e3400921e3b9cb61a0a086ec429e05d1a08b77c9a9741688a8`, test SHA-256 `45b32d3759d296494e2e9a8e2a04e7a1f046c89a2e66075b58399f2465062055`, and plan SHA-256 `7cfee446d5e9f435cfe5562f5cf84cb3a3856458494eca6bd64ecbe5be603db5`.
 
-**Customer Impact:** A database writer able to update `session_projects` can bind a session to another or nonexistent project key and can choose a non-monotonic generation. That defeats the schema-level isolation/CAS invariant and can misroute later project-keyed operations. The current legacy writer supplies only `project_name`, which reduces immediate exposure but does not close the enforced-boundary defect.
+**Resolution:** Migration 007 now treats caller identity fields as assertions, derives or validates the canonical project key through the session repository plus project name, resets classification fail-closed before resolution, and owns binding generation monotonically from stored OLD state. The current regressions exercise same-repository and cross-repository forged tuples, caller generation jumps, missing/ambiguous identity axes, direct-promotion attempts, replay, receipt constraints, and state nullability.
 
-**CVE / CVSS:** No CVE assigned. Internal high-severity authorization-boundary defect; no numeric CVSS assigned because the externally reachable write path is not established in this source package.
+**Customer Impact After Fix:** The demonstrated forged-key and generation-control paths no longer authorize a resolved binding under the migration trigger. No public HTTP/MCP path supplying `project_key` was identified. PostgreSQL table-owner/superuser DDL such as disabling or dropping enforcement is outside this package's ordinary writer threat boundary and is not claimed as defended by these tests.
 
 
 ---
@@ -72,33 +79,31 @@ category: security
 <!-- ID: description -->
 ### Threat Analysis
 
-Assets at risk are canonical project identity, per-session binding integrity, receipt isolation, and generation-based stale-writer fencing. The trust edge is a write into `session_projects`: legacy-name writes are untrusted classification input, while a supplied `project_key` is currently treated as authority without database proof. The attacker/precondition is any compromised, buggy, or future application path running under the Scribe database role with write permission on this table. The security outcome is cross-project or nonexistent-project binding plus generation rollback/selection.
+Assets at risk are canonical project identity, per-session binding integrity, receipt isolation, and generation-based stale-writer fencing. The changed trust edge is a write into `session_projects`: `session_id`, `project_name`, supplied `project_key`, supplied binding state, and supplied generation are untrusted inputs. Canonical authority comes from `scribe_sessions.repo_root` joined to exactly one `scribe_projects` identity with a usable key.
 
 ### Vulnerability
 
-At `007_reliability_receipts.sql:34-43`, any non-empty supplied `NEW.project_key` enters the resolved branch. The trigger does not prove that the key exists in `scribe_projects`, matches the session repository, or agrees with the project name. At lines 133-154, the CHECK validates only tuple shape: resolved + non-NULL key + NULL reason. Therefore a coherent forged binding passes both trigger and constraint.
+The original revision accepted any non-empty supplied `project_key` as a resolved identity and allowed caller-selected positive `binding_generation`. A coherent forged tuple therefore passed the shape CHECK while bypassing repository/project authorization, and a generation jump or rollback weakened stale-writer fencing.
 
-At lines 28-32 and 81-86, a caller may also provide any positive `binding_generation`. The trigger increments only when the supplied generation equals the old one; a different positive value skips the increment and passes the `>= 1` CHECK. This breaks monotonic rebind generation.
+### Remediated Control
 
-### Proof Path
+At current SQL lines 29-50, the trigger captures a supplied key only for validation, ignores caller generation, and resets every write to keyless unresolved state before classification. Lines 53-84 resolve only when the session exists, `project_name` is present, exactly one same-repository project matches, that project has exactly one usable key, and any supplied key equals the canonical key. Lines 87-96 advance generation only from `OLD.binding_generation` when the stored classification changes.
 
-Given unresolved session `s-zero` and a key belonging to another project:
+### Proof Path Closure
 
-```sql
-UPDATE session_projects
-SET project_key = 'key-normal',
-    binding_state = 'resolved',
-    binding_state_reason = NULL
-WHERE session_id = 's-zero';
-```
+The current PostgreSQL regression at `tests/test_database_migration.py:589-652` shows:
 
-The BEFORE trigger sees a changed, non-empty key and forces `resolved` with no reason. No key-ownership lookup runs. The consistency CHECK then accepts the row. Supplying `binding_generation = 1` or another positive value different from the old generation similarly bypasses the increment branch.
+- a caller generation update to 999 is ignored;
+- a same-repository forged key remains keyless with `project_key_mismatch`;
+- a coherent key/name pair from another repository remains keyless with `project_identity_zero_matches`;
+- a valid rebind resolves and advances generation by exactly one from OLD truth;
+- an INSERT generation of 777 is normalized to 1.
 
-The committed negative test at `tests/test_database_migration.py:517-529` disables the trigger but changes only `project_key` while leaving `binding_state='unresolved'`; that proves incoherent tuples fail, not that coherent forged tuples fail.
+The legacy classification matrix at lines 499-529 preserves missing-name, missing-session, missing-key, zero-match, and ambiguous rows as generation-1 unresolved/keyless rows. Lines 531-565 prove forced promotion is reclassified and an unresolved binding cannot produce a project-keyed receipt. Lines 654-769 verify the frozen receipt columns, nullability, keys, indexes, and representative invalid state tuples.
 
 ### Evidence Boundary
 
-This is a deterministic source-level proof from the exact reviewed SQL and committed tests. Local shell/test execution was not available to this reviewer because the repository hook returned `WORK_ITEM_MUTATION_DENIED[BIND_MISSING]`; the denial was not retried. The supplied ai-trace pair `aitrace:v1:codex:70d9b558b9cf6f800cd8ef079da8b806` / `aitrace:v1:codex:198aa77b7127cc62046fc5843cdea616` is a work-item-show call/result containing historical RED, 10+10 GREEN, initialize, and 25,895-row census claims. It is useful provenance but is not the raw execution call/result for those commands. Those historical claims demonstrate startup availability and legacy classification, not resistance to the forged-key path above.
+Fresh evidence produced by this Sentinel seat is limited to current-byte Scribe reads/hash readback, scoped searches, and admitted `review-exec` command index 4 in `bubblewrap-read-only-v1`: `git diff --check` exited 0 with one child launched and reaped. Disposable PostgreSQL and stdio results are supplied current-revision evidence, not fresh Sentinel execution: focused regressions 2 passed, module 10 passed, neighbors 10 passed, capability-free lane 16 passed with 4 expected skips, and fresh stdio initialize listed 35 tools with migration ledger `sql:007_reliability_receipts.sql` and 19 receipt columns. Crucible PASS event `9a61ebc4-b6af-40b1-af38-d4c431d179c3` and Witness PASS event `91d1fef6-c081-4775-87a4-d43b0dd430a0` cover this exact revision.
 
 
 
@@ -107,25 +112,26 @@ This is a deterministic source-level proof from the exact reviewed SQL and commi
 <!-- ID: affected_systems -->
 **Affected Areas**
 
-- `src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:17-157`
-- `tests/test_database_migration.py:463-608`
+- `src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:17-167`
+- `src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:169-313`
+- `tests/test_database_migration.py:475-829`
 - Downstream consumers that treat a resolved `session_projects.project_key` and `binding_generation` as authoritative
 
-**Trust Boundary Violation**
+**Trust Boundary Result**
 
-The migration collapses “caller supplied an opaque key” into “database proved canonical project identity.” This crosses the session-to-project authorization boundary without validating the key against `scribe_projects` and the session repository.
+The schema no longer collapses “caller supplied an opaque key” into “database proved canonical project identity.” Resolution now requires repository-scoped canonical lookup, and caller generation is discarded.
 
-**Attack Vector**
+**Fail-Closed Axes**
 
-Local/application-database write path. No public HTTP/MCP parameter reaching `project_key` was established in this package; the currently reviewed PostgreSQL `set_session_project` method writes `project_name` only. Risk becomes directly exploitable if any current or future database-role path accepts or derives `project_key` without an independent canonical lookup.
+Missing project name, missing session, zero project matches, ambiguous project matches, missing canonical key, and supplied-key mismatch all produce `binding_state='unresolved'`, `project_key=NULL`, and a stable non-empty reason. The table CHECK rejects incoherent resolved/unresolved representations when trigger enforcement is bypassed, while the trigger blocks coherent forged tuples during ordinary INSERT/UPDATE execution.
 
-**Unaffected / Positive Controls**
+**Receipt and Availability Controls**
 
-- Legacy zero, many, absent-name, missing-session, and missing-key rows are startup-safe and remain reason-coded/keyless during migration backfill.
-- Stable reason codes contain no secret values.
-- Receipt rows persist digests, byte counts, opaque refs, and error codes rather than raw payload/error bodies.
-- The SQL is generic Scribe-only and contains no Council/Aegis/seat/work-item/projection authority.
-- The three receipt indexes cover the declared claim, lease recovery, and project/state accounting access patterns.
+`background_receipts` remains exactly 19 columns with operation primary key, project/idempotency uniqueness, closed state values, state-dependent nullability, non-negative counters/fence, digest shape, and claim/recovery/accounting indexes. Stored fields are digests, sizes, opaque references, and error codes rather than payload/error bodies. No secrets or raw DSNs are introduced.
+
+**Generic Scribe Isolation**
+
+Scoped current-byte searches found no Council/Council MCP, Aegis, work-item, seat, projection, or execution-replay authority in either owned file. Migration 007 contains no direct migration-ledger write. Its sole DROP is the allowlisted idempotent replacement of `session_projects_classify_binding`.
 
 
 ---
@@ -133,70 +139,77 @@ Local/application-database write path. No public HTTP/MCP parameter reaching `pr
 <!-- ID: investigation -->
 ### Root Cause
 
-The function comment says “a writer that supplies the key owns the identity,” and the implementation encodes that trust decision directly. The table constraints only enforce representation consistency, not referential or repository-scoped validity. Generation is likewise treated as caller input before a conditional increment rather than as trigger-owned state.
+The original trigger treated caller-supplied key and generation fields as authority. Table constraints enforced only tuple shape, not repository-scoped identity. This was an authorization-boundary error analogous to CWE-639/CWE-284, with stale-state fencing weakened by caller-selected generation.
 
-### Security Classification
+### Remediation Assessment
 
-- **CWE-639 / authorization by user-controlled key (analogous):** a supplied project identifier can select another authorization domain.
-- **CWE-284:** schema-level access-control invariant is incomplete.
-- **CWE-367-style stale-state risk (analogous):** caller-controlled/non-monotonic generation weakens stale-writer fencing.
+The repair is minimal and closes the demonstrated path:
 
-### Review of Requested Properties
+1. canonical identity is selected from `NEW.session_id -> scribe_sessions.repo_root` plus `NEW.project_name`;
+2. exactly-one project match and exactly-one usable canonical key are required;
+3. a supplied key is accepted only if it equals that canonical key;
+4. classification begins unresolved/keyless, so every failed axis remains unusable;
+5. INSERT generation is always 1;
+6. UPDATE generation begins from OLD truth and increments only when canonical classification changes.
 
-- No guessed project during legacy backfill: PASS.
-- Unresolved rows stay keyless/reason-coded on legacy writes: PASS.
-- Resolved key validity: FAIL.
-- Trigger/CHECK bypass resistance: FAIL.
-- Rebind generation monotonicity: FAIL for explicit-key/generation writes; PASS only for tested legacy-name rebinds.
-- Replay idempotency: source appears idempotent for the current valid schema; historical disposable execution is supplied but not independently replayed by this reviewer.
-- Secret/error leakage: PASS in this migration.
-- Availability / indexes: PASS for the reviewed 25,895-row historical deployment claim and declared indexes; no new unbounded error payload is stored.
-- Generic Scribe-only boundary: PASS.
+### Review of Required Properties
 
-### Related Evidence
+- Same-repository forged key cannot authorize: **PASS**.
+- Cross-repository coherent forged tuple remains keyless/unresolved: **PASS**.
+- Canonical validation binds session repository and project identity: **PASS**.
+- Missing, zero-match, ambiguous, missing-key, and mismatch axes fail closed: **PASS**.
+- Caller generation jumps/rollbacks are ignored; valid rebind advances monotonically from OLD truth: **PASS**.
+- Direct forced promotion with trigger active cannot make an unresolved row authoritative: **PASS**.
+- Binding-state CHECK blocks incoherent tuples if the trigger is disabled: **PASS**.
+- Frozen receipt constraints, keys, indexes, and state-nullability expose no demonstrated bypass: **PASS**.
+- Startup-safe legacy classification and migration replay/ledger stability: **PASS** on supplied disposable PostgreSQL evidence.
+- No Council authority/import/schema leaked into generic Scribe: **PASS**.
+- No secret-bearing receipt fields added: **PASS**.
 
-Exact source reads were obtained through direct Scribe and reported SHA-256 prefixes matching the registered full hashes. Historical runtime claims are retained as provenance only; this FAIL is based on the current source path and missing negative coverage.
+### Residual Boundary
+
+The tests do not claim to resist PostgreSQL table-owner or superuser DDL that disables/drops triggers and rewrites constraints. That actor can dismantle any table-local control and is outside the ordinary application-writer boundary reviewed here. If production credentials are table owners, least-privilege ownership separation remains a deployment-hardening requirement, not a defect proven in this package.
 
 
 ---
 ## Resolution Plan
 <!-- ID: resolution_plan -->
-### Immediate Remediation
+### Remediation Implemented
 
-1. Keep startup-safe legacy classification unchanged.
-2. Remove the unconditional trust in caller-supplied `project_key`. Either:
-   - always derive the key from `session_id -> repo_root + project_name`; or
-   - validate a supplied key by requiring exactly one `scribe_projects` row whose key matches and whose `repo_root` matches the session repository.
-3. Make generation trigger-owned and monotonic. A key-changing resolve or demotion must set `OLD.binding_generation + 1`; callers must not select or reduce it.
-4. Decide the explicit-key public/schema contract with Blueprint because changing whether a writer may supply a key is a load-bearing schema/interface decision.
+- Replaced supplied-key authority with repository/project canonical derivation and equality validation.
+- Made binding generation trigger-owned: 1 on INSERT, OLD-based on UPDATE, exact increment when canonical classification changes.
+- Preserved startup-safe unresolved classification for legacy rows and later writes.
+- Added PostgreSQL negatives for same-repository forged key, cross-repository coherent tuple, generation jump, generation-on-insert, missing session, missing canonical key, unresolved promotion, replay, ledger stability, exact receipt schema, constraints, indexes, and state nullability.
+- Preserved legacy `project_name` writer compatibility and generic Scribe-only scope.
 
-### Required Regression Proof
+### Verification
 
-Run against a uniquely named disposable PostgreSQL database:
+Fresh Sentinel evidence:
 
-- reject a nonexistent supplied key;
-- reject a key belonging to another repository/project;
-- reject a coherent forged tuple when the trigger is disabled, or document/implement the database privilege model that makes trigger disabling impossible for the application role;
-- reject caller-controlled generation rollback/jump and prove exact +1 on rebind;
-- preserve zero/many/absent-name/missing-session/missing-key startup-safe classification;
-- preserve legacy writer compatibility;
-- replay migration 007 twice with unchanged row counts, keys, generations, and ledger;
-- retain fresh stdio initialize and live/disposable census proof.
+- Current Scribe readbacks match SQL SHA-256 `9eda9e27741c18e3400921e3b9cb61a0a086ec429e05d1a08b77c9a9741688a8`, tests SHA-256 `45b32d3759d296494e2e9a8e2a04e7a1f046c89a2e66075b58399f2465062055`, and plan SHA-256 `7cfee446d5e9f435cfe5562f5cf84cb3a3856458494eca6bd64ecbe5be603db5`.
+- Admitted read-only `review-exec` index 4 ran `git diff --check -- src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql tests/test_database_migration.py`; exit 0, one child launched/reaped, no timeout, empty stdout/stderr digests.
+- Current-byte source walkthrough and static boundary searches confirm the controls described above.
 
-### Mitigation Status
+Supplied current-revision execution evidence:
 
-Not started. No source fix was authorized or implemented by this review seat.
+- focused disposable PostgreSQL regressions: 2 passed;
+- migration module: 10 passed;
+- direct neighbor lane: 10 passed;
+- capability-free lane: 16 passed, 4 expected skips;
+- fresh stdio initialize: protocol `2025-11-25`, 35 tools, `sql:007_reliability_receipts.sql` ledger row, 19 receipt columns;
+- Crucible behavioral PASS `9a61ebc4-b6af-40b1-af38-d4c431d179c3`;
+- Witness truth PASS `91d1fef6-c081-4775-87a4-d43b0dd430a0`.
 
 ### Verification Status
 
-Open. A future Sentinel re-gate must inspect the repair delta and run/inspect the negative-path PostgreSQL proof. `link_fix` must be called only after that remediation is verified and landed.
+**RESOLVED / SECURITY PASS** for contract revision `a248358d885add846304939eaac56841e35a0a29682e933ad823053d07f7d4bb`. The prior `validated` fix link points to the correct repaired artifacts but preceded Sentinel closure verification. This reacceptance updates the report and records the authoritative Sentinel fix link after verification.
 
 ### Fix Landed
-Fix landed with status: **validated**
+Fix landed with status: **resolved**
 
 ### Fix Details
-- Artifact: src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:17; tests/test_database_migration.py:477
-- Execution ID: 9927bdcd-8d3c-4cf4-ae58-9b56c00ffdb3
+- Artifact: src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:17#sha256=9eda9e27741c18e3400921e3b9cb61a0a086ec429e05d1a08b77c9a9741688a8; tests/test_database_migration.py:477#sha256=45b32d3759d296494e2e9a8e2a04e7a1f046c89a2e66075b58399f2465062055
+- Execution ID: 4ca97f3b-6503-40b7-b9ce-a5f02d5e02b5
 
 
 ---
@@ -204,40 +217,50 @@ Fix landed with status: **validated**
 <!-- ID: timeline -->
 | Phase | Owner | Date | Notes |
 | --- | --- | --- | --- |
-| Security source review | Sentinel | 2026-09-28 | Found forged-key and generation-control bypass at exact revision. |
-| Contract decision | Blueprint / coordinator | Pending | Decide whether explicit keys are forbidden or validated canonically. |
-| Fix development | Forge or Mantis per coordinator routing | Pending | Migration and regression changes only within amended ownership. |
-| Security verification | Sentinel | Pending | Delta review plus disposable PostgreSQL negative-path proof. |
-| Fix linkage | Sentinel | Pending | Call `link_fix` after verified landing. |
+| Security discovery | Sentinel | 2026-09-28 | Proved supplied-key authorization and caller-generation bypass at revision `40a626...`; opened SEC-2026-09-28-0001. |
+| Contract amendment | Blueprint / coordinator | 2026-09-28 | Required repository-scoped key validation, trigger-owned monotonic generation, negative PostgreSQL proof, and focused owned scope. |
+| Repair | Mantis | 2026-09-28 | Implemented the minimal migration/test delta and captured RED-first then GREEN disposable PostgreSQL evidence. |
+| Behavioral verification | Crucible | 2026-09-28 | PASS event `9a61ebc4-b6af-40b1-af38-d4c431d179c3` at exact revision `a248358d...`. |
+| Truth verification | Witness | 2026-09-28 | PASS event `91d1fef6-c081-4775-87a4-d43b0dd430a0` at exact revision `a248358d...`. |
+| Security reacceptance | Sentinel | 2026-09-28 | Current-byte control review, case reconciliation, and admitted read-only review-exec PASS; SEC-2026-09-28-0001 resolved. |
+| Fix linkage | Sentinel | 2026-09-28 | Authoritative post-verification link recorded against the repaired SQL and regression artifacts. |
 
 
 ---
 ## Appendix
 <!-- ID: appendix -->
-### Evidence References
+### Current Evidence References
 
 - Work item: `5309eca6-4d91-477e-b0c8-7087b6d65338`
-- Contract revision: `40a626417efbf62903bb4a9cc759bf20cbb98579f823ad43bca01316cb88d4c8`
-- SQL SHA-256: `53e4af21e29c4930b96e4bd2e7a020de633997da7b9433f7030da35015e76bce`
-- Test SHA-256: `85e390bd68eb377f74b4581c5f65b1835683d5ee3b94b290a8c8f9a272f18005`
-- Plan SHA-256: `8935a7940ea40a792b43102622bc963dc75285cc17329ff7cd3b15b67f4d5287`
-- Historical evidence readback pair: `aitrace:v1:codex:70d9b558b9cf6f800cd8ef079da8b806`, `aitrace:v1:codex:198aa77b7127cc62046fc5843cdea616`
-- Reviewer execution limitation: `WORK_ITEM_MUTATION_DENIED[BIND_MISSING]`
+- Security admission: `129a9227-b3bb-4dff-aafb-a20985f2a8a2`
+- Contract revision: `a248358d885add846304939eaac56841e35a0a29682e933ad823053d07f7d4bb`
+- SQL SHA-256: `9eda9e27741c18e3400921e3b9cb61a0a086ec429e05d1a08b77c9a9741688a8`
+- Test SHA-256: `45b32d3759d296494e2e9a8e2a04e7a1f046c89a2e66075b58399f2465062055`
+- Plan SHA-256: `7cfee446d5e9f435cfe5562f5cf84cb3a3856458494eca6bd64ecbe5be603db5`
+- Crucible PASS: `9a61ebc4-b6af-40b1-af38-d4c431d179c3`
+- Witness PASS: `91d1fef6-c081-4775-87a4-d43b0dd430a0`
+- Fresh review-exec: command index 4, command digest `2c5480162cd97d94c893398d8d3a71d8d2a4dc958767edb2092dd9e77fd7cdc3`, exit 0, `bubblewrap-read-only-v1`
 
-### Open Questions
+### Historical Finding References
 
-- Which planned runtime writer is authorized to supply `project_key` directly?
-- Is the application database role prevented from disabling triggers? If not, the coherent-tuple invariant also needs a non-trigger enforcement strategy.
-- Should `session_projects.project_key` gain a foreign key once the unique project-key index is guaranteed, or should trigger validation remain the compatibility mechanism?
-- What exact generation/CAS contract must reject caller-selected values?
+- Vulnerable revision: `40a626417efbf62903bb4a9cc759bf20cbb98579f823ad43bca01316cb88d4c8`
+- Vulnerable SQL SHA-256: `53e4af21e29c4930b96e4bd2e7a020de633997da7b9433f7030da35015e76bce`
+- Original source proof is preserved in Scribe history and the case timeline.
 
 ### Fix References
 
-None yet. Case remains open; no `link_fix` is valid until remediation is verified.
+- `src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:17`
+- `tests/test_database_migration.py:477`
+- Prior link status: `validated` by Mantis before Sentinel reacceptance.
+- Final link status: `resolved` by Sentinel after exact-revision verification.
 
-- **Fix Reference:** src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:17; tests/test_database_migration.py:477 (execution: 9927bdcd-8d3c-4cf4-ae58-9b56c00ffdb3)
-- **Landing Status:** validated
-- **Fix Linked By:** mantis_sbr_schema_007_security_repair_2
+### Closure
+
+No open exploit path remains within the reviewed ordinary INSERT/UPDATE and migration-application boundary. The security report is ready, internally consistent, and suitable as the durable closure record for SEC-2026-09-28-0001.
+
+- **Fix Reference:** src/scribe_mcp/db/postgres_migrations/007_reliability_receipts.sql:17#sha256=9eda9e27741c18e3400921e3b9cb61a0a086ec429e05d1a08b77c9a9741688a8; tests/test_database_migration.py:477#sha256=45b32d3759d296494e2e9a8e2a04e7a1f046c89a2e66075b58399f2465062055 (execution: 4ca97f3b-6503-40b7-b9ce-a5f02d5e02b5)
+- **Landing Status:** resolved
+- **Fix Linked By:** sentinel_sbr_schema_007_reaccept_3
 
 
 ---
