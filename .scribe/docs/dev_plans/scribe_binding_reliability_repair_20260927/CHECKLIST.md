@@ -6,8 +6,8 @@ doc_name: checklist
 category: engineering
 status: in_progress
 version: '0.1'
-last_updated: 2026-09-28 06:18:49 UTC
-maintained_by: agent-20260928-054355-cc2b0598
+last_updated: 2026-09-28 13:10:22 UTC
+maintained_by: agent-20260928-071822-ee3c2094
 created_by: agent-20260927-061418-642053d3
 owners:
 - Blueprint
@@ -24,8 +24,8 @@ edit_trace:
   tool: manage_docs
   created_at: 2026-09-27 06:24:36 UTC
   created_via: frontmatter_update
-  last_edited_at: 2026-09-28 06:18:49 UTC
-  last_edited_by: agent-20260928-054355-cc2b0598
+  last_edited_at: 2026-09-28 13:10:22 UTC
+  last_edited_by: agent-20260928-071822-ee3c2094
   last_action: replace_text
   work_item_id: 5309eca6-4d91-477e-b0c8-7087b6d65338
 ---
@@ -66,7 +66,7 @@ Each assignment section is a stable custody region. Fresh `MODE=detail` passes r
 ## DA-04 — Schema bootstrap (`SBR-SCHEMA.*`)
 <!-- ID: sbr-schema-bootstrap -->
 - [ ] SBR-SCHEMA.1 — Add the sole additive 007_reliability_receipts PostgreSQL migration source for exact C-05/C-06 plus readiness metadata; statically prove backfill/constraints/indexes and no destructive or direct-ledger SQL, while SBR-SCHEMA.GATE/DA-10 retain mandatory disposable-target apply, idempotency, ledger, backup, and restore proof.
-- [x] SBR-SCHEMA.2 — Mirror migration 007 into fresh PostgreSQL init and fresh/legacy SQLite schema; prove exact logical PostgreSQL/SQLite/init parity, additive reopen compatibility, project_name preservation, and side-effect-free schema imports. Proof: SQLite fresh/legacy/reopen probe passed; import/py_compile passed; focused neighbors 24 passed, 1 skipped; owned hashes schema.py 4d541f6e9ca849c6aac05a19147acf274dc47387cdf46402733117fe3b28d0c4 and init.sql 7b58753777c5e19552683cf4884a4bab602a5dc5dc93d2dd20a9481a75f9ee49.
+- [ ] SBR-SCHEMA.2 — Mirror migration 007 into fresh PostgreSQL init and fresh/legacy SQLite schema; prove exact logical PostgreSQL/SQLite/init parity, additive reopen compatibility, project_name preservation, and side-effect-free schema imports. Current implementation evidence: behavioral PASS at schema.py 1e406d46f92ff10a725c9fc27a854e41c56c02f27ae4ae867d6499b18ea4b946 and init.sql 7b58753777c5e19552683cf4884a4bab602a5dc5dc93d2dd20a9481a75f9ee49 with 24 focused tests. Completion remains open: the fresh exact-seat Witness gate failed before review because COUNCIL_SEAT_JSON was absent (Council event 1224c45e), so current truth, security, and quality receipts are missing.
 - [ ] SBR-SCHEMA.3 — Implement SchemaReadinessV1, fingerprint fast check, pg_try_advisory_lock election, deadline-aware pool/retry, bounded <=500 ms peer wait, fail-closed mismatch, and setup compatibility; prove 32 simultaneous starts elect one bootstrapper with zero ledger drift.
 - [ ] SBR-SCHEMA.GATE — Run import smoke and focused neighbor tests, then the single DA-10 PostgreSQL/process lane; on an approved disposable target retain AgentKit status -> plan -> backup -> apply -> status plus restore receipts; require Sentinel and Arbiter PASS before C-07 handoff.
 ## DA-05 — Hot path and telemetry (`SBR-HOTPATH.*`)
