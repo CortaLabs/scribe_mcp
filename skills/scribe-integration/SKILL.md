@@ -1,6 +1,6 @@
 ---
 name: scribe-integration
-description: How to use Scribe MCP tools correctly — logging, docs, topology, bugs, file reading, search
+description: Use Scribe for project logging, managed documents, issue reporting, file reading, search, and document quality checks
 user-invocable: true
 context: full
 visibility: exported
@@ -9,14 +9,14 @@ owner: scribe-mcp
 
 # Scribe Integration Guide
 
-Scribe is the persistent audit trail for all Council work. Every significant action must be logged. Unlogged work is invisible to the team and to future agents.
+Scribe keeps a durable record of project work. Log important decisions, changes, and verification so collaborators can understand what happened and continue from the current state.
+
+For setup, see [Scribe Onboarding](../scribe-onboarding/SKILL.md). The repository's [Scribe usage guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/Scribe_Usage.md) and [installation guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/INSTALL_AND_BOOTSTRAP.md) provide additional examples.
 
 ## Evidence Family Boundary
 
-- `scribe-integration` is the protocol entrypoint for Scribe work (startup sequence, logging cadence, docs lifecycle, bug/security reporting).
-- Retrieval evidence (semantic search, citations, corpus refresh) belongs to `scribe-rag-workflow`.
-- Runtime/log evidence (daemon/web/process telemetry, incident traces, log-plane checks) belongs to `log-observability`.
-- Browser runtime validation belongs to a dedicated browser-validation skill package; do not expand this skill into browser troubleshooting procedures.
+- This guide covers project logging, managed documents, bug and security reports, file reading, and text search.
+- Runtime, network, and browser evidence comes from the tools that observe those systems. Record findings in Scribe when they affect the project, and link to the original evidence where possible.
 
 ## Mandatory Startup Sequence
 
@@ -35,7 +35,7 @@ read_recent(agent="<your-name>", limit=5)
 - Without `set_project`, logs are orphaned in the default project
 - `read_recent` prevents duplicating work already done
 - The base Scribe project is only for ephemeral tactical work; once a named workstream exists, stay on it
-- Orchestrators must propagate the same active project to every delegated agent instead of silently falling back to the base project
+- When several people or tools contribute, use the same named project so their entries remain together
 
 **Skip these two steps = your work gets rejected.**
 
@@ -46,7 +46,7 @@ read_recent(agent="<your-name>", limit=5)
 - Call `set_project` once during startup for the active project.
 - Do not call `set_project` before every `append_entry`.
 - Keep using `append_entry`, `manage_docs`, `read_recent`, and related Scribe calls on the active project context.
-- Re-run `set_project` only when the operator/orchestrator changes the active project, or when an `append_entry`/Scribe response indicates sentinel/fallback/base-project mode, project mismatch, or orphaned logging.
+- Re-run `set_project` only when the project changes or a Scribe response indicates a project mismatch or orphaned logging.
 
 ---
 
@@ -58,16 +58,16 @@ Log every 2-3 significant actions. If it's not logged, it didn't happen.
 
 ```python
 append_entry(
-    agent="forge",
+    agent="developer",
     message="Fixed JWT validation — expiry now checked with 15min grace period",
     status="success",
     meta={
         "reasoning": {
             "why": "JWT tokens were accepted after expiry, allowing stale sessions",
-            "what": "Added expiry check with configurable grace period to auth.py:142",
-            "how": "Read auth.py scan_only, identified missing check, added with config fallback"
+            "what": "Added an expiry check to src/example_app/auth.py:142",
+            "how": "Scanned auth.py, located token validation, and verified the changed path"
         },
-        "file": "src/council_mcp/web/auth.py",
+        "file": "src/example_app/auth.py",
         "line": 142
     }
 )
@@ -90,7 +90,7 @@ When you have multiple actions to log at once:
 
 ```python
 append_entry(
-    agent="forge",
+    agent="developer",
     items=json.dumps([
         {"message": "Scanned auth.py — found JWT validation at line 142", "status": "info"},
         {"message": "Identified missing expiry check", "status": "bug",
@@ -106,11 +106,11 @@ For repo-wide milestones (phase completions, major decisions):
 
 ```python
 append_entry(
-    agent="atlas",
-    message="Phase 1 complete — auth system refactor shipped, 44/44 tests pass",
+    agent="developer",
+    message="Phase 1 complete — auth refactor shipped, 44/44 tests pass",
     status="success",
     log_type="global",
-    meta={"project": "council_unified_platform", "entry_type": "milestone"}
+    meta={"project": "example_application", "entry_type": "milestone"}
 )
 ```
 
@@ -139,9 +139,9 @@ meta={
 - Checklist item `metadata.status` is item state only; it must not update managed-doc frontmatter lifecycle `status`.
 - Managed-doc lifecycle status must use Scribe's canonical values: `scaffolded`, `in_progress`, `ready`, `complete`, `stale`, `superseded`, `blocked`, or `archived`.
 - Managed-doc frontmatter should include stable `id`, `doc_type`, `doc_name`, `status`, `summary`, `owners`, `tags`, and typed topology when relevant.
-- Human-facing attribution should use display names such as `Forge`, `Atlas`, `Witness`, `Crucible`, `Blueprint`, `Arbiter`, `Loom`, and `Quill`; preserve opaque runtime IDs only as secondary provenance when Scribe provides them.
+- Use readable names such as `developer`, `reviewer`, and `researcher` in examples. Preserve opaque runtime identifiers only when your application requires them.
 - Scaffold residue means not done; completion/readiness can be blocked with `DOC_NOT_DONE_SCAFFOLD_QUALITY`.
-- Run `quality_check` before handoff on managed docs, use bulk `quality_check` for Atlas/project-wave validation, run `quality_handoff_check` before clean clock-out/handoff claims, and run `project_health` before closeout.
+- Run `quality_check` before handoff on managed docs, use bulk `quality_check` for project-wide validation, run `quality_handoff_check` before clean clock-out/handoff claims, and run `project_health` before closeout.
 - `quality_check` is the agent remediation surface: consume `summary`, `warning_groups`, `agent_actions`, warning `location`, `section`, `repair_hint`, and provenance fields before inventing a manual grep plan.
 - Configured log surfaces, including custom `logs:` entries in `.scribe/config/scribe.yaml`, are not readiness-quality targets.
 
@@ -188,26 +188,26 @@ Use topology actions to keep the managed corpus deterministic and downstream-saf
 
 ```python
 manage_docs(
-    agent="witness",
+    agent="reviewer",
     action="topology_scan",
     dry_run=True
 )
 
 manage_docs(
-    agent="witness",
+    agent="reviewer",
     action="metadata_scan",
     dry_run=True
 )
 
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="metadata_repair",
     metadata={"mode": "repair_safe"},
     dry_run=False
 )
 
 manage_docs(
-    agent="witness",
+    agent="reviewer",
     action="ingestion_manifest_inspect",
     dry_run=True
 )
@@ -239,7 +239,7 @@ Canonical research/index guidance:
 - Research docs for a named workstream must be created in the active Scribe project. A research artifact written to the repo root, base project, wrong dev-plan folder, wrong filename prefix, or another Scribe project is not accepted evidence.
 - If a research doc lands in the wrong location/project, BLOCK downstream routing and use Scribe `manage_docs(action="rehome_doc", metadata={"target_project": "<active_project>"})` or the dedicated Scribe rehome-doc tool if exposed. Do not move managed docs with shell `mv`, `cp`, ad hoc file writes, or git-only renames.
 - If `manage_docs(create)` lands a research artifact in the wrong place, rehome it before writing substantive content. The clean sequence is create -> verify path/project -> rehome if needed -> write body -> quality_check -> index/readback.
-- Scribe quality checks are necessary but not sufficient. Coordinator/Witness should also scan for scaffold residue, duplicate headings, stale body status, noncanonical paths, escaped-newline sludge, and index drift before accepting research.
+- Scribe quality checks are necessary but not sufficient. A project owner or reviewer should also scan for scaffold residue, duplicate headings, stale body status, noncanonical paths, escaped-newline sludge, and index drift before accepting research.
 
 Project-level artifact guidance:
 - Research docs belong in `research/INDEX.md`.
@@ -252,14 +252,14 @@ Use this for narrative-doc metadata, not checklist progress:
 
 ```python
 manage_docs(
-    agent="blueprint",
+    agent="researcher",
     action="frontmatter_update",
     doc_name="ARCHITECTURE_GUIDE",
     metadata={
         "frontmatter": {
             "status": "ready",
-            "owners": ["blueprint"],
-            "summary": "Architecture plan ready for Witness review"
+            "owners": ["researcher"],
+            "summary": "Architecture plan ready for peer review"
         }
     },
     dry_run=True
@@ -274,25 +274,25 @@ Use this before handoff on managed docs:
 
 ```python
 manage_docs(
-    agent="witness",
+    agent="reviewer",
     action="quality_check",
     doc_name="ARCHITECTURE_GUIDE",
     dry_run=True
 )
 ```
 
-For Atlas-style project or wave validation, keep the existing `quality_check` action and request bulk mode through metadata:
+For project-wide validation, keep the existing `quality_check` action and request bulk mode through metadata:
 
 ```python
 manage_docs(
-    agent="atlas",
+    agent="developer",
     action="quality_check",
     metadata={"quality": {"bulk": True}},
     dry_run=True
 )
 
 manage_docs(
-    agent="atlas",
+    agent="developer",
     action="quality_check",
     metadata={
         "quality": {
@@ -316,7 +316,7 @@ Use this before claiming clean handoff, completion, or clock-out for managed-doc
 
 ```python
 manage_docs(
-    agent="witness",
+    agent="reviewer",
     action="quality_handoff_check",
     dry_run=True
 )
@@ -326,12 +326,10 @@ If `handoff_allowed` is false, fix the listed managed docs before handing work b
 
 ### Planning Doc Ownership vs Checklist Proof
 
-- The coordinator may create and update the managed pre-research `SPEC` doc with the operator.
-- That `SPEC` is problem-definition only: problem, goals, non-goals, constraints, and research questions. It is not an architecture doc, phase plan, or task package.
-- A usable `SPEC` is concrete enough that Lens can answer it; if the open questions are mushy or solution-biased, keep refining before research starts.
-- Blueprint owns planning-content updates in `ARCHITECTURE_GUIDE`, `PHASE_PLAN`, and the planning structure of `CHECKLIST` for non-trivial named work.
-- The active coordinator owns verification evidence plus `CHECKLIST` status/proof after task packages complete.
-- `SPEC` is the only coordinator-owned planning artifact before Blueprint runs.
+- Keep project goals, scope, constraints, and research questions clear in the project's planning documents.
+- A useful research brief asks concrete questions without assuming their answers.
+- Keep architecture and phase-planning content in the project's agreed planning documents.
+- Record verification evidence and checklist status/proof as work completes.
 - Do not rewrite planning docs after every package-level correction. Update checklist status/proof for completed packages, and only route planning-doc rewrites when broader plan boundaries change.
 - In named Scribe projects, no code may continue when direction/scope has deviated from the documented plan. Either correct execution back to plan immediately or update the plan first.
 - If major reshaping or new phases are required mid-stream, open a new named Scribe project and run a fresh planning cycle instead of overwriting prior planning docs in place.
@@ -343,7 +341,7 @@ If `handoff_allowed` is false, fix the listed managed docs before handing work b
 ```python
 # Step 1: Create the scaffold (empty doc)
 manage_docs(
-    agent="lens",
+    agent="researcher",
     action="create",
     doc_name="RESEARCH_AUTH_PATTERNS",
     metadata={
@@ -354,24 +352,24 @@ manage_docs(
 
 # Step 2: ALWAYS follow with replace_section for each section
 manage_docs(
-    agent="lens",
+    agent="researcher",
     action="replace_section",
     doc_name="RESEARCH_AUTH_PATTERNS",
     section="findings",
     content="""## Auth Pattern Findings
 
-JWT validation lives in `src/council_mcp/web/auth.py:142`.
+JWT validation lives in `src/example_app/auth.py:142`.
 Current flow: token decode → signature check → expiry NOT checked.
-Grace period config key: `council.auth.token_grace_seconds` (missing from DEFAULT_CONFIG).
+Grace period config key: `auth.token_grace_seconds` (missing from application defaults).
 """
 )
 
 manage_docs(
-    agent="lens",
+    agent="researcher",
     action="replace_section",
     doc_name="RESEARCH_AUTH_PATTERNS",
     section="recommendations",
-    content="Add expiry check with configurable grace period. Add key to DEFAULT_CONFIG."
+    content="Add expiry check with configurable grace period. Add key to application defaults."
 )
 ```
 
@@ -379,12 +377,11 @@ manage_docs(
 
 | `doc_type` | Use For | Sections |
 |------------|---------|---------|
-| `research` | Lens investigation output | findings, recommendations, confidence |
+| `research` | Research findings | findings, recommendations, confidence |
 | `bug` | Bug reports | symptoms, root_cause, fix, verification |
 | `security` | Security reports | findings, severity, remediation |
 | `review` | Review or audit reports | summary, findings, verdict |
-| `agent_card` | Persona / agent documentation | role, capabilities, constraints |
-| `custom` | Council-specific managed docs such as a pre-research `SPEC` | user-defined |
+| `custom` | Project-specific managed docs such as a research brief | user-defined |
 
 ### Standard Scaffold Families
 
@@ -401,7 +398,7 @@ These are the common generated project-doc surfaces used by Scribe tooling:
 | `bug_log` | Bug-specific tracking |
 | `changelog` | Curated project outcome history |
 
-For generic test organization, naming, markers, and placement across codebases, use `/test-taxonomy`.
+For generic test organization, naming, markers, and placement across codebases, use the test conventions documented by your project.
 
 ### Changelog and Version Context
 
@@ -449,7 +446,7 @@ Escaped-newline rule:
 ```python
 # Apply a unified diff — context lines anchor the edit even if line numbers drifted
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="apply_patch",
     doc_name="architecture",
     patch="""--- before
@@ -469,7 +466,7 @@ manage_docs(
 ```python
 # Replace a specific section by anchor
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="apply_patch",
     doc_name="architecture",
     edit={"type": "replace_section", "section": "findings", "content": "Updated findings..."}
@@ -477,7 +474,7 @@ manage_docs(
 
 # Replace a block by anchor marker
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="apply_patch",
     edit={"type": "replace_block", "anchor": "<!-- ID: constraints -->", "content": "New constraints..."},
     doc_name="architecture"
@@ -499,7 +496,7 @@ manage_docs(
 ```python
 # Line numbers from read_file work directly
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_range",
     doc_name="phase_plan",
     start_line=45,   # file-relative (includes frontmatter in count)
@@ -509,7 +506,7 @@ manage_docs(
 
 # For body-relative line numbers (legacy behavior, excludes frontmatter):
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_range",
     doc_name="phase_plan",
     start_line=5,
@@ -524,7 +521,7 @@ manage_docs(
 ```python
 # Literal find/replace (default)
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_text",
     doc_name="architecture",
     metadata={"find": "old_term", "replace": "new_term", "replace_all": True}
@@ -532,7 +529,7 @@ manage_docs(
 
 # Regex mode
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_text",
     doc_name="architecture",
     metadata={"find": r"v\d+\.\d+", "replace": "v2.3", "match_mode": "regex"}
@@ -540,7 +537,7 @@ manage_docs(
 
 # Scoped to a section
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_text",
     doc_name="architecture",
     metadata={"find": "TODO", "replace": "DONE", "scope": "section:findings"}
@@ -552,7 +549,7 @@ manage_docs(
 ```python
 # Append to a section (inside = immediately after anchor)
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="append",
     doc_name="architecture",
     section="constraints",
@@ -566,7 +563,7 @@ manage_docs(
 ```python
 # Mark a checklist item as done (with proof)
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="status_update",
     doc_name="checklist",
     section="task_auth_fix",
@@ -581,12 +578,12 @@ The helper should update exactly the targeted checklist item. If it appends a du
 
 ## Bug Reporting
 
-All agents report bugs — not just Mantis. When you find a bug, file it immediately.
+When you find a bug, record it promptly so the investigation and resolution remain traceable.
 
 ```python
 # Step 1: Open the case
 open_bug(
-    agent="forge",
+    agent="developer",
     title="JWT tokens accepted after expiry",
     symptoms="Authenticated requests succeed with tokens expired >24h ago",
     category="logic"  # logic | runtime | config | data | integration | performance
@@ -594,7 +591,7 @@ open_bug(
 
 # Step 2: Create the bug report doc scaffold
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="create",
     metadata={
         "doc_type": "bug",
@@ -607,7 +604,7 @@ manage_docs(
 
 # Step 3: Write each section
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_section",
     doc_name="jwt-expiry-not-checked",
     section="symptoms",
@@ -615,7 +612,7 @@ manage_docs(
 )
 
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_section",
     doc_name="jwt-expiry-not-checked",
     section="root_cause",
@@ -623,23 +620,43 @@ manage_docs(
 )
 
 manage_docs(
-    agent="forge",
+    agent="developer",
     action="replace_section",
     doc_name="jwt-expiry-not-checked",
     section="fix",
-    content="Set `verify_exp=True` in jwt.decode() call. Add 15s grace period via `council.auth.token_grace_seconds`."
+    content="Set `verify_exp=True` in jwt.decode() call. Add 15s grace period via `auth.token_grace_seconds`."
 )
 
 # Step 4: Link the fix when resolved
 link_fix(
-    agent="forge",
+    agent="developer",
     case_id="BUG-jwt-expiry-not-checked",
-    artifact_ref="src/council_mcp/web/auth.py:142",
+    artifact_ref="src/example_app/auth.py:142",
     landing_status="merged"
 )
 ```
 
 ---
+
+## Security Reporting
+
+Use `open_security` to create a security case with the affected component, impact, severity, and reproduction details. Add affected paths and distinguish a suspected cause from a confirmed one.
+
+```python
+open_security(
+    agent="developer",
+    title="Unexpected access to a restricted record",
+    symptoms="A user can read a record outside their project.",
+    category="authorization",
+    affected_paths=["src/example_app/records.py"],
+    expected_behaviour="Only records in the active project are returned.",
+    steps_to_reproduce=["Sign in as a project member", "Request a record from another project"],
+    severity="high",
+    component="record access",
+    environment="staging",
+    customer_impact="A project member could see data from another project.",
+)
+```
 
 ## File Reading with read_file
 
@@ -650,8 +667,8 @@ link_fix(
 ```python
 # Get structure without loading content — cheap and fast
 read_file(
-    agent="forge",
-    path="src/council_mcp/web/auth.py",
+    agent="developer",
+    path="src/example_app/auth.py",
     mode="scan_only",
     include_dependencies=True  # shows imports and dependency graph
 )
@@ -664,8 +681,8 @@ The scan returns class names, function names, and line numbers. Use these to tar
 ```python
 # Read a specific range (from line numbers in the scan)
 read_file(
-    agent="forge",
-    path="src/council_mcp/web/auth.py",
+    agent="developer",
+    path="src/example_app/auth.py",
     mode="line_range",
     start_line=130,
     end_line=165
@@ -687,7 +704,7 @@ read_file(
 
 ```python
 read_file(
-    agent="forge",
+    agent="developer",
     path="/home/user/projects/scribe_mcp/src/server.py",
     mode="scan_only",
     include_dependencies=True,
@@ -703,7 +720,7 @@ read_file(
 
 ```python
 search(
-    agent="forge",
+    agent="developer",
     pattern="class.*Manager",      # Regex pattern
     glob="**/*.py"                  # File pattern filter
 )
@@ -711,8 +728,8 @@ search(
 
 ```python
 search(
-    agent="forge",
-    pattern="_get_active_council_id",
+    agent="developer",
+    pattern="_get_active_project_id",
     glob="src/**/*.py"
 )
 ```
@@ -722,7 +739,7 @@ search(
 ```python
 # Find recent entries about a topic
 query_entries(
-    agent="forge",
+    agent="developer",
     message="JWT",                  # Search term
     message_mode="substring"        # Substring match
 )
@@ -736,15 +753,15 @@ query_entries(
 
 ```python
 # WRONG: create alone produces an empty document
-manage_docs(agent="forge", action="create", doc_name="RESEARCH_X", metadata={...})
+manage_docs(agent="developer", action="create", doc_name="RESEARCH_X", metadata={...})
 # Nothing was written — doc is empty
 ```
 
 ### Right — Create then replace_section
 
 ```python
-manage_docs(agent="forge", action="create", doc_name="RESEARCH_X", metadata={...})
-manage_docs(agent="forge", action="replace_section",
+manage_docs(agent="developer", action="create", doc_name="RESEARCH_X", metadata={...})
+manage_docs(agent="developer", action="replace_section",
             doc_name="RESEARCH_X", section="findings", content="Actual findings here...")
 ```
 
@@ -767,43 +784,43 @@ manage_docs(action="apply_patch", doc_name="arch", patch="..unified diff..", dry
 
 ```python
 # WRONG: logs go to wrong project or fail silently
-append_entry(agent="forge", message="Did something important", status="success")
+append_entry(agent="developer", message="Did something important", status="success")
 ```
 
 ### Right — Always set_project first
 
 ```python
-set_project(agent="forge", name="my_project", root="/path/to/repo")
-append_entry(agent="forge", message="Did something important", status="success")
+set_project(agent="developer", name="my_project", root="/path/to/repo")
+append_entry(agent="developer", message="Did something important", status="success")
 ```
 
 ### Wrong — Reading entire large files
 
 ```python
 # WRONG: loads 800 lines when you need 20
-read_file(agent="forge", path="src/big_file.py", mode="full_stream")
+read_file(agent="developer", path="src/big_file.py", mode="full_stream")
 ```
 
 ### Right — Scan then target
 
 ```python
-read_file(agent="forge", path="src/big_file.py", mode="scan_only")
+read_file(agent="developer", path="src/big_file.py", mode="scan_only")
 # See line 142 has _validate_token()
-read_file(agent="forge", path="src/big_file.py", mode="line_range", start_line=140, end_line=165)
+read_file(agent="developer", path="src/big_file.py", mode="line_range", start_line=140, end_line=165)
 ```
 
 ### Wrong — Not calling read_recent before work
 
 ```python
 # WRONG: starting blind, may duplicate work already done
-set_project(agent="forge", name="my_project", root="/path/to/repo")
+set_project(agent="developer", name="my_project", root="/path/to/repo")
 # Immediately starts coding without checking recent progress
 ```
 
 ### Right — Always check recent context
 
 ```python
-set_project(agent="forge", name="my_project", root="/path/to/repo")
-read_recent(agent="forge", limit=5)  # Load what's already been done
+set_project(agent="developer", name="my_project", root="/path/to/repo")
+read_recent(agent="developer", limit=5)  # Load what's already been done
 # NOW start working
 ```
