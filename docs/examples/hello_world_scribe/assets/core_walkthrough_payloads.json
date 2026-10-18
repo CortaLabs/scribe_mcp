@@ -1,0 +1,47 @@
+{
+  "scenario": "core_walkthrough",
+  "payloads": {
+    "bind_mission_context": {
+      "set_project": {
+        "agent": "demo-agent",
+        "name": "demo_project",
+        "root": "./path/to/repo"
+      },
+      "read_recent": {
+        "agent": "demo-agent",
+        "limit": 20
+      }
+    },
+    "record_first_update": {
+      "append_entry": {
+        "agent": "demo-agent",
+        "status": "info",
+        "message": "Pocket Mission Control launched; first core check complete."
+      }
+    },
+    "governed_doc_move": {
+      "manage_docs_create": {
+        "agent": "demo-agent",
+        "action": "create",
+        "doc_name": "MISSION_NOTES",
+        "content": "# Mission Notes\n\n## Findings\nPlaceholder.\n",
+        "metadata": {
+          "doc_type": "research",
+          "research_goal": "Capture first-run observations for Pocket Mission Control."
+        }
+      },
+      "manage_docs_replace_section": {
+        "agent": "demo-agent",
+        "action": "replace_section",
+        "doc_name": "MISSION_NOTES",
+        "section": "findings",
+        "content": "Pocket Mission Control core run completed with project context bound and first update logged."
+      }
+    },
+    "confirm_project_snapshot": {
+      "get_project": {
+        "agent": "demo-agent"
+      }
+    }
+  }
+}

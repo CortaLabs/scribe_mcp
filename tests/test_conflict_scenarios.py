@@ -1,263 +1,123 @@
 #!/usr/bin/env python3
-"""Comprehensive conflict scenario tests for agent-scoped operations."""
+"""Conflict and concurrency scenarios for agent-scoped operations."""
+
+from __future__ import annotations
 
 import asyncio
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from scribe_mcp.storage.sqlite import SQLiteStorage
+from scribe_mcp.state.agent_manager import AgentContextManager, SessionLeaseExpired
 from scribe_mcp.state.manager import StateManager
-from scribe_mcp.state.agent_manager import AgentContextManager
 from scribe_mcp.storage.base import ConflictError
+from scribe_mcp.storage.sqlite import SQLiteStorage
 
 
 @pytest.mark.asyncio
-async def test_concurrent_project_switching():
-    """Test two agents switching projects with version conflicts."""
-    print("🧪 Testing concurrent project switching with conflicts...")
+async def test_same_repo_different_project_concurrent_agents_keep_final_attribution(tmp_path: Path) -> None:
+    """Concurrent writes in one repo must preserve per-agent final project attribution."""
+    db_path = tmp_path / "test.db"
+    state_path = tmp_path / "state.json"
+    repo_root = tmp_path / "shared_repo"
+    repo_root.mkdir(parents=True)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        db_path = temp_path / "test.db"
-        state_path = temp_path / "state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
 
-        # Initialize components
-        storage = SQLiteStorage(db_path)
-        await storage.setup()
-        state_manager = StateManager(state_path)
-        agent_manager = AgentContextManager(storage, state_manager)
+    await storage.upsert_project(
+        name="ProjectAlpha",
+        repo_root=str(repo_root),
+        progress_log_path=str(repo_root / "alpha.log"),
+    )
+    await storage.upsert_project(
+        name="ProjectBeta",
+        repo_root=str(repo_root),
+        progress_log_path=str(repo_root / "beta.log"),
+    )
 
-        # Create projects
-        project_a = await storage.upsert_project(
-            name="ConflictProjectA",
-            repo_root=str(temp_path / "project_a"),
-            progress_log_path=str(temp_path / "project_a" / "log.md")
-        )
-        project_b = await storage.upsert_project(
-            name="ConflictProjectB",
-            repo_root=str(temp_path / "project_b"),
-            progress_log_path=str(temp_path / "project_b" / "log.md")
-        )
+    session_a = await manager.start_session("AgentAlpha")
+    session_b = await manager.start_session("AgentBeta")
 
-        # Start sessions for both agents
-        session_a = await agent_manager.start_session("AgentA")
-        session_b = await agent_manager.start_session("AgentB")
+    result_a, result_b = await asyncio.gather(
+        manager.set_current_project("AgentAlpha", "ProjectAlpha", session_a),
+        manager.set_current_project("AgentBeta", "ProjectBeta", session_b),
+    )
 
-        # Set initial projects
-        result_a1 = await agent_manager.set_current_project("AgentA", "ConflictProjectA", session_a)
-        result_b1 = await agent_manager.set_current_project("AgentB", "ConflictProjectB", session_b)
+    final_a = await manager.get_current_project("AgentAlpha")
+    final_b = await manager.get_current_project("AgentBeta")
 
-        print(f"    Initial: AgentA={result_a1['version']}, AgentB={result_b1['version']}")
+    assert result_a["project_name"] == "ProjectAlpha"
+    assert result_b["project_name"] == "ProjectBeta"
+    assert final_a is not None and final_a["project_name"] == "ProjectAlpha"
+    assert final_b is not None and final_b["project_name"] == "ProjectBeta"
+    assert final_a["session_id"] == session_a
+    assert final_b["session_id"] == session_b
+    assert final_a["updated_by"] == "AgentAlpha"
+    assert final_b["updated_by"] == "AgentBeta"
 
-        # Concurrent switching: both agents try to switch to the other's project
-        print("    Testing concurrent project switches...")
-
-        # AgentA switches to ProjectB
-        try:
-            result_a2 = await agent_manager.set_current_project(
-                "AgentA", "ConflictProjectB", session_a,
-                expected_version=result_a1['version']
-            )
-            print(f"    AgentA switch successful: version {result_a1['version']} -> {result_a2['version']}")
-        except ConflictError as e:
-            print(f"    AgentA switch failed (expected): {e}")
-            result_a2 = None
-
-        # AgentB switches to ProjectA
-        try:
-            result_b2 = await agent_manager.set_current_project(
-                "AgentB", "ConflictProjectA", session_b,
-                expected_version=result_b1['version']
-            )
-            print(f"    AgentB switch successful: version {result_b1['version']} -> {result_b2['version']}")
-        except ConflictError as e:
-            print(f"    AgentB switch failed (expected): {e}")
-            result_b2 = None
-
-        # Verify final state
-        final_a = await agent_manager.get_current_project("AgentA")
-        final_b = await agent_manager.get_current_project("AgentB")
-
-        print(f"    Final: AgentA={final_a['project_name']} (v{final_a['version']})")
-        print(f"    Final: AgentB={final_b['project_name']} (v{final_b['version']})")
-
-        # Test conflict detection with stale versions
-        print("    Testing stale version conflict detection...")
-
-        # First, get current version for AgentA
-        current_state = await agent_manager.get_current_project("AgentA")
-        current_version = current_state['version']
-
-        try:
-            # Try to use wrong version number (current + 1, which doesn't exist yet)
-            await agent_manager.set_current_project(
-                "AgentA", "ConflictProjectA", session_a,
-                expected_version=current_version + 10  # Definitely stale
-            )
-            print("    ❌ Stale version should have been rejected")
-            return False
-        except ConflictError:
-            print("    ✓ Stale version correctly rejected")
-        except Exception as e:
-            print(f"    ⚠️  Unexpected error type: {type(e).__name__}: {e}")
-            # This might be expected if the version checking works differently
-
-        await storage.close()
-
-    print("✅ Concurrent project switching tests completed successfully!")
-    return True
+    await storage.close()
 
 
 @pytest.mark.asyncio
-async def test_session_isolation_conflicts():
-    """Test that expired sessions are properly rejected."""
-    print("🧪 Testing session isolation and conflicts...")
+async def test_stale_expected_version_raises_conflict_error(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    state_path = tmp_path / "state.json"
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        db_path = temp_path / "test.db"
-        state_path = temp_path / "state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
 
-        # Initialize components
-        storage = SQLiteStorage(db_path)
-        await storage.setup()
-        state_manager = StateManager(state_path)
-        agent_manager = AgentContextManager(storage, state_manager)
+    await storage.upsert_project(
+        name="ConflictProject",
+        repo_root=str(tmp_path / "repo"),
+        progress_log_path=str(tmp_path / "repo" / "log.md"),
+    )
 
-        # Create project
-        project = await storage.upsert_project(
-            name="SessionTestProject",
-            repo_root=str(temp_path / "session_test"),
-            progress_log_path=str(temp_path / "session_test" / "log.md")
+    session_id = await manager.start_session("ConflictAgent")
+    first = await manager.set_current_project("ConflictAgent", "ConflictProject", session_id)
+
+    with pytest.raises(ConflictError):
+        await manager.set_current_project(
+            "ConflictAgent",
+            "ConflictProject",
+            session_id,
+            expected_version=first["version"] + 10,
         )
 
-        # Start session
-        session_id = await agent_manager.start_session("TestAgent")
-        await agent_manager.set_current_project("TestAgent", "SessionTestProject", session_id)
-
-        # End session
-        await agent_manager.end_session("TestAgent", session_id)
-
-        # Try to use expired session
-        print("    Testing expired session rejection...")
-        try:
-            await agent_manager.set_current_project("TestAgent", "OtherProject", session_id)
-            print("    ❌ Expired session should have been rejected")
-            return False
-        except Exception as e:
-            print(f"    ✓ Expired session correctly rejected: {type(e).__name__}")
-
-        # Test session hijacking prevention
-        print("    Testing session hijacking prevention...")
-        session_a = await agent_manager.start_session("AgentA")
-        session_b = await agent_manager.start_session("AgentB")
-
-        await agent_manager.set_current_project("AgentA", "SessionTestProject", session_a)
-
-        try:
-            # AgentB tries to use AgentA's session
-            await agent_manager.set_current_project("AgentB", "OtherProject", session_a)
-            print("    ❌ Session hijacking should have been prevented")
-            return False
-        except Exception as e:
-            print(f"    ✓ Session hijacking correctly prevented: {type(e).__name__}")
-
-        await storage.close()
-
-    print("✅ Session isolation conflict tests completed successfully!")
-    return True
+    await storage.close()
 
 
 @pytest.mark.asyncio
-async def test_race_condition_prevention():
-    """Test that race conditions are prevented by atomic operations."""
-    print("🧪 Testing race condition prevention...")
+async def test_expired_and_hijacked_sessions_are_rejected(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    state_path = tmp_path / "state.json"
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        db_path = temp_path / "test.db"
-        state_path = temp_path / "state.json"
+    storage = SQLiteStorage(db_path)
+    await storage.setup()
+    manager = AgentContextManager(storage, StateManager(state_path))
 
-        # Initialize components
-        storage = SQLiteStorage(db_path)
-        await storage.setup()
-        state_manager = StateManager(state_path)
-        agent_manager = AgentContextManager(storage, state_manager)
+    await storage.upsert_project(
+        name="SessionTestProject",
+        repo_root=str(tmp_path / "repo"),
+        progress_log_path=str(tmp_path / "repo" / "log.md"),
+    )
 
-        # Create project
-        project = await storage.upsert_project(
-            name="RaceTestProject",
-            repo_root=str(temp_path / "race_test"),
-            progress_log_path=str(temp_path / "race_test" / "log.md")
-        )
+    session_a = await manager.start_session("AgentA")
+    session_b = await manager.start_session("AgentB")
+    await manager.set_current_project("AgentA", "SessionTestProject", session_a)
 
-        # Simulate concurrent operations
-        print("    Testing concurrent state modifications...")
+    await manager.end_session("AgentA", session_a)
+    with pytest.raises(SessionLeaseExpired):
+        await manager.set_current_project("AgentA", "SessionTestProject", session_a)
 
-        async def agent_operations(agent_name: str, iterations: int):
-            """Perform rapid operations to test race conditions."""
-            session = await agent_manager.start_session(agent_name)
-            results = []
+    with pytest.raises(SessionLeaseExpired):
+        await manager.set_current_project("AgentB", "SessionTestProject", session_a)
 
-            for i in range(iterations):
-                try:
-                    result = await agent_manager.set_current_project(
-                        agent_name, "RaceTestProject", session
-                    )
-                    results.append((i, True, result['version']))
-                except Exception as e:
-                    results.append((i, False, str(e)))
+    # Control assertion: owner can still write with active lease.
+    success = await manager.set_current_project("AgentB", "SessionTestProject", session_b)
+    assert success["project_name"] == "SessionTestProject"
+    assert success["session_id"] == session_b
 
-            return results
-
-        # Run two agents concurrently
-        results_a = await agent_operations("ConcurrentAgentA", 10)
-        results_b = await agent_operations("ConcurrentAgentB", 10)
-
-        # Analyze results
-        successful_a = [r for r in results_a if r[1]]
-        successful_b = [r for r in results_b if r[1]]
-
-        print(f"    AgentA: {len(successful_a)}/10 operations successful")
-        print(f"    AgentB: {len(successful_b)}/10 operations successful")
-
-        # Verify no corruption in final state
-        final_a = await agent_manager.get_current_project("ConcurrentAgentA")
-        final_b = await agent_manager.get_current_project("ConcurrentAgentB")
-
-        if (final_a and final_b and
-            final_a['project_name'] == "RaceTestProject" and
-            final_b['project_name'] == "RaceTestProject"):
-            print("    ✓ Final state is consistent")
-        else:
-            print("    ❌ Final state corruption detected")
-            return False
-
-        await storage.close()
-
-    print("✅ Race condition prevention tests completed successfully!")
-    return True
-
-
-async def main():
-    """Run all conflict scenario tests."""
-    print("🚀 Starting conflict scenario tests...\n")
-
-    success1 = await test_concurrent_project_switching()
-    print()
-    success2 = await test_session_isolation_conflicts()
-    print()
-    success3 = await test_race_condition_prevention()
-
-    if success1 and success2 and success3:
-        print("\n🎉 All conflict scenario tests passed!")
-        print("🛡️  System is bulletproof against concurrent operations!")
-    else:
-        print("\n❌ Some conflict tests failed!")
-        exit(1)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    await storage.close()

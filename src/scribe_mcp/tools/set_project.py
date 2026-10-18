@@ -5,18 +5,21 @@ from __future__ import annotations
 import logging
 import os
 import re
-from time import perf_counter as _pc
-
-logger = logging.getLogger(__name__)
+import asyncio
 from pathlib import Path
+from time import perf_counter as _pc
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp import server as server_module
+from scribe_mcp.config.downstream_assets import ensure_downstream_seed_assets
 from scribe_mcp.config.settings import settings
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import stateful_local_tool
 from scribe_mcp import reminders
-from scribe_mcp.tools.agent_project_utils import ensure_agent_session
+from scribe_mcp.tools.agent_project_utils import (
+    ensure_agent_session,
+    resolve_authoritative_write_scope,
+)
 from scribe_mcp.tools.project_utils import (
     list_project_configs,
     slugify_project_name,
@@ -25,8 +28,23 @@ from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.tools.base.parameter_normalizer import normalize_dict_param, normalize_list_param
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
-from scribe_mcp.shared.project_registry import ProjectRegistry
-from scribe_mcp.shared.project_utils import detect_project_state
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
+from scribe_mcp.shared.project_utils import detect_project_state, merge_project_inventory_authority
+from scribe_mcp.shared.tool_runtime import (
+    resolve_context_authoritative_session_key,
+    validate_repo_root_grant,
+)
+from scribe_mcp.shared.repo_authority import (
+    RepoAuthorityResolutionError,
+    build_repo_authority_snapshot,
+    resolve_authorized_project_root,
+)
+from scribe_mcp.shared.write_barrier import assert_writes_allowed
+from scribe_mcp.runtime_timing_envelope import build_runtime_efficiency_budget_status
+from scribe_mcp.utils.response import default_formatter
+
+
+logger = logging.getLogger(__name__)
 
 
 class _SetProjectHelper(LoggingToolMixin):
@@ -35,8 +53,66 @@ class _SetProjectHelper(LoggingToolMixin):
 
 
 _SET_PROJECT_HELPER = _SetProjectHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 _SESSION_DEBUG_ENABLED = os.environ.get("SCRIBE_SESSION_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+_TARGETED_REMINDER_REFRESH_TIMEOUT_SECONDS = 0.5
+_POST_BIND_CONTEXT_REFRESH_TIMEOUT_SECONDS = 1.0
+
+_SET_PROJECT_INPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "agent": {"type": "string"},
+        "name": {"type": "string"},
+        "root": {"type": "string"},
+        "grant_id": {"type": "string"},
+        "progress_log": {"type": "string"},
+        "defaults": {"type": "object"},
+        "author": {"type": "string"},
+        "overwrite_docs": {"type": "boolean"},
+        "expected_version": {"type": ["integer", "string"]},
+        "description": {"type": "string"},
+        "tags": {"type": "array"},
+        "template": {"type": "string"},
+        "auto_create_dirs": {"type": "boolean"},
+        "skip_validation": {"type": "boolean"},
+        "reminder_settings": {"type": "object"},
+        "notification_config": {"type": "object"},
+        "reset_reminders": {"type": "boolean"},
+        "emoji": {"type": "string"},
+        "bridge_id": {"type": "string"},
+        "bridge_managed": {"type": "boolean"},
+        "format": {"type": "string"},
+        "_scribe_user": {"type": "string"},
+    },
+    "required": ["agent", "name", "root"],
+    "additionalProperties": True,
+}
+
+
+def _validate_required_project_input(field_name: str, value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, str) and value.strip():
+        return None
+    return _SET_PROJECT_HELPER.error_response(
+        f"`{field_name}` is required and must be a non-empty string.",
+        suggestion=f"Pass a meaningful {field_name} value when calling set_project.",
+        extra={
+            "error_code": "missing_required_input",
+            "field": field_name,
+        },
+    )
+
+
+class ProjectRootAuthorizationError(ValueError):
+    """Structured root-authorization failure surfaced by set_project."""
+
+    def __init__(self, message: str, *, payload: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(message)
+        self.payload = dict(payload or {})
+
+
+def _trusted_workspace_user(_caller_user: Optional[str]) -> Optional[str]:
+    """Resolve workspace mapping user from server-owned environment only."""
+    return os.environ.get("SCRIBE_USER")
 
 
 async def _count_log_entries(progress_log_path: Path) -> int:
@@ -57,9 +133,17 @@ async def _count_log_entries(progress_log_path: Path) -> int:
     try:
         with open(progress_log_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
-            # Match only lines starting with timestamp pattern [YYYY-MM-DD
-            pattern = re.compile(r'^\[\d{4}-\d{2}-\d{2}')
-            return sum(1 for line in content.split('\n') if pattern.match(line.strip()))
+            # Support both legacy "[YYYY-MM-DD...]" lines and current
+            # "[emoji] [YYYY-MM-DD ...]" progress-log entries.
+            patterns = (
+                re.compile(r'^\[\d{4}-\d{2}-\d{2}'),
+                re.compile(r'^\[[^\]]+\]\s+\[\d{4}-\d{2}-\d{2}'),
+            )
+            return sum(
+                1
+                for line in content.split('\n')
+                if any(pattern.match(line.strip()) for pattern in patterns)
+            )
     except (OSError, UnicodeError, re.error) as exc:
         logger.warning(
             "Unable to count project log entries from '%s': %s",
@@ -123,6 +207,14 @@ async def _gather_project_inventory(project: Dict[str, Any]) -> Dict[str, Any]:
             "modified": False
         }
 
+    changelog_file = dev_plan_dir / "CHANGELOG.md"
+    if changelog_file.exists():
+        result["docs"]["changelog"] = {
+            "exists": True,
+            "lines": default_formatter._get_doc_line_count(changelog_file),
+            "modified": False
+        }
+
     # Progress log
     prog_file = Path(progress_log)
     if prog_file.exists():
@@ -138,9 +230,96 @@ async def _gather_project_inventory(project: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+async def _build_existing_project_activity(
+    *,
+    project: Dict[str, Any],
+    inventory: Dict[str, Any],
+    project_state: str,
+    entry_count: int,
+    backend: Any,
+    project_record: Any,
+    registry_info: Any,
+) -> Dict[str, Any]:
+    """Build readable existing-project activity from authoritative sources first."""
+    activity: Dict[str, Any] = {}
+    progress_entries = int(
+        inventory.get("docs", {})
+        .get("progress", {})
+        .get("entries", 0)
+        or 0
+    )
+    total_entries = int(entry_count or 0)
+    per_log_counts: Dict[str, int] = {}
+    last_entry_at = None
+
+    if backend and project_record and hasattr(backend, "count_entries"):
+        log_filters = {
+            "progress": ["progress"],
+            "doc_updates": ["doc_updates"],
+            "bugs": ["bugs", "bug"],
+            "security": ["security"],
+        }
+        for label, log_types in log_filters.items():
+            try:
+                count = await backend.count_entries(
+                    project_record,
+                    filters={"log_type": log_types},
+                )
+            except Exception:
+                count = 0
+            if count:
+                per_log_counts[label] = int(count)
+
+        try:
+            recent_entries = await backend.fetch_recent_entries(
+                project=project_record,
+                limit=1,
+                filters={"log_type": ["progress", "doc_updates", "bugs", "bug", "security"]},
+            )
+            if recent_entries:
+                last_entry_at = recent_entries[0].get("ts")
+        except Exception:
+            last_entry_at = None
+
+    if total_entries == 0 and progress_entries > 0:
+        total_entries = progress_entries
+    if not per_log_counts and progress_entries > 0:
+        per_log_counts["progress"] = progress_entries
+
+    status = project.get("status") or project.get("lifecycle_status")
+    backend_is_sqlite = bool(
+        backend and "sqlite" in backend.__class__.__name__.lower()
+    )
+    if not status and backend_is_sqlite and registry_info and getattr(registry_info, "status", None):
+        status = registry_info.status
+    if not status:
+        status = "planning" if project_state == "NEW" else "in_progress"
+
+    authoritative_activity = merge_project_inventory_authority(
+        {
+            "status": status,
+            "total_entries": total_entries,
+            "per_log_counts": per_log_counts,
+            "last_entry_at": last_entry_at,
+        },
+        registry_info=registry_info,
+        backend_available=bool(backend),
+    )
+
+    activity["status"] = authoritative_activity.get("status")
+    activity["total_entries"] = int(authoritative_activity.get("total_entries") or 0)
+    if authoritative_activity.get("per_log_counts"):
+        activity["per_log_counts"] = authoritative_activity["per_log_counts"]
+    if authoritative_activity.get("last_entry_at"):
+        activity["last_entry_at"] = authoritative_activity["last_entry_at"]
+
+    return activity
+
+
 async def _check_slug_collision(
     name: str,
     backend: Any,
+    repo_root: Path,
 ) -> Optional[Dict[str, Any]]:
     """Check if a new project name would collide with an existing project's canonical slug.
 
@@ -161,7 +340,16 @@ async def _check_slug_collision(
         return None  # Invalid name, will be caught elsewhere
 
     # Check if a project with this exact name already exists (update case, not a collision)
-    existing = await backend.fetch_project(name)
+    try:
+        existing = await backend.fetch_project(name, repo_root=str(repo_root.resolve()))
+    except TypeError:
+        existing = await backend.fetch_project(name)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"Unable to validate project name collision due to storage lookup failure: {exc}",
+            "error_code": "storage_lookup_failed",
+        }
     if existing:
         return None  # Same name update is allowed, not a collision
 
@@ -169,12 +357,24 @@ async def _check_slug_collision(
     try:
         all_projects = await backend.list_projects()
     except Exception as exc:
-        # If we can't query projects, allow operation to proceed
-        # (backend errors should be caught at upsert time)
-        return None
+        return {
+            "ok": False,
+            "error": f"Unable to validate project name collision due to project listing failure: {exc}",
+            "error_code": "storage_lookup_failed",
+        }
 
-    # Check if any existing project has the same canonical slug but different raw name
+    resolved_repo_root = repo_root.resolve()
+
+    # Check if any existing project in this repo has the same canonical slug but different raw name
     for project in all_projects:
+        project_repo_root = getattr(project, "repo_root", None)
+        if not project_repo_root:
+            continue
+        try:
+            if Path(project_repo_root).resolve() != resolved_repo_root:
+                continue
+        except Exception:
+            continue
         existing_slug = normalize_project_input(project.name)
         if existing_slug == canonical_slug and project.name != name:
             # Collision detected!
@@ -195,11 +395,272 @@ async def _check_slug_collision(
     return None  # No collision detected
 
 
-@app.tool(**stateful_local_tool(title="Set Project Context", tags=("projects", "context", "write")))
+async def _resolve_existing_project_alias_name(
+    name: str,
+    backend: Any,
+    repo_root: Path,
+) -> tuple[str, Optional[Dict[str, Any]]]:
+    """Prefer the existing repo-scoped project name for canonical alias matches.
+
+    Legacy data can contain both `my-project` and `my_project` rows for the same
+    repository. `fetch_project(name, repo_root=...)` resolves by canonical
+    project_key, so if that returns a different raw name we should bind to the
+    existing stored name instead of attempting a second insert/update cycle.
+    """
+    if not name or not backend or not hasattr(backend, "fetch_project"):
+        return name, None
+
+    try:
+        existing = await backend.fetch_project(name, repo_root=str(repo_root.resolve()))
+    except TypeError:
+        return name, None
+    except Exception:
+        return name, None
+
+    if not existing:
+        return name, None
+
+    existing_name = getattr(existing, "name", None)
+    if not existing_name or existing_name == name:
+        return name, None
+
+    requested_slug = normalize_project_input(name)
+    existing_slug = normalize_project_input(str(existing_name))
+    if not requested_slug or requested_slug != existing_slug:
+        return name, None
+
+    return str(existing_name), {
+        "requested_name": name,
+        "resolved_name": str(existing_name),
+        "canonical_slug": requested_slug,
+        "reason": "repo_scoped_canonical_alias_match",
+    }
+
+
+def _project_names_share_canonical_alias(left: str, right: str) -> bool:
+    left_slug = normalize_project_input(left)
+    right_slug = normalize_project_input(right)
+    return bool(left_slug and right_slug and left_slug == right_slug)
+
+
+def _project_record_root(project_record: Any) -> Optional[str]:
+    root_value = getattr(project_record, "repo_root", None)
+    if root_value is None and isinstance(project_record, dict):
+        root_value = project_record.get("repo_root") or project_record.get("root")
+    if not root_value:
+        return None
+    try:
+        return str(Path(str(root_value)).expanduser().resolve())
+    except Exception:
+        return str(root_value)
+
+
+def _project_record_docs(project_record: Any, fallback_docs: Dict[str, str]) -> Dict[str, Any]:
+    docs = dict(fallback_docs)
+    docs_json = getattr(project_record, "docs_json", None)
+    if docs_json is None and isinstance(project_record, dict):
+        docs_json = project_record.get("docs_json") or project_record.get("docs")
+    if isinstance(docs_json, dict):
+        docs.update(docs_json)
+        return docs
+    if isinstance(docs_json, str) and docs_json.strip():
+        try:
+            import json
+
+            parsed = json.loads(docs_json)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            docs.update(parsed)
+    return docs
+
+
+async def _describe_same_binding_reuse(
+    *,
+    agent_manager: Any,
+    backend: Any,
+    agent_id: str,
+    name: str,
+    resolved_root: Path,
+    authoritative_session_id: Optional[str],
+) -> Dict[str, Any]:
+    if not backend:
+        return {"reused": False, "reason": "missing_storage_backend"}
+
+    if authoritative_session_id:
+        try:
+            cached_project = await server_module.router_context_manager.get_cached_project(
+                authoritative_session_id
+            )
+        except Exception as exc:
+            return {
+                "reused": False,
+                "reason": "router_cache_lookup_failed",
+                "error": str(exc),
+            }
+        if cached_project != name:
+            return {
+                "reused": False,
+                "reason": "router_cache_mismatch",
+                "cached_project": cached_project,
+            }
+
+    async def _fetch_project_record() -> Any:
+        try:
+            return await backend.fetch_project(
+                name,
+                repo_root=str(resolved_root.resolve()),
+            )
+        except TypeError:
+            return await backend.fetch_project(name)
+
+    if not agent_manager:
+        if not authoritative_session_id:
+            return {"reused": False, "reason": "missing_authoritative_session"}
+        try:
+            project_record = await _fetch_project_record()
+        except Exception as exc:
+            return {
+                "reused": False,
+                "reason": "project_lookup_failed",
+                "error": str(exc),
+            }
+        if not project_record:
+            return {"reused": False, "reason": "missing_project_record"}
+        project_root = _project_record_root(project_record)
+        if project_root != str(resolved_root.resolve()):
+            return {
+                "reused": False,
+                "reason": "project_root_mismatch",
+                "bound_root": project_root,
+            }
+        return {
+            "reused": True,
+            "reason": "same_agent_session_project_root",
+            "binding": {
+                "agent_id": agent_id,
+                "project_name": name,
+                "session_id": authoritative_session_id,
+                "version": 1,
+                "updated_by": agent_id,
+            },
+            "project_record": project_record,
+            "binding_source": "router_session_project_cache",
+        }
+
+    if hasattr(agent_manager, "describe_current_project_binding"):
+        describe_kwargs: Dict[str, Any] = {"agent_id": agent_id}
+        if authoritative_session_id:
+            describe_kwargs["session_id"] = authoritative_session_id
+        binding_proof = await agent_manager.describe_current_project_binding(**describe_kwargs)
+    else:
+        try:
+            binding = await agent_manager.get_current_project(agent_id)
+            binding_proof = {
+                "valid": bool(binding),
+                "reason": "binding_verified" if binding else "missing_agent_project_binding",
+                "binding": binding,
+            }
+        except Exception as exc:
+            binding_proof = {
+                "valid": False,
+                "reason": "agent_project_lookup_failed",
+                "error": str(exc),
+            }
+    if not binding_proof.get("valid"):
+        return {
+            "reused": False,
+            "reason": binding_proof.get("reason") or "invalid_agent_project_binding",
+            "binding_proof": binding_proof,
+        }
+
+    binding = dict(binding_proof.get("binding") or {})
+    if binding.get("project_name") != name:
+        return {
+            "reused": False,
+            "reason": "agent_project_mismatch",
+            "bound_project": binding.get("project_name"),
+        }
+    binding_session_id = binding.get("session_id")
+    if authoritative_session_id and binding_session_id != authoritative_session_id:
+        return {
+            "reused": False,
+            "reason": "agent_session_mismatch",
+            "bound_session_id": binding_session_id,
+        }
+
+    try:
+        project_record = await _fetch_project_record()
+    except Exception as exc:
+        return {
+            "reused": False,
+            "reason": "project_lookup_failed",
+            "error": str(exc),
+        }
+    if not project_record:
+        return {"reused": False, "reason": "missing_project_record"}
+
+    project_root = _project_record_root(project_record)
+    if project_root != str(resolved_root.resolve()):
+        return {
+            "reused": False,
+            "reason": "project_root_mismatch",
+            "bound_root": project_root,
+        }
+
+    return {
+        "reused": True,
+        "reason": "same_agent_session_project_root",
+        "authoritative_session_id": authoritative_session_id or binding_session_id,
+        "binding": binding,
+        "project_record": project_record,
+    }
+
+
+async def _targeted_post_bind_refresh(
+    *,
+    project: Dict[str, Any],
+    tool_name: str,
+    state_snapshot: Dict[str, Any],
+    agent_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Fetch post-bind reminders without a full context re-resolution."""
+    async def _fetch_reminders() -> List[Dict[str, Any]]:
+        try:
+            return await reminders.get_reminders(
+                project,
+                tool_name=tool_name,
+                state=state_snapshot,
+                agent_id=agent_id,
+            )
+        except TypeError:
+            return await reminders.get_reminders(
+                project,
+                tool_name=tool_name,
+                state=state_snapshot,
+            )
+
+    try:
+        return await asyncio.wait_for(
+            _fetch_reminders(),
+            timeout=_TARGETED_REMINDER_REFRESH_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Timed out during targeted post-bind reminder refresh; returning no reminders")
+        return []
+    except Exception:
+        return []
+
+
+@app.tool(
+    **stateful_local_tool(title="Set Project Context", tags=("projects", "context", "write")),
+    input_schema=_SET_PROJECT_INPUT_SCHEMA,
+)
 async def set_project(
     agent: str = "Codex",  # REQUIRED: Agent name for session identity (e.g., "Coder-1", "ResearchAgent")
     name: str = "",
     root: str = "",  # REQUIRED: Repository root path
+    grant_id: Optional[str] = None,
     progress_log: Optional[str] = None,
     defaults: Optional[Dict[str, Any]] = None,
     author: Optional[str] = None,
@@ -232,8 +693,16 @@ async def set_project(
       tool calls (append_entry, etc.) for session isolation to work.
     - The `root` parameter is REQUIRED and specifies the repository root path.
     """
+    for field_name, value in (("name", name), ("root", root)):
+        validation_error = _validate_required_project_input(field_name, value)
+        if validation_error is not None:
+            return validation_error
+    assert_writes_allowed(Path(root), operation_label="set_project")
+
     _t0 = _pc()
     _timings: list[tuple[str, float]] = []
+    server_module.install_asyncpg_shutdown_exception_handler()
+
     def _mark(label: str) -> None:
         _timings.append((label, (_pc() - _t0) * 1000))
     def _log_timings() -> None:
@@ -244,13 +713,23 @@ async def set_project(
             delta = cum - prev
             parts.append(f"{lbl}={delta:.0f}ms")
             prev = cum
-        logger.warning("PERF set_project total=%.0fms | %s", total, " | ".join(parts))
+        logger.debug("PERF set_project total=%.0fms | %s", total, " | ".join(parts))
+
+    def _build_timing_breakdown_ms() -> Dict[str, float]:
+        timing_breakdown_ms: Dict[str, float] = {}
+        prev = 0.0
+        for lbl, cum in _timings:
+            timing_breakdown_ms[lbl] = round(cum - prev, 3)
+            prev = cum
+        timing_breakdown_ms["total_ms"] = round((_pc() - _t0) * 1000, 3)
+        return timing_breakdown_ms
 
     state_snapshot = await server_module.state_manager.record_tool("set_project")
     _mark("record_tool")
 
     # agent is now REQUIRED - use it as agent_id for internal tracking
     agent_id = agent
+    trusted_workspace_user = _trusted_workspace_user(_scribe_user)
 
     # Use BaseTool parameter normalization for consistent MCP framework handling
     if isinstance(defaults, str):
@@ -274,18 +753,31 @@ async def set_project(
 
     # Update agent activity tracking
     agent_identity = server_module.get_agent_identity()
-    if agent_identity:
+    if agent_identity and hasattr(agent_identity, "update_agent_activity"):
         await agent_identity.update_agent_activity(
             agent_id, "set_project", {"project_name": name, "expected_version": expected_version}
         )
     _mark("update_agent_activity")
 
-    base_context: LoggingContext = await _SET_PROJECT_HELPER.prepare_context(
-        tool_name="set_project",
-        agent_id=agent_id,
-        require_project=False,
-        state_snapshot=state_snapshot,
-    )
+    base_context: Optional[LoggingContext] = None
+
+    async def _prepare_base_context() -> LoggingContext:
+        nonlocal base_context
+        if base_context is None:
+            base_context = await _SET_PROJECT_HELPER.prepare_context(
+                tool_name="set_project",
+                agent_id=agent_id,
+                require_project=False,
+                state_snapshot=state_snapshot,
+            )
+            _mark("prepare_context")
+        return base_context
+
+    async def _apply_context_payload(response: Dict[str, Any]) -> Dict[str, Any]:
+        return _SET_PROJECT_HELPER.apply_context_payload(
+            response,
+            await _prepare_base_context(),
+        )
 
     # Normalize tags parameter if provided
     if isinstance(tags, str):
@@ -298,31 +790,60 @@ async def set_project(
         except ValueError:
             tags = [tags]  # Fallback: treat as single item
 
-    _mark("prepare_context")
     defaults = _normalise_defaults(defaults or {}, emoji, agent_id)
-    context_root = _get_context_repo_root()
     try:
-        resolved_root = _resolve_root(root, context_root, skip_validation, scribe_user=_scribe_user)
-    except ValueError as exc:
-        return _SET_PROJECT_HELPER.apply_context_payload(
-            _SET_PROJECT_HELPER.error_response(str(exc)),
-            base_context,
+        current_context = server_module.get_execution_context()
+    except Exception:
+        current_context = None
+    enrolled_first_party_roots = tuple(
+        str(Path(str(project.get("root", ""))).expanduser().resolve())
+        for project in list_project_configs().values()
+        if project.get("root")
+    )
+    authority_snapshot = build_repo_authority_snapshot(
+        current_context=current_context,
+        app=app,
+        scribe_user=trusted_workspace_user,
+        authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+        enrolled_first_party_roots=enrolled_first_party_roots,
+    )
+    try:
+        resolved_root, root_authorization = await _resolve_root(
+            root,
+            authority_snapshot,
+            skip_validation,
+            grant_id=grant_id,
+            storage_backend=server_module.storage_backend,
+            scribe_user=trusted_workspace_user,
+        )
+    except ProjectRootAuthorizationError as exc:
+        return await _apply_context_payload(
+            _SET_PROJECT_HELPER.error_response(
+                str(exc),
+                extra=exc.payload,
+            )
         )
 
     # Detect if a path mapping occurred (for metadata).
     from scribe_mcp.config.paths import map_client_root as _mcr
 
-    _, client_root_original = _mcr(root or str(context_root or ""), user=_scribe_user)
+    _, client_root_original = _mcr(root or str(authority_snapshot.verified_binding_root or ""), user=trusted_workspace_user)
     # client_root_original is non-None only when a mapping happened.
+
+    alias_resolution: Optional[Dict[str, Any]] = None
+    backend = server_module.storage_backend
+    if backend:
+        name, alias_resolution = await _resolve_existing_project_alias_name(
+            name,
+            backend,
+            resolved_root,
+        )
 
     docs_dir = _resolve_docs_dir(name, resolved_root)
     try:
         resolved_log = _resolve_log(progress_log, resolved_root, docs_dir)
     except ValueError as exc:
-        return _SET_PROJECT_HELPER.apply_context_payload(
-            _SET_PROJECT_HELPER.error_response(str(exc)),
-            base_context,
-        )
+        return await _apply_context_payload(_SET_PROJECT_HELPER.error_response(str(exc)))
 
     validation = await _validate_project_paths(
         name=name,
@@ -331,23 +852,210 @@ async def set_project(
         progress_log=resolved_log,
     )
     if not validation.get("ok", False):
-        return _SET_PROJECT_HELPER.apply_context_payload(validation, base_context)
+        return await _apply_context_payload(validation)
 
     _mark("resolve_paths")
-    resolved_root.mkdir(parents=True, exist_ok=True)
+    if resolved_root.exists() and not resolved_root.is_dir():
+        return await _apply_context_payload(
+            _SET_PROJECT_HELPER.error_response("Project root must be a directory.")
+        )
+    if not resolved_root.exists():
+        if not auto_create_dirs:
+            return await _apply_context_payload(
+                _SET_PROJECT_HELPER.error_response(
+                    "Project root does not exist and auto_create_dirs is disabled."
+                ),
+            )
+        resolved_root.mkdir(parents=True, exist_ok=True)
+
+    docs = {
+        "architecture": str(docs_dir / "ARCHITECTURE_GUIDE.md"),
+        "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
+        "checklist": str(docs_dir / "CHECKLIST.md"),
+        "changelog": str(docs_dir / "CHANGELOG.md"),
+        "progress_log": str(resolved_log),
+    }
+
+    agent_manager = server_module.get_agent_context_manager()
+    reuse_context = None
+    reuse_context_meta: Dict[str, Any] = {}
+    try:
+        reuse_context, reuse_context_meta = server_module.get_execution_context(
+            recovery_mode="none",
+            include_metadata=True,
+        )
+    except Exception:
+        reuse_context = None
+        reuse_context_meta = {}
+    reuse_scope = resolve_authoritative_write_scope(
+        context=reuse_context or current_context,
+        agent_session_id=None,
+    )
+    reuse_authoritative_session_id = reuse_scope.get("authoritative_session_id")
+    reuse_blockers: List[str] = []
+    if os.environ.get("SCRIBE_ALLOW_SET_PROJECT_GLOBAL_COMPAT", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        reuse_blockers.append("global_compat_enabled")
+    if format == "readable":
+        reuse_blockers.append("readable_sitrep_requested")
+    if any(
+        value is not None
+        for value in (
+            progress_log,
+            description,
+            bridge_id,
+            expected_version,
+            reminder_settings,
+            notification_config,
+            template,
+        )
+    ) or any(
+        bool(value)
+        for value in (
+            overwrite_docs,
+            reset_reminders,
+            bridge_managed,
+            tags,
+        )
+    ):
+        reuse_blockers.append("mutation_parameters_present")
+    if reuse_context_meta.get("fallback_used") or reuse_context_meta.get("sentinel_fallback"):
+        reuse_blockers.append("context_fallback")
+
+    reuse_probe = {"reused": False, "reason": "not_attempted"}
+    if not reuse_blockers:
+        reuse_probe = await _describe_same_binding_reuse(
+            agent_manager=agent_manager,
+            backend=backend,
+            agent_id=agent_id,
+            name=name,
+            resolved_root=resolved_root,
+            authoritative_session_id=reuse_authoritative_session_id,
+        )
+        _mark("same_binding_reuse_probe")
+
+    if reuse_probe.get("reused"):
+        project_record = reuse_probe["project_record"]
+        reused_session_id = reuse_probe.get("authoritative_session_id") or reuse_authoritative_session_id
+        docs = _project_record_docs(project_record, docs)
+        project_data = {
+            "name": name,
+            "root": str(resolved_root),
+            "progress_log": str(resolved_log),
+            "docs_dir": str(docs_dir),
+            "docs": docs,
+            "defaults": defaults,
+            "author": author or defaults.get("agent") or "Scribe",
+            "description": description,
+            "tags": tags or [],
+            "version": (reuse_probe.get("binding") or {}).get("version", 1),
+            "updated_by": (reuse_probe.get("binding") or {}).get("updated_by", agent_id),
+            "session_id": reused_session_id,
+        }
+        if client_root_original:
+            project_data.setdefault("meta", {})
+            project_data["meta"]["client_root"] = client_root_original
+        if alias_resolution:
+            project_data.setdefault("meta", {})
+            project_data["meta"]["alias_resolution"] = alias_resolution
+
+        write_side_effects: Dict[str, Any] = {
+            "authoritative_session_id": reused_session_id,
+            "scope_resolution_source": reuse_scope.get("scope_resolution_source"),
+            "binding_reused": True,
+            "binding_reuse_reason": reuse_probe.get("reason"),
+            "skipped_persistent_writes": [
+                "ensure_downstream_seed_assets",
+                "ensure_documents",
+                "upsert_project",
+                "project_registry",
+                "upsert_dev_plans",
+                "agent_context_manager",
+                "state_set_current_project",
+                "state_set_session_mode",
+                "backend_session_ops",
+                "upsert_agent_recent",
+            ],
+            "global_mirror": {"enabled": False, "reason": None, "performed": False},
+            "compatibility_writes": [],
+        }
+        response: Dict[str, Any] = {
+            "ok": True,
+            "project": project_data,
+            "recent_projects": list(getattr(state_snapshot, "recent_projects", []) or [name]),
+            "generated": [],
+            "skipped": [
+                "architecture",
+                "phase_plan",
+                "checklist",
+                "changelog",
+                "progress_log",
+                "doc_log",
+                "security_log",
+                "bug_log",
+            ],
+            "side_effects": write_side_effects,
+            "root_authorization": root_authorization,
+            "timing": {"set_project_phase_ms": {}},
+            "reminders": [],
+            "scope_resolution": {
+                "source": write_side_effects.get("scope_resolution_source"),
+                "authoritative_session_id": write_side_effects.get("authoritative_session_id"),
+                "compatibility_writes": [],
+                "global_mirror_performed": False,
+                "binding_reused": True,
+                "binding_reuse_reason": reuse_probe.get("reason"),
+            },
+            **({"warnings": validation.get("warnings", [])} if validation.get("warnings") else {}),
+        }
+        # Warm rebind is the most frequent set_project path; without this the
+        # branch returned reminders:[] unconditionally (WS3 Finding 2). Mirror the
+        # full-write path's targeted refresh so a rebind on a stale project still
+        # surfaces reminders. The helper carries its own timeout + safe fallback,
+        # and the reused branch performs no persistent writes, so this is read-only.
+        reused_targeted_reminders = await _targeted_post_bind_refresh(
+            project=project_data,
+            tool_name="set_project",
+            state_snapshot=state_snapshot,
+            agent_id=agent_id,
+        )
+        _mark("targeted_refresh_reused")
+        if reused_targeted_reminders:
+            response["reminders"] = list(reused_targeted_reminders)
+        set_project_phase_ms = _build_timing_breakdown_ms()
+        response["timing"]["set_project_phase_ms"] = set_project_phase_ms
+        response["timing"]["budget_status"] = build_runtime_efficiency_budget_status(
+            startup_phases_ms=None,
+            set_project_phase_ms=set_project_phase_ms,
+            dispatch_path=None,
+            startup_profile=None,
+            budget_thresholds=getattr(settings, "runtime_efficiency_budgets", None),
+        )
+        _mark("format_structured")
+        _log_timings()
+        return await default_formatter.finalize_tool_response(
+            response,
+            format=format,
+            tool_name="set_project",
+            telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
+        )
+
+    base_context = await _prepare_base_context()
+
+    try:
+        ensure_downstream_seed_assets(resolved_root)
+    except Exception as exc:
+        logger.warning("Downstream asset bootstrap skipped for '%s': %s", resolved_root, exc)
 
     # Bootstrap documentation scaffolds when missing
     doc_result = await _ensure_documents(name, author, overwrite_docs, resolved_root, docs_dir, agent_id)
     _mark("ensure_documents")
     if not doc_result.get("ok", False):
         return _SET_PROJECT_HELPER.apply_context_payload(doc_result, base_context)
-
-    docs = {
-        "architecture": str(docs_dir / "ARCHITECTURE_GUIDE.md"),
-        "phase_plan": str(docs_dir / "PHASE_PLAN.md"),
-        "checklist": str(docs_dir / "CHECKLIST.md"),
-        "progress_log": str(resolved_log),
-    }
 
     # Compute baseline_hashes for newly generated docs (fixes EXISTING_LEGACY state detection)
     # This allows get_project to distinguish NEW from EXISTING_LEGACY projects
@@ -356,7 +1064,7 @@ async def set_project(
     if docs_were_generated:
         from scribe_mcp.utils.integrity import compute_file_hash
         baseline_hashes = {}
-        for doc_type in ["architecture", "phase_plan", "checklist"]:
+        for doc_type in ["architecture", "phase_plan", "checklist", "changelog"]:
             doc_path = docs.get(doc_type)
             if doc_path and Path(doc_path).exists():
                 try:
@@ -387,6 +1095,9 @@ async def set_project(
     if client_root_original:
         project_data.setdefault("meta", {})
         project_data["meta"]["client_root"] = client_root_original
+    if alias_resolution:
+        project_data.setdefault("meta", {})
+        project_data["meta"]["alias_resolution"] = alias_resolution
 
     # Optional: allow agents to clear reminder cooldowns if they're confused.
     # This is scoped to (project_root + agent_id) to avoid impacting other agents.
@@ -405,24 +1116,56 @@ async def set_project(
 
     _mark("build_project_data")
     # Create/upsert project in database first
-    backend = server_module.storage_backend
     project_record = None
     if backend:
         # Check for slug collisions before creating new project
-        collision = await _check_slug_collision(name, backend)
+        collision = await _check_slug_collision(name, backend, resolved_root)
         if collision:
             return _SET_PROJECT_HELPER.apply_context_payload(collision, base_context)
 
         _mark("check_slug_collision")
         import json as _json
-        project_record = await backend.upsert_project(
-            name=name,
-            repo_root=str(resolved_root),
-            progress_log_path=str(resolved_log),
-            docs_json=_json.dumps(docs),  # Persist docs mapping to DB
-            bridge_id=bridge_id,
-            bridge_managed=bridge_managed,
-        )
+        try:
+            project_record = await backend.upsert_project(
+                name=name,
+                repo_root=str(resolved_root),
+                progress_log_path=str(resolved_log),
+                docs_json=_json.dumps(docs),  # Persist docs mapping to DB
+                bridge_id=bridge_id,
+                bridge_managed=bridge_managed,
+            )
+        except Exception as exc:
+            exc_text = str(exc)
+            duplicate_alias_conflict = (
+                "idx_scribe_projects_project_key_unique" in exc_text
+                or "scribe_projects_name_key" in exc_text
+            )
+            if not duplicate_alias_conflict:
+                raise
+
+            retry_name, retry_alias_resolution = await _resolve_existing_project_alias_name(
+                name,
+                backend,
+                resolved_root,
+            )
+            if retry_name == name:
+                raise
+
+            name = retry_name
+            project_data["name"] = name
+            alias_resolution = alias_resolution or retry_alias_resolution
+            if alias_resolution:
+                project_data.setdefault("meta", {})
+                project_data["meta"]["alias_resolution"] = alias_resolution
+
+            project_record = await backend.upsert_project(
+                name=name,
+                repo_root=str(resolved_root),
+                progress_log_path=str(resolved_log),
+                docs_json=_json.dumps(docs),
+                bridge_id=bridge_id,
+                bridge_managed=bridge_managed,
+            )
 
         _mark("upsert_project")
         # Parse docs_json from project_record and populate project_data meta
@@ -493,30 +1236,50 @@ async def set_project(
 
     _mark("upsert_dev_plans")
     # Use AgentContextManager for agent-scoped project context
-    agent_manager = server_module.get_agent_context_manager()
     session_id: Optional[str] = None
-    mirror_global = True
+    mirror_global = False
     context_session_id: Optional[str] = None
     stable_session_id: Optional[str] = None
+    compatibility_path: Optional[str] = None
+    authoritative_scope = {
+        "resolved_scope": None,
+        "authoritative_session_id": None,
+        "scope_resolution_source": "none",
+    }
+    write_side_effects: Dict[str, Any] = {
+        "authoritative_session_id": None,
+        "scope_resolution_source": "none",
+        "global_mirror": {"enabled": False, "reason": None, "performed": False},
+        "compatibility_writes": [],
+    }
     context = None
     try:
-        context = server_module.get_execution_context()
+        context, context_meta = server_module.get_execution_context(
+            recovery_mode="none",
+            include_metadata=True,
+        )
         if context:
             context_session_id = context.session_id
             # PHASE 1 INTEGRATION: Get stable session from ExecutionContext
             stable_session_id = getattr(context, 'stable_session_id', None)
+        _ = context_meta
     except Exception:
         context_session_id = None
+    authoritative_scope = resolve_authoritative_write_scope(
+        context=context,
+        agent_session_id=None,
+    )
+    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
     if agent_manager:
         try:
             # Ensure agent has an active session, passing stable session if available
-            session_id = await ensure_agent_session(agent_id, stable_session_id=stable_session_id)
+            preferred_session_id = authoritative_session_id or stable_session_id
+            session_id = await ensure_agent_session(agent_id, stable_session_id=preferred_session_id)
             if not session_id:
                 # Fallback: create simple session with stable session if available
-                import uuid
                 session_id = await agent_manager.start_session(
                     agent_id,
-                    session_id=stable_session_id,  # Use stable session in fallback too
+                    session_id=preferred_session_id,  # Use authoritative/stable session in fallback too
                     metadata={"tool": "set_project"}
                 )
 
@@ -538,16 +1301,44 @@ async def set_project(
             project_data["version"] = result.get("version", 1)
             project_data["updated_by"] = result.get("updated_by", agent_id)
             project_data["session_id"] = result.get("session_id", session_id)
-            # Preserve legacy/global behavior when no execution context is bound.
-            # Session-scoped calls (with stable or transport session IDs) should
-            # stay isolated; context-free calls should still update global state.
-            mirror_global = not (stable_session_id or context_session_id)
 
         except Exception as e:
             # Fallback to legacy behavior if agent context fails
             logger.warning("Agent context management failed: %s", e)
-            logger.warning("  Falling back to legacy global state management")
-            mirror_global = True
+            logger.warning("  Falling back to state_manager-only write path")
+            compatibility_path = "agent_context_failure"
+    authoritative_scope = resolve_authoritative_write_scope(
+        context=context,
+        agent_session_id=session_id,
+    )
+    authoritative_session_id = authoritative_scope.get("authoritative_session_id")
+    if authoritative_session_id:
+        project_data["session_id"] = authoritative_session_id
+    write_side_effects["authoritative_session_id"] = authoritative_session_id
+    write_side_effects["scope_resolution_source"] = authoritative_scope.get("scope_resolution_source")
+    state_write_session_id = authoritative_session_id if context is not None else None
+
+    if not authoritative_session_id and os.environ.get("SCRIBE_ALLOW_SET_PROJECT_GLOBAL_COMPAT", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        mirror_global = True
+        compatibility_path = compatibility_path or "explicit_global_compat_env"
+        write_side_effects["global_mirror"] = {
+            "enabled": True,
+            "reason": compatibility_path,
+            "performed": False,
+        }
+    elif context is None:
+        mirror_global = True
+        compatibility_path = compatibility_path or "no_runtime_context_global_compat"
+        write_side_effects["global_mirror"] = {
+            "enabled": True,
+            "reason": compatibility_path,
+            "performed": False,
+        }
     # Mirror project data into JSON state; global current_project only updates for legacy fallback.
 
     _mark("agent_context_manager")
@@ -555,7 +1346,8 @@ async def set_project(
         name,
         project_data,
         agent_id=agent_id,
-        session_id=context_session_id or session_id,
+        session_id=state_write_session_id,
+        resolved_scope=authoritative_scope.get("resolved_scope"),
         mirror_global=mirror_global,
         skip_upsert=True,  # Already upserted at line 417
     )
@@ -563,44 +1355,43 @@ async def set_project(
         logger.warning("StateManager.set_current_project returned None; reloading state snapshot.")
         state = await server_module.state_manager.load()
     _mark("state_set_current_project")
-    await server_module.state_manager.set_session_mode(
-        context_session_id or session_id,
-        "project",
-    )
+    if state_write_session_id:
+        await server_module.state_manager.set_session_mode(
+            state_write_session_id,
+            "project",
+        )
     _mark("state_set_session_mode")
     backend = server_module.storage_backend
     if backend:
-        # CRITICAL: Use stable_session_id (deterministic) instead of context_session_id (unstable UUID)
-        session_key = stable_session_id or context_session_id or session_id
+        session_key = state_write_session_id
         if session_key:
-            if hasattr(backend, "set_session_project"):
-                # NO SILENT ERRORS - this is THE critical project binding!
-                await backend.set_session_project(session_key, name)
-                # Update in-memory cache for auto-injection
-                await server_module.router_context_manager.cache_project_binding(
-                    stable_session_id or session_key,
-                    name
-                )
-                if _SESSION_DEBUG_ENABLED:
-                    logger.debug(
-                        "set_project session binding | session_key=%s project=%s stable_session_id=%s context_session_id=%s",
-                        session_key,
-                        name,
-                        stable_session_id,
-                        context_session_id,
-                    )
-            if hasattr(backend, "set_session_mode"):
-                # NO SILENT ERRORS - mode must be set correctly
-                await backend.set_session_mode(session_key, "project")
+            await server_module.router_context_manager.cache_project_binding(
+                session_key,
+                name,
+            )
             if hasattr(backend, "upsert_session"):
-                # NO SILENT ERRORS - session data must be persisted
+                # set_project is the authority that verified this root; persist
+                # it as the session's stored root so later requests adopt the
+                # binding's repo scope. This also heals sessions whose stored
+                # root was poisoned by a pre-binding fallback root — without
+                # this write, a wedged session stays wedged no matter how many
+                # times the caller re-runs set_project.
                 await backend.upsert_session(
                     session_id=session_key,
-                    transport_session_id=getattr(context, "transport_session_id", None),
-                    agent_id=agent_id,
                     repo_root=str(resolved_root),
                     mode="project",
                 )
+            if _SESSION_DEBUG_ENABLED:
+                logger.debug(
+                    "set_project authoritative session binding | session_key=%s project=%s stable_session_id=%s context_session_id=%s",
+                    session_key,
+                    name,
+                    stable_session_id,
+                    context_session_id,
+                )
+        if mirror_global:
+            write_side_effects["global_mirror"]["performed"] = True
+            write_side_effects["compatibility_writes"].append("global_mirror")
         _mark("backend_session_ops")
         if agent_id and hasattr(backend, "upsert_agent_recent_project"):
             # NO SILENT ERRORS - agent tracking must work
@@ -608,22 +1399,26 @@ async def set_project(
     _mark("upsert_agent_recent")
     recent_projects = list(state.recent_projects)
 
-    try:
-        context_after = await _SET_PROJECT_HELPER.prepare_context(
-            tool_name="set_project",
-            agent_id=agent_id,
-            explicit_project=name,
-            require_project=False,
-            state_snapshot=state_snapshot,
-        )
-    except ProjectResolutionError:
-        context_after = base_context
-
-    _mark("prepare_context_after")
     # Handle readable format with SITREP formatters
     if format == "readable":
-        from scribe_mcp.utils.response import default_formatter
-
+        try:
+            await asyncio.wait_for(
+                _SET_PROJECT_HELPER.prepare_context(
+                    tool_name="set_project",
+                    agent_id=agent_id,
+                    explicit_project=name,
+                    require_project=False,
+                    state_snapshot=state_snapshot,
+                ),
+                timeout=_POST_BIND_CONTEXT_REFRESH_TIMEOUT_SECONDS,
+            )
+        except ProjectResolutionError:
+            pass
+        except TimeoutError:
+            logger.warning(
+                "Timed out during set_project post-bind context refresh; using base context"
+            )
+        _mark("prepare_context_after")
         # Compute docs_were_generated BEFORE count_entries so we can skip the call for new projects.
         # doc_result is set earlier (from _ensure_documents) and does not depend on count_entries.
         # Note: _ensure_documents returns "generated" key (list of generated doc types)
@@ -656,6 +1451,8 @@ async def set_project(
             docs_were_generated
         )
         is_new = (state == "NEW")
+        readable_project_data = dict(project_data)
+        readable_project_data["root_authorization"] = root_authorization
 
         if is_new:
             # NEW PROJECT SITREP
@@ -667,7 +1464,7 @@ async def set_project(
             }
 
             readable_content = default_formatter.format_project_sitrep_new(
-                project_data,
+                readable_project_data,
                 docs_created
             )
 
@@ -684,7 +1481,8 @@ async def set_project(
             return await default_formatter.finalize_tool_response(
                 response,
                 format="readable",
-                tool_name="set_project"
+                tool_name="set_project",
+                telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
             )
 
         else:
@@ -695,21 +1493,18 @@ async def set_project(
             # Get activity from registry (use module-level instance)
             registry_info = _PROJECT_REGISTRY.get_project(name)
 
-            # Build activity summary
-            activity = {
-                "status": registry_info.status if registry_info else "unknown",
-                "total_entries": registry_info.total_entries if registry_info else 0,
-                "last_entry_at": registry_info.last_entry_at if registry_info else None
-            }
-
-            # Add per-log counts if available
-            if hasattr(registry_info, 'meta') and registry_info and registry_info.meta:
-                log_counts = registry_info.meta.get('log_entry_counts', {})
-                if log_counts:
-                    activity["per_log_counts"] = log_counts
+            activity = await _build_existing_project_activity(
+                project=project_data,
+                inventory=inventory,
+                project_state=state,
+                entry_count=entry_count,
+                backend=backend,
+                project_record=project_record,
+                registry_info=registry_info,
+            )
 
             readable_content = default_formatter.format_project_sitrep_existing(
-                project_data,
+                readable_project_data,
                 inventory,
                 activity
             )
@@ -720,6 +1515,7 @@ async def set_project(
                 "is_new": False,
                 "inventory": inventory,
                 "activity": activity,
+                "root_authorization": root_authorization,
                 "readable_content": readable_content
             }
 
@@ -728,9 +1524,21 @@ async def set_project(
             return await default_formatter.finalize_tool_response(
                 response,
                 format="readable",
-                tool_name="set_project"
+                tool_name="set_project",
+                telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
             )
 
+
+
+    def _build_timing_breakdown_ms() -> Dict[str, float]:
+        timing_breakdown_ms: Dict[str, float] = {}
+        prev = 0.0
+        for lbl, cum in _timings:
+            timing_breakdown_ms[lbl] = round(cum - prev, 3)
+            prev = cum
+        if _timings:
+            timing_breakdown_ms["total_ms"] = round(_timings[-1][1], 3)
+        return timing_breakdown_ms
     # For structured/compact formats, use existing logic
     response: Dict[str, Any] = {
         "ok": True,
@@ -738,60 +1546,141 @@ async def set_project(
         "recent_projects": recent_projects,
         "generated": doc_result.get("files", []),
         "skipped": doc_result.get("skipped", []),
+        "side_effects": write_side_effects,
+        "root_authorization": root_authorization,
+        "timing": {"set_project_phase_ms": {}},
+        "scope_resolution": {
+            "source": write_side_effects.get("scope_resolution_source"),
+            "authoritative_session_id": write_side_effects.get("authoritative_session_id"),
+            "compatibility_writes": list(write_side_effects.get("compatibility_writes", [])),
+            "global_mirror_performed": bool(
+                (write_side_effects.get("global_mirror") or {}).get("performed")
+            ),
+        },
         **({"warnings": validation.get("warnings", [])} if validation.get("warnings") else {}),
     }
-    if context_after.reminders:
-        response["reminders"] = list(context_after.reminders)
+    targeted_reminders = await _targeted_post_bind_refresh(
+        project=project_data,
+        tool_name="set_project",
+        state_snapshot=state_snapshot,
+        agent_id=agent_id,
+    )
+    _mark("targeted_refresh_after")
+    if targeted_reminders:
+        response["reminders"] = list(targeted_reminders)
+    set_project_phase_ms = _build_timing_breakdown_ms()
+    response["timing"]["set_project_phase_ms"] = set_project_phase_ms
+    response["timing"]["budget_status"] = build_runtime_efficiency_budget_status(
+        startup_phases_ms=None,
+        set_project_phase_ms=set_project_phase_ms,
+        dispatch_path=None,
+        startup_profile=None,
+        budget_thresholds=getattr(settings, "runtime_efficiency_budgets", None),
+    )
 
     _mark("format_structured")
     _log_timings()
-    return _SET_PROJECT_HELPER.apply_context_payload(response, context_after)
+    return await default_formatter.finalize_tool_response(
+        _SET_PROJECT_HELPER.apply_context_payload(response, base_context),
+        format=format,
+        tool_name="set_project",
+        telemetry={"started_perf_counter": _t0, "measurement_scope": "tool_only"},
+    )
 
 
-def _get_context_repo_root() -> Optional[Path]:
+def _get_context_repo_root_details() -> Dict[str, Any]:
     try:
         context = server_module.get_execution_context()
     except Exception:
         context = None
     if not context or not getattr(context, "repo_root", None):
-        return None
+        return {
+            "trusted_path": None,
+            "claimed_path": None,
+            "provenance": "missing",
+            "authoritative_session_key": None,
+        }
+    repo_root_provenance = None
     try:
-        return Path(str(context.repo_root)).expanduser().resolve()
+        resolved_scope = getattr(context, "resolved_scope", None)
+        scope_provenance = getattr(resolved_scope, "provenance", None)
+        repo_root_provenance = getattr(scope_provenance, "repo_root", None)
+        if repo_root_provenance is None:
+            raw_scope_provenance = getattr(context, "scope_provenance", None)
+            if isinstance(raw_scope_provenance, dict):
+                repo_root_provenance = raw_scope_provenance.get("repo_root")
+    except Exception:
+        repo_root_provenance = None
+    authoritative_session_key = resolve_context_authoritative_session_key(context)
+    try:
+        resolved_path = Path(str(context.repo_root)).expanduser().resolve()
     except (TypeError, ValueError):
-        return None
+        return {
+            "trusted_path": None,
+            "claimed_path": None,
+            "provenance": "invalid",
+            "authoritative_session_key": authoritative_session_key,
+        }
+
+    provenance_label = str(repo_root_provenance or "unknown").strip().lower() or "unknown"
+    if provenance_label == "verified":
+        return {
+            "trusted_path": resolved_path,
+            "claimed_path": None,
+            "provenance": provenance_label,
+            "authoritative_session_key": authoritative_session_key,
+        }
+    if provenance_label in {"claimed", "inferred", "unknown", "anonymous", "missing"}:
+        return {
+            "trusted_path": None,
+            "claimed_path": resolved_path,
+            "provenance": provenance_label,
+            "authoritative_session_key": authoritative_session_key,
+        }
+    return {
+        "trusted_path": None,
+        "claimed_path": resolved_path,
+        "provenance": provenance_label,
+        "authoritative_session_key": authoritative_session_key,
+    }
 
 
-def _resolve_root(
+async def _resolve_root(
     root: Optional[str],
-    context_root: Optional[Path],
+    authority_snapshot: Any,
     skip_validation: bool,
+    grant_id: Optional[str],
+    storage_backend: Any,
     scribe_user: Optional[str] = None,
-) -> Path:
+) -> tuple[Path, Dict[str, Any]]:
     base = settings.project_root.resolve()
-    if not root:
-        if context_root and context_root != base:
-            return context_root
-        if settings.require_explicit_root and not skip_validation:
-            raise ValueError(
-                "Explicit project root required. Pass root=... or provide context.repo_root."
-            )
-        return base
 
-    root_path = Path(root).expanduser()
-    if not root_path.is_absolute():
-        # Preserve relative-path compatibility while allowing roots outside the server repo
-        root_path = (base / root_path).resolve()
-    else:
-        root_path = root_path.resolve()
+    async def _validate_grant(
+        backend: Any,
+        grant: str,
+        repo_root: str,
+        session_key: Optional[str],
+    ) -> tuple[bool, dict[str, Any]]:
+        return await validate_repo_root_grant(
+            storage_backend=backend,
+            grant_id=grant,
+            repo_root=repo_root,
+            authoritative_session_key=session_key,
+        )
 
-    # Server-side path mapping for remote clients (Docker/SSE).
-    # No-op when the path exists on this filesystem (local dev).
-    from scribe_mcp.config.paths import map_client_root
-
-    mapped, _original = map_client_root(str(root_path), user=scribe_user)
-    root_path = Path(mapped)
-
-    return root_path
+    try:
+        return await resolve_authorized_project_root(
+            root=root,
+            skip_validation=skip_validation,
+            grant_id=grant_id,
+            snapshot=authority_snapshot,
+            base_root=base,
+            scribe_user=scribe_user,
+            validate_repo_root_grant=_validate_grant,
+            storage_backend=storage_backend,
+        )
+    except RepoAuthorityResolutionError as exc:
+        raise ProjectRootAuthorizationError(str(exc), payload=exc.payload) from exc
 
 
 def _resolve_docs_dir(name: str, root_path: Path) -> Path:
@@ -873,6 +1762,7 @@ async def _ensure_documents(
         "architecture": docs_dir / "ARCHITECTURE_GUIDE.md",
         "phase_plan": docs_dir / "PHASE_PLAN.md",
         "checklist": docs_dir / "CHECKLIST.md",
+        "changelog": docs_dir / "CHANGELOG.md",
         "progress_log": docs_dir / "PROGRESS_LOG.md",
         "doc_log": docs_dir / "DOC_LOG.md",
         "security_log": docs_dir / "SECURITY_LOG.md",
@@ -897,6 +1787,23 @@ async def _ensure_documents(
             "status": "docs_already_exist",
             "message": f"All documentation files already exist for project '{name}'"
         }
+
+    changelog_path = docs_dir / "CHANGELOG.md"
+    changelog_template = (
+        "# Project Changelog\n\n"
+        "Use one section per curated project outcome.\n\n"
+        "## Entry Template\n"
+        "- `entry_id`: <yyyymmdd>:<slug>\n"
+        "- `entry_status`: draft|accepted|superseded\n"
+        "- `title`: <one concise outcome title>\n"
+        "- `summary`: <short human-readable outcome summary>\n"
+        "- `evidence_refs`:\n"
+        "  - <path-or-proof-reference>\n"
+    )
+
+    if (overwrite or not changelog_path.exists() or changelog_path.stat().st_size == 0):
+        changelog_path.parent.mkdir(parents=True, exist_ok=True)
+        changelog_path.write_text(changelog_template, encoding="utf-8")
 
     # Generate missing files (or all if overwriting)
     from scribe_mcp.tools import generate_doc_templates as doc_templates
@@ -939,6 +1846,8 @@ async def _validate_project_paths(
     log_resolved = progress_log.resolve()
 
     for other_name, paths in existing.items():
+        if _project_names_share_canonical_alias(other_name, name) and paths["root"] == root_resolved:
+            continue
         if paths["progress_log"] == log_resolved:
             return {
                 "ok": False,

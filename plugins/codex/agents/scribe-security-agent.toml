@@ -5,5 +5,5 @@ model_instructions_file = "./scribe-security-agent.md"
 approval_policy = "on-request"
 
 [[skills.config]]
-path = "../skills/scribe-mcp-usage/SKILL.md"
+path = "../skills/scribe-integration/SKILL.md"
 enabled = true

@@ -12,7 +12,11 @@ import pytest
 from scribe_mcp import server as server_module
 import scribe_mcp.tools.read_file as read_file_module
 from scribe_mcp.config.repo_config import RepoConfig
-from scribe_mcp.plugins.registry import PluginRegistry
+from scribe_mcp.plugins.registry import (
+    PluginRegistry,
+    trusted_plugin_runtime_enabled,
+    trusted_plugin_runtime_opt_in_vars,
+)
 from scribe_mcp.shared.execution_context import AgentIdentity, ExecutionContext
 from scribe_mcp.tools.read_file import read_file
 from scribe_mcp.tools.search import search
@@ -328,6 +332,8 @@ def test_plugin_registry_requires_trusted_runtime_opt_in(monkeypatch: pytest.Mon
 
     assert registry.plugins == {}
     assert marker_path.exists() is False
+    assert trusted_plugin_runtime_enabled() is False
+    assert "SCRIBE_TRUST_REPO_PLUGINS" in trusted_plugin_runtime_opt_in_vars()
 
 
 def test_plugin_registry_loads_manifest_pinned_plugin_with_trusted_runtime(

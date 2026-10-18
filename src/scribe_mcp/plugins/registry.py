@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp.config.repo_config import RepoConfig
-from scribe_mcp.config.settings import settings
 from scribe_mcp.security.sandbox import safe_file_operation
 
 
@@ -42,6 +41,15 @@ def _bool_env(name: str) -> bool:
 
 def _trusted_plugin_runtime_enabled() -> bool:
     return any(_bool_env(name) for name in _TRUSTED_PLUGIN_ENV_VARS)
+
+
+def trusted_plugin_runtime_enabled() -> bool:
+    """Public-safe readback for diagnostics; does not reveal raw env values."""
+    return _trusted_plugin_runtime_enabled()
+
+
+def trusted_plugin_runtime_opt_in_vars() -> tuple[str, ...]:
+    return _TRUSTED_PLUGIN_ENV_VARS
 
 
 @dataclass
@@ -139,6 +147,22 @@ class HookPlugin(ScribePlugin):
         """Called after log rotation."""
         pass
 
+    # read-hook-event: generic, content-agnostic read hooks. Mirror the
+    # append/rotate vocabulary above. Scribe never inspects the returned
+    # payload shape; any non-None post_read return is collected by the
+    # registry into a generic ``result["read_annotations"]`` list.
+    def pre_read(self, path: str, context: Dict[str, Any]) -> None:
+        """Called before a read result is produced."""
+        pass
+
+    def post_read(self, path: str, result: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Called after a read result is produced.
+
+        Return an optional generic annotation payload (opaque to Scribe) or
+        ``None`` for no annotation.
+        """
+        return None
+
 
 class PluginRegistry:
     """Registry for managing Scribe plugins with security hardening."""
@@ -151,6 +175,12 @@ class PluginRegistry:
         self.hook_plugins: List[HookPlugin] = []
         self.repo_root = repo_root
         self._plugin_hashes: Dict[str, str] = {}  # Cache of verified plugin hashes
+        self.last_load_diagnostics: Dict[str, Any] = {
+            "blocked_reason": None,
+            "load_errors": [],
+            "skipped": [],
+        }
+        self._last_plugin_load_error: Optional[Dict[str, str]] = None
 
     def _verify_plugin_hash(self, plugin_file: Path, expected_hash: Optional[str] = None) -> bool:
         """Verify SHA-256 hash of plugin file against expected value."""
@@ -229,14 +259,23 @@ class PluginRegistry:
     def load_plugins(self, config: RepoConfig) -> None:
         """Load plugins from the repository's plugins directory with security hardening."""
         plugin_settings = config.plugin_config or {}
+        self.last_load_diagnostics = {
+            "plugin_loading_requested": bool(config.plugin_loading_requested()),
+            "repo_plugin_trust_enabled": _trusted_plugin_runtime_enabled(),
+            "blocked_reason": None,
+            "load_errors": [],
+            "skipped": [],
+        }
         if not config.plugin_loading_requested():
             plugin_logger.info("Plugin loading disabled (plugin_config.enabled is false or missing)")
+            self.last_load_diagnostics["blocked_reason"] = "plugin_config_not_enabled"
             return
         if not _trusted_plugin_runtime_enabled():
             plugin_logger.warning(
                 "Repo-local plugin loading requested but blocked until a trusted runtime "
                 f"opt-in is set via one of: {', '.join(_TRUSTED_PLUGIN_ENV_VARS)}"
             )
+            self.last_load_diagnostics["blocked_reason"] = "repo_plugin_trust_not_enabled"
             return
 
         # Security settings
@@ -250,6 +289,7 @@ class PluginRegistry:
 
         if not config.plugins_dir or not config.plugins_dir.exists():
             plugin_logger.debug("No plugins directory found")
+            self.last_load_diagnostics["blocked_reason"] = "plugins_dir_missing"
             return
 
         # Load repository-specific plugins
@@ -274,31 +314,55 @@ class PluginRegistry:
                 )
             except Exception as sandbox_error:
                 plugin_logger.error(f"Sandbox violation for plugin {plugin_name}: {sandbox_error}")
+                self.last_load_diagnostics["load_errors"].append(
+                    {
+                        "stem": plugin_name,
+                        "reason": "sandbox_violation",
+                        "error_type": type(sandbox_error).__name__,
+                        "message": str(sandbox_error),
+                    }
+                )
                 continue
 
             # Security check 2: Allowlist/blocklist enforcement
             if not self._is_plugin_allowed(plugin_name, allowlist, blocklist):
+                self.last_load_diagnostics["skipped"].append(
+                    {"stem": plugin_name, "reason": "not_allowed_by_config"}
+                )
                 continue
 
             # Security check 3: Load and validate manifest if required
             manifest = self._load_plugin_manifest(plugin_file)
             if require_manifest and not plugin_file.with_suffix(".json").exists():
                 plugin_logger.error(f"Plugin {plugin_name} missing required manifest")
+                self.last_load_diagnostics["load_errors"].append(
+                    {"stem": plugin_name, "reason": "manifest_missing"}
+                )
                 continue
             if not manifest:
                 plugin_logger.error(f"Plugin {plugin_name} manifest failed validation")
+                self.last_load_diagnostics["load_errors"].append(
+                    {"stem": plugin_name, "reason": "manifest_invalid"}
+                )
                 continue
 
             # Security check 4: Hash verification
             if verify_hashes and not manifest.file_hash:
                 plugin_logger.error(f"Plugin {plugin_name} manifest must declare file_hash")
+                self.last_load_diagnostics["load_errors"].append(
+                    {"stem": plugin_name, "reason": "manifest_hash_missing"}
+                )
                 continue
             if verify_hashes and not self._verify_plugin_hash(plugin_file, manifest.file_hash):
                 plugin_logger.error(f"Plugin {plugin_name} failed hash verification")
+                self.last_load_diagnostics["load_errors"].append(
+                    {"stem": plugin_name, "reason": "manifest_hash_mismatch"}
+                )
                 continue
 
             # Load the plugin with comprehensive error handling
             try:
+                self._last_plugin_load_error = None
                 plugin = self._load_plugin_file(plugin_file, config, manifest)
                 if plugin:
                     self._register_plugin(plugin)
@@ -307,8 +371,20 @@ class PluginRegistry:
                         f"Successfully loaded plugin: {plugin.name} v{plugin.version} "
                         f"(hash: {self._plugin_hashes.get(plugin_file.name, 'unknown')[:8]}...)"
                     )
+                elif self._last_plugin_load_error:
+                    self.last_load_diagnostics["load_errors"].append(
+                        {"stem": plugin_name, **self._last_plugin_load_error}
+                    )
             except Exception as e:
                 plugin_logger.error(f"Failed to load plugin {plugin_file}: {e}", exc_info=True)
+                self.last_load_diagnostics["load_errors"].append(
+                    {
+                        "stem": plugin_name,
+                        "reason": "plugin_load_failed",
+                        "error_type": type(e).__name__,
+                        "message": str(e),
+                    }
+                )
                 continue
 
         plugin_logger.info(f"Plugin loading completed. Loaded {plugins_loaded} plugins.")
@@ -374,6 +450,11 @@ class PluginRegistry:
 
                 except Exception as e:
                     plugin_logger.error(f"Failed to instantiate plugin {class_name}: {e}", exc_info=True)
+                    self._last_plugin_load_error = {
+                        "reason": "plugin_instantiation_failed",
+                        "error_type": type(e).__name__,
+                        "message": str(e),
+                    }
                     continue
 
             plugin_logger.error(f"All plugin classes in {plugin_file} failed to instantiate")
@@ -381,6 +462,11 @@ class PluginRegistry:
 
         except Exception as e:
             plugin_logger.error(f"Failed to load plugin module {plugin_file}: {e}", exc_info=True)
+            self._last_plugin_load_error = {
+                "reason": "plugin_module_load_failed",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            }
             return None
 
     def _register_plugin(self, plugin: ScribePlugin) -> None:
@@ -461,6 +547,33 @@ class PluginRegistry:
                 plugin.post_rotate(project_name, archive_info)
             except Exception as e:
                 plugin_logger.warning(f"Post-rotate hook failed in {plugin.name}: {e}")
+
+    # read-hook-event: generic read dispatch, fail-open, mirrors append/rotate.
+    def execute_hook_pre_read(self, path: str, context: Dict[str, Any]) -> None:
+        """Execute pre-read hooks (fail-open, generic)."""
+        for plugin in self.hook_plugins:
+            try:
+                plugin.pre_read(path, context)
+            except Exception as e:
+                plugin_logger.warning(f"Pre-read hook failed in {plugin.name}: {e}")
+
+    def execute_hook_post_read(
+        self, path: str, result: Dict[str, Any], context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Execute post-read hooks (fail-open, generic).
+
+        Collects each plugin's non-None ``post_read`` return into a generic
+        ``result["read_annotations"]`` list. Scribe never inspects the payload
+        shape; consumers own its content and rendering.
+        """
+        for plugin in self.hook_plugins:
+            try:
+                annotation = plugin.post_read(path, result, context)
+                if annotation is not None:
+                    result.setdefault("read_annotations", []).append(annotation)
+            except Exception as e:
+                plugin_logger.warning(f"Post-read hook failed in {plugin.name}: {e}")
+        return result
 
     def cleanup(self) -> None:
         """Cleanup all registered plugins."""

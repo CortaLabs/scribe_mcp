@@ -249,16 +249,37 @@ async def record_tool_call(
     error_message: Optional[str] = None,
     response_size_bytes: Optional[int] = None,
     repo_root: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    measurement_scope: Optional[str] = None,
 ) -> None:
     await initialise_fn()
     async with write_lock:
         try:
+            column_definitions = {
+                "duration_ms": "REAL",
+                "status": "TEXT NOT NULL DEFAULT 'success'",
+                "format_requested": "TEXT",
+                "project_name": "TEXT",
+                "agent_id": "TEXT",
+                "error_message": "TEXT",
+                "response_size_bytes": "INTEGER",
+                "repo_root": "TEXT",
+                "correlation_id": "TEXT",
+                "measurement_scope": "TEXT",
+            }
+            for column_name, column_definition in column_definitions.items():
+                try:
+                    await execute_fn(f"ALTER TABLE tool_calls ADD COLUMN {column_name} {column_definition}", ())
+                except Exception as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        raise
             await execute_fn(
                 """
                 INSERT INTO tool_calls (
                     session_id, tool_name, timestamp, duration_ms, status,
-                    format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
-                ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
+                    format_requested, project_name, agent_id, error_message, response_size_bytes,
+                    repo_root, correlation_id, measurement_scope
+                ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -271,6 +292,8 @@ async def record_tool_call(
                     error_message,
                     response_size_bytes,
                     repo_root,
+                    correlation_id,
+                    measurement_scope,
                 ),
             )
         except Exception as e:
@@ -291,6 +314,8 @@ def record_tool_call_sync(
     error_message: Optional[str] = None,
     response_size_bytes: Optional[int] = None,
     repo_root: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    measurement_scope: Optional[str] = None,
 ) -> None:
     telemetry_support.record_tool_call_sync(
         db_path=db_path,
@@ -305,20 +330,42 @@ def record_tool_call_sync(
         error_message=error_message,
         response_size_bytes=response_size_bytes,
         repo_root=repo_root,
+        correlation_id=correlation_id,
+        measurement_scope=measurement_scope,
     )
 
 
 async def get_session_tool_calls(
     *,
     initialise_fn: AsyncInitialise,
+    execute_fn: AsyncExecute,
     fetchall_fn: AsyncFetchAll,
     session_id: str,
     limit: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     await initialise_fn()
+    column_definitions = {
+        "duration_ms": "REAL",
+        "status": "TEXT NOT NULL DEFAULT 'success'",
+        "format_requested": "TEXT",
+        "project_name": "TEXT",
+        "agent_id": "TEXT",
+        "error_message": "TEXT",
+        "response_size_bytes": "INTEGER",
+        "repo_root": "TEXT",
+        "correlation_id": "TEXT",
+        "measurement_scope": "TEXT",
+    }
+    for column_name, column_definition in column_definitions.items():
+        try:
+            await execute_fn(f"ALTER TABLE tool_calls ADD COLUMN {column_name} {column_definition}", ())
+        except Exception as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
     query = """
         SELECT id, tool_name, timestamp, duration_ms, status,
-               format_requested, project_name, agent_id, error_message, response_size_bytes
+               format_requested, project_name, agent_id, error_message, response_size_bytes,
+               repo_root, correlation_id, measurement_scope
         FROM tool_calls
         WHERE session_id = ?
         ORDER BY timestamp DESC

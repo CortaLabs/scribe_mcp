@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from scribe_mcp.state import StateManager
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.template_engine import Jinja2TemplateEngine
 from scribe_mcp.tools.manage_docs import manage_docs
+from scribe_mcp.tools import manage_docs as manage_docs_module
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 
 
@@ -212,7 +214,16 @@ async def test_manage_docs_renders_jinja_content_and_custom_templates(tmp_path: 
     assert change.verification_passed
     updated_text = architecture_path.read_text(encoding="utf-8")
     assert "**Project:** Test Project | Note: Upgraded via test" in updated_text
-    assert list(architecture_path.parent.glob("ARCHITECTURE_GUIDE.preflight-*.bak"))
+    preflight_backup = change.extra.get("preflight_backup")
+    assert isinstance(preflight_backup, str) and preflight_backup
+    preflight_backup_path = Path(preflight_backup)
+    assert preflight_backup_path.is_file()
+    assert preflight_backup_path.suffix == ".bak"
+    expected_archive_dir = docs_dir / "archive" / "preflight" / "planning"
+    assert preflight_backup_path.parent == expected_archive_dir
+    assert "ARCHITECTURE_GUIDE" in preflight_backup_path.name
+    assert ".preflight-" in preflight_backup_path.name
+    assert not list(architecture_path.parent.glob("ARCHITECTURE_GUIDE.preflight-*.bak"))
 
     # Append additional content via a custom template stored under .scribe/templates
     custom_templates_dir = project_root / ".scribe" / "templates"
@@ -323,6 +334,56 @@ async def test_manage_docs_apply_patch_and_replace_range(tmp_path: Path) -> None
     updated_text = architecture_path.read_text(encoding="utf-8")
     assert "BETA" in updated_text
     assert "GAMMA" in updated_text
+
+
+@pytest.mark.asyncio
+async def test_manage_docs_replace_range_dry_run_reports_changelog_quality_warnings(tmp_path: Path) -> None:
+    """Dry-run previews must expose changelog-specific quality blockers."""
+    project_root = tmp_path / "changelog_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "test_project"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    changelog_path = docs_dir / "CHANGELOG.md"
+    changelog_path.write_text(
+        "# Project Changelog\n\nUse one section per curated project outcome.\n",
+        encoding="utf-8",
+    )
+    original_text = changelog_path.read_text(encoding="utf-8")
+
+    project: Dict[str, object] = {
+        "name": "Changelog Project",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+        "docs": {"changelog": str(changelog_path)},
+        "defaults": {"agent": "QA Bot"},
+    }
+
+    change = await apply_doc_change(
+        project,
+        doc="changelog",
+        action="replace_range",
+        section=None,
+        content=(
+            "# Project Changelog\\n\\n"
+            "## Entry\\n"
+            "- `entry_id`: 20260512:bad\\n"
+            "- `entry_status`: accepted\\n"
+            "- `summary`: literal escaped newline sludge\\n"
+            "- `evidence_refs`: proof"
+        ),
+        patch=None,
+        patch_source_hash=None,
+        start_line=1,
+        end_line=3,
+        template=None,
+        metadata={},
+        dry_run=True,
+    )
+
+    codes = {warning.get("code") for warning in change.extra.get("scaffold_quality_warnings", [])}
+    assert "SCF_CHANGELOG_ESCAPED_NEWLINES" in codes
+    assert changelog_path.read_text(encoding="utf-8") == original_text
 
 
 @pytest.mark.asyncio
@@ -467,7 +528,32 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
     server_module.state_manager = state_manager
     server_module.storage_backend = storage
 
+    had_get_execution_context = hasattr(server_module, "get_execution_context")
+    had_get_agent_identity = hasattr(server_module, "get_agent_identity")
+    original_get_execution_context = getattr(server_module, "get_execution_context", None)
+    original_get_agent_identity = getattr(server_module, "get_agent_identity", None)
+    original_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
+
     try:
+        server_module.get_execution_context = lambda: SimpleNamespace(mode="local")
+        server_module.get_agent_identity = lambda: None
+        async def _prepare_context_stub(**kwargs):
+            state = await state_manager.load()
+            current_project = state.get_project(state.current_project) if state.current_project else None
+            return SimpleNamespace(
+                tool_name=str(kwargs.get("tool_name") or "manage_docs"),
+                project=current_project,
+                recent_projects=list(getattr(state, "recent_projects", []) or []),
+                state_snapshot=kwargs.get("state_snapshot") if isinstance(kwargs.get("state_snapshot"), dict) else {},
+                reminders=[],
+                agent_id="test_agent",
+                resolution_source="compat_active_project",
+                fallback_used=False,
+                fallback_chain=[],
+                denied_fallback_attempts=[],
+                compatibility_usage={"requested": True, "requested_mode": "compat_active_project", "applied": True},
+            )
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
         project_config = {
             "name": project_name,
             "root": str(project_root),
@@ -718,6 +804,15 @@ async def test_special_document_templates_and_agent_card_storage(tmp_path: Path)
         await storage.close()
         server_module.state_manager = original_state_manager
         server_module.storage_backend = original_storage_backend
+        if had_get_execution_context:
+            server_module.get_execution_context = original_get_execution_context
+        elif hasattr(server_module, "get_execution_context"):
+            delattr(server_module, "get_execution_context")
+        if had_get_agent_identity:
+            server_module.get_agent_identity = original_get_agent_identity
+        elif hasattr(server_module, "get_agent_identity"):
+            delattr(server_module, "get_agent_identity")
+        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = original_prepare_context
         shutil.rmtree(project_root, ignore_errors=True)
 
 
@@ -786,6 +881,64 @@ def test_toggle_checklist_status_updates_inline_section_anchor_without_appending
     assert "- [x] Ship docs | proof=commit_abc <!-- ID: p4_documents -->" in updated
     assert "<!-- ID: p4_documents -->" in updated
     assert "\n\n<!-- ID: p4_documents -->\n" not in updated
+
+
+def test_toggle_checklist_status_targets_lowercase_inline_item_id_without_appending() -> None:
+    original = (
+        "# Checklist\n"
+        "- [ ] <!-- id: p4-task-3 --> BLOCKED: Final quality gate pending.\n"
+        "- [ ] <!-- id: final-gate-1 --> Final review pending.\n"
+    )
+
+    updated = _toggle_checklist_status(
+        original,
+        "p4-task-3",
+        {"status": "done", "proof": "live project_health pass"},
+    )
+
+    assert "- [x] <!-- id: p4-task-3 --> BLOCKED: Final quality gate pending. | proof=live project_health pass" in updated
+    assert "- [ ] <!-- id: final-gate-1 --> Final review pending." in updated
+    assert "\n\n<!-- ID: p4-task-3 -->\n" not in updated
+
+
+@pytest.mark.asyncio
+async def test_status_update_does_not_treat_item_status_as_frontmatter_status(tmp_path: Path) -> None:
+    project_root = tmp_path / "status_update_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "p"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    checklist = docs_dir / "CHECKLIST.md"
+    checklist.write_text(
+        "---\n"
+        "status: in_progress\n"
+        "title: Checklist\n"
+        "---\n"
+        "# Checklist\n"
+        "- [ ] <!-- id: p4-task-3 --> Final quality gate pending.\n",
+        encoding="utf-8",
+    )
+    project = {
+        "name": "P",
+        "root": str(project_root),
+        "docs_dir": str(docs_dir),
+        "docs": {"checklist": str(checklist)},
+    }
+
+    change = await apply_doc_change(
+        project,
+        doc_name="checklist",
+        action="status_update",
+        section="p4-task-3",
+        content=None,
+        template=None,
+        metadata={"status": "done", "proof": "live project_health pass"},
+        dry_run=True,
+    )
+
+    parsed = parse_frontmatter(change.content_written)
+    assert parsed.frontmatter_data["status"] == "in_progress"
+    assert "- [x] <!-- id: p4-task-3 --> Final quality gate pending. | proof=live project_health pass" in parsed.body
+    frontmatter_updates = (change.extra.get("frontmatter_updates") or {})
+    assert "status" not in (frontmatter_updates.get("updated_keys") or [])
 
 
 def test_toggle_checklist_status_requires_explicit_scope_for_multi_item_section() -> None:

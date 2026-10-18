@@ -308,15 +308,11 @@ def manage_docs_cli(args) -> None:
     try:
         # Convert argparse namespace to dict and call manage_docs
         import sys
-        sys.argv = ["manage-docs"]
+        sys.argv = ["manage-docs", args.action, args.doc]
 
         # Add command-line arguments
         if args.project:
             sys.argv.extend(["--project", args.project])
-        if args.doc:
-            sys.argv.extend(["--doc", args.doc])
-        if args.action:
-            sys.argv.extend(["--action", args.action])
         if args.section:
             sys.argv.extend(["--section", args.section])
         if args.content:
@@ -400,8 +396,20 @@ def main() -> None:
     # manage-docs command
     manage_docs_parser = subparsers.add_parser("manage-docs", help="Manage project documentation")
     manage_docs_parser.add_argument("--project", help="Project name")
-    manage_docs_parser.add_argument("--doc", required=True, choices=["architecture", "phase_plan", "checklist", "progress_log"], help="Document to manage")
-    manage_docs_parser.add_argument("--action", required=True, choices=["replace_section", "append", "status_update"], help="Action to perform")
+    manage_docs_parser.add_argument("--doc", required=True, help="Document to manage")
+    manage_docs_parser.add_argument(
+        "--action",
+        required=True,
+        choices=[
+            "replace_section",
+            "append",
+            "status_update",
+            "frontmatter_update",
+            "quality_check",
+            "scaffold_quality_check",
+        ],
+        help="Action to perform",
+    )
     manage_docs_parser.add_argument("--section", help="Section ID for replace_section/status_update actions")
     manage_docs_parser.add_argument("--content", help="Content for actions")
     manage_docs_parser.add_argument("--template", help="Template to use")

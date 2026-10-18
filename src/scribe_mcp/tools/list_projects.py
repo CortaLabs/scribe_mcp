@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,9 +16,16 @@ from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.context_safety import ContextManager
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
-from scribe_mcp.shared.project_registry import ProjectRegistry
-from scribe_mcp.shared.project_utils import detect_project_state
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
+from scribe_mcp.shared.project_utils import detect_project_state, merge_project_inventory_authority
+from scribe_mcp.shared.repo_authority import (
+    RepoAuthoritySnapshot,
+    build_repo_authority_snapshot,
+    project_root_is_first_party,
+)
+from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
 from scribe_mcp.config.repo_config import get_current_repo_config
+from scribe_mcp.tools.project_utils import list_project_configs
 
 
 MINIMAL_FIELDS = ("name", "root", "progress_log")
@@ -54,6 +62,15 @@ STATE_ICONS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _normalise_project_root(value: Any) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        return str(Path(str(value)).expanduser().resolve())
+    except Exception:
+        return str(value)
 
 
 def _compute_summary_stats(projects: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -95,7 +112,7 @@ class _ListProjectsHelper(LoggingToolMixin):
 
 
 _LIST_PROJECTS_HELPER = _ListProjectsHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 
 
 async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
@@ -205,6 +222,7 @@ async def list_projects(
     order_by: Optional[str] = None,
     direction: str = "desc",
     format: str = "readable",  # New parameter for output format
+    recovery_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return projects registered in the database or state cache with intelligent filtering.
 
@@ -226,6 +244,8 @@ async def list_projects(
         order_by: Optional sort field: created_at|last_entry_at|last_access_at|total_entries
         direction: Sort direction ('asc' or 'desc') when order_by is provided
         format: Output format ('readable', 'structured', 'compact') (default: 'structured')
+        recovery_mode: Optional explicit compatibility recovery branch.
+            Supported values: "compat_active_project".
 
     Returns:
         Projects list with intelligent filtering, pagination, and context safety.
@@ -251,6 +271,68 @@ async def list_projects(
 
     state = await server_module.state_manager.load()
     projects_map: Dict[str, Dict[str, Any]] = {}
+    allowed_recovery_modes = {"compat_active_project"}
+    compatibility_mode = recovery_mode in allowed_recovery_modes
+    recovery_applied = False
+    recovery_reason: Optional[str] = None
+
+    def _resolve_active_project_name(active_name: Optional[str]) -> Optional[str]:
+        """Resolve active project for response metadata with session binding precedence."""
+        session_bound_name = context.project.get("name") if context.project else None
+        if context.resolution_source == "session_binding":
+            return session_bound_name
+        return active_name or session_bound_name
+
+    def _resolution_payload(active_name: Optional[str]) -> Dict[str, Any]:
+        source = context.resolution_source
+        fallback_used = bool(context.fallback_used)
+        fallback_chain = list(context.fallback_chain or [])
+        if recovery_applied and compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
+            fallback_chain.append(recovery_mode)
+            fallback_used = True
+        effective_source = source if source != "unresolved" else "project_index"
+        summary = (
+            f"Listed projects from '{effective_source}' scope"
+            if not fallback_used
+            else f"Listed projects from '{effective_source}' with recovery chain: {', '.join(fallback_chain)}"
+        )
+        resolved_active_name = _resolve_active_project_name(active_name)
+        return {
+            "resolution_source": effective_source,
+            "fallback_used": fallback_used,
+            "fallback_chain": fallback_chain,
+            "resolution_summary": summary,
+            "active_project": resolved_active_name,
+            "compatibility_recovery": {
+                "requested": compatibility_mode,
+                "mode": recovery_mode if compatibility_mode else None,
+                "applied": recovery_applied,
+                "reason": recovery_reason,
+            },
+        }
+
+    try:
+        current_context = server_module.get_execution_context()
+    except Exception:
+        current_context = None
+
+    enrolled_first_party_roots = tuple(
+        str(Path(str(project.get("root", ""))).expanduser().resolve())
+        for project in list_project_configs().values()
+        if project.get("root")
+    )
+    authority_snapshot: RepoAuthoritySnapshot = build_repo_authority_snapshot(
+        current_context=current_context,
+        app=app,
+        scribe_user=os.environ.get("SCRIBE_USER"),
+        authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+        enrolled_first_party_roots=enrolled_first_party_roots,
+    )
+    has_first_party_authority = bool(
+        authority_snapshot.verified_binding_root
+        or authority_snapshot.verified_request_root
+        or authority_snapshot.enrolled_first_party_roots
+    )
 
     # Determine repo scope for query
     # Priority: explicit root > auto-detect current repo > global if global_mode=True
@@ -258,7 +340,7 @@ async def list_projects(
     if root:
         # Explicit root filter takes precedence
         effective_repo_root = str(Path(root).resolve())
-    elif not global_mode:
+    elif not global_mode and not has_first_party_authority:
         # Default: scope to current repository
         try:
             current_repo_root, _ = get_current_repo_config()
@@ -268,14 +350,17 @@ async def list_projects(
             pass
 
     backend = server_module.storage_backend
+    backend_records: Dict[tuple[str, str], Any] = {}
     if backend:
         if effective_repo_root and hasattr(backend, "list_projects_by_repo"):
             # Repo-scoped query (default behavior)
             records = await backend.list_projects_by_repo(effective_repo_root)
         else:
-            # Global query (explicit global_mode=True or fallback)
+            # Global query (explicit global_mode=True or authority-based visibility filtering)
             records = await backend.list_projects()
         for record in records:
+            normalized_record_root = _normalise_project_root(record.repo_root) or str(record.repo_root)
+            backend_records[(record.name, normalized_record_root)] = record
             projects_map[record.name] = {
                 "name": record.name,
                 "root": record.repo_root,
@@ -285,31 +370,36 @@ async def list_projects(
     for name, data in state.projects.items():
         # Keep state cache merge global for backward compatibility with direct tool invocation.
         existing = projects_map.get(name, {"name": name})
-        if data.get("root"):
-            existing["root"] = data["root"]
-        if data.get("progress_log"):
-            existing["progress_log"] = data["progress_log"]
-        if data.get("docs"):
-            existing["docs"] = data["docs"]
-        if data.get("defaults"):
-            existing["defaults"] = data["defaults"]
-        if data.get("description"):
-            existing["description"] = data["description"]
-        if data.get("tags"):
-            existing["tags"] = data["tags"]
-        projects_map[name] = existing
+        projects_map[name] = merge_project_inventory_authority(
+            existing,
+            state_overlay=data,
+            backend_available=bool(backend),
+        )
 
-    active_project, current_name, recent = await load_active_project(server_module.state_manager)
-    if active_project and active_project["name"] not in projects_map:
-        projects_map[active_project["name"]] = {
-            "name": active_project["name"],
-            "root": active_project.get("root"),
-            "progress_log": active_project.get("progress_log"),
-            "docs": active_project.get("docs"),
-            "defaults": active_project.get("defaults"),
-            "description": active_project.get("description"),
-            "tags": active_project.get("tags"),
-        }
+    current_name = context.project.get("name") if context.project else None
+    recent = list(context.recent_projects)
+    if compatibility_mode and recovery_mode == "compat_active_project":
+        if current_name:
+            recovery_reason = "session_authority_present"
+        else:
+            active_project, recovered_name, recovered_recent = await load_active_project(server_module.state_manager)
+            if active_project:
+                recovery_applied = True
+                recovery_reason = "compat_active_project"
+                current_name = recovered_name or active_project.get("name")
+                recent = list(recovered_recent)
+                if active_project["name"] not in projects_map:
+                    projects_map[active_project["name"]] = {
+                        "name": active_project["name"],
+                        "root": active_project.get("root"),
+                        "progress_log": active_project.get("progress_log"),
+                        "docs": active_project.get("docs"),
+                        "defaults": active_project.get("defaults"),
+                        "description": active_project.get("description"),
+                        "tags": active_project.get("tags"),
+                    }
+            else:
+                recovery_reason = "compat_active_project_not_found"
 
     # Enrich with Project Registry information (best-effort).
     for name, data in list(projects_map.items()):
@@ -320,48 +410,11 @@ async def list_projects(
         if not info:
             continue
 
-        # Only set fields that aren't already present from state.
-        data.setdefault("description", info.description)
-        data.setdefault("status", info.status)
-        data.setdefault("created_at", info.created_at.isoformat() if info.created_at else None)
-        data.setdefault("last_entry_at", info.last_entry_at.isoformat() if info.last_entry_at else None)
-        data.setdefault("last_access_at", info.last_access_at.isoformat() if info.last_access_at else None)
-        data.setdefault(
-            "last_status_change",
-            info.last_status_change.isoformat() if info.last_status_change else None,
+        projects_map[name] = merge_project_inventory_authority(
+            data,
+            registry_info=info,
+            backend_available=bool(backend),
         )
-        data.setdefault("total_entries", info.total_entries)
-        data.setdefault("total_files", info.total_files)
-        data.setdefault("total_phases", info.total_phases)
-        if info.meta and "meta" not in data:
-            data["meta"] = info.meta
-        if info.tags and "tags" not in data:
-            data["tags"] = info.tags
-
-    # Integrate state detection for all projects (Phase 4.3)
-    for name, data in projects_map.items():
-        # Get entry count from backend
-        entry_count = 0
-        if backend:
-            try:
-                raw_count = await backend.count_entries(name)
-                if isinstance(raw_count, (int, float)):
-                    entry_count = int(raw_count)
-                elif isinstance(raw_count, str) and raw_count.strip().isdigit():
-                    entry_count = int(raw_count.strip())
-                else:
-                    entry_count = int(data.get("total_entries", 0) or 0)
-            except Exception:
-                # Fallback to total_entries from registry if count_entries fails
-                entry_count = int(data.get("total_entries", 0) or 0)
-
-        # Detect state using Phase 4.1 infrastructure
-        state, sitrep_message = detect_project_state(data, entry_count)
-
-        # Add state information to project data
-        data["state"] = state
-        data["sitrep_message"] = sitrep_message
-        data["entry_count"] = entry_count
 
     # Convert to list and apply name/root/status/tag filters if provided
     projects_list = list(projects_map.values())
@@ -411,6 +464,17 @@ async def list_projects(
             for project in projects_list
             if _project_tags(project) & wanted_tags
         ]
+
+    if not global_mode and not root and has_first_party_authority:
+        visible_projects: list[Dict[str, Any]] = []
+        for project in projects_list:
+            visible, _authority_source, _reason_code, _normalized_root = project_root_is_first_party(
+                project_root=project.get("root"),
+                snapshot=authority_snapshot,
+            )
+            if visible:
+                visible_projects.append(project)
+        projects_list = visible_projects
 
     # Ordering: default by name; optional registry-aware sort when order_by is provided.
     if order_by:
@@ -479,6 +543,29 @@ async def list_projects(
     default_fields = list(MINIMAL_FIELDS) + ["state", "sitrep_message", "entry_count"]
     selected_fields = fields or default_fields
 
+    for project in context_response["items"]:
+        entry_count = int(project.get("total_entries", 0) or 0)
+        if backend:
+            record_key = (
+                project.get("name", ""),
+                _normalise_project_root(project.get("root")) or "",
+            )
+            project_record = backend_records.get(record_key)
+            if project_record is not None:
+                try:
+                    raw_count = await backend.count_entries(project_record)
+                    if isinstance(raw_count, (int, float)):
+                        entry_count = int(raw_count)
+                    elif isinstance(raw_count, str) and raw_count.strip().isdigit():
+                        entry_count = int(raw_count.strip())
+                except Exception:
+                    entry_count = int(project.get("total_entries", 0) or 0)
+
+        state, sitrep_message = detect_project_state(project, entry_count)
+        project["state"] = state
+        project["sitrep_message"] = sitrep_message
+        project["entry_count"] = entry_count
+
     def _format_project(project: Dict[str, Any]) -> Dict[str, Any]:
         formatted: Dict[str, Any] = {}
         for field in selected_fields:
@@ -516,8 +603,8 @@ async def list_projects(
                 "projects": [],
                 "count": 0,
                 "readable_content": readable_content,
-                "active_project": current_name
             }
+            response.update(_resolution_payload(current_name))
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
@@ -544,8 +631,8 @@ async def list_projects(
                 "projects": formatted_projects,
                 "count": 1,
                 "readable_content": readable_content,
-                "active_project": current_name
             }
+            response.update(_resolution_payload(current_name))
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
@@ -587,8 +674,8 @@ async def list_projects(
                 "count": filtered_count,
                 "pagination": pagination_info,
                 "readable_content": readable_content,
-                "active_project": current_name
             }
+            response.update(_resolution_payload(current_name))
             response = _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
             if context.reminders:
                 response["reminders"] = list(context.reminders)
@@ -627,6 +714,7 @@ async def list_projects(
             "projects": compact_projects,
             "count": len(compact_projects),
             "compact": True,
+            **_resolution_payload(current_name),
             "pagination": {
                 "page": pagination_info["page"],
                 "page_size": pagination_info["page_size"],
@@ -655,12 +743,8 @@ async def list_projects(
             },
             "summary": summary_stats,
             "recent_projects": list(recent),
-            "active_project": (
-                current_name
-                if current_name
-                else (context.project.get("name") if context.project else None)
-            ),
         }
+        response.update(_resolution_payload(current_name))
         return _LIST_PROJECTS_HELPER.apply_context_payload(response, context)
 
     # Legacy fallback for backward compatibility (compact parameter, not format)
@@ -687,14 +771,10 @@ async def list_projects(
         "total_available": total_available,
         "filtered": filtered_flag,
         "recent_projects": list(recent),
-        "active_project": (
-            current_name
-            if current_name
-            else (context.project.get("name") if context.project else None)
-        ),
         "context_safety": context_safety,
         "summary": summary_stats,  # Phase 4.3: State breakdown statistics
     }
+    response.update(_resolution_payload(current_name))
 
     if token_check.get("warning"):
         response["token_warning"] = {

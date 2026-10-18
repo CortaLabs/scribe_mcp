@@ -2,14 +2,44 @@
 
 from __future__ import annotations
 
+import copy
+import logging
+import os
 import re
+import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
+from pathlib import Path
 
 from scribe_mcp import server as server_module
+from scribe_mcp.case_lifecycle import (
+    CanonicalDocBinding,
+    CaseReopenValidationError,
+    build_canonical_doc_binding,
+    build_link_fix_lifecycle_result,
+    build_reopen_transition_decision,
+    doc_binding_from_metadata,
+    doc_binding_to_metadata,
+    infer_reopen_case_type,
+    parse_governed_case_report,
+)
+from scribe_mcp.doc_management import utils as doc_utils
+from scribe_mcp.shared.reference_resolution import (
+    build_reference_scope,
+    resolve_reference,
+)
+from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
 from scribe_mcp.server import app
-from scribe_mcp.tool_contracts import additive_local_tool
+from scribe_mcp.shared.log_enums import LogPriority
+from scribe_mcp.storage.models import CaseRegistryRecord
+from scribe_mcp.tool_contracts import additive_local_tool, stateful_local_tool
+from scribe_mcp.utils.error_handler import sanitize_error_message
 from scribe_mcp.utils.sentinel_logs import append_case_event, append_sentinel_event
+
+
+logger = logging.getLogger(__name__)
 
 
 # Template field list for completeness scoring
@@ -30,6 +60,548 @@ _BUG_TEMPLATE_FIELDS = [
     "immediate_actions",
 ]
 
+# Completeness fields are SEMANTIC fields, not section anchors. Guidance must
+# name the anchor that hosts each field, or replace_section fails with
+# SECTION_ANCHOR_MISSING (live-reproduced on BUG-2026-06-11-0004, P1.6).
+_BUG_FIELD_SECTION_ANCHORS = {
+    "summary_long": "description",
+    "symptoms": "description",
+    "expected_behavior": "description",
+    "actual_behavior": "description",
+    "reproduction_steps": "description",
+    "category": "bug_overview",
+    "severity": "bug_overview",
+    "status": "bug_overview",
+    "component": "bug_overview",
+    "environment": "bug_overview",
+    "customer_impact": "bug_overview",
+    "root_cause": "investigation",
+    "affected_areas": "investigation",
+    "immediate_actions": "resolution_plan",
+}
+
+_SECURITY_FIELD_SECTION_ANCHORS = {
+    **_BUG_FIELD_SECTION_ANCHORS,
+    "category": "security_overview",
+    "severity": "security_overview",
+    "status": "security_overview",
+    "component": "security_overview",
+    "environment": "security_overview",
+    "customer_impact": "security_overview",
+    "affected_areas": "affected_systems",
+}
+
+# Completeness scoring must use a per-case-type field set so a future
+# security-only field (CVSS, exposure, blast-radius) is scored against the
+# security contract rather than the bug field set (F4). Currently equal to the
+# bug set, but kept as a distinct binding so the scoring source is explicit and
+# can diverge without touching the shared scoring loop.
+_SECURITY_TEMPLATE_FIELDS = list(_BUG_TEMPLATE_FIELDS)
+
+
+# ---------------------------------------------------------------------------
+# Host input-schema enrichment (P2.2)
+#
+# Mirrors the proven ``set_project`` / ``manage_docs`` (P1.2) ``input_schema=``
+# override pattern: each ``@app.tool`` passes a hand-authored schema that the
+# host uses verbatim, and the server's ``_with_runtime_agent_schema`` then
+# injects the required ``agent`` field. ``additionalProperties`` stays ``True``
+# so the rich optional-kwarg surface (component, environment, preview, ...) is
+# never regressed into a hard host rejection.
+#
+# Enum values are sourced LIVE from their real accepted-value sources so they
+# cannot drift from runtime behavior:
+#   * ``severity`` -> ``LogPriority`` (critical/high/medium/low), the same
+#     severity vocabulary the docstrings advertise.
+#   * ``landing_status`` -> the unified case-status vocabulary in
+#     ``doc_management/utils.py`` (the exact tokens ``resolved_case_close_status``
+#     understands: open + fix-terminal + non-fix-terminal). A non-terminal token
+#     legitimately leaves the case open, which is why the open set is included.
+# ``category`` is intentionally NOT enumerated: it is a free-form organizational
+# label ("auth"/"api"/"injection"/...) validated only as non-empty at runtime.
+# There is no canonical accepted-value source for it, so it carries teaching
+# guidance via ``description`` rather than a fabricated enum that would falsely
+# reject valid free-form categories.
+
+# Severity values, live from the canonical priority vocabulary (single source of
+# truth — derived, never hand-copied).
+_SEVERITY_ENUM: list[str] = [member.value for member in LogPriority]
+
+# The case-category guidance (free-form; teach, do not constrain).
+_BUG_CATEGORY_DESCRIPTION = (
+    "Free-form organizational label for the bug (e.g. 'auth', 'api', 'ui', "
+    "'runtime', 'startup'). Required and non-empty; not constrained to a fixed "
+    "vocabulary."
+)
+_SECURITY_CATEGORY_DESCRIPTION = (
+    "Free-form organizational label for the security issue (e.g. 'auth', "
+    "'injection', 'xss', 'secrets'). Required and non-empty; not constrained to "
+    "a fixed vocabulary."
+)
+_CASE_ID_FORMAT_HINT = (
+    "Stable per-day case identifier. Format: 'BUG-YYYYMMDD-NNNN' for bug cases "
+    "or 'SEC-YYYYMMDD-NNNN' for security cases."
+)
+
+
+def _landing_status_enum() -> list[str]:
+    """Live accepted-value list for ``link_fix`` ``landing_status``.
+
+    Sourced from the unified case-status vocabulary (P1.1) so it tracks exactly
+    the tokens ``doc_utils.resolved_case_close_status`` recognizes:
+    open (non-terminal, leaves the case open), fix-terminal (collapses to
+    "closed"), and non-fix-terminal (preserved as the closure reason). Sorted
+    for stable host presentation; derived, never frozen.
+    """
+    return sorted(
+        doc_utils.CASE_OPEN_STATUS_VALUES | doc_utils.CASE_CLOSED_STATUS_VALUES
+    )
+
+
+def _build_open_bug_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``open_bug`` (severity enum)."""
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "title": {"type": "string"},
+            "symptoms": {"type": "string"},
+            "category": {"type": "string", "description": _BUG_CATEGORY_DESCRIPTION},
+            "affected_paths": {"type": "array"},
+            "expected_behaviour": {"type": "string"},
+            "steps_to_reproduce": {"type": "array"},
+            "root_cause": {"type": "string"},
+            "resolution_notes": {"type": "string"},
+            "severity": {
+                "type": "string",
+                "enum": list(_SEVERITY_ENUM),
+                "description": (
+                    "Bug severity level (sourced from the canonical priority "
+                    "vocabulary). Defaults to 'medium' when omitted."
+                ),
+            },
+            "component": {"type": "string"},
+            "environment": {"type": "string"},
+            "customer_impact": {"type": "string"},
+            "preview": {"type": "boolean"},
+        },
+        "required": ["title", "symptoms", "category"],
+        "additionalProperties": True,
+    }
+
+
+def _build_open_security_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``open_security`` (severity enum)."""
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "title": {"type": "string"},
+            "symptoms": {"type": "string"},
+            "category": {
+                "type": "string",
+                "description": _SECURITY_CATEGORY_DESCRIPTION,
+            },
+            "affected_paths": {"type": "array"},
+            "expected_behaviour": {"type": "string"},
+            "steps_to_reproduce": {"type": "array"},
+            "root_cause": {"type": "string"},
+            "resolution_notes": {"type": "string"},
+            "severity": {
+                "type": "string",
+                "enum": list(_SEVERITY_ENUM),
+                "description": (
+                    "Security severity level (sourced from the canonical "
+                    "priority vocabulary). Defaults to 'high' when omitted."
+                ),
+            },
+            "component": {"type": "string"},
+            "environment": {"type": "string"},
+            "customer_impact": {"type": "string"},
+            "preview": {"type": "boolean"},
+        },
+        "required": ["title", "symptoms", "category"],
+        "additionalProperties": True,
+    }
+
+
+def _build_link_fix_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``link_fix`` (landing_status enum)."""
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "case_id": {"type": "string", "description": _CASE_ID_FORMAT_HINT},
+            "execution_id": {"type": "string"},
+            "artifact_ref": {"type": "string"},
+            "landing_status": {
+                "type": "string",
+                "enum": _landing_status_enum(),
+                "description": (
+                    "Landing/lifecycle status for the linked fix (sourced from "
+                    "the unified case-status vocabulary). Fix-terminal values "
+                    "(e.g. 'merged', 'resolved') close the case; non-fix-terminal "
+                    "values (e.g. 'wontfix', 'duplicate') close it with the "
+                    "reason preserved; open values (e.g. 'in_progress') leave the "
+                    "case open."
+                ),
+            },
+        },
+        "required": ["case_id", "artifact_ref", "landing_status"],
+        "additionalProperties": True,
+    }
+
+
+def _build_reopen_case_input_schema() -> Dict[str, Any]:
+    """Hand-authored host schema for explicit project-scoped case reopening."""
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "case_id": {
+                "type": "string",
+                "description": (
+                    "Canonical governed case identifier in "
+                    "BUG-YYYY-MM-DD-NNNN or SEC-YYYY-MM-DD-NNNN form."
+                ),
+            },
+            "reason": {
+                "type": "string",
+                "description": (
+                    "Non-empty audit reason for this explicit reopen request."
+                ),
+            },
+            "target_status": {
+                "type": "string",
+                "enum": sorted(doc_utils.CASE_OPEN_STATUS_VALUES),
+                "default": "investigating",
+                "description": (
+                    "Canonical open lifecycle status. Defaults to investigating."
+                ),
+            },
+        },
+        "required": ["case_id", "reason"],
+        "additionalProperties": True,
+    }
+
+
+_OPEN_BUG_INPUT_SCHEMA: Dict[str, Any] = _build_open_bug_input_schema()
+_OPEN_SECURITY_INPUT_SCHEMA: Dict[str, Any] = _build_open_security_input_schema()
+_LINK_FIX_INPUT_SCHEMA: Dict[str, Any] = _build_link_fix_input_schema()
+_REOPEN_CASE_INPUT_SCHEMA: Dict[str, Any] = _build_reopen_case_input_schema()
+
+_REOPEN_CASE_FAILURE_CONTRACT: dict[str, dict[str, str]] = {
+    "CONTEXT_UNAVAILABLE": {
+        "failure_stage": "context",
+        "message": "The execution context could not be verified.",
+        "next_step": "Retry from a bound project execution context.",
+    },
+    "PROJECT_MODE_REQUIRED": {
+        "failure_stage": "context",
+        "message": "The case reopen operation is available only in project mode.",
+        "next_step": "Bind the target project and retry the same request.",
+    },
+    "INVALID_CASE_ID": {
+        "failure_stage": "input",
+        "message": "The case identifier is invalid.",
+        "next_step": (
+            "Provide a canonical BUG-YYYY-MM-DD-NNNN or SEC-YYYY-MM-DD-NNNN identifier."
+        ),
+    },
+    "INVALID_REASON": {
+        "failure_stage": "input",
+        "message": "A non-empty reopen reason is required.",
+        "next_step": "Provide a non-empty reason and retry.",
+    },
+    "INVALID_TARGET_STATUS": {
+        "failure_stage": "input",
+        "message": "The requested target status is not an allowed open status.",
+        "next_step": "Choose a canonical open status and retry.",
+    },
+    "ACTIVE_SCOPE_UNAVAILABLE": {
+        "failure_stage": "scope",
+        "message": "The active repository and project scope could not be verified.",
+        "next_step": "Bind the target project scope and retry.",
+    },
+    "CASE_NOT_FOUND": {
+        "failure_stage": "registry_lookup",
+        "message": "The requested case was not found in the active scope.",
+        "next_step": (
+            "Verify the case identifier and active project scope, then retry."
+        ),
+    },
+    "CASE_SCOPE_MISMATCH": {
+        "failure_stage": "registry_identity",
+        "message": "The case does not belong to the verified active scope.",
+        "next_step": "Bind the case's owning project scope and retry.",
+    },
+    "REGISTRY_IDENTITY_MISMATCH": {
+        "failure_stage": "registry_identity",
+        "message": ("The case registry identity does not match the requested case."),
+        "next_step": ("Repair the governed registry/report binding before retrying."),
+    },
+    "REPORT_UNAVAILABLE": {
+        "failure_stage": "report_access",
+        "message": "The governed case report is unavailable.",
+        "next_step": ("Restore the governed report at its registered path and retry."),
+    },
+    "REPORT_OUTSIDE_SCOPE": {
+        "failure_stage": "report_access",
+        "message": "The governed case report is outside the active repository.",
+        "next_step": "Repair the registered report path before retrying.",
+    },
+    "REPORT_READ_FAILED": {
+        "failure_stage": "report_access",
+        "message": "The governed case report could not be read.",
+        "next_step": "Restore a readable UTF-8 governed report and retry.",
+    },
+    "REPORT_ID_HEADER_MISSING": {
+        "failure_stage": "report_identity",
+        "message": (
+            "The governed report is missing its required case identifier header."
+        ),
+        "next_step": "Repair the governed report identity header and retry.",
+    },
+    "REPORT_ID_HEADER_DUPLICATE": {
+        "failure_stage": "report_identity",
+        "message": ("The governed report contains duplicate case identifier headers."),
+        "next_step": "Repair the governed report identity header and retry.",
+    },
+    "REPORT_ID_HEADER_MALFORMED": {
+        "failure_stage": "report_identity",
+        "message": "The governed report case identifier header is malformed.",
+        "next_step": "Repair the governed report identity header and retry.",
+    },
+    "REPORT_ID_HEADER_TYPE_MISMATCH": {
+        "failure_stage": "report_identity",
+        "message": (
+            "The governed report case identifier header does not match "
+            "the registered case type."
+        ),
+        "next_step": "Repair the governed report identity header and retry.",
+    },
+    "REPORT_ID_MISMATCH": {
+        "failure_stage": "report_identity",
+        "message": (
+            "The governed report case identifier does not match the requested case."
+        ),
+        "next_step": "Repair the governed report identity header and retry.",
+    },
+    "REPORT_STATUS_MISSING": {
+        "failure_stage": "report_status",
+        "message": "The governed report is missing a Status field.",
+        "next_step": "Repair the governed report Status fields and retry.",
+    },
+    "REPORT_STATUS_CONFLICT": {
+        "failure_stage": "report_status",
+        "message": "The governed report contains conflicting Status fields.",
+        "next_step": "Repair the governed report Status fields and retry.",
+    },
+    "REPORT_STATUS_INVALID": {
+        "failure_stage": "report_status",
+        "message": "The governed report contains an invalid Status value.",
+        "next_step": "Repair the governed report Status fields and retry.",
+    },
+    "REPORT_STATUS_MISMATCH": {
+        "failure_stage": "report_status",
+        "message": (
+            "The governed report Status does not match the requested target status."
+        ),
+        "next_step": "Repair the governed report Status fields and retry.",
+    },
+    "REGISTRY_STATUS_INVALID": {
+        "failure_stage": "transition",
+        "message": "The registry contains an invalid lifecycle status.",
+        "next_step": "Repair the governed registry status before retrying.",
+    },
+    "TRANSITION_NOT_ALLOWED": {
+        "failure_stage": "transition",
+        "message": "The requested case transition is not allowed.",
+        "next_step": (
+            "Use reopen_case only for terminal-to-open recovery "
+            "or an exact already-open retry."
+        ),
+    },
+    "AUDIT_REQUEST_FAILED": {
+        "failure_stage": "audit_requested",
+        "message": (
+            "The reopen request audit event was not recorded; "
+            "no registry mutation was attempted."
+        ),
+        "next_step": "Restore audit delivery and retry the same request.",
+    },
+    "REGISTRY_PAYLOAD_BUILD_FAILED": {
+        "failure_stage": "registry_mutation",
+        "message": (
+            "The registry update could not be prepared; "
+            "no registry mutation was attempted."
+        ),
+        "next_step": (
+            "Repair the registry record contract and retry the same request."
+        ),
+    },
+    "REGISTRY_UPSERT_FAILED": {
+        "failure_stage": "registry_mutation",
+        "message": (
+            "The registry update did not complete with independently verified state."
+        ),
+        "next_step": (
+            "Retry the same request; the idempotent path will reconcile "
+            "any committed transition and create a new audit pair."
+        ),
+    },
+    "REGISTRY_READBACK_FAILED": {
+        "failure_stage": "registry_readback",
+        "message": "The registry state could not be independently verified.",
+        "next_step": (
+            "Retry the same request; the idempotent path will reconcile "
+            "any committed transition and create a new audit pair."
+        ),
+    },
+    "REGISTRY_READBACK_MISMATCH": {
+        "failure_stage": "registry_readback",
+        "message": (
+            "The independently read registry state did not match the reopen contract."
+        ),
+        "next_step": (
+            "Retry the same request; the idempotent path will reconcile "
+            "any committed transition and create a new audit pair."
+        ),
+    },
+    "AUDIT_COMPLETION_FAILED": {
+        "failure_stage": "audit_completed",
+        "message": (
+            "The registry branch completed, but the completion audit "
+            "event was not recorded."
+        ),
+        "next_step": (
+            "Restore audit delivery and retry the same request "
+            "to create a complete audit pair."
+        ),
+    },
+}
+
+_REOPEN_CASE_SUCCESS_MESSAGES = {
+    "changed": "The case was reopened and independently verified.",
+    "idempotent": (
+        "The case was already at the requested open status; "
+        "no registry mutation was performed."
+    ),
+}
+
+REOPEN_CASE_PUBLIC_CONTRACT_DESCRIPTOR: dict[str, object] = {
+    "schema_version": "reopen-case-public-envelope.v1",
+    "response_fields": {
+        "ok": "bool",
+        "mode": "project|sentinel|unresolved",
+        "case_id": "str|null",
+        "case_type": "bug|security|null",
+        "partial": "bool",
+        "failure_stage": "failure_stage|null",
+        "error_code": "error_code|null",
+        "message": "str",
+        "changed": "bool|null",
+        "reopened": "bool|null",
+        "idempotent": "bool|null",
+        "target_status": "str|null",
+        "report_status": "str|null",
+        "registry_status_before": "str|null",
+        "registry_status_after": "str|null",
+        "registry_mutation_attempted": "bool",
+        "registry_readback_verified": "bool",
+        "mutation_may_have_occurred": "bool",
+        "requested_event_id": "str|null",
+        "completed_event_id": "str|null",
+        "case_scope": "object",
+        "case_registry": "object",
+        "warnings": "list[str]",
+        "next_step": "str",
+    },
+    "case_scope_fields": {
+        "active_repo_verified": "bool",
+        "active_project_verified": "bool",
+    },
+    "case_registry_fields": {
+        "record_found": "bool",
+        "identity_verified": "bool",
+    },
+    "failure_contract": _REOPEN_CASE_FAILURE_CONTRACT,
+    "success_messages": _REOPEN_CASE_SUCCESS_MESSAGES,
+}
+
+
+def _format_unfilled_guidance(
+    unfilled_fields: list[str],
+    anchor_map: dict[str, str],
+    limit: int,
+) -> str:
+    """Render unfilled fields with their hosting section anchors for guidance."""
+    rendered = [
+        f"{field} (section='{anchor_map.get(field, 'description')}')"
+        for field in unfilled_fields[:limit]
+    ]
+    suffix = (
+        f" and {len(unfilled_fields) - limit} more"
+        if len(unfilled_fields) > limit
+        else ""
+    )
+    return ", ".join(rendered) + suffix
+
+
+def _normalize_artifact_reference(artifact_ref: str) -> dict[str, Any]:
+    raw = str(artifact_ref or "").strip()
+    if not raw:
+        return {
+            "raw": raw,
+            "kind": "artifact",
+            "source": "link_fix_argument",
+            "value": raw,
+        }
+    if re.fullmatch(r"[0-9a-f]{7,40}", raw):
+        return {
+            "raw": raw,
+            "kind": "git_commit",
+            "source": "link_fix_argument",
+            "value": raw,
+        }
+    if raw.startswith("commit:"):
+        return {
+            "raw": raw,
+            "kind": "git_commit",
+            "source": "link_fix_argument",
+            "value": raw.split(":", 1)[1].strip(),
+        }
+    if raw.startswith("scribe://"):
+        return {
+            "raw": raw,
+            "kind": "scribe_reference",
+            "source": "link_fix_argument",
+            "value": raw,
+        }
+    return {"raw": raw, "kind": "artifact", "source": "link_fix_argument", "value": raw}
+
+
+def _operator_envelope(
+    *,
+    ok: bool,
+    mode: str,
+    case_id: Optional[str] = None,
+    artifacts: Optional[list[dict[str, str]]] = None,
+    warnings: Optional[list[str]] = None,
+    next_step: str = "",
+    **extra: Any,
+) -> Dict[str, Any]:
+    envelope: Dict[str, Any] = {
+        "ok": ok,
+        "mode": mode,
+        "case_id": case_id or "",
+        "artifacts": artifacts or [],
+        "warnings": warnings or [],
+        "next_step": next_step,
+    }
+    envelope.update(extra)
+    return envelope
+
 
 def _require_sentinel_context():
     context = server_module.get_execution_context()
@@ -45,6 +617,694 @@ def _get_context():
     if not context:
         raise ValueError("ExecutionContext missing")
     return context
+
+
+def _build_reopen_case_response(
+    *,
+    ok: bool,
+    mode: str,
+    case_id: Optional[str] = None,
+    case_type: Optional[str] = None,
+    partial: bool = False,
+    failure_stage: Optional[str] = None,
+    error_code: Optional[str] = None,
+    message: str = "",
+    changed: Optional[bool] = None,
+    reopened: Optional[bool] = False,
+    idempotent: Optional[bool] = None,
+    target_status: Optional[str] = None,
+    report_status: Optional[str] = None,
+    registry_status_before: Optional[str] = None,
+    registry_status_after: Optional[str] = None,
+    registry_mutation_attempted: bool = False,
+    registry_readback_verified: bool = False,
+    mutation_may_have_occurred: bool = False,
+    requested_event_id: Optional[str] = None,
+    completed_event_id: Optional[str] = None,
+    active_repo_verified: bool = False,
+    active_project_verified: bool = False,
+    record_found: bool = False,
+    identity_verified: bool = False,
+    next_step: str = "",
+) -> Dict[str, object]:
+    """Build the closed, allowlist-only reopen_case public envelope."""
+    return {
+        "ok": ok,
+        "mode": mode,
+        "case_id": case_id,
+        "case_type": case_type,
+        "partial": partial,
+        "failure_stage": failure_stage,
+        "error_code": error_code,
+        "message": message,
+        "changed": changed,
+        "reopened": reopened,
+        "idempotent": idempotent,
+        "target_status": target_status,
+        "report_status": report_status,
+        "registry_status_before": registry_status_before,
+        "registry_status_after": registry_status_after,
+        "registry_mutation_attempted": registry_mutation_attempted,
+        "registry_readback_verified": registry_readback_verified,
+        "mutation_may_have_occurred": mutation_may_have_occurred,
+        "requested_event_id": requested_event_id,
+        "completed_event_id": completed_event_id,
+        "case_scope": {
+            "active_repo_verified": active_repo_verified,
+            "active_project_verified": active_project_verified,
+        },
+        "case_registry": {
+            "record_found": record_found,
+            "identity_verified": identity_verified,
+        },
+        "warnings": [],
+        "next_step": next_step,
+    }
+
+
+def _public_reopen_mode(context: Any) -> str:
+    mode = getattr(context, "mode", None)
+    if mode == "project":
+        return "project"
+    if mode == "sentinel":
+        return "sentinel"
+    return "unresolved"
+
+
+def _record_value(record: Any, field: str) -> Any:
+    if isinstance(record, dict):
+        return record.get(field)
+    return getattr(record, field, None)
+
+
+_REOPEN_REGISTRY_REQUIRED_FIELDS = (
+    "case_id",
+    "case_type",
+    "project_name",
+    "repo_root",
+    "repo_id",
+    "project_key",
+    "doc_type",
+    "doc_name",
+    "doc_path",
+)
+_REOPEN_REGISTRY_OPTIONAL_STRING_FIELDS = (
+    "title",
+    "status",
+    "severity",
+    "source_tool",
+)
+_REOPEN_REGISTRY_OPTIONAL_FIELDS = (
+    *_REOPEN_REGISTRY_OPTIONAL_STRING_FIELDS,
+    "metadata",
+    "created_at",
+    "updated_at",
+)
+_REOPEN_REGISTRY_ROW_FIELDS = (
+    *_REOPEN_REGISTRY_REQUIRED_FIELDS,
+    *_REOPEN_REGISTRY_OPTIONAL_FIELDS,
+)
+
+
+def _is_safe_reopen_registry_metadata(
+    value: object,
+    *,
+    depth: int = 0,
+    ancestors: set[int] | None = None,
+) -> bool:
+    if value is None or type(value) in {str, int, float, bool}:
+        return True
+    if depth >= 32 or type(value) not in {dict, list}:
+        return False
+
+    active_ancestors = ancestors if ancestors is not None else set()
+    identity = id(value)
+    if identity in active_ancestors:
+        return False
+    active_ancestors.add(identity)
+    try:
+        if type(value) is list:
+            return all(
+                _is_safe_reopen_registry_metadata(
+                    item,
+                    depth=depth + 1,
+                    ancestors=active_ancestors,
+                )
+                for item in value
+            )
+        return all(
+            type(key) is str
+            and _is_safe_reopen_registry_metadata(
+                item,
+                depth=depth + 1,
+                ancestors=active_ancestors,
+            )
+            for key, item in value.items()
+        )
+    finally:
+        active_ancestors.remove(identity)
+
+
+def _normalize_reopen_registry_record(record: object) -> CaseRegistryRecord | None:
+    """Project one closed storage-row mapping into the established registry DTO."""
+    if type(record) is CaseRegistryRecord:
+        return record
+    if not isinstance(record, Mapping):
+        return None
+
+    keys: list[str] = []
+    try:
+        iterator = iter(record)
+        for _ in range(len(_REOPEN_REGISTRY_ROW_FIELDS) + 1):
+            try:
+                key = next(iterator)
+            except StopIteration:
+                break
+            if type(key) is not str or key in keys:
+                return None
+            keys.append(key)
+    except Exception:
+        return None
+
+    key_set = set(keys)
+    if not set(_REOPEN_REGISTRY_REQUIRED_FIELDS).issubset(key_set):
+        return None
+    if not key_set.issubset(_REOPEN_REGISTRY_ROW_FIELDS):
+        return None
+
+    values: dict[str, object] = {
+        field: None for field in _REOPEN_REGISTRY_OPTIONAL_FIELDS
+    }
+    try:
+        for field in keys:
+            values[field] = record[field]
+    except Exception:
+        return None
+
+    for field in _REOPEN_REGISTRY_REQUIRED_FIELDS:
+        value = values[field]
+        if type(value) is not str or not value.strip():
+            return None
+    for field in _REOPEN_REGISTRY_OPTIONAL_STRING_FIELDS:
+        value = values[field]
+        if value is not None and type(value) is not str:
+            return None
+    if values["metadata"] is not None and (
+        type(values["metadata"]) is not dict
+        or not _is_safe_reopen_registry_metadata(values["metadata"])
+    ):
+        return None
+    for field in ("created_at", "updated_at"):
+        value = values[field]
+        if value is not None and type(value) is not datetime:
+            return None
+
+    try:
+        projected_values = dict(values)
+        projected_values["metadata"] = copy.deepcopy(values["metadata"])
+        return CaseRegistryRecord(**projected_values)
+    except Exception:
+        return None
+
+
+_REOPEN_PRESERVED_RECORD_FIELDS = (
+    "case_id",
+    "case_type",
+    "project_name",
+    "repo_root",
+    "repo_id",
+    "project_key",
+    "doc_type",
+    "doc_name",
+    "doc_path",
+    "title",
+    "severity",
+    "source_tool",
+    "metadata",
+    "created_at",
+)
+
+
+def _reopen_record_snapshot(record: Any) -> dict[str, Any]:
+    return {
+        field: copy.deepcopy(_record_value(record, field))
+        for field in (*_REOPEN_PRESERVED_RECORD_FIELDS, "status", "updated_at")
+    }
+
+
+def _expected_reopen_upsert_payload(
+    record: Any,
+    *,
+    target_status: str,
+) -> dict[str, Any]:
+    return {
+        "case_id": _record_value(record, "case_id"),
+        "case_type": _record_value(record, "case_type"),
+        "project_name": _record_value(record, "project_name"),
+        "repo_root": _record_value(record, "repo_root"),
+        "doc_type": _record_value(record, "doc_type"),
+        "doc_name": _record_value(record, "doc_name"),
+        "doc_path": _record_value(record, "doc_path"),
+        "title": _record_value(record, "title"),
+        "status": target_status,
+        "severity": _record_value(record, "severity"),
+        "source_tool": _record_value(record, "source_tool"),
+        "metadata": copy.deepcopy(_record_value(record, "metadata")),
+    }
+
+
+def _reopen_readback_matches(
+    *,
+    before: dict[str, Any],
+    after: Any,
+    target_status: str,
+    transition_required: bool,
+) -> bool:
+    if after is None:
+        return False
+    for field in _REOPEN_PRESERVED_RECORD_FIELDS:
+        if _record_value(after, field) != before[field]:
+            return False
+    if _record_value(after, "status") != target_status:
+        return False
+    if (
+        not transition_required
+        and _record_value(after, "updated_at") != before["updated_at"]
+    ):
+        return False
+    return True
+
+
+def _log_reopen_case_failure(error_code: str, exc: BaseException | None = None) -> None:
+    contract = _REOPEN_CASE_FAILURE_CONTRACT[error_code]
+    detail = "no_exception_detail"
+    if exc is not None:
+        try:
+            detail = sanitize_error_message(str(exc))
+        except Exception:
+            detail = type(exc).__name__
+    logger.warning(
+        "reopen_case failure code=%s stage=%s detail=%s",
+        error_code,
+        contract["failure_stage"],
+        detail,
+    )
+
+
+async def _append_reopen_case_audit(
+    *,
+    agent: str,
+    event_name: str,
+    metadata: dict[str, Any],
+    error_code: str,
+) -> Optional[str]:
+    from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+
+    try:
+        result = await append_entry_tool(
+            agent=agent,
+            message=f"[CASE REOPEN] {event_name}",
+            status="success" if event_name == "case_reopen_completed" else "info",
+            meta=metadata,
+            format="structured",
+        )
+    except Exception as exc:
+        _log_reopen_case_failure(error_code, exc)
+        return None
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        _log_reopen_case_failure(error_code)
+        return None
+    receipt = result.get("id")
+    if not isinstance(receipt, str) or not receipt.strip():
+        _log_reopen_case_failure(error_code)
+        return None
+    return receipt.strip()
+
+
+@app.tool(
+    **stateful_local_tool(
+        title="Reopen Case",
+        tags=("project", "case", "lifecycle", "write"),
+    ),
+    input_schema=_REOPEN_CASE_INPUT_SCHEMA,
+)
+async def reopen_case(
+    agent: str,
+    case_id: str,
+    reason: str,
+    target_status: str = "investigating",
+) -> Dict[str, object]:
+    """Explicitly reopen one governed terminal case in its verified project scope."""
+    state: dict[str, Any] = {
+        "mode": "unresolved",
+        "case_id": None,
+        "case_type": None,
+        "partial": False,
+        "changed": None,
+        "reopened": False,
+        "idempotent": None,
+        "target_status": None,
+        "report_status": None,
+        "registry_status_before": None,
+        "registry_status_after": None,
+        "registry_mutation_attempted": False,
+        "registry_readback_verified": False,
+        "mutation_may_have_occurred": False,
+        "requested_event_id": None,
+        "completed_event_id": None,
+        "active_repo_verified": False,
+        "active_project_verified": False,
+        "record_found": False,
+        "identity_verified": False,
+    }
+
+    def _failure(error_code: str) -> Dict[str, object]:
+        contract = _REOPEN_CASE_FAILURE_CONTRACT[error_code]
+        return _build_reopen_case_response(
+            ok=False,
+            mode=state["mode"],
+            case_id=state["case_id"],
+            case_type=state["case_type"],
+            partial=state["partial"],
+            failure_stage=contract["failure_stage"],
+            error_code=error_code,
+            message=contract["message"],
+            changed=state["changed"],
+            reopened=state["reopened"],
+            idempotent=state["idempotent"],
+            target_status=state["target_status"],
+            report_status=state["report_status"],
+            registry_status_before=state["registry_status_before"],
+            registry_status_after=state["registry_status_after"],
+            registry_mutation_attempted=state["registry_mutation_attempted"],
+            registry_readback_verified=state["registry_readback_verified"],
+            mutation_may_have_occurred=state["mutation_may_have_occurred"],
+            requested_event_id=state["requested_event_id"],
+            completed_event_id=state["completed_event_id"],
+            active_repo_verified=state["active_repo_verified"],
+            active_project_verified=state["active_project_verified"],
+            record_found=state["record_found"],
+            identity_verified=state["identity_verified"],
+            next_step=contract["next_step"],
+        )
+
+    try:
+        context = _get_context()
+    except Exception as exc:
+        _log_reopen_case_failure("CONTEXT_UNAVAILABLE", exc)
+        return _failure("CONTEXT_UNAVAILABLE")
+
+    state["mode"] = _public_reopen_mode(context)
+    if getattr(context, "mode", None) != "project":
+        return _failure("PROJECT_MODE_REQUIRED")
+
+    try:
+        inferred_case_type = infer_reopen_case_type(case_id)
+    except CaseReopenValidationError:
+        return _failure("INVALID_CASE_ID")
+    canonical_case_id = case_id.strip()
+    state["case_id"] = canonical_case_id
+    state["case_type"] = inferred_case_type
+
+    if not isinstance(reason, str) or not reason.strip():
+        return _failure("INVALID_REASON")
+    canonical_reason = reason.strip()
+
+    if not isinstance(target_status, str):
+        return _failure("INVALID_TARGET_STATUS")
+    normalized_target = doc_utils.normalize_case_status(target_status)
+    if normalized_target not in doc_utils.CASE_OPEN_STATUS_VALUES:
+        return _failure("INVALID_TARGET_STATUS")
+    state["target_status"] = normalized_target
+
+    try:
+        active_repo_root, active_project_name, _ = _active_repo_project_authority(
+            context
+        )
+        if not active_repo_root or not active_project_name:
+            return _failure("ACTIVE_SCOPE_UNAVAILABLE")
+        active_repo_path = Path(active_repo_root).expanduser().resolve()
+    except Exception as exc:
+        _log_reopen_case_failure("ACTIVE_SCOPE_UNAVAILABLE", exc)
+        return _failure("ACTIVE_SCOPE_UNAVAILABLE")
+    state["active_repo_verified"] = True
+    state["active_project_verified"] = True
+
+    backend = getattr(server_module, "storage_backend", None)
+    fetch_record = getattr(backend, "fetch_case_registry_record", None)
+    if not callable(fetch_record):
+        _log_reopen_case_failure("CASE_NOT_FOUND")
+        return _failure("CASE_NOT_FOUND")
+    try:
+        case_record = await fetch_record(
+            case_id=canonical_case_id,
+            repo_root=str(active_repo_path),
+            project_name=active_project_name,
+        )
+    except Exception as exc:
+        _log_reopen_case_failure("CASE_NOT_FOUND", exc)
+        return _failure("CASE_NOT_FOUND")
+    if case_record is None:
+        return _failure("CASE_NOT_FOUND")
+    state["record_found"] = True
+    case_record = _normalize_reopen_registry_record(case_record)
+    if case_record is None:
+        return _failure("REGISTRY_IDENTITY_MISMATCH")
+
+    record_repo_root = _record_value(case_record, "repo_root")
+    record_project_name = _record_value(case_record, "project_name")
+    try:
+        record_repo_path = (
+            Path(record_repo_root).expanduser().resolve()
+            if isinstance(record_repo_root, str) and record_repo_root.strip()
+            else None
+        )
+    except Exception:
+        record_repo_path = None
+    if (
+        record_repo_path != active_repo_path
+        or record_project_name != active_project_name
+    ):
+        return _failure("CASE_SCOPE_MISMATCH")
+
+    if (
+        _record_value(case_record, "case_id") != canonical_case_id
+        or _record_value(case_record, "case_type") != inferred_case_type
+        or _record_value(case_record, "doc_type") != inferred_case_type
+        or _record_value(case_record, "doc_name") != canonical_case_id
+    ):
+        return _failure("REGISTRY_IDENTITY_MISMATCH")
+    state["identity_verified"] = True
+    normalized_registry_status = doc_utils.normalize_case_status(
+        _record_value(case_record, "status")
+    )
+    if normalized_registry_status in (
+        doc_utils.CASE_OPEN_STATUS_VALUES | doc_utils.CASE_CLOSED_STATUS_VALUES
+    ):
+        state["registry_status_before"] = normalized_registry_status
+
+    raw_report_path = _record_value(case_record, "doc_path")
+    if not isinstance(raw_report_path, str) or not raw_report_path.strip():
+        return _failure("REPORT_UNAVAILABLE")
+    candidate_report_path = Path(raw_report_path).expanduser()
+    if not candidate_report_path.is_absolute():
+        candidate_report_path = active_repo_path / candidate_report_path
+    try:
+        resolved_report_path = candidate_report_path.resolve()
+    except Exception as exc:
+        _log_reopen_case_failure("REPORT_UNAVAILABLE", exc)
+        return _failure("REPORT_UNAVAILABLE")
+    try:
+        resolved_report_path.relative_to(active_repo_path)
+    except ValueError:
+        return _failure("REPORT_OUTSIDE_SCOPE")
+    if not resolved_report_path.is_file():
+        return _failure("REPORT_UNAVAILABLE")
+    try:
+        report_text = resolved_report_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        _log_reopen_case_failure("REPORT_READ_FAILED", exc)
+        return _failure("REPORT_READ_FAILED")
+
+    try:
+        report = parse_governed_case_report(
+            report_text,
+            expected_case_id=canonical_case_id,
+            expected_case_type=inferred_case_type,
+        )
+    except CaseReopenValidationError as exc:
+        return _failure(exc.error_code)
+    state["report_status"] = report.status
+
+    try:
+        decision = build_reopen_transition_decision(
+            case_id=canonical_case_id,
+            case_record=case_record,
+            target_status=normalized_target,
+            report=report,
+        )
+    except CaseReopenValidationError as exc:
+        return _failure(exc.error_code)
+    state["registry_status_before"] = decision.registry_status_before
+    state["idempotent"] = decision.idempotent
+
+    audit_metadata: dict[str, Any] = {
+        "case_event": "case_reopen_requested",
+        "source_tool": "reopen_case",
+        "case_id": decision.case_id,
+        "case_type": decision.case_type,
+        "repo_root": str(active_repo_path),
+        "project_name": active_project_name,
+        "registry_status_before": decision.registry_status_before,
+        "target_status": decision.target_status,
+        "report_status": decision.report_status,
+        "transition_required": decision.transition_required,
+        "idempotent": decision.idempotent,
+        "reason": canonical_reason,
+    }
+    if decision.case_type == "security":
+        audit_metadata["security_event"] = "1"
+    requested_event_id = await _append_reopen_case_audit(
+        agent=agent,
+        event_name="case_reopen_requested",
+        metadata=audit_metadata,
+        error_code="AUDIT_REQUEST_FAILED",
+    )
+    if requested_event_id is None:
+        state["changed"] = False
+        state["reopened"] = False
+        return _failure("AUDIT_REQUEST_FAILED")
+    state["requested_event_id"] = requested_event_id
+
+    before_snapshot = _reopen_record_snapshot(case_record)
+    if decision.transition_required:
+        upsert_record = getattr(backend, "upsert_case_registry_record", None)
+        if not callable(upsert_record):
+            state["changed"] = False
+            return _failure("REGISTRY_PAYLOAD_BUILD_FAILED")
+        try:
+            upsert_payload = doc_utils.build_case_registry_upsert_kwargs(
+                existing_record=case_record,
+                overrides={
+                    "case_id": canonical_case_id,
+                    "status": decision.target_status,
+                },
+            )
+            expected_payload = _expected_reopen_upsert_payload(
+                case_record,
+                target_status=decision.target_status,
+            )
+            if (
+                not isinstance(upsert_payload, dict)
+                or upsert_payload != expected_payload
+            ):
+                state["changed"] = False
+                return _failure("REGISTRY_PAYLOAD_BUILD_FAILED")
+        except Exception as exc:
+            _log_reopen_case_failure("REGISTRY_PAYLOAD_BUILD_FAILED", exc)
+            state["changed"] = False
+            return _failure("REGISTRY_PAYLOAD_BUILD_FAILED")
+
+        state["registry_mutation_attempted"] = True
+        state["mutation_may_have_occurred"] = True
+        try:
+            await upsert_record(**upsert_payload)
+        except Exception as exc:
+            _log_reopen_case_failure("REGISTRY_UPSERT_FAILED", exc)
+            state["partial"] = True
+            state["changed"] = None
+            state["reopened"] = None
+            return _failure("REGISTRY_UPSERT_FAILED")
+    else:
+        state["changed"] = False
+        state["reopened"] = False
+
+    try:
+        raw_case_record_after = await fetch_record(
+            case_id=canonical_case_id,
+            repo_root=str(active_repo_path),
+            project_name=active_project_name,
+        )
+    except Exception as exc:
+        _log_reopen_case_failure("REGISTRY_READBACK_FAILED", exc)
+        state["partial"] = True
+        if decision.transition_required:
+            state["changed"] = None
+            state["reopened"] = None
+        return _failure("REGISTRY_READBACK_FAILED")
+
+    case_record_after = (
+        _normalize_reopen_registry_record(raw_case_record_after)
+        if raw_case_record_after is not None
+        else None
+    )
+    if not _reopen_readback_matches(
+        before=before_snapshot,
+        after=case_record_after,
+        target_status=decision.target_status,
+        transition_required=decision.transition_required,
+    ):
+        state["partial"] = True
+        if decision.transition_required:
+            state["changed"] = None
+            state["reopened"] = None
+        return _failure("REGISTRY_READBACK_MISMATCH")
+
+    state["registry_status_after"] = decision.target_status
+    state["registry_readback_verified"] = True
+    state["mutation_may_have_occurred"] = False
+    state["changed"] = decision.transition_required
+    state["reopened"] = decision.transition_required
+
+    completed_metadata = {
+        **audit_metadata,
+        "case_event": "case_reopen_completed",
+        "registry_status_after": decision.target_status,
+        "registry_readback_verified": True,
+        "requested_event_id": requested_event_id,
+    }
+    completed_event_id = await _append_reopen_case_audit(
+        agent=agent,
+        event_name="case_reopen_completed",
+        metadata=completed_metadata,
+        error_code="AUDIT_COMPLETION_FAILED",
+    )
+    if completed_event_id is None:
+        state["partial"] = True
+        return _failure("AUDIT_COMPLETION_FAILED")
+    state["completed_event_id"] = completed_event_id
+
+    return _build_reopen_case_response(
+        ok=True,
+        mode=state["mode"],
+        case_id=state["case_id"],
+        case_type=state["case_type"],
+        partial=False,
+        failure_stage=None,
+        error_code=None,
+        message=(
+            _REOPEN_CASE_SUCCESS_MESSAGES["changed"]
+            if decision.transition_required
+            else _REOPEN_CASE_SUCCESS_MESSAGES["idempotent"]
+        ),
+        changed=state["changed"],
+        reopened=state["reopened"],
+        idempotent=state["idempotent"],
+        target_status=state["target_status"],
+        report_status=state["report_status"],
+        registry_status_before=state["registry_status_before"],
+        registry_status_after=state["registry_status_after"],
+        registry_mutation_attempted=state["registry_mutation_attempted"],
+        registry_readback_verified=state["registry_readback_verified"],
+        mutation_may_have_occurred=state["mutation_may_have_occurred"],
+        requested_event_id=state["requested_event_id"],
+        completed_event_id=state["completed_event_id"],
+        active_repo_verified=state["active_repo_verified"],
+        active_project_verified=state["active_project_verified"],
+        record_found=state["record_found"],
+        identity_verified=state["identity_verified"],
+        next_step="",
+    )
 
 
 def _unwrap_result(result: Any) -> Dict[str, Any]:
@@ -84,8 +1344,38 @@ def _unwrap_result(result: Any) -> Dict[str, Any]:
     return {"ok": False, "error": "Could not unwrap result"}
 
 
+def _case_id_directory_exists(
+    repo_root: Path, candidate_case_id: str, suffix: str
+) -> bool:
+    """Return True if a report directory already owns ``candidate_case_id``.
+
+    Report directories are named ``{date}_{slug}`` where ``slug`` is the case ID,
+    so collision detection is an EXACT directory-name suffix match (F8). This
+    reads directory NAMES only — never report bodies — so the per-allocation cost
+    is bounded by the number of report directories and independent of report file
+    size. A bare exact-name match (``slug`` only) is also honoured for resilience
+    against any non-date-prefixed layout.
+    """
+    docs_root = repo_root / "docs"
+    for section in (docs_root / "bugs", docs_root / "security"):
+        if not section.exists():
+            continue
+        # ``*/*`` mirrors the report layout ``{category}/{date}_{slug}`` without
+        # touching ``report.md`` contents.
+        for report_dir in section.glob("*/*"):
+            try:
+                if not report_dir.is_dir():
+                    continue
+            except OSError:
+                continue
+            name = report_dir.name
+            if name.endswith(suffix) or name == candidate_case_id:
+                return True
+    return False
+
+
 def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
-    """Generate a case ID for project mode by scanning recent entries.
+    """Generate a case ID for project mode using a repo-scoped atomic counter.
 
     Args:
         kind: "BUG" or "SEC"
@@ -97,39 +1387,242 @@ def _next_case_id_for_project(kind: str, result: Dict[str, Any]) -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     prefix = f"{kind}-{today}-"
 
-    # Try to scan the log file for existing case IDs with this prefix
-    last_seq = 0
     paths = result.get("paths", [])
     primary_path = result.get("path")
     if primary_path:
         paths = [primary_path] + [p for p in paths if p != primary_path]
 
-    case_id_pattern = re.compile(rf"{re.escape(prefix)}(\d+)")
-
+    project_dir: Optional[Path] = None
     for log_path in paths:
         try:
-            from pathlib import Path
-            path = Path(log_path)
-            if not path.exists():
-                continue
-            # Read last 64KB to find recent case IDs
-            size = path.stat().st_size
-            read_size = min(size, 65536)
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                if size > read_size:
-                    f.seek(size - read_size)
-                content = f.read()
-                for match in case_id_pattern.finditer(content):
-                    seq = int(match.group(1))
-                    if seq > last_seq:
-                        last_seq = seq
+            candidate = Path(log_path).resolve().parent
+            if candidate.exists() and candidate.is_dir():
+                project_dir = candidate
+                break
         except Exception:
             continue
 
-    return f"{prefix}{last_seq + 1:04d}"
+    if project_dir is None:
+        raise RuntimeError(
+            "case-id allocation failed: unable to resolve project directory from append_entry result paths"
+        )
+
+    repo_root = project_dir
+    for parent in project_dir.parents:
+        expected = parent / ".scribe" / "docs" / "dev_plans" / project_dir.name
+        try:
+            if expected.resolve() == project_dir:
+                repo_root = parent
+                break
+        except Exception:
+            continue
+
+    counter_dir = repo_root / ".scribe" if repo_root != project_dir else project_dir
+    counter_dir.mkdir(parents=True, exist_ok=True)
+    counter_file = counter_dir / ".sentinel_case_id_counters.json"
+    lock_file = counter_dir / ".sentinel_case_id_counters.lock"
+    lock_fd: Optional[int] = None
+    deadline = time.monotonic() + 2.0
+
+    while True:
+        try:
+            lock_fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "case-id allocation failed: timeout acquiring counter lock"
+                )
+            time.sleep(0.01)
+        except Exception as exc:
+            raise RuntimeError(
+                f"case-id allocation failed: lock acquisition error: {exc}"
+            ) from exc
+
+    try:
+        counters: Dict[str, Dict[str, int]] = {}
+        if counter_file.exists():
+            try:
+                import json
+
+                loaded = json.loads(counter_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"case-id allocation failed: unable to read persisted counter state: {exc}"
+                ) from exc
+            if not isinstance(loaded, dict):
+                raise RuntimeError(
+                    "case-id allocation failed: persisted counter state is malformed (expected JSON object)"
+                )
+            counters = loaded
+
+        day_counters = counters.get(today)
+        if day_counters is None:
+            day_counters = {}
+            counters[today] = day_counters
+        elif not isinstance(day_counters, dict):
+            raise RuntimeError(
+                "case-id allocation failed: persisted counter state is malformed "
+                f"(expected object at date bucket '{today}')"
+            )
+
+        for counter_kind in ("BUG", "SEC"):
+            if counter_kind not in day_counters:
+                continue
+            persisted_value = day_counters[counter_kind]
+            if (
+                not isinstance(persisted_value, int)
+                or isinstance(persisted_value, bool)
+                or persisted_value < 0
+            ):
+                raise RuntimeError(
+                    "case-id allocation failed: persisted counter state is malformed "
+                    f"(expected non-negative integer at date bucket '{today}' for kind '{counter_kind}')"
+                )
+
+        persisted_seq = day_counters.get(kind, 0)
+        if (
+            not isinstance(persisted_seq, int)
+            or isinstance(persisted_seq, bool)
+            or persisted_seq < 0
+        ):
+            raise RuntimeError(
+                "case-id allocation failed: persisted counter state is malformed "
+                f"(expected non-negative integer at date bucket '{today}' for kind '{kind}')"
+            )
+        # Uniqueness check (F8): the atomic counter is the allocator. Report
+        # directories are named ``{date}_{slug}`` where ``slug == case_id``, so a
+        # collision is an EXACT directory-name suffix match — never full-text body
+        # content. The previous implementation read every report body under this
+        # lock (O(reports x filesize) per allocation) and false-positived when a
+        # case ID was quoted in another report (e.g. a cross-reference). Comparing
+        # directory names only keeps the per-allocation cost bounded by the report
+        # count and independent of report file size.
+        next_seq = persisted_seq + 1
+        while True:
+            candidate_case_id = f"{prefix}{next_seq:04d}"
+            suffix = f"_{candidate_case_id}"
+            if not _case_id_directory_exists(repo_root, candidate_case_id, suffix):
+                break
+            next_seq += 1
+
+        day_counters[kind] = next_seq
+
+        import json
+
+        tmp_file = counter_file.with_suffix(f"{counter_file.suffix}.tmp")
+        tmp_file.write_text(json.dumps(counters, sort_keys=True), encoding="utf-8")
+        tmp_file.replace(counter_file)
+
+        return f"{prefix}{next_seq:04d}"
+    finally:
+        try:
+            if lock_fd is not None:
+                os.close(lock_fd)
+        finally:
+            try:
+                lock_file.unlink()
+            except Exception:
+                pass
 
 
-def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[str, Any]]) -> str:
+def _preview_case_id_for_project(kind: str, context: Any) -> str:
+    """Compute next case ID without mutating state.
+
+    This preview path reads persisted counter/docs state but does not write counters,
+    append entries, or create documents.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    prefix = f"{kind}-{today}-"
+
+    repo_root_raw = getattr(context, "repo_root", None)
+    if not isinstance(repo_root_raw, str) or not repo_root_raw.strip():
+        raise RuntimeError(
+            "case-id preview failed: missing repo_root in execution context"
+        )
+    repo_root = Path(repo_root_raw).resolve()
+
+    affected_projects = getattr(context, "affected_dev_projects", None)
+    project_name = (
+        affected_projects[0]
+        if isinstance(affected_projects, list)
+        and affected_projects
+        and isinstance(affected_projects[0], str)
+        else None
+    )
+
+    if project_name:
+        project_dir = (
+            repo_root / ".scribe" / "docs" / "dev_plans" / project_name
+        ).resolve()
+        if project_dir.exists() and project_dir.is_dir():
+            counter_dir = repo_root / ".scribe"
+        else:
+            counter_dir = repo_root / ".scribe"
+    else:
+        counter_dir = repo_root / ".scribe"
+
+    counter_file = counter_dir / ".sentinel_case_id_counters.json"
+    persisted_seq = 0
+    if counter_file.exists():
+        try:
+            import json
+
+            loaded = json.loads(counter_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(
+                f"case-id preview failed: unable to read persisted counter state: {exc}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError(
+                "case-id preview failed: persisted counter state is malformed (expected JSON object)"
+            )
+        day_counters = loaded.get(today, {})
+        if not isinstance(day_counters, dict):
+            raise RuntimeError(
+                "case-id preview failed: persisted counter state is malformed "
+                f"(expected object at date bucket '{today}')"
+            )
+        persisted_value = day_counters.get(kind, 0)
+        if (
+            not isinstance(persisted_value, int)
+            or isinstance(persisted_value, bool)
+            or persisted_value < 0
+        ):
+            raise RuntimeError(
+                "case-id preview failed: persisted counter state is malformed "
+                f"(expected non-negative integer at date bucket '{today}' for kind '{kind}')"
+            )
+        persisted_seq = persisted_value
+
+    next_seq = persisted_seq + 1
+    while True:
+        candidate_case_id = f"{prefix}{next_seq:04d}"
+        duplicate_found = False
+        docs_root = repo_root / "docs"
+        for candidate in (
+            docs_root / "bugs",
+            docs_root / "security",
+        ):
+            if not candidate.exists():
+                continue
+            for report_path in candidate.glob("*/*/report.md"):
+                try:
+                    if candidate_case_id in report_path.read_text(encoding="utf-8"):
+                        duplicate_found = True
+                        break
+                except OSError:
+                    continue
+            if duplicate_found:
+                break
+        if not duplicate_found:
+            return candidate_case_id
+        next_seq += 1
+
+
+def _build_descriptive_message(
+    event_type: Optional[str], data: Optional[Dict[str, Any]]
+) -> str:
     """Build a human-readable message from event_type and data.
 
     Instead of terse messages like "scope_violation", creates descriptive ones like:
@@ -173,7 +1666,521 @@ def _build_descriptive_message(event_type: Optional[str], data: Optional[Dict[st
     return event_type
 
 
-@app.tool(**additive_local_tool(title="Append Sentinel Event", tags=("sentinel", "logs", "write")))
+async def _resolve_link_fix_execution_reference(
+    context: Any, execution_id: Optional[str]
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    alias_value = execution_id if isinstance(execution_id, str) else ""
+    alias_token = alias_value.strip().lower()
+    if alias_token in {"", "current", "active", "session"}:
+        authoritative = resolve_context_authoritative_session_key(context)
+        if isinstance(authoritative, str) and authoritative.strip():
+            execution_id = authoritative.strip()
+        else:
+            execution_id = str(getattr(context, "execution_id", "") or "").strip()
+    if not isinstance(execution_id, str) or not execution_id.strip():
+        return (
+            None,
+            "execution_id is required and no active execution/session context is available",
+        )
+
+    scope = build_reference_scope(context)
+    resolution = resolve_reference(execution_id, "execution_id", scope)
+    if (
+        not resolution.ok
+        and resolution.compatibility_hint
+        != "potential_entry_reference_requires_storage_lookup"
+    ):
+        return None, (
+            "execution_id does not match active execution context "
+            "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
+        )
+
+    if resolution.ok:
+        if resolution.source == "runtime_transport_session":
+            return None, (
+                "execution_id does not match active execution context "
+                "(transport session identifiers are not accepted; use current/parent execution_id, "
+                "authoritative session key, or a Scribe entry id)"
+            )
+        if resolution.kind not in {
+            "execution",
+            "parent_execution",
+            "session",
+            "authoritative_session_key",
+            "entry",
+        }:
+            return None, (
+                "execution_id does not match active execution context "
+                "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
+            )
+        return {
+            "raw": execution_id,
+            "kind": resolution.kind,
+            "source": resolution.source,
+            "value": resolution.resolved_value or execution_id,
+            "entry_proven": False,
+        }, None
+
+    repo_root, project_name, _ownership_meta = _active_repo_project_authority(
+        context, None
+    )
+    backend = getattr(server_module, "storage_backend", None)
+    if backend is None or not repo_root or not project_name:
+        return None, (
+            "execution_id does not match active execution context "
+            "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
+        )
+    repo_id = backend.compute_repo_id(repo_root)
+    entry = await backend.fetch_entry_by_id(
+        entry_id=execution_id.strip(),
+        repo_id=repo_id,
+        project_name=project_name,
+    )
+    if not isinstance(entry, dict):
+        return None, (
+            "execution_id does not match active execution context "
+            "(must be current/parent execution_id, the active session key, or a Scribe entry id)"
+        )
+    return {
+        "raw": execution_id,
+        "kind": "entry",
+        "source": "storage_scope_lookup",
+        "value": execution_id.strip(),
+        "entry_proven": True,
+        "scope_repo_id": repo_id,
+        "scope_project_name": project_name,
+    }, None
+
+
+def _active_repo_project_authority(
+    context: Any, fallback_project_name: Optional[str] = None
+) -> tuple[Optional[str], Optional[str], dict[str, Any]]:
+    resolved_scope = getattr(context, "resolved_scope", None)
+    resolved_repo_root = getattr(resolved_scope, "repo_root", None)
+    resolved_project_name = getattr(resolved_scope, "project_name", None)
+    repo_root = (
+        resolved_repo_root
+        if isinstance(resolved_repo_root, str) and resolved_repo_root.strip()
+        else getattr(context, "repo_root", None)
+    )
+    project_name = (
+        resolved_project_name
+        if isinstance(resolved_project_name, str) and resolved_project_name.strip()
+        else fallback_project_name
+    )
+
+    provenance = getattr(resolved_scope, "provenance", None)
+    ownership_meta = {
+        "trust_level": getattr(resolved_scope, "trust_level", None),
+        "resolution_source": getattr(resolved_scope, "resolution_source", None),
+        "repo_root_provenance": getattr(provenance, "repo_root", None),
+        "project_name_provenance": getattr(provenance, "project_name", None),
+    }
+    return (
+        str(repo_root).strip()
+        if isinstance(repo_root, str) and repo_root.strip()
+        else None,
+        str(project_name).strip()
+        if isinstance(project_name, str) and project_name.strip()
+        else None,
+        ownership_meta,
+    )
+
+
+async def _register_case_registry_ownership(
+    *,
+    context: Any,
+    case_id: str,
+    case_type: str,
+    project_name: str,
+    doc_type: str,
+    doc_name: str,
+    doc_path: str,
+    title: str,
+    status: str,
+    severity: Optional[str],
+    source_tool: str,
+) -> tuple[bool, Optional[str], Optional[dict[str, Any]]]:
+    backend = getattr(server_module, "storage_backend", None)
+    if backend is None or not hasattr(backend, "upsert_case_registry_record"):
+        return False, "shared case registry backend is unavailable", None
+
+    repo_root, authority_project_name, ownership_meta = _active_repo_project_authority(
+        context, fallback_project_name=project_name
+    )
+    if not repo_root:
+        return (
+            False,
+            "unable to resolve authoritative repo_root for case registry ownership",
+            None,
+        )
+    if not authority_project_name:
+        return (
+            False,
+            "unable to resolve authoritative project_name for case registry ownership",
+            None,
+        )
+
+    execution_meta = {
+        "execution_id": getattr(context, "execution_id", None),
+        "parent_execution_id": getattr(context, "parent_execution_id", None),
+        "authoritative_session_key": getattr(
+            context, "authoritative_session_key", None
+        ),
+        "stable_session_id": getattr(context, "stable_session_id", None),
+    }
+    existing_record = None
+    fetch_record = getattr(backend, "fetch_case_registry_record", None)
+    if callable(fetch_record):
+        try:
+            existing_record = await fetch_record(
+                case_id=case_id,
+                repo_root=repo_root,
+                project_name=authority_project_name,
+            )
+        except Exception:
+            existing_record = None
+
+    upsert_kwargs = doc_utils.build_case_registry_upsert_kwargs(
+        existing_record=existing_record,
+        overrides={
+            "case_id": case_id,
+            "case_type": case_type,
+            "project_name": authority_project_name,
+            "repo_root": repo_root,
+            "doc_type": doc_type,
+            "doc_name": doc_name,
+            "doc_path": doc_path,
+            "title": title,
+            "status": status,
+            "severity": severity,
+            "source_tool": source_tool,
+        },
+        metadata_overrides={
+            "ownership": ownership_meta,
+            "execution_provenance": execution_meta,
+            "registration_event": "case_opened",
+        },
+    )
+    if upsert_kwargs is None:
+        return (
+            False,
+            "unable to build case registry payload for ownership registration",
+            None,
+        )
+    await backend.upsert_case_registry_record(**upsert_kwargs)
+    return (
+        True,
+        None,
+        {
+            "case_id": upsert_kwargs["case_id"],
+            "case_type": upsert_kwargs["case_type"],
+            "doc_name": upsert_kwargs["doc_name"],
+            "doc_path": upsert_kwargs["doc_path"],
+            "project_name": upsert_kwargs["project_name"],
+        },
+    )
+
+
+async def _completeness_gate_blockers(
+    *,
+    manage_docs_tool: Any,
+    agent: str,
+    doc_name: str,
+    landing_status: str,
+) -> Optional[list[str]]:
+    """Return blocking-warning messages if a fix-terminal close is incomplete.
+
+    F5 enforcement: closing a case (fix-terminal ``landing_status``) is only
+    legitimate once the report has real content in its required sections. The
+    completeness signal is read from the canonical content-quality reader —
+    ``manage_docs(action="quality_check")`` — not a parallel parser. An
+    incomplete/scaffold report (``[UNFILLED]`` placeholders in
+    symptoms/root_cause/fix) surfaces as ``quality_status == "fail"`` with
+    ``readiness_blockers`` (e.g. ``SCF_PLACEHOLDER_BRACKET``).
+
+    Returns:
+        - ``None`` when the close is allowed: the transition is not fix-terminal,
+          the report doc is unknown, the quality reader is inconclusive (soft
+          gate — fail open so a transient/unavailable reader never traps a real
+          close), or the report passes.
+        - a non-empty ``list[str]`` of teaching messages when the close must be
+          refused because the quality reader affirmatively reports blockers.
+    """
+    # Only fix-terminal closes are gated. Non-fix terminal statuses
+    # (wontfix/duplicate/false_positive/mitigated) and non-terminal statuses
+    # (proposed/open/...) leave a case in a state that does not assert "this was
+    # fixed", so a complete fix narrative is not required.
+    if doc_utils.resolved_case_close_status(landing_status) != "closed":
+        return None
+
+    target_doc = str(doc_name or "").strip()
+    if not target_doc:
+        # Without a resolvable report doc there is nothing to read; do not trap
+        # the close on a missing reference (soft gate).
+        return None
+
+    try:
+        quality_result = await manage_docs_tool(
+            agent=agent,
+            action="quality_check",
+            doc_name=target_doc,
+            dry_run=True,
+        )
+    except Exception:
+        # The quality reader is advisory at this boundary; an exception inside it
+        # must not raise out of link_fix (MCP tools return error dicts, never
+        # raise) and must not block a legitimate close.
+        return None
+
+    if not isinstance(quality_result, dict):
+        return None
+
+    # Affirmative-failure only: block when the reader explicitly reports a failing
+    # quality status with readiness blockers. Anything inconclusive (no
+    # quality_status, ok=False, pass/warn) falls open.
+    if str(quality_result.get("quality_status") or "").lower() != "fail":
+        return None
+
+    blockers = quality_result.get("readiness_blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return None
+
+    messages: list[str] = []
+    for blocker in blockers[:5]:
+        if not isinstance(blocker, dict):
+            continue
+        code = str(blocker.get("code") or "").strip()
+        detail = str(
+            blocker.get("message") or blocker.get("suggested_repair") or ""
+        ).strip()
+        if code and detail:
+            messages.append(f"{code}: {detail}")
+        elif code:
+            messages.append(code)
+        elif detail:
+            messages.append(detail)
+    if not messages:
+        # quality_status=="fail" with opaque blockers — still a real failure.
+        messages.append(
+            "Report has unresolved scaffold/placeholder content in required sections."
+        )
+    return messages
+
+
+async def _register_case_registry_fix_link(
+    *,
+    case_record: Any,
+    context: Any,
+    case_id: str,
+    execution_id: str,
+    artifact_ref: str,
+    normalized_execution_ref: Optional[dict[str, Any]] = None,
+    normalized_artifact_ref: Optional[dict[str, Any]] = None,
+    landing_status: str,
+    doc_binding: CanonicalDocBinding | None = None,
+) -> tuple[bool, Optional[str], Any | None]:
+    backend = getattr(server_module, "storage_backend", None)
+    if backend is None or not hasattr(backend, "upsert_case_registry_record"):
+        return False, "shared case registry backend is unavailable", None
+
+    execution_meta = {
+        "execution_id": getattr(context, "execution_id", None),
+        "parent_execution_id": getattr(context, "parent_execution_id", None),
+        "authoritative_session_key": getattr(
+            context, "authoritative_session_key", None
+        ),
+        "stable_session_id": getattr(context, "stable_session_id", None),
+    }
+    # Canonical lifecycle vocabulary shared with list_open_cases (doc_utils). A
+    # non-fix terminal status (wontfix/duplicate/false_positive/mitigated) is
+    # preserved as the recorded case status so the closure reason survives; a fix
+    # terminal status collapses to "closed"; a non-terminal status leaves the case
+    # open (close_status is None).
+    close_status = doc_utils.resolved_case_close_status(landing_status)
+    metadata_overrides: dict[str, Any] = {
+        "execution_provenance": execution_meta,
+        "fix_link": {
+            "execution_id": execution_id,
+            "artifact_ref": artifact_ref,
+            "execution_ref": normalized_execution_ref or {"value": execution_id},
+            "artifact_ref_meta": normalized_artifact_ref or {"value": artifact_ref},
+            "landing_status": landing_status,
+        },
+    }
+    if doc_binding is not None:
+        metadata_overrides["doc_binding"] = doc_binding_to_metadata(doc_binding)
+
+    upsert_kwargs = doc_utils.build_case_registry_upsert_kwargs(
+        existing_record=case_record,
+        overrides={"case_id": case_id, "status": close_status},
+        metadata_overrides=metadata_overrides,
+    )
+    if upsert_kwargs is None:
+        return False, "unable to build case registry payload for fix link update", None
+    upserted_record = await backend.upsert_case_registry_record(**upsert_kwargs)
+    return True, None, upserted_record
+
+
+async def _fetch_case_registry_record_after_fix(
+    *,
+    context: Any,
+    case_id: str,
+) -> Any | None:
+    backend = getattr(server_module, "storage_backend", None)
+    if backend is None or not hasattr(backend, "fetch_case_registry_record"):
+        return None
+    active_repo_root, _, _ = _active_repo_project_authority(context)
+    active_project_name = getattr(
+        getattr(context, "resolved_scope", None), "project_name", None
+    )
+    try:
+        return await backend.fetch_case_registry_record(
+            case_id=case_id,
+            repo_root=active_repo_root,
+            project_name=active_project_name,
+        )
+    except Exception:
+        return None
+
+
+def _doc_binding_for_case_record(
+    case_record: Any, *, case_id: str
+) -> CanonicalDocBinding | None:
+    metadata = getattr(case_record, "metadata", None)
+    doc_path = str(getattr(case_record, "doc_path", "") or "")
+    binding = doc_binding_from_metadata(
+        metadata if isinstance(metadata, dict) else None,
+        fallback_case_id=case_id,
+        fallback_doc_path=doc_path or None,
+    )
+    if binding is not None:
+        return binding
+    if not doc_path:
+        return None
+    return build_canonical_doc_binding(
+        case_id,
+        doc_path,
+        {},
+        preferred_doc_name=str(getattr(case_record, "doc_name", "") or case_id),
+    )
+
+
+def _apply_lifecycle_readback(
+    response: dict[str, Any],
+    lifecycle: Any,
+    *,
+    preserve_next_step: bool = False,
+) -> None:
+    lifecycle_dict = lifecycle.to_dict()
+    response["lifecycle"] = dict(lifecycle_dict)
+    for field in (
+        "fix_link_recorded",
+        "case_closed",
+        "registry_status_before",
+        "registry_status_after",
+        "landing_status_terminal",
+        "closure_reason",
+        "doc_binding",
+        "last_fix_link",
+    ):
+        response[field] = lifecycle_dict[field]
+    if preserve_next_step:
+        return
+    next_step = str(lifecycle_dict.get("next_step") or "")
+    if lifecycle.case_closed:
+        response["next_step"] = "No follow-up required."
+        return
+    if lifecycle.fix_link_recorded:
+        next_step = (
+            f"{next_step} The fix link was recorded, but the case remains open; "
+            "use a terminal landing_status such as merged or resolved when closure is ready."
+        )
+        response["lifecycle"]["next_step"] = next_step
+    response["next_step"] = next_step
+
+
+def _case_record_for_lifecycle(
+    case_record: Any, *, fallback_status: str | None = None
+) -> Any:
+    if hasattr(case_record, "status"):
+        return case_record
+    return SimpleNamespace(
+        case_id=str(getattr(case_record, "case_id", "") or ""),
+        case_type=str(getattr(case_record, "case_type", "") or ""),
+        status=fallback_status,
+        metadata=getattr(case_record, "metadata", None),
+    )
+
+
+def _landing_status_for_lifecycle(
+    landing_status: str, current_status: str | None
+) -> str:
+    normalized = doc_utils.normalize_case_status(landing_status)
+    allowed_values = (
+        doc_utils.CASE_OPEN_STATUS_VALUES | doc_utils.CASE_CLOSED_STATUS_VALUES
+    )
+    if normalized in allowed_values:
+        return landing_status
+    normalized_current = doc_utils.normalize_case_status(current_status)
+    if normalized_current in doc_utils.CASE_OPEN_STATUS_VALUES:
+        return normalized_current
+    return "open"
+
+
+async def _load_and_authorize_case_registry_record(
+    *,
+    context: Any,
+    case_id: str,
+) -> tuple[Optional[Any], Optional[str]]:
+    backend = getattr(server_module, "storage_backend", None)
+    if backend is None or not hasattr(backend, "fetch_case_registry_record"):
+        return None, "shared case registry backend is unavailable"
+
+    active_repo_root, _, _ = _active_repo_project_authority(context)
+    if not active_repo_root:
+        return (
+            None,
+            "unable to resolve authoritative repo_root for case ownership validation",
+        )
+    active_project_name = getattr(
+        getattr(context, "resolved_scope", None), "project_name", None
+    )
+
+    case_record = await backend.fetch_case_registry_record(
+        case_id=case_id,
+        repo_root=active_repo_root,
+        project_name=active_project_name,
+    )
+    if case_record is None:
+        return None, (
+            f"case_id '{case_id}' is not registered in the shared case registry "
+            "for the active repo/project scope"
+        )
+
+    record_repo_root = str(getattr(case_record, "repo_root", "") or "").strip()
+    if not record_repo_root:
+        return (
+            None,
+            f"shared case registry record for '{case_id}' is missing repo ownership",
+        )
+
+    active_resolved = str(Path(active_repo_root).expanduser().resolve())
+    record_resolved = str(Path(record_repo_root).expanduser().resolve())
+    if active_resolved != record_resolved:
+        return None, (
+            "repo ownership mismatch for case_id "
+            f"'{case_id}' (active repo='{active_resolved}', case repo='{record_resolved}')"
+        )
+
+    return case_record, None
+
+
+@app.tool(
+    **additive_local_tool(
+        title="Append Sentinel Event", tags=("sentinel", "logs", "write")
+    )
+)
 async def append_event(
     agent: str,
     message: Optional[str] = None,
@@ -195,6 +2202,7 @@ async def append_event(
 
     if context.mode == "project":
         from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+
         payload_message = message
         if not payload_message and isinstance(data, dict):
             payload_message = data.get("message") or data.get("event") or None
@@ -242,6 +2250,7 @@ async def append_event(
         elif isinstance(items, str):
             try:
                 import json
+
                 parsed = json.loads(items)
                 if isinstance(parsed, list):
                     bulk_items = parsed
@@ -261,7 +2270,9 @@ async def append_event(
                 "status": entry.get("status"),
                 "emoji": entry.get("emoji"),
                 "agent": entry.get("agent"),
-                "meta": entry.get("meta") if isinstance(entry.get("meta"), dict) else None,
+                "meta": entry.get("meta")
+                if isinstance(entry.get("meta"), dict)
+                else None,
                 "timestamp_utc_override": entry.get("timestamp_utc"),
             }
             resolved_event_type = entry.get("status") or "info"
@@ -294,7 +2305,352 @@ async def append_event(
     return {"ok": True, "event_type": status or "info", "written_count": written}
 
 
-@app.tool(**additive_local_tool(title="Open Bug Case", tags=("bugs", "sentinel", "write")))
+# ---------------------------------------------------------------------------
+# Shared case-opening implementation (F4)
+#
+# ``open_bug`` and ``open_security`` were ~290 lines of near-duplicate logic
+# differing only in a handful of literals (case kind, status strings, default
+# severity, security flag, doc_type, anchor map, template field set). The
+# duplication doubled maintenance surface and, worse, ``open_security`` scored
+# completeness against the BUG field set — so any security-only field would be
+# silently mis-scored. ``_open_case`` is the single implementation both tools
+# call with their constants; completeness is scored against ``template_fields``
+# so the source is per-case-type.
+# ---------------------------------------------------------------------------
+async def _open_case(
+    *,
+    kind: str,
+    case_type: str,
+    doc_type: str,
+    doc_category: str,
+    report_artifact_type: str,
+    report_key: str,
+    label: str,
+    message_prefix: str,
+    append_status: str,
+    default_severity: str,
+    security_event: bool,
+    template_fields: list[str],
+    anchor_map: dict[str, str],
+    sentinel_event_type: str,
+    preview_tool_name: str,
+    open_tool_name: str,
+    agent: str,
+    title: str,
+    symptoms: str,
+    category: str,
+    affected_paths: Optional[list[str]] = None,
+    expected_behaviour: Optional[str] = None,
+    steps_to_reproduce: Optional[list[str]] = None,
+    root_cause: Optional[str] = None,
+    resolution_notes: Optional[str] = None,
+    severity: Optional[str] = None,
+    component: Optional[str] = None,
+    environment: Optional[str] = None,
+    customer_impact: Optional[str] = None,
+    preview: bool = False,
+) -> Dict[str, Any]:
+    """Open a BUG or SECURITY case. See ``open_bug``/``open_security`` for the
+    public contracts; this is their shared body keyed on ``kind`` constants."""
+    context = _get_context()
+    if not category or not category.strip():
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            warnings=["category is required"],
+            next_step=f"Provide a non-empty 'category' value and retry {open_tool_name}.",
+            error="category is required",
+        )
+
+    # Project mode: route through append_entry AND create a report doc.
+    if context.mode == "project":
+        if preview:
+            try:
+                case_id = _preview_case_id_for_project(kind, context)
+            except Exception as exc:
+                message = f"Failed to preview {kind} case ID: {exc}"
+                return _operator_envelope(
+                    ok=False,
+                    mode="project",
+                    warnings=[message],
+                    next_step="Verify execution context repo binding (repo_root/project scope) and retry preview.",
+                    error=message,
+                )
+            return _operator_envelope(
+                ok=True,
+                mode="project",
+                case_id=case_id,
+                next_step=f"Preview only. Run {open_tool_name} with preview=False to register and create docs.",
+                preview=True,
+            )
+
+        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
+        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
+
+        message = f"{message_prefix} {title}: {symptoms}"
+        meta: Dict[str, Any] = {
+            "case_type": case_type,
+            "title": title,
+            "symptoms": symptoms,
+            "affected_paths": affected_paths or [],
+            "landing_status": "proposed",
+        }
+        if security_event:
+            meta["security_event"] = "1"  # Triggers auto-tee to security log
+
+        result = await append_entry_tool(
+            message=message,
+            status=append_status,
+            agent=agent,
+            meta=meta,
+            format="structured",  # Returns plain dict, not MCP-wrapped
+        )
+
+        if not result.get("ok"):
+            message = str(result.get("error", "append_entry failed"))
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                warnings=[message],
+                next_step=f"Resolve append_entry failure and retry {open_tool_name}.",
+                error=message,
+            )
+
+        # Generate case ID after entry is written (so paths are resolvable).
+        try:
+            case_id = _next_case_id_for_project(kind, result)
+        except Exception as exc:
+            message = f"Failed to allocate {kind} case ID: {exc}"
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                warnings=[message],
+                next_step=f"Validate repo docs/counter state and retry {open_tool_name}.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        # Ensure fresh case IDs are immediately queryable by bare ID.
+        registration_meta: Dict[str, Any] = {
+            "case_type": case_type,
+            "case_id": case_id,
+            "registration_event": "case_opened",
+            "title": title,
+        }
+        if security_event:
+            registration_meta["security_event"] = "1"
+        registration_result = await append_entry_tool(
+            message=f"[CASE REGISTERED] {case_id}",
+            status=append_status,
+            agent=agent,
+            meta=registration_meta,
+            format="structured",
+        )
+        if not registration_result.get("ok"):
+            message = str(
+                registration_result.get(
+                    "error", "case registration append_entry failed"
+                )
+            )
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step="Fix registration append failure so case_id is queryable, then retry.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        # Build metadata (used for both doc creation and completeness scoring).
+        case_metadata = {
+            "doc_type": doc_type,
+            "category": category,
+            "slug": case_id,
+            "title": title,
+            "case_id": case_id,
+            "symptoms": symptoms,
+            "summary_long": symptoms,  # Map to template field
+            "actual_behavior": symptoms,  # Map to template field
+            "affected_paths": affected_paths or [],
+            "affected_areas": affected_paths or [],  # Map to template field
+            "reporter": agent,  # Map to template field
+            "status": "INVESTIGATING",  # Default status
+            "severity": severity if severity is not None else default_severity,
+            # NEW parameter mappings (use [UNFILLED] for missing values):
+            "expected_behavior": expected_behaviour
+            if expected_behaviour is not None
+            else "[UNFILLED]",
+            "reproduction_steps": steps_to_reproduce
+            if steps_to_reproduce is not None
+            else ["[UNFILLED]"],
+            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
+            "immediate_actions": resolution_notes
+            if resolution_notes is not None
+            else "[UNFILLED]",
+            "component": component if component is not None else "[UNFILLED]",
+            "environment": environment if environment is not None else "[UNFILLED]",
+            "customer_impact": customer_impact
+            if customer_impact is not None
+            else "[UNFILLED]",
+        }
+
+        doc_result = await manage_docs_tool(
+            agent=agent,
+            action="create",
+            metadata=case_metadata,
+        )
+
+        # Check if document creation succeeded
+        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
+            error_msg = (
+                doc_result.get("error", "Unknown error")
+                if isinstance(doc_result, dict)
+                else "manage_docs returned non-dict"
+            )
+            message = f"{label} report document creation failed: {error_msg}"
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step=f"Fix manage_docs(create) failure and retry {open_tool_name} for this case.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        registry_result = await _register_case_registry_ownership(
+            context=context,
+            case_id=case_id,
+            case_type=case_type,
+            project_name=str(result.get("project_name", "")),
+            doc_type=doc_type,
+            doc_name=case_id,
+            doc_path=str(doc_result.get("path", "")),
+            title=title,
+            status="open",
+            severity=case_metadata.get("severity"),
+            source_tool=open_tool_name,
+        )
+        registry_ok = registry_result[0]
+        registry_error = registry_result[1]
+        case_registry_summary = registry_result[2] if len(registry_result) > 2 else None
+        if not registry_ok:
+            message = f"Case registry ownership registration failed: {registry_error}"
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step="Ensure project ownership context is bound and shared registry backend is available.",
+                error=message,
+                entry_id=str(result.get("id", "")),
+                path=str(result.get("path", "")),
+                project_name=str(result.get("project_name", "")),
+            )
+
+        # Calculate completeness score against the case-type-specific field set.
+        filled_sections = []
+        unfilled_sections = []
+        for field in template_fields:
+            value = case_metadata.get(field)
+            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
+                filled_sections.append(field)
+            else:
+                unfilled_sections.append(field)
+
+        total_fields = len(template_fields)
+        filled_count = len(filled_sections)
+        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
+
+        report_path = str(doc_result.get("path", ""))
+        return _operator_envelope(
+            ok=True,
+            mode="project",
+            case_id=str(case_id),
+            artifacts=[{"type": report_artifact_type, "ref": report_path}],
+            next_step=(
+                f"Use manage_docs replace_section with doc_name='{case_id}' to complete remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, anchor_map, 3)}."
+            ),
+            entry_id=str(result.get("id", "")),
+            path=str(result.get("path", "")),
+            project_name=str(result.get("project_name", "")),
+            doc_name=str(case_id),
+            doc_path=report_path,
+            doc_category=doc_category,
+            case_registry=case_registry_summary
+            or {
+                "case_id": str(case_id),
+                "case_type": case_type,
+                "doc_name": str(case_id),
+                "doc_path": report_path,
+                "project_name": str(result.get("project_name", "")),
+            },
+            completeness={
+                "score": f"{filled_count}/{total_fields}",
+                "percentage": percentage,
+                "filled_sections": filled_sections,
+                "unfilled_sections": unfilled_sections,
+                "field_section_anchors": {
+                    field: anchor_map.get(field, "description")
+                    for field in unfilled_sections
+                },
+            },
+            action_required=(
+                f"{label} report {percentage}% complete. "
+                f"Use manage_docs(agent='{agent}', action='replace_section', "
+                f"doc_name='{case_id}', section='<section_anchor>', content='...') "
+                f"(doc_path '{report_path}' is also a governed alias) "
+                f"to fill remaining fields: "
+                f"{_format_unfilled_guidance(unfilled_sections, anchor_map, 5)}"
+            ),
+            **{report_key: report_path},
+        )
+
+    # Sentinel mode: original behavior
+    if preview:
+        sentinel_day = getattr(context, "sentinel_day", None)
+        if not isinstance(sentinel_day, str) or not sentinel_day.strip():
+            sentinel_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return _operator_envelope(
+            ok=True,
+            mode="sentinel",
+            case_id=f"{kind}-{sentinel_day}-PREVIEW",
+            next_step=f"Preview only. Run {open_tool_name} with preview=False to append sentinel case event.",
+            preview=True,
+        )
+
+    case_id = append_case_event(
+        context,
+        kind=kind,
+        event_type=sentinel_event_type,
+        data={
+            "title": title,
+            "symptoms": symptoms,
+            "affected_paths": affected_paths or [],
+            "landing_status": "proposed",
+        },
+        include_md=True,
+    )
+    return _operator_envelope(
+        ok=True,
+        mode="sentinel",
+        case_id=case_id,
+        next_step="Case opened in sentinel mode. Run link_fix when a fix artifact is ready.",
+    )
+
+
+@app.tool(
+    **additive_local_tool(title="Open Bug Case", tags=("bugs", "sentinel", "write")),
+    input_schema=_OPEN_BUG_INPUT_SCHEMA,
+)
 async def open_bug(
     agent: str,
     title: str,
@@ -310,6 +2666,7 @@ async def open_bug(
     component: Optional[str] = None,
     environment: Optional[str] = None,
     customer_impact: Optional[str] = None,
+    preview: bool = False,
 ) -> Dict[str, Any]:
     """Open a BUG case with per-day stable ID and create a detailed bug report document.
 
@@ -328,144 +2685,46 @@ async def open_bug(
         environment: Environment where bug occurs (local/staging/production)
         customer_impact: Description of impact on users/customers
     """
-    if not category or not category.strip():
-        return {"ok": False, "error": "category is required"}
-
-    context = _get_context()
-
-    # Project mode: route through append_entry with bug status AND create bug report doc
-    if context.mode == "project":
-        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
-        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
-
-        # Generate case ID first so we can use it in the document
-        # We'll use a temporary result to get paths, then generate ID
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        case_id_prefix = f"BUG-{today}-"
-
-        message = f"[BUG] {title}: {symptoms}"
-        meta = {
-            "case_type": "bug",
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        }
-
-        result = await append_entry_tool(
-            message=message,
-            status="bug",
-            agent=agent,
-            meta=meta,
-            format="structured",  # Returns plain dict, not MCP-wrapped
-        )
-
-        if not result.get("ok"):
-            return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
-
-        # Generate case ID after entry is written (so we can scan for existing IDs)
-        case_id = _next_case_id_for_project("BUG", result)
-
-        # Create detailed bug report document
-        # Build metadata dict (used for both doc creation and completeness scoring)
-        bug_metadata = {
-            "doc_type": "bug",
-            "category": category,
-            "slug": case_id,
-            "title": title,
-            "case_id": case_id,
-            "symptoms": symptoms,
-            "summary_long": symptoms,  # Map to template field
-            "actual_behavior": symptoms,  # Map to template field
-            "affected_paths": affected_paths or [],
-            "affected_areas": affected_paths or [],  # Map to template field
-            "reporter": agent,  # Map to template field
-            "status": "INVESTIGATING",  # Default status
-            "severity": severity if severity is not None else "medium",  # Default severity
-            # NEW parameter mappings (use [UNFILLED] for missing values):
-            "expected_behavior": expected_behaviour if expected_behaviour is not None else "[UNFILLED]",
-            "reproduction_steps": steps_to_reproduce if steps_to_reproduce is not None else ["[UNFILLED]"],
-            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
-            "immediate_actions": resolution_notes if resolution_notes is not None else "[UNFILLED]",
-            "component": component if component is not None else "[UNFILLED]",
-            "environment": environment if environment is not None else "[UNFILLED]",
-            "customer_impact": customer_impact if customer_impact is not None else "[UNFILLED]",
-        }
-        
-        doc_result = await manage_docs_tool(
-            agent=agent,
-            action="create",
-            metadata=bug_metadata,
-        )
-
-        # Check if document creation succeeded
-        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
-            error_msg = doc_result.get("error", "Unknown error") if isinstance(doc_result, dict) else "manage_docs returned non-dict"
-            return {
-                "ok": False,
-                "error": f"Bug report document creation failed: {error_msg}",
-                "case_id": str(case_id),
-                "entry_id": str(result.get("id", "")),
-                "path": str(result.get("path", "")),
-                "project_name": str(result.get("project_name", "")),
-            }
-
-        # Calculate completeness score
-        filled_sections = []
-        unfilled_sections = []
-        
-        for field in _BUG_TEMPLATE_FIELDS:
-            value = bug_metadata.get(field)
-            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
-                filled_sections.append(field)
-            else:
-                unfilled_sections.append(field)
-        
-        total_fields = len(_BUG_TEMPLATE_FIELDS)
-        filled_count = len(filled_sections)
-        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
-
-        return {
-            "ok": True,
-            "case_id": str(case_id),
-            "entry_id": str(result.get("id", "")),
-            "path": str(result.get("path", "")),
-            "project_name": str(result.get("project_name", "")),
-            "bug_report": str(doc_result.get("path", "")),
-            # NEW completeness metadata:
-            "completeness": {
-                "score": f"{filled_count}/{total_fields}",
-                "percentage": percentage,
-                "filled_sections": filled_sections,
-                "unfilled_sections": unfilled_sections,
-            },
-            # UPDATED action_required with specific guidance:
-            "action_required": (
-                f"Bug report {percentage}% complete. "
-                f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_id>', content='...') "
-                f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
-                + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
-            ),
-        }
-
-    # Sentinel mode: original behavior
-    case_id = append_case_event(
-        context,
+    return await _open_case(
         kind="BUG",
-        event_type="bug_opened",
-        data={
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        },
-        include_md=True,
+        case_type="bug",
+        doc_type="bug",
+        doc_category="bugs",
+        report_artifact_type="bug_report",
+        report_key="bug_report",
+        label="Bug",
+        message_prefix="[BUG]",
+        append_status="bug",
+        default_severity="medium",
+        security_event=False,
+        template_fields=_BUG_TEMPLATE_FIELDS,
+        anchor_map=_BUG_FIELD_SECTION_ANCHORS,
+        sentinel_event_type="bug_opened",
+        preview_tool_name="open_bug",
+        open_tool_name="open_bug",
+        agent=agent,
+        title=title,
+        symptoms=symptoms,
+        category=category,
+        affected_paths=affected_paths,
+        expected_behaviour=expected_behaviour,
+        steps_to_reproduce=steps_to_reproduce,
+        root_cause=root_cause,
+        resolution_notes=resolution_notes,
+        severity=severity,
+        component=component,
+        environment=environment,
+        customer_impact=customer_impact,
+        preview=preview,
     )
-    return {"ok": True, "case_id": case_id}
 
 
-@app.tool(**additive_local_tool(title="Open Security Case", tags=("security", "sentinel", "write")))
+@app.tool(
+    **additive_local_tool(
+        title="Open Security Case", tags=("security", "sentinel", "write")
+    ),
+    input_schema=_OPEN_SECURITY_INPUT_SCHEMA,
+)
 async def open_security(
     agent: str,
     title: str,
@@ -481,6 +2740,7 @@ async def open_security(
     component: Optional[str] = None,
     environment: Optional[str] = None,
     customer_impact: Optional[str] = None,
+    preview: bool = False,
 ) -> Dict[str, Any]:
     """Open a SECURITY case with per-day stable ID and create a detailed security report document.
 
@@ -499,151 +2759,97 @@ async def open_security(
         environment: Environment where issue occurs (local/staging/production)
         customer_impact: Description of impact on users/customers
     """
-    if not category or not category.strip():
-        return {"ok": False, "error": "category is required"}
-
-    context = _get_context()
-
-    # Project mode: route through append_entry with security flag AND create security report doc
-    if context.mode == "project":
-        from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
-        from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
-
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        message = f"[SECURITY] {title}: {symptoms}"
-        meta = {
-            "case_type": "security",
-            "security_event": "1",  # Triggers auto-tee to security log
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        }
-
-        result = await append_entry_tool(
-            message=message,
-            status="warn",  # Security issues are warnings
-            agent=agent,
-            meta=meta,
-            format="structured",  # Returns plain dict, not MCP-wrapped
-        )
-
-        if not result.get("ok"):
-            return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
-
-        # Generate case ID after entry is written (so we can scan for existing IDs)
-        case_id = _next_case_id_for_project("SEC", result)
-
-        # Create detailed security report document
-        # Build metadata dict (used for both doc creation and completeness scoring)
-        security_metadata = {
-            "doc_type": "security",  # Use dedicated security template
-            "category": category,
-            "slug": case_id,
-            "title": title,
-            "case_id": case_id,
-            "symptoms": symptoms,
-            "summary_long": symptoms,  # Map to template field
-            "actual_behavior": symptoms,  # Map to template field
-            "affected_paths": affected_paths or [],
-            "affected_areas": affected_paths or [],  # Map to template field
-            "reporter": agent,  # Map to template field
-            "status": "INVESTIGATING",  # Default status
-            "severity": severity if severity is not None else "high",  # Default severity for security issues
-            # NEW parameter mappings (use [UNFILLED] for missing values):
-            "expected_behavior": expected_behaviour if expected_behaviour is not None else "[UNFILLED]",
-            "reproduction_steps": steps_to_reproduce if steps_to_reproduce is not None else ["[UNFILLED]"],
-            "root_cause": root_cause if root_cause is not None else "[UNFILLED]",
-            "immediate_actions": resolution_notes if resolution_notes is not None else "[UNFILLED]",
-            "component": component if component is not None else "[UNFILLED]",
-            "environment": environment if environment is not None else "[UNFILLED]",
-            "customer_impact": customer_impact if customer_impact is not None else "[UNFILLED]",
-        }
-        
-        doc_result = await manage_docs_tool(
-            agent=agent,
-            action="create",
-            metadata=security_metadata,
-        )
-
-        # Check if document creation succeeded
-        if not isinstance(doc_result, dict) or not doc_result.get("ok"):
-            error_msg = doc_result.get("error", "Unknown error") if isinstance(doc_result, dict) else "manage_docs returned non-dict"
-            return {
-                "ok": False,
-                "error": f"Security report document creation failed: {error_msg}",
-                "case_id": str(case_id),
-                "entry_id": str(result.get("id", "")),
-                "path": str(result.get("path", "")),
-                "project_name": str(result.get("project_name", "")),
-            }
-
-        # Calculate completeness score
-        filled_sections = []
-        unfilled_sections = []
-        
-        for field in _BUG_TEMPLATE_FIELDS:
-            value = security_metadata.get(field)
-            if value and value != "[UNFILLED]" and value != ["[UNFILLED]"]:
-                filled_sections.append(field)
-            else:
-                unfilled_sections.append(field)
-        
-        total_fields = len(_BUG_TEMPLATE_FIELDS)
-        filled_count = len(filled_sections)
-        percentage = int((filled_count / total_fields) * 100) if total_fields > 0 else 0
-
-        return {
-            "ok": True,
-            "case_id": str(case_id),
-            "entry_id": str(result.get("id", "")),
-            "path": str(result.get("path", "")),
-            "project_name": str(result.get("project_name", "")),
-            "security_report": str(doc_result.get("path", "")),
-            # NEW completeness metadata:
-            "completeness": {
-                "score": f"{filled_count}/{total_fields}",
-                "percentage": percentage,
-                "filled_sections": filled_sections,
-                "unfilled_sections": unfilled_sections,
-            },
-            # UPDATED action_required with specific guidance:
-            "action_required": (
-                f"Security report {percentage}% complete. "
-                f"Use manage_docs(agent='{agent}', action='replace_section', "
-                f"doc_name='{case_id}', section='<section_id>', content='...') "
-                f"to fill remaining sections: {', '.join(unfilled_sections[:5])}"
-                + (f" and {len(unfilled_sections) - 5} more" if len(unfilled_sections) > 5 else "")
-            ),
-        }
-
-    # Sentinel mode: original behavior
-    case_id = append_case_event(
-        context,
+    return await _open_case(
         kind="SEC",
-        event_type="security_opened",
-        data={
-            "title": title,
-            "symptoms": symptoms,
-            "affected_paths": affected_paths or [],
-            "landing_status": "proposed",
-        },
-        include_md=True,
+        case_type="security",
+        doc_type="security",
+        doc_category="security",
+        report_artifact_type="security_report",
+        report_key="security_report",
+        label="Security",
+        message_prefix="[SECURITY]",
+        append_status="warn",
+        default_severity="high",
+        security_event=True,
+        template_fields=_SECURITY_TEMPLATE_FIELDS,
+        anchor_map=_SECURITY_FIELD_SECTION_ANCHORS,
+        sentinel_event_type="security_opened",
+        preview_tool_name="open_security",
+        open_tool_name="open_security",
+        agent=agent,
+        title=title,
+        symptoms=symptoms,
+        category=category,
+        affected_paths=affected_paths,
+        expected_behaviour=expected_behaviour,
+        steps_to_reproduce=steps_to_reproduce,
+        root_cause=root_cause,
+        resolution_notes=resolution_notes,
+        severity=severity,
+        component=component,
+        environment=environment,
+        customer_impact=customer_impact,
+        preview=preview,
     )
-    return {"ok": True, "case_id": case_id}
 
 
-@app.tool(**additive_local_tool(title="Link Fix Artifact", tags=("bugs", "security", "traceability", "write")))
+@app.tool(
+    **additive_local_tool(
+        title="Link Fix Artifact", tags=("bugs", "security", "traceability", "write")
+    ),
+    input_schema=_LINK_FIX_INPUT_SCHEMA,
+)
 async def link_fix(
     agent: str,
     case_id: str,
-    execution_id: str,
-    artifact_ref: str,
-    landing_status: str,
+    execution_id: str = "current",
+    artifact_ref: str = "",
+    landing_status: str = "",
 ) -> Dict[str, Any]:
     """Link a fix artifact to a BUG/SEC case."""
     context = _get_context()
+    if not isinstance(execution_id, str):
+        execution_id = str(execution_id or "")
+    execution_id = execution_id.strip() or "current"
+    artifact_ref = str(artifact_ref or "").strip()
+    landing_status = str(landing_status or "").strip()
+    if not artifact_ref:
+        message = "artifact_ref is required"
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            case_id=str(case_id or ""),
+            warnings=[message],
+            next_step="Provide artifact_ref and retry link_fix.",
+            error=message,
+        )
+    if not landing_status:
+        message = "landing_status is required"
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            case_id=str(case_id or ""),
+            warnings=[message],
+            next_step="Provide landing_status and retry link_fix.",
+            error=message,
+        )
+    normalized_artifact_ref = _normalize_artifact_reference(artifact_ref)
+
+    (
+        resolved_execution,
+        execution_id_error,
+    ) = await _resolve_link_fix_execution_reference(context, execution_id)
+    if execution_id_error:
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            case_id=str(case_id or ""),
+            warnings=[execution_id_error],
+            next_step=(
+                "Run link_fix with the current/parent execution_id, active session key, or a Scribe entry id."
+            ),
+            error=execution_id_error,
+        )
 
     case_id_upper = case_id.upper()
     if case_id_upper.startswith("BUG-"):
@@ -653,22 +2859,90 @@ async def link_fix(
         event_type = "security_fix_linked"
         kind = "SEC"
     else:
-        return {"ok": False, "error": "case_id must start with BUG- or SEC-"}
+        message = "case_id must start with BUG- or SEC-"
+        return _operator_envelope(
+            ok=False,
+            mode=str(getattr(context, "mode", "") or "unknown"),
+            case_id=str(case_id or ""),
+            warnings=[message],
+            next_step="Provide a valid BUG-* or SEC-* case_id and retry link_fix.",
+            error=message,
+        )
 
     # Project mode: route through append_entry
     if context.mode == "project":
+        case_record, ownership_error = await _load_and_authorize_case_registry_record(
+            context=context,
+            case_id=case_id,
+        )
+        if ownership_error:
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[ownership_error],
+                next_step=(
+                    "Use a case_id registered to this repo/session context or reopen the case in the active project."
+                ),
+                error=ownership_error,
+            )
+
         from scribe_mcp.tools.append_entry import append_entry as append_entry_tool
         from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
 
+        # F5 completeness gate: refuse a fix-terminal close while the report still
+        # has scaffold/[UNFILLED] content in its required sections. The case stays
+        # OPEN (no registry close, no report mutation) and the operator gets a
+        # teaching envelope. Non-fix-terminal/non-terminal landing statuses pass
+        # straight through (gate returns None).
+        completeness_blockers = await _completeness_gate_blockers(
+            manage_docs_tool=manage_docs_tool,
+            agent=agent,
+            doc_name=str(getattr(case_record, "doc_name", "") or case_id),
+            landing_status=landing_status,
+        )
+        if completeness_blockers:
+            block_warning = (
+                f"Case {case_id} cannot be closed with landing_status='{landing_status}': "
+                "the report is missing required content (symptoms/root_cause/fix). "
+                "It remains OPEN."
+            )
+            gate_response = _operator_envelope(
+                ok=True,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[block_warning, *completeness_blockers],
+                next_step=(
+                    f"Fill the required sections via manage_docs(action='replace_section', doc_name='{case_id}', ...) "
+                    "for symptoms/root_cause/fix, then retry link_fix. To close without a fix, use a non-fix "
+                    "landing_status (e.g. wontfix/duplicate/false_positive)."
+                ),
+            )
+            gate_response["partial"] = True
+            gate_response["completeness_gate"] = {
+                "blocked": True,
+                "landing_status": landing_status,
+                "blockers": list(completeness_blockers),
+            }
+            gate_response["case_event"] = {"event": "fix_link_blocked_incomplete"}
+            return gate_response
+
+        doc_binding = _doc_binding_for_case_record(case_record, case_id=case_id)
+        resolved_execution_value = str(
+            (resolved_execution or {}).get("value") or execution_id
+        )
         message = f"[FIX LINKED] {case_id}: {artifact_ref} ({landing_status})"
         meta = {
             "case_type": "bug" if kind == "BUG" else "security",
             "case_id": case_id,
             "fix_link": {
-                "execution_id": execution_id,
+                "execution_id": resolved_execution_value,
                 "artifact_ref": artifact_ref,
+                "execution_ref": resolved_execution or {"value": execution_id},
+                "artifact_ref_meta": normalized_artifact_ref,
             },
             "landing_status": landing_status,
         }
@@ -677,33 +2951,81 @@ async def link_fix(
         if kind == "SEC":
             meta["security_event"] = "1"
 
+        case_event_name = "fix_linked"
         result = await append_entry_tool(
             message=message,
-            status="success" if landing_status in ("merged", "landed", "done") else "info",
+            status="success"
+            if landing_status in ("merged", "landed", "done")
+            else "info",
             agent=agent,
-            meta=meta,
+            meta={**meta, "case_event": case_event_name},
             format="structured",  # Returns plain dict, not MCP-wrapped
         )
 
         if not result.get("ok"):
-            return {"ok": False, "error": str(result.get("error", "append_entry failed"))}
+            message = str(result.get("error", "append_entry failed"))
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step="Resolve append_entry failure and retry link_fix.",
+                error=message,
+            )
+
+        (
+            registry_ok,
+            registry_error,
+            upserted_case_record,
+        ) = await _register_case_registry_fix_link(
+            case_record=case_record,
+            context=context,
+            case_id=case_id,
+            execution_id=resolved_execution_value,
+            artifact_ref=artifact_ref,
+            normalized_execution_ref=resolved_execution,
+            normalized_artifact_ref=normalized_artifact_ref,
+            landing_status=landing_status,
+            doc_binding=doc_binding,
+        )
+        if not registry_ok:
+            message = f"Case registry fix-link update failed: {registry_error}"
+            return _operator_envelope(
+                ok=False,
+                mode="project",
+                case_id=str(case_id),
+                warnings=[message],
+                next_step="Ensure case registry backend is available and retry link_fix.",
+                error=message,
+            )
+        fetched_case_record_after = await _fetch_case_registry_record_after_fix(
+            context=context, case_id=case_id
+        )
+        case_record_after = (
+            fetched_case_record_after
+            if fetched_case_record_after is not None
+            and hasattr(fetched_case_record_after, "status")
+            else upserted_case_record
+        )
 
         # Update the bug/security report document with fix reference information.
         # The case_id was registered in project["docs"] when open_bug/open_security was called.
         doc_update_warning: str | None = None
         try:
             # Update the appendix section with fix reference details
+            report_doc_name = str(getattr(case_record, "doc_name", "") or case_id)
             appendix_content = (
-                f"- **Fix Reference:** {artifact_ref} (execution: {execution_id})\n"
+                f"- **Fix Reference:** {artifact_ref} (execution: {resolved_execution_value})\n"
                 f"- **Landing Status:** {landing_status}\n"
                 f"- **Fix Linked By:** {agent}\n"
             )
             appendix_result = await manage_docs_tool(
                 agent=agent,
                 action="replace_section",
-                doc_name=case_id,
+                doc_name=report_doc_name,
                 section="appendix",
                 content=appendix_content,
+                metadata={"preserve_authored": True},
             )
             if not isinstance(appendix_result, dict) or not appendix_result.get("ok"):
                 doc_update_warning = (
@@ -713,49 +3035,142 @@ async def link_fix(
                 )
                 _logger.warning(
                     "link_fix: failed to update appendix section for %s: %s",
-                    case_id,
+                    report_doc_name,
                     doc_update_warning,
                 )
             else:
                 # Update the resolution_plan section with landing status
                 resolution_content = (
-                    f"### Immediate Actions\n"
+                    f"### Fix Landed\n"
                     f"Fix landed with status: **{landing_status}**\n\n"
                     f"### Fix Details\n"
                     f"- Artifact: {artifact_ref}\n"
-                    f"- Execution ID: {execution_id}\n"
+                    f"- Execution ID: {resolved_execution_value}\n"
                 )
                 resolution_result = await manage_docs_tool(
                     agent=agent,
                     action="replace_section",
-                    doc_name=case_id,
+                    doc_name=report_doc_name,
                     section="resolution_plan",
                     content=resolution_content,
+                    metadata={"preserve_authored": True},
                 )
-                if not isinstance(resolution_result, dict) or not resolution_result.get("ok"):
+                if not isinstance(resolution_result, dict) or not resolution_result.get(
+                    "ok"
+                ):
                     doc_update_warning = (
-                        resolution_result.get("error", "Could not update resolution_plan")
+                        resolution_result.get(
+                            "error", "Could not update resolution_plan"
+                        )
                         if isinstance(resolution_result, dict)
                         else "manage_docs returned non-dict"
                     )
                     _logger.warning(
                         "link_fix: failed to update resolution_plan for %s: %s",
-                        case_id,
+                        report_doc_name,
                         doc_update_warning,
                     )
         except Exception as exc:
             doc_update_warning = str(exc)
             _logger.warning("link_fix: exception updating doc for %s: %s", case_id, exc)
 
-        response: dict[str, Any] = {
-            "ok": True,
-            "case_id": str(case_id),
-            "entry_id": str(result.get("id", "")),
-            "path": str(result.get("path", "")),
-            "project_name": str(result.get("project_name", "")),
+        response: dict[str, Any] = _operator_envelope(
+            ok=True,
+            mode="project",
+            case_id=str(case_id),
+            artifacts=[{"type": "fix_artifact", "ref": str(artifact_ref)}],
+            warnings=[],
+            next_step="Fix link recorded.",
+            entry_id=str(result.get("id", "")),
+            path=str(result.get("path", "")),
+            project_name=str(result.get("project_name", "")),
+        )
+        response["resolved_references"] = {
+            "execution": dict(resolved_execution or {}),
+            "case": {
+                "raw": case_id,
+                "kind": kind.lower(),
+                "source": "case_id_prefix",
+                "value": case_id,
+            },
+            "artifact": {
+                "raw": artifact_ref,
+                "kind": "artifact",
+                "source": "link_fix_argument",
+                "value": artifact_ref,
+            },
+            "artifact_meta": dict(normalized_artifact_ref),
         }
+        response["case_scope"] = {
+            "mode": "project",
+            "project_name": str(getattr(case_record, "project_name", "") or ""),
+            "project_key": str(
+                getattr(case_record, "project_key", None)
+                or getattr(case_record, "project_name", "")
+                or ""
+            ),
+            "repo_id": str(getattr(case_record, "repo_id", "") or ""),
+        }
+        response["case_event"] = {"event": case_event_name}
+        response["case_registry"] = {
+            "doc_name": str(getattr(case_record, "doc_name", "") or ""),
+            "doc_type": str(getattr(case_record, "doc_type", "") or ""),
+            "project_name": str(getattr(case_record, "project_name", "") or ""),
+        }
+        lifecycle_record_before = _case_record_for_lifecycle(case_record)
+        lifecycle_record_after = (
+            _case_record_for_lifecycle(
+                case_record_after,
+                fallback_status=getattr(lifecycle_record_before, "status", None),
+            )
+            if case_record_after is not None
+            else None
+        )
+        lifecycle_landing_status = _landing_status_for_lifecycle(
+            landing_status,
+            getattr(lifecycle_record_before, "status", None),
+        )
+        lifecycle = build_link_fix_lifecycle_result(
+            case_record_before=lifecycle_record_before,
+            case_record_after=lifecycle_record_after,
+            landing_status=lifecycle_landing_status,
+            fix_link_recorded=True,
+            doc_binding=doc_binding,
+            doc_update_warning=doc_update_warning,
+        )
+        _apply_lifecycle_readback(response, lifecycle)
+        report_event_name = "report_body_updated"
         if doc_update_warning:
+            report_event_name = "fix_link_partial"
+            response["warnings"].append(doc_update_warning)
             response["doc_update_warning"] = doc_update_warning
+            response["partial"] = True
+            response["case_event"] = {"event": report_event_name}
+            response["meta"] = {
+                **response.get("meta", {}),
+                "case_event": report_event_name,
+            }
+            response["next_step"] = (
+                f"Fix report updates for {case_id} via manage_docs replace_section (appendix/resolution_plan)."
+            )
+            _apply_lifecycle_readback(response, lifecycle, preserve_next_step=True)
+        else:
+            response["case_event"] = {"event": report_event_name}
+            response["meta"] = {
+                **response.get("meta", {}),
+                "case_event": report_event_name,
+            }
+        await append_entry_tool(
+            message=f"[CASE REPORT EVENT] {case_id}: {report_event_name}",
+            status="info",
+            agent=agent,
+            meta={
+                **meta,
+                "case_event": report_event_name,
+                "report_event": report_event_name,
+            },
+            format="structured",
+        )
         return response
 
     # Sentinel mode: original behavior
@@ -768,9 +3183,34 @@ async def link_fix(
             "fix_link": {
                 "execution_id": execution_id,
                 "artifact_ref": artifact_ref,
+                "execution_ref": resolved_execution or {"value": execution_id},
+                "artifact_ref_meta": normalized_artifact_ref,
             },
             "landing_status": landing_status,
         },
         include_md=True,
     )
-    return {"ok": True, "case_id": str(case_id)}
+    response = _operator_envelope(
+        ok=True,
+        mode="sentinel",
+        case_id=str(case_id),
+        artifacts=[{"type": "fix_artifact", "ref": str(artifact_ref)}],
+        next_step="Fix link appended in sentinel mode.",
+    )
+    response["resolved_references"] = {
+        "execution": dict(resolved_execution or {}),
+        "case": {
+            "raw": case_id,
+            "kind": kind.lower(),
+            "source": "case_id_prefix",
+            "value": case_id,
+        },
+        "artifact": {
+            "raw": artifact_ref,
+            "kind": "artifact",
+            "source": "link_fix_argument",
+            "value": artifact_ref,
+        },
+        "artifact_meta": dict(normalized_artifact_ref),
+    }
+    return response

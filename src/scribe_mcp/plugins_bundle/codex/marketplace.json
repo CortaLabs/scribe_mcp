@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    {
+      "name": "scribe-mcp",
+      "source": {
+        "type": "local",
+        "path": "./plugins/codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "defaults": {
+    "features": {
+      "multi_agent": true
+    },
+    "agents": {
+      "max_depth": 1,
+      "max_threads": 12
+    }
+  },
+  "agents": [
+    {
+      "name": "scribe-architect",
+      "description": "System design, architectural decisions, and phase planning for Scribe MCP. Stage 2 of the PROTOCOL pipeline. Transforms Research findings into actionable development blueprints. Produces ARCHITECTURE_GUIDE, PHASE_PLAN, and CHECKLIST documents with bounded task packages designed for parallel team execution. MUST always run on Opus — this is non-negotiable in this repository. The Architect's task packages are the Coder's CONTRACT. Deploy after Research is complete. The Architect never designs blind — gaps in research are escalated, not guessed through."
+    },
+    {
+      "name": "scribe-bug-hunter",
+      "description": "Bug hunting, debugging, and root cause analysis for Scribe MCP. Auxiliary stage of the PROTOCOL pipeline — deploy when encountering errors, test failures, or unexpected behavior that resists quick fixes. Creates reproduction cases before fixing anything. Surgical fixes only — minimal changes that do not break anything else."
+    },
+    {
+      "name": "scribe-coder",
+      "description": "Code implementation, refactoring, and feature development for Scribe MCP. Stage 4 of the PROTOCOL pipeline. Executes task packages created by the Architect. Writes clean, tested code following established patterns. Full tool access including file editing and shell execution. Deploy after Architecture is complete — never with only Research output."
+    },
+    {
+      "name": "scribe-doc-writer",
+      "description": "Public-facing documentation for Scribe MCP — READMEs, API references, user guides, whitepapers, wiki pages, and developer onboarding docs. Creates documentation that external developers consume to understand and adopt Scribe MCP. Ensures all published docs are accurate, current, and verified against actual code. Works extensively with manage_docs for governed document workflows. Deploy when documentation needs creation, major updates, quality review, or when a new feature needs external-facing documentation."
+    },
+    {
+      "name": "scribe-research-analyst",
+      "description": "Deep codebase investigation and documentation research for Scribe MCP. Stage 1 of the PROTOCOL pipeline. Creates structured RESEARCH_*.md reports via manage_docs. Use before any implementation to ensure agents have current, accurate context. Deploy liberally — understanding existing code before changing it prevents cascading failures downstream."
+    },
+    {
+      "name": "scribe-review-agent",
+      "description": "Adversarial code review, quality gates, and standards enforcement for Scribe MCP. Operates at Stages 3 (pre-implementation) and 5 (post-implementation) of the PROTOCOL pipeline. Reviews are optional — deploy on complex projects, multi-phase efforts, or security-sensitive work. Grades work objectively with 93% threshold to pass. Read-only — identifies issues but does not fix them."
+    },
+    {
+      "name": "scribe-security-agent",
+      "description": "Security review, vulnerability analysis, and auth pattern assessment for Scribe MCP. Reviews code for OWASP top 10 vulnerabilities, input validation gaps, authentication/authorization issues, secrets exposure, and trust boundary violations. Files security reports via manage_docs with severity ratings and remediation guidance. Runs on Opus for deep reasoning about subtle vulnerability chains. Deploy for security-sensitive changes, pre-release audits, auth/access pattern modifications, or when new system boundaries are introduced."
+    }
+  ]
+}

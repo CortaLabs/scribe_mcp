@@ -1,18 +1,18 @@
 # Deploying Scribe MCP
 
-This guide covers the tracked deployment assets in `deploy/` for the frozen **2.5 compatibility-release** documentation wave.
+This guide describes the supported public deployment posture for the v2.5 release docs.
 
-The deployment contract in this wave is intentionally narrow:
+The supported story is intentionally narrow:
 
-- **local/core remains the default public posture**
-- **authenticated SSE/remote deployment is optional**
-- **casual public exposure is unsupported**
+- local/core is the default
+- authenticated SSE server deployment is optional
+- casual public internet exposure is unsupported
 
 ## Table of contents
 
 - [Supported deployment postures](#supported-deployment-postures)
 - [Quick start: authenticated local container](#quick-start-authenticated-local-container)
-- [Council compose overlay](#council-compose-overlay)
+- [Paired compose overlay](#paired-compose-overlay)
 - [Client connection example](#client-connection-example)
 - [Files in this directory](#files-in-this-directory)
 - [Related docs](#related-docs)
@@ -21,11 +21,21 @@ The deployment contract in this wave is intentionally narrow:
 
 | Posture | Status | Notes |
 | --- | --- | --- |
-| Local/core stdio or loopback-local usage | **Default / supported** | Primary public posture for Scribe. |
-| Managed private-mesh or Tailscale-style SSE deployment | **Supported optional posture** | Use auth and treat it as an intentional operator deployment. |
-| Casual public exposure | **Unsupported** | Do not document or ship this as a normal deployment recipe. |
+| Local/core stdio or loopback-local usage | **Default / supported** | Primary public posture. |
+| Managed private-mesh or Tailscale-style SSE deployment | **Supported optional posture** | Auth is required for server transport access. |
+| Casual public internet exposure | **Unsupported** | Not a supported public recipe. |
 
 If you bind broadly inside a container, keep the host exposure narrow and the auth boundary explicit.
+
+### Canonical env/auth names (v2.5)
+
+Use these names in public docs and examples:
+
+- `SCRIBE_REMOTE_URL`: client endpoint URL
+- `SCRIBE_REMOTE_AUTH_TOKEN`: client bearer token
+- `SCRIBE_TRANSPORT_AUTH_TOKEN`: server-side token the service validates
+
+Compatibility aliases may still load in mixed environments (`SCRIBE_AUTH_TOKEN`, and on the client side `SCRIBE_TRANSPORT_AUTH_TOKEN`), but public docs should lead with the canonical names above.
 
 ## Quick start: authenticated local container
 
@@ -61,11 +71,11 @@ Check health:
 curl http://127.0.0.1:8200/health
 ```
 
-`SCRIBE_TRANSPORT_AUTH_TOKEN` is the server-side auth setting here. Client-side docs should prefer `SCRIBE_REMOTE_AUTH_TOKEN`; see [`../docs/REMOTE_CLIENT.md`](../docs/REMOTE_CLIENT.md).
+`SCRIBE_TRANSPORT_AUTH_TOKEN` is the server-side auth setting here. The initial public release excludes remote/client mode (`SCRIBE_RELEASE_PROFILE=public` in release artifacts), so release docs do not publish a remote client bootstrap path.
 
-## Council compose overlay
+## Paired compose overlay
 
-When you need the synchronized Council pairing, compose the two overlays from
+When you need a paired deployment with `council_mcp`, compose the two overlays from
 the roots of your local checkouts:
 
 ```bash
@@ -79,10 +89,10 @@ This keeps the same frozen contract:
 
 - `council_mcp` consumes the installed-package `scribe-server` contract
 - local/core remains the default story
-- authenticated remote/SSE is optional
+- authenticated SSE server transport is optional
+- casual public internet exposure is unsupported
 
-Use the matching `council_mcp` release docs from that checkout for the
-Council-side contract details.
+Use the matching `council_mcp` release docs from that checkout for paired deployment details.
 
 ## Client connection example
 

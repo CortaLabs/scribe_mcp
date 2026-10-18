@@ -71,6 +71,18 @@ class TestFormatProjectSitrepNew:
         assert "Root: /tmp/projects/MCP_SPINE/scribe_mcp" in output
         assert "Dev Plan: .scribe/docs/dev_plans/my_new_feature/" in output
 
+    def test_new_sitrep_surfaces_compatibility_override(self, formatter, sample_project, sample_docs_created):
+        """Verify readable new-project SITREP surfaces compatibility override provenance."""
+        project = dict(sample_project)
+        project["root_authorization"] = {
+            "skip_validation_requested": True,
+            "compatibility_override_used": True,
+            "authorization_mode": "compatibility_opt_in",
+        }
+
+        output = formatter.format_project_sitrep_new(project, sample_docs_created)
+        assert "Root Authorization: legacy skip_validation compatibility shim (grant-backed)" in output
+
     def test_template_doc_line_counts(self, formatter, sample_project, sample_docs_created):
         """Verify template docs show correct line counts."""
         output = formatter.format_project_sitrep_new(sample_project, sample_docs_created)
@@ -176,6 +188,39 @@ class TestFormatProjectSitrepExisting:
 
         assert "📌 PROJECT ACTIVATED: scribe_tool_output_refinement" in output
         assert "╔══════════════════════════════════════════════════════════╗" in output
+
+    def test_existing_sitrep_surfaces_compatibility_override(self, formatter, sample_project, sample_inventory, sample_activity):
+        """Verify readable existing-project SITREP surfaces compatibility override provenance."""
+        project = dict(sample_project)
+        project["root_authorization"] = {
+            "skip_validation_requested": True,
+            "compatibility_override_used": True,
+            "authorization_mode": "compatibility_opt_in",
+        }
+
+        output = formatter.format_project_sitrep_existing(
+            project, sample_inventory, sample_activity
+        )
+        assert "Root Authorization: legacy skip_validation compatibility shim (grant-backed)" in output
+
+    def test_existing_sitrep_surfaces_authority_metadata_fields(self, formatter, sample_project, sample_inventory, sample_activity):
+        project = dict(sample_project)
+        project["repo_id"] = "repo-123"
+        project["project_key"] = "pk-abc"
+        project["root_authorization"] = {
+            "reason_code": "external_scope_grant_match",
+            "grant_id": "grant-1",
+            "denied_fallback_attempts": ["compat_recent_project:public_release_blocked"],
+        }
+
+        output = formatter.format_project_sitrep_existing(
+            project, sample_inventory, sample_activity
+        )
+        assert "Authority Source: external_scope_grant_match" in output
+        assert "Grant ID: grant-1" in output
+        assert "Repo ID: repo-123" in output
+        assert "Project Key: pk-abc" in output
+        assert "Denied Fallback Attempts: 1" in output
 
     def test_status_annotation_active_work(self, formatter, sample_project, sample_inventory, sample_activity):
         """Verify 'in_progress' status shows '(active work)' annotation."""

@@ -107,8 +107,27 @@ SESSION_TABLE_STATEMENTS = [
         session_id TEXT PRIMARY KEY,
         project_name TEXT,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
         FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE SET NULL
     );
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_session_projects_requires_session_insert
+    BEFORE INSERT ON session_projects
+    FOR EACH ROW
+    WHEN (SELECT 1 FROM scribe_sessions WHERE session_id = NEW.session_id) IS NULL
+    BEGIN
+        SELECT RAISE(ABORT, 'session_projects.session_id requires a live scribe_sessions row');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_session_projects_requires_session_update
+    BEFORE UPDATE OF session_id ON session_projects
+    FOR EACH ROW
+    WHEN (SELECT 1 FROM scribe_sessions WHERE session_id = NEW.session_id) IS NULL
+    BEGIN
+        SELECT RAISE(ABORT, 'session_projects.session_id requires a live scribe_sessions row');
+    END;
     """,
     """
     CREATE TABLE IF NOT EXISTS agent_recent_projects (
@@ -336,6 +355,9 @@ TELEMETRY_TABLE_STATEMENTS = [
         agent_id TEXT,
         error_message TEXT,
         response_size_bytes INTEGER,
+        repo_root TEXT,
+        correlation_id TEXT,
+        measurement_scope TEXT,
         FOREIGN KEY (session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE
     );
     """,
@@ -376,6 +398,39 @@ ARCHIVE_TABLE_STATEMENTS = [
     );
     """,
 ]
+APPLY_PREVIEW_RECEIPT_TABLE_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS apply_preview_receipts (
+        token_sha256 TEXT PRIMARY KEY
+            CHECK (
+                length(token_sha256) = 64
+                AND token_sha256 NOT GLOB '*[^0-9a-f]*'
+            ),
+        receipt_version INTEGER NOT NULL CHECK (receipt_version >= 1),
+        state TEXT NOT NULL
+            CHECK (state IN ('issued', 'applying', 'applied', 'failed_terminal')),
+        principal_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        project_key TEXT NOT NULL,
+        repo_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        normalized_intent_json TEXT NOT NULL,
+        target_binding_json TEXT NOT NULL,
+        precondition_json TEXT NOT NULL,
+        predicted_after_json TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        fence INTEGER NOT NULL DEFAULT 0 CHECK (fence >= 0),
+        apply_lease_expires_at TEXT,
+        terminal_result_code TEXT,
+        terminal_result_json TEXT,
+        terminal_at TEXT,
+        audit_correlation_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
+]
 FTS_TABLE_STATEMENTS = [
     """
     CREATE VIRTUAL TABLE IF NOT EXISTS document_sections_fts
@@ -412,7 +467,27 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_agent_projects_updated_at ON agent_projects(updated_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_agent_project_events_agent_id ON agent_project_events(agent_id);",
     "CREATE INDEX IF NOT EXISTS idx_agent_project_events_created_at ON agent_project_events(created_at);",
-    "CREATE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id);",
+    """
+    WITH ranked AS (
+        SELECT
+            rowid,
+            ROW_NUMBER() OVER (
+                PARTITION BY transport_session_id
+                ORDER BY last_active_at DESC, started_at DESC, session_id DESC
+            ) AS rn
+        FROM scribe_sessions
+        WHERE transport_session_id IS NOT NULL
+    )
+    UPDATE scribe_sessions
+    SET transport_session_id = NULL
+    WHERE rowid IN (SELECT rowid FROM ranked WHERE rn > 1);
+    """,
+    "DROP INDEX IF EXISTS idx_scribe_sessions_transport;",
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_sessions_transport
+        ON scribe_sessions(transport_session_id)
+        WHERE transport_session_id IS NOT NULL;
+    """,
     "CREATE INDEX IF NOT EXISTS idx_scribe_sessions_agent ON scribe_sessions(agent_id);",
     "CREATE INDEX IF NOT EXISTS idx_doc_changes_project ON doc_changes(project_id, created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON scribe_entries(project_id, ts_iso DESC);",
@@ -441,6 +516,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);",
     "CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);",
     "CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);",
+    "CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);",
     "CREATE INDEX IF NOT EXISTS idx_document_sections_project ON document_sections(project_id);",
     "CREATE INDEX IF NOT EXISTS idx_document_sections_updated ON document_sections(updated_at);",
     "CREATE INDEX IF NOT EXISTS idx_document_changes_project ON document_changes(project_id);",
@@ -451,6 +527,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at);",
     "CREATE INDEX IF NOT EXISTS idx_archive_project_ts ON scribe_entries_archive(project_id, ts_iso DESC);",
     "CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON scribe_entries_archive(archived_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_expiry ON apply_preview_receipts(expires_at);",
+    "CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_state_lease ON apply_preview_receipts(state, apply_lease_expires_at);",
 ]
 async def create_migration_table(execute_fn: ExecuteFn) -> None:
     await execute_fn(MIGRATION_TABLE_STATEMENT, ())
@@ -464,10 +542,31 @@ async def create_planning_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(PLANNING_TABLE_STATEMENTS)
 async def create_telemetry_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(TELEMETRY_TABLE_STATEMENTS)
+async def ensure_telemetry_index_columns(execute_fn: ExecuteFn) -> None:
+    """Ensure optional telemetry columns exist before index creation."""
+    for column_name, column_definition in (
+        ("duration_ms", "REAL"),
+        ("status", "TEXT NOT NULL DEFAULT 'success'"),
+        ("format_requested", "TEXT"),
+        ("project_name", "TEXT"),
+        ("agent_id", "TEXT"),
+        ("error_message", "TEXT"),
+        ("response_size_bytes", "INTEGER"),
+        ("repo_root", "TEXT"),
+        ("correlation_id", "TEXT"),
+        ("measurement_scope", "TEXT"),
+    ):
+        try:
+            await execute_fn(f"ALTER TABLE tool_calls ADD COLUMN {column_name} {column_definition};", ())
+        except Exception as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
 async def create_bridge_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(BRIDGE_TABLE_STATEMENTS)
 async def create_archive_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(ARCHIVE_TABLE_STATEMENTS)
+async def create_apply_preview_receipt_tables(execute_many_fn: ExecuteManyFn) -> None:
+    await execute_many_fn(APPLY_PREVIEW_RECEIPT_TABLE_STATEMENTS)
 async def create_fts_tables(execute_many_fn: ExecuteManyFn) -> None:
     await execute_many_fn(FTS_TABLE_STATEMENTS)
 async def create_all_indexes(execute_many_fn: ExecuteManyFn) -> None:
@@ -487,5 +586,7 @@ async def create_schema(
     await create_telemetry_tables(execute_many_fn)
     await create_bridge_tables(execute_many_fn)
     await create_archive_tables(execute_many_fn)
+    await create_apply_preview_receipt_tables(execute_many_fn)
     await create_fts_tables(execute_many_fn)
+    await ensure_telemetry_index_columns(execute_fn)
     await create_all_indexes(execute_many_fn)

@@ -1,74 +1,63 @@
-# Release Surface Policy
+# Release Surface
 
-This document defines the public release surface for `scribe-mcp` and the boundary between **tracked repo truth** and **repo-local runtime/operator overlays**.
+Baseline date: **2026-06-16**
+Applies to: **v2.7.1 public release line**
 
-## 1. Repo truth vs. local overlays
+## Public contract
 
-Treat the following as **repo truth** for public release work:
+Treat these as public release truth:
 
-- tracked package source and manifests such as `src/scribe_mcp/**`, `packages/scribe_council/**`, `pyproject.toml`, and `MANIFEST.in`
-- tracked release docs and tracked examples under `docs/**` and `docs/examples/**`
-- shipped bridge/plugin assets that live in tracked package paths
+- Shipped package source and manifests:
+  - `pyproject.toml`
+  - `MANIFEST.in`
+  - `src/scribe_mcp/**`
+- Public docs and examples:
+  - `README.md`
+  - `docs/**`
+  - `docs/examples/**`
+  - `skills/**`
 
-Treat the following as **local overlays or runtime state**, not public release truth:
+## Runtime truth in public docs
 
-- `.council/`
-- `.mcp.json`
-- `opencode.json`
-- `.scribe/cli/*.json`
-- `.scribe/state/*.json`
-- `.scribe/logs/*`
-- operator-specific `AGENTS.md`, `.claude/**`, and `.codex/**` material
+Public docs must keep these runtime truths aligned with current source:
 
-If a local overlay exists in the repo root, it may be useful for one operator's workstation, but it is **not** the public contract for downstream users.
+- Postgres is the default storage posture.
+- Standalone SQLite is explicit local-only opt-in.
+- Remote/client remains internal compatibility only for this release line and is excluded by public-release posture.
+- `SCRIBE_REMOTE_URL` is documented as service root; `/health` and `/sse` are distinct paths with different roles.
+- Codex projection is documented through `scribe plugins project-codex`.
+- Managed-doc hygiene behavior is public release truth: scaffold-aware `quality_check`, grouped `project_health` signals, project-local managed-doc preflight archives, centralized `edit_file` backups, canonical research artifact naming, and stale index-backup cleanup.
+- Changelog/version memory behavior is public release truth: project `CHANGELOG.md` is curated source, `.scribe/docs/GLOBAL_CHANGELOG.md` is derived by preview/apply reconciliation, version context is advisory observed evidence, and malformed changelog escaped-newline content is a blocking quality failure.
+- Missing current-version changelog coverage is a blocking warning (`SCF_CHANGELOG_CURRENT_VERSION_MISSING`) surfaced by `quality_check`, reminders, and `project_health` quality digests.
+- v2.7.1 keeps the fail-closed provenance guard for changelog/global reconciliation, deterministic document topology, metadata scan/repair, quality handoff gates, agent-ready quality-check summaries/actions, bulk managed-doc checks, sanitized downstream export manifests, and governed case-registry closeout for resolved fixes.
+- Fast same-binding `set_project` reuse, queryable runtime telemetry, append-entry phase timing, physical/logical reconciliation diagnostics, JSON probe output, same-server root comparison, clean success-path timing logs, and background telemetry drain behavior are public runtime truth for this release line.
+- Bug/security case reports are governed repo-root documents; `open_bug`/`open_security` expose follow-up handles and `manage_docs` resolves those reports without dev-plan name guessing.
+- Scribe-owned write barriers, owner-only Postgres backup/restore custody, sparse `read_recent` progress-log supplementation, and remote blocking for local operator-only tools are public runtime safety behavior.
+- Downstream topology exports are generic publication artifacts. Public Scribe must not hard-code a private retrieval product as the consumer or source of truth.
 
-## 2. Public guidance must point to tracked docs/examples
+## Local/operator boundary
 
-Do not tell users to copy the repo-root `.mcp.json`, `opencode.json`, `AGENTS.md`, `.claude/`, or `.codex/` overlays.
+Treat these as local/operator-only, not public contract:
 
-Use these tracked examples instead:
+- Repo overlays and agent/tooling configuration at repo root
+- Local runtime state and logs under `.scribe/**`
+- Build output and caches (`build/`, `dist/`, `*.egg-info/`, `__pycache__/`)
+- Generated authoring/runtime overlays unless a future exported copy is intentionally tracked as public support material
 
-- `docs/examples/mcp.json.example`
-- `docs/examples/opencode.json.example`
+If a path is workstation-specific or runtime-generated, it is not public guidance.
 
-Those files are the release-safe examples for client bootstrap guidance in this repo.
+## Plugin and bridge boundary
 
-## 3. Runtime state is mutable and local-only
+Public docs should describe only shipped plugin/bridge surfaces:
 
-These paths are runtime/operator surfaces and should be treated as mutable local state:
+- Core runtime/plugin framework in `src/scribe_mcp/bridges/**`
 
-- `.scribe/cli/*.json` for per-operator CLI/session state
-- `.scribe/state/*.json` for local runtime state such as rotation/audit bookkeeping
-- `.scribe/logs/*` for local log output
+Do not present local manifests, local bridge config, unpromoted generated outputs, or local operator adapters as shipped public surface.
 
-Runtime files may exist during development, but they do not define what ships. They also stay out of object-store sync and packaging decisions.
+## Practical release check
 
-## 4. Build artifacts are never release truth
+Before publishing guidance, confirm all referenced files are:
 
-The following are stale or generated artifact surfaces and must not be used to define package scope:
-
-- `build/`
-- `dist/`
-- `*.egg-info/`
-- `__pycache__/`
-
-Release decisions must come from tracked source/manifests/docs, not from generated trees left behind by earlier builds.
-
-## 5. Bridge package boundary
-
-For bridge/runtime work, the release contract is:
-
-- **Core (`scribe-mcp`)** ships the generic bridge runtime contract only: manifest loading, plugin/runtime binding, policy enforcement, hook execution, and server wiring.
-- **Optional extension (`scribe-council`)** owns any council/federation-specific shipped bridge manifests, bridge plugins, hook adapters, scaffold/export assets, and docs/examples that require council semantics.
-- **Local-only overlays** stay local: repo/operator manifests and adapters under `.scribe/config/bridges/`, `.council/`, or other workstation-specific paths are not public release truth.
-
-One additional release rule is mandatory: a bridge manifest must resolve to a real runtime plugin in the same owning package or local overlay. Manifest-only inactive placeholders are not a supported shipped surface.
-
-## 6. Practical release rule
-
-When deciding whether a file belongs in public guidance or packaging:
-
-1. Prefer tracked package source, tracked docs, and tracked examples.
-2. Reject repo-root operator overlays and mutable runtime outputs as release truth.
-3. Reject generated build artifacts as release truth.
-4. If a public example is needed, add it under `docs/examples/` instead of pointing to a repo-root overlay file.
+1. Tracked in the repo
+2. Part of shipped package/manifests or public docs/examples
+3. Not runtime-generated and not workstation-specific

@@ -43,6 +43,67 @@ manage_docs(project="MY PROJECT", ...)
 
 ## Action Categories
 
+## Contract Updates (Frontmatter, Status, Quality, Indexing)
+
+- `frontmatter_update` is the explicit path for narrative-doc YAML/frontmatter changes.
+- `status_update` is checklist-only; using it on narrative docs returns `DOC_STATUS_INTENT_MISMATCH` and guidance to use `frontmatter_update` with `metadata.frontmatter`.
+- Scaffold residue means "not done"; readiness can be blocked with `DOC_NOT_DONE_SCAFFOLD_QUALITY`.
+- Use `quality_check` before handoff for deterministic scaffold/readiness proof. Do not replace this with giant ad hoc regex passes.
+- Configured log surfaces, including custom `logs:` entries in `.scribe/config/scribe.yaml`, are not readiness-quality targets. Curated docs, research docs, plans, and checklists are.
+
+Authoritative scaffold warning codes to watch for:
+- `SCF_PLACEHOLDER_BRACKET`
+- `SCF_TEMPLATE_PROSE`
+- `SCF_EMPTY_FINDING`
+- `SCF_UNFILLED_APPENDIX`
+- `SCF_TODO_ONLY_SECTION`
+- `SCF_LOG_TEMPLATE_ONLY`
+- `SCF_FRONTMATTER_MISMATCH`
+- `SCF_INDEX_STALE`
+- `SCF_INDEX_MISSING`
+- `SCF_DOC_UNINDEXED`
+- `SCF_NONCANONICAL_LOCATION`
+
+If Scribe/search/manage_docs/generation surfaces are unavailable or awkward, report that tool friction explicitly in logs/handoff instead of silently bypassing it.
+
+Research artifacts belong in the canonical flat path:
+- `.scribe/docs/dev_plans/<project>/research/`
+- `research/INDEX.md` is refreshed by managed lifecycle paths.
+- Noncanonical location, stale index, or unindexed docs are warning states and should be resolved before completion claims.
+
+## Changelog and Version Context (Operator Workflow)
+
+Use this minimal workflow when documenting accepted project outcomes.
+
+- Author curated entries in the project `CHANGELOG.md`.
+- Treat `.scribe/docs/GLOBAL_CHANGELOG.md` as derived output only.
+- Reconcile global entries only from project entries with `entry_status: accepted`.
+
+Required accepted-entry fields:
+- `entry_id`
+- `entry_status`
+- `summary`
+- `evidence_refs`
+
+Identity and dedupe:
+- `entry_id` format: `<yyyymmdd>:<slug>`
+- source key: `(project_slug, entry_id)`
+
+Version/context behavior is advisory:
+- Scribe observes context from manual metadata first, then `pyproject.toml`, then optional git fallback, then `unknown`.
+- There is no SemVer enforcement, no auto-bump, and no hidden release management.
+- Missing/unknown version context is allowed and non-blocking.
+
+Explicit repair and reconciliation path:
+- Use `frontmatter_update` when lifecycle status metadata needs repair.
+- Use `quality_check` for deterministic warnings and readiness checks.
+- Use `preview_reconciliation` before `apply_global_changelog`.
+- Preview and validation diagnose; they do not perform hidden mutation.
+
+Project artifact discoverability:
+- Research docs belong in `research/INDEX.md`.
+- Synthesis/review/project-level docs are not research docs and should surface through project-level artifact health/quality paths.
+
 ### EDIT Actions (Auto-Register)
 
 These actions automatically register unregistered documents before performing the operation:
@@ -67,18 +128,18 @@ These actions handle document creation and registration internally:
 
 | Action | Description | Use Case |
 |--------|-------------|----------|
-| `create(doc_type="research")` | Create structured research documents | Document investigation findings |
-| `create(doc_type="bug")` | Create structured bug reports | Track bugs with automatic indexing |
-| `create(doc_type="review")` | Create review reports | Document code review outcomes |
-| `create(doc_type="agent_card")` | Create agent performance reports | Track agent quality scores |
-| `create(doc_type="custom")` | Create custom documents | Generate custom doc types |
+| `create(metadata={"doc_type":"research"})` | Create structured research documents | Document investigation findings |
+| `create(metadata={"doc_type":"bug"})` | Create structured bug reports | Track bugs with automatic indexing |
+| `create(metadata={"doc_type":"review"})` | Create review reports | Document code review outcomes |
+| `create(metadata={"doc_type":"agent_card"})` | Create agent performance reports | Track agent quality scores |
+| `create(metadata={"doc_type":"custom"})` | Create custom documents | Generate custom doc types |
 
 **Deprecated Actions (Still Work with Warnings):**
-- `create_research_doc` → Use `create(doc_type="research")` instead
-- `create_bug_report` → Use `create(doc_type="bug")` instead
-- `create_review_report` → Use `create(doc_type="review")` instead
-- `create_agent_report_card` → Use `create(doc_type="agent_card")` instead
-- `create_doc` → Use `create(doc_type="custom")` instead
+- `create_research_doc` → Use `create(metadata={"doc_type":"research"})` instead
+- `create_bug_report` → Use `create(metadata={"doc_type":"bug"})` instead
+- `create_review_report` → Use `create(metadata={"doc_type":"review"})` instead
+- `create_agent_report_card` → Use `create(metadata={"doc_type":"agent_card"})` instead
+- `create_doc` → Use `create(metadata={"doc_type":"custom"})` instead
 
 ## Common Patterns
 
@@ -103,13 +164,13 @@ await manage_docs(
 ```python
 await manage_docs(
     action="create",
-    doc_type="research",  # REQUIRED - specifies document type
-    doc_name="RESEARCH_CONTEXT_HYDRATION_20260106",  # REQUIRED
     metadata={
+        "doc_type": "research",  # REQUIRED - specifies document type
         "research_goal": "Design context hydration for tools",
         "confidence_areas": ["tool_behavior", "output_formats"],
         "priority": "high"
-    }
+    },
+    doc_name="RESEARCH_CONTEXT_HYDRATION_20260106",  # REQUIRED
 )
 ```
 
@@ -228,7 +289,7 @@ await generate_doc_templates(project_name="<project>")
 # Create file first using generate_doc_templates
 await generate_doc_templates(project_name="<project>")
 # OR use CREATE action for new custom docs
-await manage_docs(action="create", doc_type="custom", ...)
+await manage_docs(action="create", metadata={"doc_type": "custom", ...})
 ```
 
 **Error: `STRUCTURED_EDIT_ANCHOR_NOT_FOUND`**
@@ -271,12 +332,12 @@ await manage_docs(
 ### For Research Agents
 
 ```python
-# Always use create with doc_type="research" for new research
+# Always use create with metadata.doc_type="research" for new research
 await manage_docs(
     action="create",
-    doc_type="research",
     doc_name="RESEARCH_<TOPIC>_<YYYYMMDD>",
     metadata={
+        "doc_type": "research",
         "research_goal": "...",
         "confidence_areas": ["area1", "area2"]
     }
@@ -316,8 +377,8 @@ await manage_docs(
 # Create bug reports when issues found
 await manage_docs(
     action="create",
-    doc_type="bug",
     metadata={
+        "doc_type": "bug",
         "category": "logic",
         "slug": "off_by_one_error",
         "severity": "medium",
@@ -333,8 +394,8 @@ await manage_docs(
 # Create review reports
 await manage_docs(
     action="create",
-    doc_type="review",
     metadata={
+        "doc_type": "review",
         "review_type": "pre_implementation",
         "overall_grade": 95,
         "recommendations": [...]
@@ -361,10 +422,10 @@ manage_docs(action="replace_section", doc="architecture", section="<id>", conten
 manage_docs(action="status_update", doc="checklist", section="<id>", metadata={"status": "done", "proof": "..."})
 
 # Create research doc
-manage_docs(action="create", doc_type="research", doc_name="RESEARCH_<TOPIC>_<DATE>", metadata={...})
+manage_docs(action="create", doc_name="RESEARCH_<TOPIC>_<DATE>", metadata={"doc_type": "research", ...})
 
 # Create bug report
-manage_docs(action="create", doc_type="bug", metadata={"category": "...", "slug": "...", "severity": "...", ...})
+manage_docs(action="create", metadata={"doc_type": "bug", "category": "...", "slug": "...", "severity": "...", ...})
 
 # Append to document
 manage_docs(action="append", doc="phase_plan", content="...")

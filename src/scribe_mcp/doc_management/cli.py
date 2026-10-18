@@ -17,6 +17,7 @@ def run_manage_docs_cli(
         try:
             result = await manage_docs_callable(
                 action=args.action,
+                project=args.project,
                 doc=args.doc,
                 section=args.section,
                 content=args.content,
@@ -79,10 +80,14 @@ Examples:
             "replace_section",
             "append",
             "status_update",
+            "frontmatter_update",
+            "quality_check",
+            "scaffold_quality_check",
             "apply_patch",
             "replace_range",
             "list_sections",
             "list_checklist_items",
+            "preview_reconciliation",
             "batch",
             "create_research_doc",
             "create_bug_report",
@@ -94,8 +99,12 @@ Examples:
 
     parser.add_argument(
         "doc",
-        choices=["architecture", "phase_plan", "checklist", "progress_log", "doc_log", "security_log", "bug_log"],
         help="Document to modify",
+    )
+
+    parser.add_argument(
+        "--project",
+        help="Project name to target",
     )
 
     parser.add_argument(
@@ -168,9 +177,6 @@ Examples:
             print("❌ Error: --edit is required for apply_patch structured mode")
             return 1
 
-    if args.action == "apply_patch" and (args.patch or args.content) and not args.patch_mode:
-        print("❌ Error: --patch-mode is required when providing a patch")
-        return 1
     if args.action == "apply_patch" and args.patch_mode and args.patch_mode not in {"structured", "unified"}:
         print("❌ Error: --patch-mode must be 'structured' or 'unified'")
         return 1
@@ -180,7 +186,26 @@ Examples:
         return 1
 
     if (
-        args.action not in ["apply_patch", "replace_range", "create_doc", "validate_crosslinks", "normalize_headers", "generate_toc"]
+        args.action
+        not in [
+            "apply_patch",
+            "replace_range",
+            "create_doc",
+            "validate_crosslinks",
+            "normalize_headers",
+            "generate_toc",
+            "preview_reconciliation",
+            "frontmatter_update",
+            "quality_check",
+            "scaffold_quality_check",
+            "list_sections",
+            "list_checklist_items",
+            "batch",
+            "create_research_doc",
+            "create_bug_report",
+            "create_review_report",
+            "create_agent_report_card",
+        ]
         and not args.content
         and not args.template
     ):

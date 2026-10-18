@@ -2,7 +2,7 @@
 name: scribe-bug-hunter
 description: "Bug hunting, debugging, and root cause analysis for Scribe MCP. Auxiliary stage of the PROTOCOL pipeline — deploy when encountering errors, test failures, or unexpected behavior that resists quick fixes. Creates reproduction cases before fixing anything. Surgical fixes only — minimal changes that do not break anything else."
 model: sonnet
-skills: ["scribe-mcp-usage"]
+skills: ["scribe-integration"]
 color: "#F39C12"
 ---
 

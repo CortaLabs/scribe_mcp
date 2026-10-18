@@ -8,17 +8,34 @@ for zero-latency middleware operations.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
-from datetime import datetime
+from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
 from scribe_mcp.storage.base import ConflictError, RemoteUnavailableError, StorageBackend
-from scribe_mcp.storage.models import ProjectRecord
+from scribe_mcp.storage.models import (
+    ApplyPreviewClaimResult,
+    ApplyPreviewReceiptRecord,
+    CaseRegistryRecord,
+    ProjectRecord,
+    RepoScopeGrantRecord,
+    normalize_repo_root,
+)
+from scribe_mcp.state.agent_manager import SessionLeaseExpired
 
 logger = logging.getLogger(__name__)
+
+
+def _is_public_release_profile() -> bool:
+    if os.environ.get("SCRIBE_PUBLIC_RELEASE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    release_profile = os.environ.get("SCRIBE_RELEASE_PROFILE", "internal").strip().lower()
+    return release_profile == "public"
 
 
 class RemoteStorageBackend(StorageBackend):
@@ -36,6 +53,10 @@ class RemoteStorageBackend(StorageBackend):
         timeout: float = 30.0,
         auth_token: Optional[str] = None,
     ) -> None:
+        if _is_public_release_profile():
+            raise ValueError(
+                "RemoteStorageBackend is internal-only and unavailable in public release profile."
+            )
         self._server_url = server_url.rstrip("/")
         self._timeout = timeout
         self._auth_token = auth_token.strip() if auth_token else None
@@ -46,7 +67,8 @@ class RemoteStorageBackend(StorageBackend):
         self._session_projects: Dict[str, str] = {}         # session_id -> project_name
         self._session_modes: Dict[str, str] = {}            # session_id -> mode
         self._transport_sessions: Dict[str, str] = {}       # transport_session_id -> session_id
-        self._agent_sessions: Dict[str, str] = {}           # identity_key -> session_id
+        self._agent_sessions: Dict[str, Dict[str, str]] = {}  # identity_key -> allocation record
+        self._last_agent_session_allocation: Dict[str, Dict[str, Any]] = {}
         self._agent_recent_projects: Dict[str, str] = {}    # agent_id -> project_name
         self._agent_projects: Dict[str, dict] = {}          # agent_id -> {project_name, version, ...}
 
@@ -129,10 +151,36 @@ class RemoteStorageBackend(StorageBackend):
             if headers:
                 request_kwargs["headers"] = headers
             resp = await self._client.post(path, **request_kwargs)
-            if resp.status_code in (401, 403):
+            if resp.status_code == 401:
+                raise RuntimeError(self._auth_failure_message(context, resp))
+            if resp.status_code == 403:
+                response_type = ""
+                response_error = ""
+                try:
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        response_type = str(data.get("type") or "").strip()
+                        response_error = str(data.get("error") or data.get("detail") or "").strip()
+                except ValueError:
+                    response_error = resp.text.strip()
+                if response_type == "ForbiddenOperation":
+                    message = f"Remote operation denied for {context}: HTTP 403 Forbidden."
+                    if response_error:
+                        message += f" {response_error}"
+                    raise PermissionError(message)
                 raise RuntimeError(self._auth_failure_message(context, resp))
             resp.raise_for_status()
-            return resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise RemoteUnavailableError(
+                    f"Remote server returned malformed JSON for {context}"
+                ) from exc
+            if not isinstance(data, dict):
+                raise RemoteUnavailableError(
+                    f"Remote server returned malformed response for {context}"
+                )
+            return data
         except httpx.ConnectError as exc:
             raise RemoteUnavailableError(f"Cannot reach remote server: {exc}") from exc
         except httpx.TimeoutException as exc:
@@ -151,7 +199,20 @@ class RemoteStorageBackend(StorageBackend):
             context=f"backend/{operation}",
         )
         if "error" in data:
-            raise RuntimeError(f"Remote operation {operation} failed: {data['error']}")
+            error_text = str(data.get("error") or "")
+            error_type = str(data.get("type") or "")
+            if error_type == "StaleSession":
+                raise SessionLeaseExpired(
+                    error_text or f"Remote stale session in operation {operation}",
+                    reason=str(data.get("stale_session_reason") or "stale_session"),
+                    agent_id=str(data.get("agent_id") or ""),
+                    session_id=(str(data.get("session_id")) if data.get("session_id") is not None else None),
+                )
+            if error_type == "ForbiddenOperation":
+                raise PermissionError(
+                    f"Remote operation {operation} forbidden: {error_text or 'operation denied'}"
+                )
+            raise RuntimeError(f"Remote operation {operation} failed: {error_text}")
         return data.get("result")
 
     async def execute_batch(self, operations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -168,8 +229,145 @@ class RemoteStorageBackend(StorageBackend):
         return data.get("results", [])
 
     # ------------------------------------------------------------------
-    # ProjectRecord deserialization
+    # Record deserialization
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_remote_datetime(value: Any) -> datetime:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            text = value.strip()
+            if text.endswith("Z"):
+                text = f"{text[:-1]}+00:00"
+            parsed = datetime.fromisoformat(text)
+        else:
+            raise TypeError("expected datetime or ISO-8601 string")
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("expected timezone-aware datetime")
+        return parsed
+
+    @staticmethod
+    def _serialize_apply_preview_receipt(record: ApplyPreviewReceiptRecord) -> Dict[str, Any]:
+        return {
+            key: value.isoformat() if isinstance(value, datetime) else value
+            for key, value in asdict(record).items()
+        }
+
+    def _to_apply_preview_receipt_record(self, data: Any) -> ApplyPreviewReceiptRecord:
+        if isinstance(data, ApplyPreviewReceiptRecord):
+            return data
+        if not isinstance(data, dict):
+            raise RemoteUnavailableError("Remote server returned malformed apply-preview receipt")
+        try:
+            return ApplyPreviewReceiptRecord(
+                token_sha256=data["token_sha256"],
+                receipt_version=data["receipt_version"],
+                state=data["state"],
+                principal_id=data["principal_id"],
+                session_id=data["session_id"],
+                run_id=data["run_id"],
+                project_key=data["project_key"],
+                repo_id=data["repo_id"],
+                action=data["action"],
+                normalized_intent_json=data["normalized_intent_json"],
+                target_binding_json=data["target_binding_json"],
+                precondition_json=data["precondition_json"],
+                predicted_after_json=data["predicted_after_json"],
+                issued_at=self._parse_remote_datetime(data["issued_at"]),
+                expires_at=self._parse_remote_datetime(data["expires_at"]),
+                fence=data["fence"],
+                apply_lease_expires_at=(
+                    self._parse_remote_datetime(data["apply_lease_expires_at"])
+                    if data.get("apply_lease_expires_at") is not None
+                    else None
+                ),
+                terminal_result_code=data.get("terminal_result_code"),
+                terminal_result_json=data.get("terminal_result_json"),
+                terminal_at=(
+                    self._parse_remote_datetime(data["terminal_at"])
+                    if data.get("terminal_at") is not None
+                    else None
+                ),
+                audit_correlation_id=data["audit_correlation_id"],
+                updated_at=self._parse_remote_datetime(data["updated_at"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RemoteUnavailableError(
+                "Remote server returned malformed apply-preview receipt"
+            ) from exc
+
+    def _to_apply_preview_claim_result(self, data: Any) -> ApplyPreviewClaimResult:
+        if isinstance(data, ApplyPreviewClaimResult):
+            return data
+        if not isinstance(data, dict):
+            raise RemoteUnavailableError("Remote server returned malformed apply-preview claim result")
+        try:
+            record_data = data.get("record")
+            record = (
+                self._to_apply_preview_receipt_record(record_data)
+                if record_data is not None
+                else None
+            )
+            return ApplyPreviewClaimResult(status=data["status"], record=record)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RemoteUnavailableError(
+                "Remote server returned malformed apply-preview claim result"
+            ) from exc
+
+    async def issue_apply_preview_receipt(
+        self, record: ApplyPreviewReceiptRecord
+    ) -> ApplyPreviewReceiptRecord:
+        result = await self._call(
+            "issue_apply_preview_receipt",
+            record=self._serialize_apply_preview_receipt(record),
+        )
+        return self._to_apply_preview_receipt_record(result)
+
+    async def fetch_apply_preview_receipt(
+        self, token_sha256: str
+    ) -> ApplyPreviewReceiptRecord | None:
+        result = await self._call("fetch_apply_preview_receipt", token_sha256=token_sha256)
+        if result is None:
+            return None
+        return self._to_apply_preview_receipt_record(result)
+
+    async def claim_apply_preview_receipt(
+        self, token_sha256: str, *, lease_seconds: int
+    ) -> ApplyPreviewClaimResult:
+        result = await self._call(
+            "claim_apply_preview_receipt",
+            token_sha256=token_sha256,
+            lease_seconds=lease_seconds,
+        )
+        return self._to_apply_preview_claim_result(result)
+
+    async def finalize_apply_preview_receipt(
+        self,
+        token_sha256: str,
+        *,
+        fence: int,
+        terminal_state: str,
+        result_code: str,
+        result_json: str,
+    ) -> ApplyPreviewReceiptRecord:
+        result = await self._call(
+            "finalize_apply_preview_receipt",
+            token_sha256=token_sha256,
+            fence=fence,
+            terminal_state=terminal_state,
+            result_code=result_code,
+            result_json=result_json,
+        )
+        return self._to_apply_preview_receipt_record(result)
+
+    async def cleanup_apply_preview_receipts(self) -> int:
+        result = await self._call("cleanup_apply_preview_receipts")
+        if not isinstance(result, int) or isinstance(result, bool) or result < 0:
+            raise RemoteUnavailableError(
+                "Remote server returned malformed apply-preview cleanup result"
+            )
+        return result
 
     def _to_project_record(self, data: Any) -> Optional[ProjectRecord]:
         """Convert a dict from the remote server to a ProjectRecord."""
@@ -188,6 +386,63 @@ class RemoteStorageBackend(StorageBackend):
                 bridge_managed=data.get("bridge_managed", False),
             )
         return data  # Already a ProjectRecord
+
+    def _to_repo_scope_grant_record(self, data: Any) -> Optional[RepoScopeGrantRecord]:
+        if data is None:
+            return None
+        if isinstance(data, RepoScopeGrantRecord):
+            return data
+        if not isinstance(data, dict):
+            return None
+
+        def _parse_time(value: Any) -> datetime:
+            if isinstance(value, datetime):
+                parsed = value
+            else:
+                text = str(value).strip()
+                if text.endswith("Z"):
+                    text = f"{text[:-1]}+00:00"
+                parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+
+        return RepoScopeGrantRecord(
+            grant_id=str(data.get("grant_id", "")),
+            authoritative_session_key=str(data.get("authoritative_session_key", "")),
+            repo_root=str(data.get("repo_root", "")),
+            repo_id=str(data.get("repo_id", "")),
+            reason=str(data.get("reason", "")),
+            expires_at=_parse_time(data.get("expires_at")),
+            created_at=_parse_time(data.get("created_at")) if data.get("created_at") else None,
+            updated_at=_parse_time(data.get("updated_at")) if data.get("updated_at") else None,
+        )
+
+    def _to_case_registry_record(self, data: Any) -> Optional[CaseRegistryRecord]:
+        if data is None:
+            return None
+        if isinstance(data, CaseRegistryRecord):
+            return data
+        if not isinstance(data, dict):
+            return None
+        return CaseRegistryRecord(
+            case_id=str(data.get("case_id", "")),
+            case_type=str(data.get("case_type", "")),
+            project_name=str(data.get("project_name", "")),
+            repo_root=str(data.get("repo_root", "")),
+            repo_id=str(data.get("repo_id", "")),
+            project_key=str(data.get("project_key", "")),
+            doc_type=str(data.get("doc_type", "")),
+            doc_name=str(data.get("doc_name", "")),
+            doc_path=str(data.get("doc_path", "")),
+            title=data.get("title"),
+            status=data.get("status"),
+            severity=data.get("severity"),
+            source_tool=data.get("source_tool"),
+            metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else None,
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
+        )
 
     # ------------------------------------------------------------------
     # Project record cache helpers
@@ -227,8 +482,8 @@ class RemoteStorageBackend(StorageBackend):
             "agent_id": agent_id,
             "repo_root": repo_root,
             "mode": mode,
-            "created_at": datetime.utcnow().isoformat(),
-            "last_active_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_active_at": datetime.now(timezone.utc).isoformat(),
         }
         if transport_session_id:
             self._transport_sessions[transport_session_id] = session_id
@@ -251,6 +506,100 @@ class RemoteStorageBackend(StorageBackend):
     async def get_session_project(self, session_id: str) -> Optional[str]:
         return self._session_projects.get(session_id)
 
+    async def create_repo_scope_grant(
+        self,
+        *,
+        authoritative_session_key: str,
+        repo_root: str,
+        reason: str,
+        ttl_minutes: int = 30,
+    ) -> RepoScopeGrantRecord:
+        result = await self._call(
+            "create_repo_scope_grant",
+            authoritative_session_key=authoritative_session_key,
+            repo_root=normalize_repo_root(repo_root),
+            reason=reason,
+            ttl_minutes=ttl_minutes,
+        )
+        record = self._to_repo_scope_grant_record(result)
+        if record is None:
+            raise RuntimeError("Remote operation create_repo_scope_grant returned invalid payload")
+        return record
+
+    async def fetch_repo_scope_grant(self, grant_id: str) -> Optional[RepoScopeGrantRecord]:
+        result = await self._call("fetch_repo_scope_grant", grant_id=grant_id)
+        return self._to_repo_scope_grant_record(result)
+
+    async def upsert_case_registry_record(
+        self,
+        *,
+        case_id: str,
+        case_type: str,
+        project_name: str,
+        repo_root: str,
+        doc_type: str,
+        doc_name: str,
+        doc_path: str,
+        title: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        source_tool: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CaseRegistryRecord:
+        result = await self._call(
+            "upsert_case_registry_record",
+            case_id=case_id,
+            case_type=case_type,
+            project_name=project_name,
+            repo_root=repo_root,
+            doc_type=doc_type,
+            doc_name=doc_name,
+            doc_path=doc_path,
+            title=title,
+            status=status,
+            severity=severity,
+            source_tool=source_tool,
+            metadata=metadata,
+        )
+        record = self._to_case_registry_record(result)
+        if record is None:
+            raise RuntimeError("Remote operation upsert_case_registry_record returned invalid payload")
+        return record
+
+    async def fetch_case_registry_record(
+        self,
+        case_id: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[CaseRegistryRecord]:
+        result = await self._call(
+            "fetch_case_registry_record",
+            case_id=case_id,
+            repo_root=repo_root,
+            project_name=project_name,
+        )
+        return self._to_case_registry_record(result)
+
+    async def query_case_registry_records(
+        self,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+        case_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[CaseRegistryRecord]:
+        result = await self._call(
+            "query_case_registry_records",
+            repo_root=repo_root,
+            project_name=project_name,
+            case_type=case_type,
+            limit=limit,
+            offset=offset,
+        )
+        return [self._to_case_registry_record(item) for item in (result or []) if item]
+
     async def upsert_agent_session(
         self, agent_id: str, session_id: str, metadata: Optional[Dict[str, Any]]
     ) -> None:
@@ -258,18 +607,40 @@ class RemoteStorageBackend(StorageBackend):
             "session_id": session_id,
             "agent_id": agent_id,
             "metadata": metadata or {},
-            "created_at": datetime.utcnow().isoformat(),
-            "last_active_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_active_at": datetime.now(timezone.utc).isoformat(),
             "state": "active",
         }
 
     async def heartbeat_session(self, session_id: str) -> None:
         if session_id in self._sessions:
-            self._sessions[session_id]["last_active_at"] = datetime.utcnow().isoformat()
+            self._sessions[session_id]["last_active_at"] = datetime.now(timezone.utc).isoformat()
 
     async def end_session(self, session_id: str) -> None:
         if session_id in self._sessions:
             self._sessions[session_id]["state"] = "expired"
+        self._session_projects.pop(session_id, None)
+        self._session_modes.pop(session_id, None)
+        self._transport_sessions = {
+            transport_id: mapped_session
+            for transport_id, mapped_session in self._transport_sessions.items()
+            if mapped_session != session_id
+        }
+        self._agent_sessions = {
+            identity_key: record
+            for identity_key, record in self._agent_sessions.items()
+            if record.get("session_id") != session_id
+        }
+        self._last_agent_session_allocation = {
+            identity_key: allocation
+            for identity_key, allocation in self._last_agent_session_allocation.items()
+            if allocation.get("session_id") != session_id
+        }
+        self._agent_projects = {
+            agent_id: record
+            for agent_id, record in self._agent_projects.items()
+            if record.get("session_id") != session_id
+        }
 
     async def get_agent_project(self, agent_id: str) -> Optional[Dict[str, Any]]:
         return self._agent_projects.get(agent_id)
@@ -295,7 +666,7 @@ class RemoteStorageBackend(StorageBackend):
             "version": new_version,
             "updated_by": updated_by,
             "session_id": session_id,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         self._agent_projects[agent_id] = record
         return record
@@ -322,19 +693,64 @@ class RemoteStorageBackend(StorageBackend):
         mode: str = "",
         scope_key: str = "",
     ) -> str:
-        if identity_key in self._agent_sessions:
-            return self._agent_sessions[identity_key]
+        scoped_reuse_key = self._derive_scoped_reuse_key(repo_root=repo_root, scope_key=scope_key)
+        existing = self._agent_sessions.get(identity_key)
+        if (
+            existing
+            and existing.get("scoped_reuse_key") == scoped_reuse_key
+            and existing.get("mode") == mode
+        ):
+            self._last_agent_session_allocation[identity_key] = {
+                "status": "reused",
+                "session_id": existing["session_id"],
+                "scoped_reuse_key": scoped_reuse_key,
+                "repo_root": existing.get("repo_root", ""),
+                "scope_key": existing.get("scope_key", ""),
+                "mode": existing.get("mode", ""),
+            }
+            return existing["session_id"]
         session_id = str(uuid.uuid4())
-        self._agent_sessions[identity_key] = session_id
+        normalized_repo_root = os.path.realpath(repo_root) if repo_root else ""
+        normalized_scope_key = scope_key or "__prebinding__"
+        self._agent_sessions[identity_key] = {
+            "session_id": session_id,
+            "scoped_reuse_key": scoped_reuse_key,
+            "scope_key": normalized_scope_key,
+            "repo_root": normalized_repo_root,
+            "mode": mode,
+        }
+        self._last_agent_session_allocation[identity_key] = {
+            "status": "allocated",
+            "session_id": session_id,
+            "scoped_reuse_key": scoped_reuse_key,
+            "repo_root": normalized_repo_root,
+            "scope_key": normalized_scope_key,
+            "mode": mode,
+        }
         self._sessions[session_id] = {
             "session_id": session_id,
             "identity_key": identity_key,
             "agent_name": agent_name,
-            "created_at": datetime.utcnow().isoformat(),
-            "last_active_at": datetime.utcnow().isoformat(),
+            "agent_key": agent_key,
+            "repo_root": normalized_repo_root,
+            "mode": mode,
+            "scope_key": normalized_scope_key,
+            "scoped_reuse_key": scoped_reuse_key,
+            "session_reuse_status": "allocated",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_active_at": datetime.now(timezone.utc).isoformat(),
             "state": "active",
         }
         return session_id
+
+    async def get_last_agent_session_allocation(self, identity_key: str) -> Optional[Dict[str, Any]]:
+        return self._last_agent_session_allocation.get(identity_key)
+
+    @staticmethod
+    def _derive_scoped_reuse_key(*, repo_root: str, scope_key: str) -> str:
+        normalized_repo_root = os.path.realpath(repo_root) if repo_root else ""
+        normalized_scope_key = scope_key or "__prebinding__"
+        return f"{normalized_repo_root}:{normalized_scope_key}"
 
     async def upsert_agent_recent_project(
         self, agent_id: str, project_name: str
@@ -371,12 +787,24 @@ class RemoteStorageBackend(StorageBackend):
             self._cache_project(record)
         return record
 
-    async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
-        # Check cache first to avoid redundant HTTP calls
-        cached = self._get_cached_project(name)
-        if cached is not None:
-            return cached
-        result = await self._call("fetch_project", name=name)
+    async def fetch_project(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[ProjectRecord]:
+        # Name-only lookups can reuse cache; scoped lookups should hit source of truth.
+        if repo_root is None and project_key is None:
+            cached = self._get_cached_project(name)
+            if cached is not None:
+                return cached
+        result = await self._call(
+            "fetch_project",
+            name=name,
+            repo_root=repo_root,
+            project_key=project_key,
+        )
         record = self._to_project_record(result)
         if record:
             self._cache_project(record)
@@ -395,8 +823,19 @@ class RemoteStorageBackend(StorageBackend):
         result = await self._call("delete_project", name=name)
         return bool(result)
 
-    async def update_project_docs(self, name: str, docs_json: str) -> bool:
-        result = await self._call("update_project_docs", name=name, docs_json=docs_json)
+    async def update_project_docs(
+        self,
+        name: str,
+        docs_json: str,
+        *,
+        repo_root: Optional[str] = None,
+    ) -> bool:
+        result = await self._call(
+            "update_project_docs",
+            name=name,
+            docs_json=docs_json,
+            repo_root=repo_root,
+        )
         return bool(result)
 
     # --- Entry operations ---
@@ -459,6 +898,20 @@ class RemoteStorageBackend(StorageBackend):
             offset=offset,
         )
         return result or []
+
+    async def fetch_entry_by_id(
+        self,
+        *,
+        entry_id: str,
+        repo_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return await self._call(
+            "fetch_entry_by_id",
+            entry_id=entry_id,
+            repo_id=repo_id,
+            project_name=project_name,
+        )
 
     async def fetch_recent_entries_paginated(
         self,
@@ -722,6 +1175,12 @@ class RemoteStorageBackend(StorageBackend):
 
     # --- Synchronous fetch fallback ---
 
-    async def fetch_project_sync(self, name: str) -> Optional[ProjectRecord]:
+    async def fetch_project_sync(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[ProjectRecord]:
         """Synchronous wrapper -- in remote mode, just calls async fetch_project."""
-        return await self.fetch_project(name)
+        return await self.fetch_project(name, repo_root=repo_root, project_key=project_key)

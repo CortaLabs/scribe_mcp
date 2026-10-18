@@ -153,6 +153,7 @@ class BridgeManifest:
     project_config: BridgeProjectConfig = field(default_factory=BridgeProjectConfig)
     validation: BridgeValidationConfig = field(default_factory=BridgeValidationConfig)
     api_key: Optional[str] = None
+    api_key_reference: Optional[str] = None
     permissions: List[str] = field(default_factory=list)
     min_scribe_version: str = "2.1.0"
     max_scribe_version: Optional[str] = None
@@ -215,10 +216,21 @@ class BridgeManifest:
         api_key will be set to None.
         """
         if self.api_key and self.api_key.startswith("${") and self.api_key.endswith("}"):
+            self.api_key_reference = self.api_key
             var_name = self.api_key[2:-1]
             self.api_key = os.environ.get(var_name)
 
-    def to_json(self) -> str:
+    def _serialize_api_key(self, *, for_persistence: bool) -> Optional[str]:
+        """Serialize api_key safely for persistence without leaking resolved secrets."""
+        if not for_persistence:
+            return self.api_key
+        if self.api_key_reference:
+            return self.api_key_reference
+        if self.api_key and self.api_key.startswith("${") and self.api_key.endswith("}"):
+            return self.api_key
+        return None
+
+    def to_json(self, *, for_persistence: bool = False) -> str:
         """
         Serialize manifest to JSON string.
 
@@ -236,7 +248,7 @@ class BridgeManifest:
             "hooks": {k: v.to_dict() for k, v in self.hooks.items()},
             "project_config": self.project_config.to_dict(),
             "validation": self.validation.to_dict(),
-            "api_key": self.api_key,
+            "api_key": self._serialize_api_key(for_persistence=for_persistence),
             "permissions": self.permissions,
             "min_scribe_version": self.min_scribe_version,
             "max_scribe_version": self.max_scribe_version,
@@ -278,6 +290,7 @@ class BridgeManifest:
             project_config=project_config,
             validation=validation,
             api_key=data.get("api_key"),
+            api_key_reference=data.get("api_key_reference"),
             permissions=data.get("permissions", []),
             min_scribe_version=data.get("min_scribe_version", "2.1.0"),
             max_scribe_version=data.get("max_scribe_version"),

@@ -1,10 +1,11 @@
 {% extends "documents/base_log.md" %}
 {% from "documents/base_log.md" import rotation_notice with context %}
+{% set product = product_name | default(project_name or "this project") %}
 
 {% block log_metadata %}
 {% set log_config.title = "Bug Log" %}
 {% set log_config.icon = "🐞" %}
-{% set log_config.summary = 'Track bug discoveries, investigations, and resolutions. Use `log_type="bugs"` (or `--log bugs`).' %}
+{% set log_config.summary = "Track bug discoveries, investigations, and resolutions for " ~ product ~ ". Use `log_type=\"bugs\"` (or `--log bugs`)." %}
 {% endblock %}
 
 {% block log_body %}
@@ -62,12 +63,12 @@
 ---
 
 ## Status Flow Guide
-1. **open** → Initial discovery and logging  
-2. **investigating** → Root cause analysis  
-3. **in_progress** → Fix under development  
-4. **fixed** → Fix implemented, ready for testing  
-5. **verified** → Fix tested and confirmed  
-6. **closed** → Issue resolved and documented  
+1. **open** → Initial discovery and logging
+2. **investigating** → Root cause analysis
+3. **in_progress** → Fix under development
+4. **fixed** → Fix implemented, ready for testing
+5. **verified** → Fix tested and confirmed
+6. **closed** → Issue resolved and documented
 7. **wont_fix** → Issue accepted as-is (include justification)
 
 ---

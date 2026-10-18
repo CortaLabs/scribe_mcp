@@ -6,8 +6,7 @@ from pathlib import Path
 from scribe_mcp.utils.files import preflight_backup
 
 
-@pytest.mark.asyncio
-async def test_backup_integration_with_real_scenario():
+def test_backup_integration_with_real_scenario():
     """Test that backup works in realistic scenario similar to manage_docs usage."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
@@ -31,15 +30,24 @@ Analysis of current auth implementation.
         research_doc.write_text(original_content)
 
         # Create a backup (as manage_docs would do)
-        backup_path = preflight_backup(research_doc, repo_root=tmpdir)
+        backup_path = preflight_backup(
+            research_doc,
+            repo_root=tmpdir,
+            context={
+                "component": "files",
+                "op": "backup",
+                "managed_doc_archive": True,
+                "project_docs_dir": str(project_dir),
+                "backup_family": "research",
+            },
+        )
 
-        # Verify backup is in centralized location, NOT in research/ directory
-        assert backup_path.parent == tmpdir / ".scribe" / "backups"
+        # Verify backup is in project docs archive lane, NOT in research/ directory
+        assert backup_path.parent == project_dir / "archive" / "preflight" / "research"
         assert backup_path.parent != research_dir  # NOT alongside original
 
-        # Verify filename preserves path structure
-        # Expected: .scribe__docs__dev_plans__test_project__research__RESEARCH_AUTH_20260119.md.preflight-TIMESTAMP.bak
-        assert ".scribe__docs__dev_plans__test_project__research__RESEARCH_AUTH_20260119.md.preflight-" in str(backup_path)
+        # Verify filename preserves relative path structure from repo root.
+        assert ".scribe__docs__dev_plans__test_project__research__RESEARCH_AUTH_20260119.md.preflight-" in backup_path.name
 
         # Verify content matches
         assert backup_path.read_text() == original_content
@@ -47,7 +55,7 @@ Analysis of current auth implementation.
         # Verify original file is untouched
         assert research_doc.read_text() == original_content
 
-        # Verify research directory is clean (no .bak files)
+        # Verify research directory is clean (no sibling .bak files)
         bak_files_in_research = list(research_dir.glob("*.bak"))
         assert len(bak_files_in_research) == 0, "No .bak files should be in research directory"
 

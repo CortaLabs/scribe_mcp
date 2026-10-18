@@ -195,6 +195,12 @@ manage_docs(agent="ReviewAgent", action="create",
 
 Available `doc_type` values: `research`, `bug`, `custom`, `review`, `agent_card`
 
+Doc-type/create routing contract:
+- For `create`, pass `metadata.doc_type` as the only operator-facing selector.
+- Config routing lives in `.scribe/config/scribe.yaml` under `doc_types.create_aliases` and `doc_types.create_templates`.
+- Built-ins are reserved; invalid/missing template config fails closed.
+- Create responses include: `requested_doc_type`, `resolved_doc_type`, `resolved_handler`, `config_source`.
+
 #### Editing Documents
 
 ```python
@@ -228,7 +234,44 @@ manage_docs(agent="Coder", action="apply_patch",
 manage_docs(agent="Coder", action="status_update",
     doc_name="checklist", section="phase_1_task_1",
     metadata={"status": "done", "proof": "All tests passing"})
+
+# Update narrative document frontmatter (NOT checklist)
+manage_docs(agent="Coder", action="frontmatter_update",
+    doc_name="RESEARCH_AUTH_FLOW_20260129",
+    metadata={"frontmatter": {"status": "ready_for_review"}})
+
+# Intent mismatch example:
+# status_update on narrative docs returns DOC_STATUS_INTENT_MISMATCH
+# and directs you to frontmatter_update / metadata.frontmatter.
 ```
+
+#### Quality and readiness checks
+
+- Scaffold residue means "not done"; readiness can be blocked with `DOC_NOT_DONE_SCAFFOLD_QUALITY`.
+- Run `manage_docs(action="quality_check", ...)` before handoff for deterministic no-regex proof UX.
+- Configured log surfaces, including custom `.scribe/config/scribe.yaml` `logs:` entries, are excluded from readiness-quality aggregation. Do not clean log timestamps as scaffold residue.
+- Warning codes you must treat as authoritative:
+  - `SCF_PLACEHOLDER_BRACKET`
+  - `SCF_TEMPLATE_PROSE`
+  - `SCF_EMPTY_FINDING`
+  - `SCF_UNFILLED_APPENDIX`
+  - `SCF_TODO_ONLY_SECTION`
+  - `SCF_LOG_TEMPLATE_ONLY`
+  - `SCF_FRONTMATTER_MISMATCH`
+  - `SCF_INDEX_STALE`
+  - `SCF_INDEX_MISSING`
+  - `SCF_DOC_UNINDEXED`
+  - `SCF_NONCANONICAL_LOCATION`
+
+#### Canonical research path/index rules
+
+- Keep research artifacts in canonical flat `.scribe/docs/dev_plans/<project>/research/`.
+- `research/INDEX.md` is managed and refreshed by lifecycle paths.
+- Noncanonical locations and stale/orphan/unindexed index states are warnings that block quality completion.
+
+#### Tool friction reporting
+
+If Scribe tools, search, manage_docs, or generation surfaces are awkward/unavailable, report that friction in Scribe logs (or your active audit trail) before handoff.
 
 #### Querying Documents
 
@@ -267,6 +310,54 @@ manage_docs(agent="X", action="batch", metadata={"operations": [
 **`open_security(agent, title, symptoms, category)`** — Open a security case (SEC-YYYY-MM-DD-N ID).
 
 **`link_fix(agent, case_id, execution_id, artifact_ref, landing_status)`** — Link a fix to a bug/security case. `landing_status`: `merged`, `landed`, `done`, `proposed`.
+
+Accepted `execution_id` reference forms (for `link_fix`):
+- current execution id
+- parent execution id
+- authoritative session key
+- in-scope Scribe entry id (32-hex) that exists in storage for the active project
+
+Not accepted:
+- transport or process session identifiers
+- arbitrary 32-hex tokens that are not proven in-scope Scribe entry ids
+
+Fast recovery when `execution_id` is rejected:
+- retry with the current execution id
+- or retry with the parent execution id
+- or retry with the active authoritative session key
+- or retry with a real in-scope Scribe entry id from the active project
+
+### Frontmatter Mutation Contract
+
+Preserve-first defaults:
+- Empty/null/blank-style incoming values do not overwrite existing non-empty frontmatter values.
+- Body-only edit actions do not create frontmatter unless you explicitly opt in.
+
+Explicit deletion and replacement:
+- Use `metadata.frontmatter_delete` only for non-reserved keys.
+- Reserved/runtime-owned keys are protected and cannot be deleted by caller input.
+- `frontmatter_mode=\"replace_explicit\"` is structural replacement for allowed fields; it is not a bypass for reserved/runtime-owned keys.
+
+Runtime-owned attribution:
+- `created_by`, `maintained_by`, and `edit_trace` are tool/runtime-authored.
+- Caller-supplied values for runtime-owned attribution fields are ignored in favor of runtime resolution.
+
+Frontmatter creation behavior:
+- `create` writes governed frontmatter by default.
+- `frontmatter_update` may create frontmatter when metadata intent is explicit.
+- Body-only actions (`replace_section`, `append`, `replace_text`, `replace_range`, `apply_patch`) default to no frontmatter creation unless opted in.
+
+### Focused Validation Bundle
+
+Run this focused bundle for the ID/frontmatter/case workflow:
+
+```bash
+uv run pytest -q tests/test_frontmatter.py tests/test_manage_docs_frontmatter_contract.py
+uv run pytest -q tests/test_sentinel_tools.py tests/test_case_registry_ownership.py
+uv run pytest -q tests/test_case_registry_storage.py tests/storage/test_entry_lookup_scope.py
+uv run pytest -q tests/shared/test_reference_resolution.py
+git diff --check
+```
 
 ### Diagnostics
 

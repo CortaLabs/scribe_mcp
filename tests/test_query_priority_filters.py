@@ -10,7 +10,7 @@ from scribe_mcp.tools.set_project import set_project
 from scribe_mcp.config.settings import settings
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="module")
 async def test_project():
     """Create a test project for filtering tests."""
     project_name = f"test_priority_filters"
@@ -18,7 +18,7 @@ async def test_project():
     return project_name
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_read_recent_priority_filter(test_project):
     """Test filtering by priority in read_recent."""
     # Create test entries with different priorities
@@ -57,7 +57,7 @@ async def test_read_recent_priority_filter(test_project):
             assert priority in ["critical", "high"], f"Expected critical/high, got {priority}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_read_recent_category_filter(test_project):
     """Test filtering by category in read_recent."""
     # Create test entries with different categories
@@ -87,7 +87,7 @@ async def test_read_recent_category_filter(test_project):
     assert result.get("ok") is not False
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_read_recent_confidence_filter(test_project):
     """Test filtering by minimum confidence in read_recent."""
     # Create test entries with different confidence levels
@@ -120,7 +120,7 @@ async def test_read_recent_confidence_filter(test_project):
             assert float(conf) >= 0.8, f"Expected confidence >= 0.8, got {conf}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_read_recent_priority_sort(test_project):
     """Test priority-based sorting in read_recent."""
     # Create entries in random priority order
@@ -151,7 +151,7 @@ async def test_read_recent_priority_sort(test_project):
                     f"Critical should come before low in {priorities}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_query_entries_priority_filter(test_project):
     """Test priority filter in query_entries."""
     # Create test entries
@@ -176,7 +176,7 @@ async def test_query_entries_priority_filter(test_project):
     assert result.get("ok") is not False
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_query_entries_category_filter(test_project):
     """Test category filter in query_entries."""
     # Create test entries
@@ -201,7 +201,7 @@ async def test_query_entries_category_filter(test_project):
     assert result.get("ok") is not False
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_combined_filters(test_project):
     """Test combining multiple filters."""
     # Create test entries
@@ -233,7 +233,7 @@ async def test_combined_filters(test_project):
     assert result.get("ok") is not False
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_query_entries_priority_sort(test_project):
     """Test priority sorting in query_entries."""
     # Create entries with different priorities

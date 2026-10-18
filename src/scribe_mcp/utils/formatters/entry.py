@@ -639,8 +639,8 @@ class EntryFormatter(BaseFormatter):
         | METADATA                                                     |
         +--------------------------------------------------------------+
         | paths: 2 log files written                                   |
-        | * /home/austin/.scribe/.../PROGRESS_LOG.md                   |
-        | * /home/austin/.scribe/.../BUG_LOG.md                        |
+        | * /home/user/.scribe/.../PROGRESS_LOG.md                     |
+        | * /home/user/.scribe/.../BUG_LOG.md                          |
         +==============================================================+
         """
         parts = []

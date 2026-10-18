@@ -64,6 +64,16 @@ class QueryEntriesConfig:
     relevance_threshold: float = 0.0
     max_results: Optional[int] = None
 
+    # Phase 5 Priority/Category Filter Parameters
+    # (P4.2: previously omitted from this config, so the priority/category/
+    # min_confidence/priority_sort knobs were silently dropped before reaching
+    # the execution paths — the filters appeared "broken when combined". Declared
+    # here so they flow through from_legacy_params into search_params.)
+    priority: Optional[List[str]] = None
+    category: Optional[List[str]] = None
+    min_confidence: Optional[float] = None
+    priority_sort: bool = False
+
     # Internal configuration
     _config_manager: ConfigManager = field(
         default_factory=lambda: ConfigManager("query_entries"),
@@ -97,18 +107,26 @@ class QueryEntriesConfig:
         self.page = page
         self.page_size = original_page_size
 
-        # Only apply limit normalization if we're in legacy mode (page=1 and page_size=50)
+        # Only apply the legacy limit->page_size coupling in legacy mode
+        # (page=1 and page_size=50). P4.2: in pagination mode, PRESERVE ``limit``
+        # as the total-results cap instead of nulling it — the unified contract in
+        # query_entries (_resolve_pagination) treats limit as a cap independent of
+        # the page window, so discarding it here is what made limit/max_results
+        # dead on the paginated path (F6).
         if page == 1 and original_page_size == 50:
-            # Legacy mode - normalize limit
+            # Legacy mode - normalize limit and couple it to page_size
             if self.limit is not None:
                 self.limit = int(self.limit) if isinstance(self.limit, str) else self.limit
                 self.limit = max(1, min(self.limit or 50, 500))
                 self.page_size = self.limit
             self._is_pagination_mode = False
         else:
-            # Pagination mode - preserve pagination parameters but disable legacy limit
+            # Pagination mode - preserve pagination parameters AND keep limit as a
+            # cap (no longer nulled). page/page_size define the window; limit caps
+            # the total considered before windowing.
             self._is_pagination_mode = True
-            self.limit = None
+            if self.limit is not None:
+                self.limit = int(self.limit) if isinstance(self.limit, str) else self.limit
 
     def _normalize_list_parameters(self) -> None:
         """Normalize list parameters using utility functions."""
@@ -519,9 +537,15 @@ class QueryEntriesConfig:
         return cls(**params)
 
     def get_effective_limit(self) -> int:
-        """Get the effective limit based on pagination mode."""
+        """Get the effective per-call window under the unified P4.2 contract.
+
+        ``limit`` is the total-results cap and ``page_size`` is the page window;
+        the effective number of rows a single call can surface is the smaller of
+        the two. (Before P4.2 ``limit`` was nulled in pagination mode and this
+        fell back to ``page_size`` alone.)
+        """
         if self.limit is not None:
-            return self.limit
+            return min(self.limit, self.page_size)
         return self.page_size
 
     def is_pagination_mode(self) -> bool:

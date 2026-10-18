@@ -68,6 +68,12 @@ def _cleanup_state_dir() -> None:
 atexit.register(_cleanup_state_dir)
 
 
+@pytest.fixture
+def test_agent() -> str:
+    """Return the canonical persona used by hermetic tests."""
+    return "test-agent"
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_test_artifacts() -> None:
     """Prevent cross-test pollution from temp artifact directories/db files."""

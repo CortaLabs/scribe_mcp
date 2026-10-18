@@ -16,9 +16,9 @@
 <!-- ID: executive_summary -->
 ## Executive Summary
 
-**Overall Decision:** {{ overall_decision | default(metadata.overall_decision | default('[APPROVED/REJECTED/REQUIRES_REVISION]')) }}
+**Overall Decision:** {{ overall_decision | default(metadata.overall_decision | default('REQUIRES_REVISION')) }}
 
-**Confidence Level:** {{ confidence_level | default(metadata.confidence_level | default('[High/Medium/Low]')) }}
+**Confidence Level:** {{ confidence_level | default(metadata.confidence_level | default('Medium')) }}
 
 **Key Findings:**
 - [ ] {{ key_finding_1 | default('Finding 1') }}
@@ -31,8 +31,8 @@
 ## Phase Review Results
 
 ### Research Phase Review
-**Grade:** {{ research_grade | default('[Score]') }}%
-**Status:** {{ research_status | default('[PASS/FAIL/CONDITIONAL]') }}
+**Grade:** {{ research_grade | default('Not graded') }}
+**Status:** {{ research_status | default('CONDITIONAL') }}
 
 **Findings:**
 - [ ] {{ research_finding_1 | default('Research completeness assessment') }}
@@ -41,8 +41,8 @@
 - [ ] {{ research_finding_4 | default('Cross-project validation results') }}
 
 ### Architecture Phase Review
-**Grade:** {{ architecture_grade | default('[Score]') }}%
-**Status:** {{ architecture_status | default('[PASS/FAIL/CONDITIONAL]') }}
+**Grade:** {{ architecture_grade | default('Not graded') }}
+**Status:** {{ architecture_status | default('CONDITIONAL') }}
 
 **Findings:**
 - [ ] {{ architecture_finding_1 | default('Design feasibility assessment') }}
@@ -79,12 +79,12 @@
 ## Recommendations
 
 ### Immediate Actions
-- [ ] {{ immediate_action_1 | default('[Action 1]') }}
-- [ ] {{ immediate_action_2 | default('[Action 2]') }}
+- [ ] {{ immediate_action_1 | default('Capture reviewer-approved remediation tasks.') }}
+- [ ] {{ immediate_action_2 | default('Assign owners and due dates for each remediation task.') }}
 
 ### Implementation Requirements
-- [ ] {{ implementation_requirement_1 | default('[Requirement 1]') }}
-- [ ] {{ implementation_requirement_2 | default('[Requirement 2]') }}
+- [ ] {{ implementation_requirement_1 | default('Define verification commands and expected results.') }}
+- [ ] {{ implementation_requirement_2 | default('Confirm bounded scope and dependency ownership.') }}
 
 ### Next Steps
 - [ ] {{ next_step_1 | default('Proceed to implementation (if approved)') }}
@@ -98,17 +98,17 @@
 
 | Agent | Role | Grade | Comments |
 |-------|------|-------|----------|
-| Research Analyst | Research | {{ research_agent_grade | default('[Score]%') }} | {{ research_agent_comments | default('[Comments]') }} |
-| Architect | Architecture | {{ architect_agent_grade | default('[Score]%') }} | {{ architect_agent_comments | default('[Comments]') }} |
-| Coder | Implementation | {{ coder_agent_grade | default('N/A') }} | {{ coder_agent_comments | default('[Not yet evaluated]') }} |
-| Reviewer | Review | {{ reviewer_agent_grade | default('[Score]%') }} | {{ reviewer_agent_comments | default('[Self-assessment]') }} |
+| Research Analyst | Research | {{ research_agent_grade | default('Not graded') }} | {{ research_agent_comments | default('No research-specific grading recorded in this report.') }} |
+| Architect | Architecture | {{ architect_agent_grade | default('Not graded') }} | {{ architect_agent_comments | default('No architecture-specific grading recorded in this report.') }} |
+| Coder | Implementation | {{ coder_agent_grade | default('Not graded') }} | {{ coder_agent_comments | default('Implementation grading deferred or not applicable.') }} |
+| Reviewer | Review | {{ reviewer_agent_grade | default('Not graded') }} | {{ reviewer_agent_comments | default('Reviewer self-assessment not provided.') }} |
 
 ---
 
 <!-- ID: compliance_verification -->
 ## Compliance Verification
 
-**Scribe Protocol Compliance:** {{ protocol_compliance | default('[COMPLIANT/PARTIALLY_COMPLIANT/NON_COMPLIANT]') }}
+**Scribe Protocol Compliance:** {{ protocol_compliance | default('PARTIALLY_COMPLIANT') }}
 
 - [ ] {{ compliance_check_1 | default('Minimum logging requirements met') }}
 - [ ] {{ compliance_check_2 | default('Documentation standards followed') }}
@@ -120,15 +120,15 @@
 <!-- ID: final_decision -->
 ## Final Decision
 
-**{{ final_decision | default('[APPROVED/REJECTED/REQUIRES_REVISION]') }}**
+**{{ final_decision | default('REQUIRES_REVISION') }}**
 
-**Rationale:** {{ rationale | default('[Detailed justification for decision]') }}
+**Rationale:** {{ rationale | default('Decision rationale should reference concrete evidence from findings and verification.') }}
 
 **Conditions for Proceeding:**
-- [ ] {{ condition_1 | default('[Condition 1]') }}
-- [ ] {{ condition_2 | default('[Condition 2]') }}
+- [ ] {{ condition_1 | default('Complete required remediation tasks and capture verification evidence.') }}
+- [ ] {{ condition_2 | default('Re-run applicable validation and document outcome in the managed report.') }}
 
-**Expected Timeline:** {{ expected_timeline | default('[Timeline estimate]') }}
+**Expected Timeline:** {{ expected_timeline | default('To be confirmed by owner after remediation scope review.') }}
 
 ---
 

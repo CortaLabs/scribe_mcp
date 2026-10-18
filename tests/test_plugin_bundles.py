@@ -1,18 +1,71 @@
 from __future__ import annotations
 
+import importlib.util
+import hashlib
 import json
 import shutil
+import sys
 import tomllib
 from pathlib import Path
+from types import ModuleType
+
+import yaml
 
 from scribe_mcp.cli import main as cli_main
 from scribe_mcp.scripts.project_codex_plugin import project_codex_plugin
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import sync_plugin_skills  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_PLUGIN_ROOT = REPO_ROOT / "plugins" / "claude"
 CODEX_PLUGIN_ROOT = REPO_ROOT / "plugins" / "codex"
-MARKETPLACE_PATH = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
+MARKETPLACE_PATH = CODEX_PLUGIN_ROOT / "marketplace.json"
+PACKAGE_BUNDLE_ROOT = REPO_ROOT / "src" / "scribe_mcp" / "plugins_bundle"
+PACKAGE_ONBOARDING_SKILL = (
+    PACKAGE_BUNDLE_ROOT / "codex" / "skills" / "scribe-onboarding" / "SKILL.md"
+)
+SCRIBE_COUNCIL_ROOT = REPO_ROOT / "packages" / "scribe_council"
+SCRIBE_COUNCIL_TEMPLATES = (
+    SCRIBE_COUNCIL_ROOT / "src" / "scribe_council" / "council_templates"
+)
+SCRIBE_RETIREMENTS_PATH = SCRIBE_COUNCIL_TEMPLATES / "retirements.v1.yaml"
+SCRIBE_RETIREMENTS_SHA256 = (
+    "58c3bca5e28f2e08af623cca0af5c3aa7fe93589754ffd94b87ade92cc8f325e"
+)
+SCRIBE_PROVIDER_SKILLS = [
+    "scribe-integration",
+    "scribe-onboarding",
+]
+SCRIBE_RETIREMENTS_DESCRIPTOR = {
+    "schema_version": "provider-host-retirements.v1",
+    "retirements": [
+        {
+            "transition_id": "scribe-mcp-usage-to-scribe-integration",
+            "artifact_kind": "skill",
+            "predecessor_canonical_identity": "skill:scribe-mcp-usage",
+            "predecessor_tree_hashes": [
+                {
+                    "host": "claude",
+                    "target_root": ".claude/skills/scribe-mcp-usage",
+                    "manifest_path": ".claude/skills/.council_generated_manifest.json",
+                    "tree_sha256": "a5a5d7e4e55981f0148cc031eb2248b8bf14cb7af4796c38de0072a3b3e6ff28",
+                },
+                {
+                    "host": "codex",
+                    "target_root": ".codex/skills/scribe-mcp-usage",
+                    "manifest_path": ".codex/skills/.council_generated_manifest.json",
+                    "tree_sha256": "a5a5d7e4e55981f0148cc031eb2248b8bf14cb7af4796c38de0072a3b3e6ff28",
+                },
+            ],
+            "successor_canonical_identity": "skill:scribe-integration",
+            "publisher_id": "scribe-council",
+            "owner_id": "scribe-mcp",
+            "action": "retire_generated_host_tree",
+        }
+    ],
+}
 ALLOWED_PUBLIC_AGENTS = [
     "scribe-architect",
     "scribe-bug-hunter",
@@ -62,6 +115,29 @@ def _normalized_policy_text(text: str) -> str:
     return "".join(ch for ch in text.casefold() if ch.isalnum())
 
 
+def _canonical_descriptor_sha256(payload: object) -> str:
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _load_scribe_council_template_provider() -> ModuleType:
+    module_path = SCRIBE_COUNCIL_TEMPLATES / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        "scribe_council.council_templates",
+        module_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _assert_public_safe_text(text: str) -> None:
     normalized_text = _normalized_policy_text(text)
     for marker in PRIVATE_LOGIC_MARKERS:
@@ -103,7 +179,7 @@ def test_claude_bundle_keeps_manifest_only_directory_shape_and_public_assets() -
     hook_command = hooks_config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert hook_command == "${CLAUDE_PLUGIN_ROOT}/bin/protect-managed-docs.sh"
 
-    assert (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage" / "SKILL.md").exists()
+    assert (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-integration" / "SKILL.md").exists()
     _assert_public_safe_markdown_dir(CLAUDE_PLUGIN_ROOT / "agents")
 
 
@@ -142,7 +218,7 @@ def test_project_codex_plugin_preserves_existing_user_files_and_is_idempotent(tm
     codex_home = tmp_path / "codex-home"
     agents_dir = codex_home / "agents"
     agents_dir.mkdir(parents=True)
-    skill_dir = codex_home / "skills" / "scribe-mcp-usage"
+    skill_dir = codex_home / "skills" / "scribe-integration"
     skill_dir.mkdir(parents=True)
 
     config_path = codex_home / "config.toml"
@@ -332,3 +408,344 @@ def test_scribe_cli_projects_codex_plugin_rejects_private_catalog_content(tmp_pa
     assert exit_code == 1
     assert "error: invalid Codex plugin catalog:" in captured.err
     assert "private/council-only content" in captured.err
+
+
+def _tree_fingerprint(directory: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(directory)): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_package_bundle_is_byte_identical_to_canonical_repo_plugins() -> None:
+    """P6.6 drift guard: the wheel-shipped src/scribe_mcp/plugins_bundle/{claude,codex}
+    bundle MUST stay byte-identical to the canonical repo plugins/ source so the
+    copy cannot silently rot into a parallel system. If you edit the repo bundle,
+    re-copy it into the package tree (and vice versa)."""
+    assert _tree_fingerprint(PACKAGE_BUNDLE_ROOT / "claude") == _tree_fingerprint(CLAUDE_PLUGIN_ROOT)
+    assert _tree_fingerprint(PACKAGE_BUNDLE_ROOT / "codex") == _tree_fingerprint(CODEX_PLUGIN_ROOT)
+
+
+def test_packaged_onboarding_skill_stays_outside_shipped_plugin_surface() -> None:
+    """The packaged onboarding helper is the lean shipped plugin skill."""
+    assert PACKAGE_ONBOARDING_SKILL.is_file()
+    assert not (CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage").exists()
+
+
+def test_scribe_provider_publishes_host_retirement_descriptor() -> None:
+    """Scribe publishes its exact one-time predecessor retirement contract."""
+    # The descriptor is intentionally readable without importing provider code.
+    descriptor = yaml.safe_load(SCRIBE_RETIREMENTS_PATH.read_text(encoding="utf-8"))
+    assert descriptor == SCRIBE_RETIREMENTS_DESCRIPTOR
+    assert _canonical_descriptor_sha256(descriptor) == SCRIBE_RETIREMENTS_SHA256
+
+    provider = _load_scribe_council_template_provider()
+    manifest = provider.get_council_templates()
+    assert manifest["package_name"] == "scribe-council"
+    assert manifest["retirements_path"] == str(SCRIBE_RETIREMENTS_PATH)
+    assert manifest["retirements_digest"] == SCRIBE_RETIREMENTS_SHA256
+    assert provider.RETIREMENTS_DESCRIPTOR_SHA256 == SCRIBE_RETIREMENTS_SHA256
+
+    package_config = tomllib.loads(
+        (SCRIBE_COUNCIL_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    package_data = package_config["tool"]["setuptools"]["package-data"][
+        "scribe_council"
+    ]
+    assert package_data.count("council_templates/retirements.v1.yaml") == 1
+
+    retirement = descriptor["retirements"][0]
+    assert list(retirement) == [
+        "transition_id",
+        "artifact_kind",
+        "predecessor_canonical_identity",
+        "predecessor_tree_hashes",
+        "successor_canonical_identity",
+        "publisher_id",
+        "owner_id",
+        "action",
+    ]
+    assert [row["host"] for row in retirement["predecessor_tree_hashes"]] == [
+        "claude",
+        "codex",
+    ]
+    for row in retirement["predecessor_tree_hashes"]:
+        assert list(row) == [
+            "host",
+            "target_root",
+            "manifest_path",
+            "tree_sha256",
+        ]
+    assert "admission_receipt_id" not in retirement
+    assert "source_content_receipt_id" not in retirement
+    assert "predecessor_tree_hash" not in retirement
+
+
+def test_scribe_provider_exports_only_scribe_owned_skills() -> None:
+    """The provider must not republish Council-owned template source."""
+    provider = _load_scribe_council_template_provider()
+    manifest = provider.get_council_templates()
+    skills_dir = Path(manifest["skills_dir"])
+    shipped = sorted(
+        path.parent.name for path in skills_dir.glob("*/SKILL.md.j2")
+    )
+
+    assert shipped == SCRIBE_PROVIDER_SKILLS
+    assert "meta-architect" not in shipped
+    assert not (skills_dir / "meta-architect" / "SKILL.md.j2").exists()
+    assert manifest["retirements_path"] == str(SCRIBE_RETIREMENTS_PATH)
+    assert manifest["retirements_digest"] == SCRIBE_RETIREMENTS_SHA256
+
+
+def test_scribe_retirement_descriptor_rejects_alternate_or_tampered_shapes() -> None:
+    """Only the exact two-host owner publication has the published digest."""
+    altered_descriptors: list[dict[str, object]] = []
+
+    for field, altered_value in (
+        ("predecessor_canonical_identity", "skill:other"),
+        ("successor_canonical_identity", "skill:other"),
+        ("publisher_id", "other-publisher"),
+        ("owner_id", "other-owner"),
+        ("artifact_kind", "rule"),
+        ("action", "delete"),
+    ):
+        altered = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+        altered["retirements"][0][field] = altered_value
+        altered_descriptors.append(altered)
+
+    for field, altered_value in (
+        ("tree_sha256", "0" * 64),
+        ("target_root", ".codex/skills/other"),
+        ("manifest_path", ".codex/skills/other.json"),
+        ("host", "agents"),
+    ):
+        altered = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+        altered["retirements"][0]["predecessor_tree_hashes"][1][field] = (
+            altered_value
+        )
+        altered_descriptors.append(altered)
+
+    extra_host = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    extra_host["retirements"][0]["predecessor_tree_hashes"].append(
+        {
+            "host": "agents",
+            "target_root": ".agents/skills/scribe-mcp-usage",
+            "manifest_path": ".agents/skills/.council_generated_manifest.json",
+            "tree_sha256": "a5a5d7e4e55981f0148cc031eb2248b8bf14cb7af4796c38de0072a3b3e6ff28",
+        }
+    )
+    altered_descriptors.append(extra_host)
+
+    extra_transition = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    extra_transition["retirements"].append(
+        json.loads(json.dumps(extra_transition["retirements"][0]))
+    )
+    altered_descriptors.append(extra_transition)
+
+    singular_shape = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    retirement = singular_shape["retirements"][0]
+    retirement["predecessor_tree_hash"] = retirement.pop("predecessor_tree_hashes")[
+        0
+    ]["tree_sha256"]
+    altered_descriptors.append(singular_shape)
+
+    reversed_hosts = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    reversed_hosts["retirements"][0]["predecessor_tree_hashes"].reverse()
+    altered_descriptors.append(reversed_hosts)
+
+    extra_key = json.loads(json.dumps(SCRIBE_RETIREMENTS_DESCRIPTOR))
+    extra_key["retirements"][0]["legacy_alias"] = True
+    altered_descriptors.append(extra_key)
+
+    for altered in altered_descriptors:
+        assert altered != SCRIBE_RETIREMENTS_DESCRIPTOR
+        assert _canonical_descriptor_sha256(altered) != SCRIBE_RETIREMENTS_SHA256
+
+
+def test_scribe_retirement_descriptor_is_not_a_plugin_runtime_asset() -> None:
+    """Retirement authority ships only from the scribe-council provider."""
+    plugin_roots = [CLAUDE_PLUGIN_ROOT, CODEX_PLUGIN_ROOT, PACKAGE_BUNDLE_ROOT]
+    for plugin_root in plugin_roots:
+        assert not list(plugin_root.rglob("retirements.v1.yaml"))
+
+
+def test_resolve_codex_plugin_root_prefers_packaged_bundle() -> None:
+    """install_wizard projection must resolve to the installed package bundle
+    (post-`pip install`), not the caller's CWD/repo clone."""
+    from scribe_mcp.config.paths import codex_plugin_bundle_dir, resolve_codex_plugin_root
+
+    resolved = resolve_codex_plugin_root(REPO_ROOT)
+    assert resolved == codex_plugin_bundle_dir()
+    assert (resolved / ".codex-plugin" / "plugin.json").exists()
+    assert (resolved / "skills" / "scribe-integration" / "SKILL.md").exists()
+
+
+def test_resolve_codex_plugin_root_falls_back_to_repo_when_bundle_absent(monkeypatch) -> None:
+    """Clone/dev fallback: if the packaged bundle is unavailable, resolution
+    falls back to the canonical repo plugins/codex tree."""
+    from scribe_mcp.config import paths
+
+    monkeypatch.setattr(paths, "codex_plugin_bundle_dir", lambda: REPO_ROOT / "no-such-bundle")
+    resolved = paths.resolve_codex_plugin_root(REPO_ROOT)
+    assert resolved == REPO_ROOT / "plugins" / "codex"
+    assert (resolved / ".codex-plugin" / "plugin.json").exists()
+
+
+def test_roster_review_agent_uses_registered_slug_for_scribe_sign_in() -> None:
+    roster_text = (REPO_ROOT / ".council" / "roster.yaml").read_text(encoding="utf-8")
+    assert "You sign into Scribe as `scribe-review-agent`" in roster_text
+    assert "You sign into Scribe as `ReviewAgent`" not in roster_text
+
+
+# --- Plugin skill sync (2.8.1): lean Scribe plugin surface ships ---
+
+# The skills that MUST ship in both plugins and the bundle. This is the
+# intentionally lean Scribe plugin surface; broader usage docs stay in repo docs.
+EXPECTED_SHIPPED_SKILLS = [
+    "scribe-integration",
+    "scribe-onboarding",
+]
+EXCLUDED_FROM_PLUGINS = {
+    # Legacy broad-form usage docs are too large/stale for the installed plugin
+    # surface; scribe-integration, scribe-onboarding, and repo docs cover it.
+    "scribe-mcp-usage",
+    # Owned by Knowledge MCP (owner: knowledge-mcp, coupled to
+    # knowledge_mcp.operator_cli + .knowledge datasets).
+    "scribe-rag-workflow",
+}
+
+
+def _shipped_skill_slugs(skills_dir: Path) -> list[str]:
+    return sorted(
+        path.name
+        for path in skills_dir.glob("scribe-*")
+        if path.is_dir() and (path / "SKILL.md").is_file()
+    )
+
+
+def test_every_scribe_skill_ships_in_both_plugins_and_bundle() -> None:
+    """All Scribe-owned generated skills ship (SKILL.md) in both plugin trees and
+    the wheel-vendored bundle; the knowledge-mcp skill stays excluded."""
+    skill_dirs = [
+        CLAUDE_PLUGIN_ROOT / "skills",
+        CODEX_PLUGIN_ROOT / "skills",
+        PACKAGE_BUNDLE_ROOT / "claude" / "skills",
+        PACKAGE_BUNDLE_ROOT / "codex" / "skills",
+    ]
+    for skills_dir in skill_dirs:
+        shipped = _shipped_skill_slugs(skills_dir)
+        assert shipped == EXPECTED_SHIPPED_SKILLS, f"{skills_dir}: {shipped}"
+        for excluded in EXCLUDED_FROM_PLUGINS:
+            assert excluded not in shipped, f"{skills_dir} must exclude {excluded}"
+        for slug in EXPECTED_SHIPPED_SKILLS:
+            assert (skills_dir / slug / "SKILL.md").is_file()
+
+
+def _skill_tree_fingerprint(skill_dir: Path) -> dict[str, bytes]:
+    """Map every file under a skill dir (relative path -> bytes)."""
+    return {
+        str(path.relative_to(skill_dir)): path.read_bytes()
+        for path in skill_dir.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_shipped_plugin_skills_match_generated_source() -> None:
+    """Each shipped plugin/bundle skill is FULL-TREE byte-identical to the
+    canonical generated source it was synced from (.claude/skills, .codex/skills).
+
+    Every file in the generated skill tree must ship in both the plugin tree and
+    the wheel-vendored bundle."""
+    generated = {
+        "claude": REPO_ROOT / ".claude" / "skills",
+        "codex": REPO_ROOT / ".codex" / "skills",
+    }
+    targets = {
+        "claude": [CLAUDE_PLUGIN_ROOT / "skills", PACKAGE_BUNDLE_ROOT / "claude" / "skills"],
+        "codex": [CODEX_PLUGIN_ROOT / "skills", PACKAGE_BUNDLE_ROOT / "codex" / "skills"],
+    }
+    for channel, source_dir in generated.items():
+        for slug in EXPECTED_SHIPPED_SKILLS:
+            source_tree = _skill_tree_fingerprint(source_dir / slug)
+            assert source_tree, f"{source_dir / slug}: generated source is empty"
+            for target_dir in targets[channel]:
+                assert _skill_tree_fingerprint(target_dir / slug) == source_tree, (
+                    f"{target_dir / slug} not full-tree byte-identical to "
+                    f"{source_dir / slug}"
+                )
+
+
+def test_scribe_mcp_usage_is_not_shipped_in_plugins_or_bundle() -> None:
+    """The broad legacy usage skill stays out of the installed plugin surface."""
+
+    skill_dirs = [
+        CLAUDE_PLUGIN_ROOT / "skills" / "scribe-mcp-usage",
+        CODEX_PLUGIN_ROOT / "skills" / "scribe-mcp-usage",
+        PACKAGE_BUNDLE_ROOT / "claude" / "skills" / "scribe-mcp-usage",
+        PACKAGE_BUNDLE_ROOT / "codex" / "skills" / "scribe-mcp-usage",
+    ]
+    for skill_dir in skill_dirs:
+        assert not skill_dir.exists(), f"{skill_dir} should not ship"
+
+
+def test_plugin_skill_sync_is_clean() -> None:
+    """The durable sync mechanism reports zero drift, proving the committed
+    plugin + bundle skill trees match what the sync rule would produce."""
+    assert sync_plugin_skills.sync(check=True) == 0
+
+
+def test_plugin_skill_sync_rule_excludes_knowledge_mcp_skill() -> None:
+    """The shipped-set rule excludes scribe-rag-workflow on both channels even
+    though it exists in the generated source."""
+    for channel in ("claude", "codex"):
+        names = sync_plugin_skills.shipped_skill_names(channel)
+        for excluded in EXCLUDED_FROM_PLUGINS:
+            assert excluded not in names
+        assert names == EXPECTED_SHIPPED_SKILLS
+
+
+def test_plugin_skill_sync_uses_tracked_plugin_tree_when_generated_sources_are_absent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Clean CI checkouts do not track .claude/.codex generated skill sources.
+
+    The sync check must not treat absent generated dirs as an empty shipped set;
+    it should use the tracked plugin tree as the source for bundle parity.
+    """
+
+    generated_dirs = {
+        "claude": tmp_path / "missing-generated" / "claude",
+        "codex": tmp_path / "missing-generated" / "codex",
+    }
+    plugin_dirs = {
+        "claude": tmp_path / "plugins" / "claude" / "skills",
+        "codex": tmp_path / "plugins" / "codex" / "skills",
+    }
+    bundle_dirs = {
+        "claude": tmp_path / "bundle" / "claude" / "skills",
+        "codex": tmp_path / "bundle" / "codex" / "skills",
+    }
+
+    for channel in ("claude", "codex"):
+        plugin_skill = plugin_dirs[channel] / "scribe-integration" / "SKILL.md"
+        bundle_skill = bundle_dirs[channel] / "scribe-integration" / "SKILL.md"
+        plugin_skill.parent.mkdir(parents=True)
+        bundle_skill.parent.mkdir(parents=True)
+        plugin_skill.write_text(f"# {channel} integration\n", encoding="utf-8")
+        bundle_skill.write_text(f"# {channel} integration\n", encoding="utf-8")
+
+    monkeypatch.setattr(sync_plugin_skills, "GENERATED_SKILL_DIRS", generated_dirs)
+    monkeypatch.setattr(sync_plugin_skills, "PLUGIN_SKILL_DIRS", plugin_dirs)
+    monkeypatch.setattr(sync_plugin_skills, "BUNDLE_SKILL_DIRS", bundle_dirs)
+
+    assert sync_plugin_skills.shipped_skill_names("claude") == ["scribe-integration"]
+    assert sync_plugin_skills.sync(check=True) == 0
+
+    stale_bundle = bundle_dirs["codex"] / "scribe-integration" / "SKILL.md"
+    stale_bundle.write_text("# stale\n", encoding="utf-8")
+    assert sync_plugin_skills.sync(check=True) == 1
+    assert sync_plugin_skills.sync(check=False) == 1
+    assert stale_bundle.read_text(encoding="utf-8") == "# codex integration\n"
+    assert sync_plugin_skills.sync(check=True) == 0

@@ -47,6 +47,7 @@ def heal_manage_docs_parameters(
     content: Optional[str] = None,
     patch: Optional[str] = None,
     patch_source_hash: Optional[str] = None,
+    expected_anchor_sha256: Optional[str] = None,
     edit: Optional[Dict[str, Any] | str] = None,
     patch_mode: Optional[str] = None,
     start_line: Optional[int] = None,
@@ -130,6 +131,18 @@ def heal_manage_docs_parameters(
         healed_params["patch_source_hash"] = healed_hash
     else:
         healed_params["patch_source_hash"] = None
+
+    if expected_anchor_sha256 is not None:
+        original_anchor_hash = expected_anchor_sha256
+        healed_anchor_hash = str(expected_anchor_sha256).strip()
+        if healed_anchor_hash != original_anchor_hash:
+            healing_applied = True
+            healing_messages.append(
+                "Auto-corrected expected_anchor_sha256 parameter to string type"
+            )
+        healed_params["expected_anchor_sha256"] = healed_anchor_hash
+    else:
+        healed_params["expected_anchor_sha256"] = None
 
     healed_params["edit"] = None
     if edit is not None:

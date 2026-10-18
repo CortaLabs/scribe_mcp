@@ -91,11 +91,11 @@
 
   Files to Update:
 
-  - .council/roster.yaml
-  - .council/templates/claude/council_member.md.j2
-  - .council/templates/claude/_scribe_required_reading.j2
-  - .council/templates/claude/_session_protocol.j2
-  - Regenerate local `.claude/agents/*` only after the source lanes above are corrected
+  - Scribe project configuration
+  - Source-owned authoring templates
+  - Required-reading template source
+  - Session protocol template source
+  - Regenerate local agent outputs only after the source lanes above are corrected
 
   Key Fixes Needed:
 

@@ -22,6 +22,13 @@ Always available in templates (and uppercased variants like `PROJECT_NAME`):
 
 Custom variables from `.scribe/variables.json` (if present) are merged in and exposed as top-level keys.
 
+Common downstream customization keys now used by the default document templates include:
+
+- `product_name: str` – Friendly product or repo name shown in rendered docs.
+- `repo_role: str` – Short description of what role this repo plays in the wider system.
+
+Template authors should prefer `metadata.get("key", default)` for optional metadata instead of `metadata.key`, because the engine runs with `StrictUndefined`.
+
 ---
 
 ## 2. `ARCHITECTURE_GUIDE_TEMPLATE.md`
@@ -55,6 +62,7 @@ Used for `ARCHITECTURE_GUIDE.md` via `generate_doc_templates` and `manage_docs`.
 - `appendix: str` – Optional extra content appended at the end.
 
 The template uses helpers/macros (e.g. `bullet_list`, `section`) and anchors like `<!-- ID: problem_statement -->` to enable `manage_docs.replace_section`.
+Optional metadata should be guarded with `metadata.get(...)` or `if metadata.get(...)`.
 
 ---
 
@@ -153,5 +161,19 @@ This means:
 - You can override any built-in template by placing a file with the same name under `.scribe/templates/`.
 - Pack templates provide alternate styles but are still overridden by project-local templates.
 
-For more details on discovery and security (including `include_file` restrictions), see `template_engine/engine.py` and the main whitepaper’s template section.
+## 8. Built-In Validation
 
+Use the CLI to validate the active template stack for a repo:
+
+- `scribe templates list --repo-root <repo>`
+- `scribe templates validate --repo-root <repo>`
+- `scribe templates validate --repo-root <repo> --render-check`
+- `scribe templates validate --repo-root <repo> --template documents/ARCHITECTURE_GUIDE_TEMPLATE.md --render-check --meta-json '{"summary":"Probe"}'`
+
+Validation modes:
+
+- Syntax-only validation parses Jinja without rendering.
+- `--render-check` performs a strict render smoke-test using the active repo's `.scribe/templates/`, `.scribe/variables.json`, and any supplied metadata.
+- Render-check is the better guard for catching `StrictUndefined` mistakes and optional-metadata access bugs.
+
+For more details on discovery and security (including `include_file` restrictions), see `template_engine/engine.py` and the main whitepaper’s template section.

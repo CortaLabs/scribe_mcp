@@ -5,13 +5,245 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Mapping, MutableMapping, Optional, Set, cast
+from typing import Any, Awaitable, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Set, cast
+
+from scribe_mcp.shared.repo_authority import build_repo_authority_snapshot
+from scribe_mcp.config.repo_config import RepoDiscovery
+from scribe_mcp.mcp_adapter import ProtocolEra
+from scribe_mcp.shared.execution_context import (
+    ApplicationIdentity,
+    resolve_application_identity,
+)
+from scribe_mcp.shared.session_utils import get_canonical_session_key
 
 ToolCallable = Callable[..., Any]
 BridgeToolResolver = Callable[[str], Optional[ToolCallable]]
 ScopeViolationLogger = Callable[..., None]
+logger = logging.getLogger(__name__)
+_PROVENANCE_VALUES = {"verified", "claimed", "inferred", "anonymous"}
+_PROVENANCE_RANK = {
+    "anonymous": 0,
+    "inferred": 1,
+    "claimed": 2,
+    "verified": 3,
+}
+_UNTRUSTED_CALLER_SESSION_KEYS = (
+    "session_id",
+    "client_id",
+    "connection_id",
+    "transport_session_id",
+)
+_UNBOUND_REPO_SAFE_TOOLS = {"scribe_doctor", "list_projects"}
+# read-hook-dispatch: GENERIC read-event tool gate. The single dispatch
+# chokepoint fires the SCRIBEHOOK.1 pre_read/post_read vocabulary only for tool
+# names listed here. Keyed strictly on the tool name — content-agnostic, with no
+# plugin/bridge/RI special-casing. Extend the frozenset to onboard future read
+# tools; never add council/RI concepts.
+_READ_TOOLS = frozenset({"read_file"})
+
+
+def _trusted_request_attribute(app: Any, name: str) -> Any:
+    try:
+        request_context = app.request_context
+    except Exception:
+        return None
+    return getattr(request_context, name, None) if request_context is not None else None
+
+
+def _resolve_runtime_application_identity(app: Any) -> Optional[ApplicationIdentity]:
+    """Validate identity data attached by authenticated ingress.
+
+    Only direct request-context attributes are accepted. Protocol headers,
+    MCP metadata, tool arguments, client labels, and capabilities are never
+    identity sources.
+    """
+
+    raw_era = _trusted_request_attribute(app, "protocol_era")
+    attached = _trusted_request_attribute(app, "application_identity")
+    if raw_era is None and isinstance(attached, ApplicationIdentity):
+        raw_era = attached.protocol_era
+    if raw_era is None:
+        return None
+    try:
+        era = raw_era if isinstance(raw_era, ProtocolEra) else ProtocolEra(str(raw_era))
+    except ValueError as exc:
+        raise ValueError("authenticated ingress supplied an invalid protocol era") from exc
+    principal = _trusted_request_attribute(app, "principal_id")
+    transport = _trusted_request_attribute(app, "transport")
+    if isinstance(attached, ApplicationIdentity):
+        principal = principal or attached.principal_id
+        transport = transport or attached.transport
+        supplied_handle = attached.application_handle
+    else:
+        supplied_handle = _trusted_request_attribute(app, "application_handle")
+    return resolve_application_identity(
+        principal_id=str(principal or ""),
+        protocol_era=era,
+        transport=str(transport or ""),
+        supplied_handle=supplied_handle,
+        connection_id=None,
+    )
+
+
+def _normalize_configured_repo_root(value: Any) -> Optional[str]:
+    """Return a configured repo root only when it resolves to a real repo root."""
+    if value is None:
+        return None
+    try:
+        candidate = Path(str(value)).expanduser().resolve()
+    except (TypeError, ValueError, OSError):
+        return None
+    discovered = RepoDiscovery.find_repo_root(candidate)
+    if discovered is None:
+        return None
+    try:
+        resolved = discovered.resolve()
+    except (OSError, ValueError):
+        return None
+    if resolved != candidate or not resolved.exists():
+        return None
+    return str(resolved)
+
+
+def _configured_repo_roots(settings: Any) -> tuple[Optional[str], tuple[str, ...]]:
+    default_root = _normalize_configured_repo_root(
+        getattr(settings, "default_repo_root", None)
+    )
+    trusted_values = getattr(settings, "trusted_repo_roots", ()) or ()
+    if isinstance(trusted_values, (str, bytes)):
+        trusted_iter: Iterable[Any] = (trusted_values,)
+    else:
+        trusted_iter = trusted_values
+    trusted = []
+    for item in trusted_iter:
+        normalized = _normalize_configured_repo_root(item)
+        if normalized and normalized not in trusted:
+            trusted.append(normalized)
+    if default_root and default_root not in trusted:
+        trusted.append(default_root)
+    return default_root, tuple(trusted)
+
+
+def resolve_context_authoritative_session_key(context: Any) -> Optional[str]:
+    """Resolve the canonical authoritative session key from runtime context."""
+    if context is None:
+        return None
+
+    resolved_scope = getattr(context, "resolved_scope", None)
+    for candidate in (
+        getattr(resolved_scope, "authoritative_session_key", None),
+        getattr(context, "authoritative_session_key", None),
+        get_canonical_session_key(context),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+async def issue_repo_root_grant(
+    *,
+    storage_backend: Any,
+    repo_root: str,
+    reason: str,
+    ttl_minutes: int,
+    authoritative_session_key: str,
+) -> Dict[str, str]:
+    """Create a short-lived repo-root authorization grant."""
+    if (
+        storage_backend is None
+        or not hasattr(storage_backend, "create_repo_scope_grant")
+    ):
+        raise ValueError("repo-scope grant storage backend is unavailable")
+
+    normalized_root = str(Path(repo_root).expanduser().resolve())
+    grant = await storage_backend.create_repo_scope_grant(
+        authoritative_session_key=str(authoritative_session_key),
+        repo_root=normalized_root,
+        reason=str(reason),
+        ttl_minutes=int(ttl_minutes),
+    )
+    return {
+        "grant_id": str(grant.grant_id),
+        "repo_root": str(grant.repo_root),
+        "repo_id": str(grant.repo_id),
+        "expires_at": grant.expires_at.isoformat(),
+        "authoritative_session_key": str(grant.authoritative_session_key),
+    }
+
+
+async def validate_repo_root_grant(
+    *,
+    storage_backend: Any,
+    grant_id: Optional[str],
+    repo_root: str,
+    authoritative_session_key: Optional[str],
+) -> tuple[bool, Dict[str, str]]:
+    """Validate a repo-root authorization grant against root and session."""
+    if (
+        storage_backend is None
+        or not hasattr(storage_backend, "fetch_repo_scope_grant")
+    ):
+        return False, {"reason_code": "repo_scope_grant_storage_unavailable"}
+    if not isinstance(grant_id, str) or not grant_id.strip():
+        return False, {"reason_code": "missing_grant_id"}
+
+    grant = await storage_backend.fetch_repo_scope_grant(grant_id.strip())
+    if grant is None:
+        return False, {"reason_code": "grant_not_found", "grant_id": grant_id.strip()}
+
+    normalized_root = str(Path(repo_root).expanduser().resolve())
+    grant_root = str(Path(str(grant.repo_root)).expanduser().resolve())
+    if normalized_root != grant_root:
+        return False, {
+            "reason_code": "grant_root_mismatch",
+            "grant_id": str(grant.grant_id),
+            "requested_repo_root": normalized_root,
+            "grant_repo_root": grant_root,
+            "repo_id": str(grant.repo_id),
+            "expires_at": grant.expires_at.isoformat(),
+            "authoritative_session_key": str(grant.authoritative_session_key),
+        }
+
+    requested_session_key = (
+        str(authoritative_session_key).strip()
+        if isinstance(authoritative_session_key, str) and authoritative_session_key.strip()
+        else None
+    )
+    if requested_session_key and requested_session_key != str(grant.authoritative_session_key):
+        return False, {
+            "reason_code": "grant_session_mismatch",
+            "grant_id": str(grant.grant_id),
+            "repo_root": grant_root,
+            "repo_id": str(grant.repo_id),
+            "expires_at": grant.expires_at.isoformat(),
+            "authoritative_session_key": str(grant.authoritative_session_key),
+            "requested_authoritative_session_key": requested_session_key,
+        }
+
+    return True, {
+        "grant_id": str(grant.grant_id),
+        "repo_root": grant_root,
+        "repo_id": str(grant.repo_id),
+        "expires_at": grant.expires_at.isoformat(),
+        "authoritative_session_key": str(grant.authoritative_session_key),
+    }
+
+
+def repo_root_grant_diagnostics(*, storage_backend: Any) -> Dict[str, Any]:
+    """Return basic diagnostics about repo-scope grant support."""
+    backend_supports_grants = bool(
+        storage_backend
+        and hasattr(storage_backend, "create_repo_scope_grant")
+        and hasattr(storage_backend, "fetch_repo_scope_grant")
+    )
+    return {
+        "grant_storage_source": "backend" if backend_supports_grants else "unavailable",
+        "grant_storage_ready": backend_supports_grants,
+        "grant_metrics_available": False,
+    }
 
 
 def _normalize_repo_root(value: Any, project_root: Path) -> Optional[str]:
@@ -56,11 +288,9 @@ def _derive_transport_session_id(
     app: Any,
     fallback_process_id: str,
     kwargs: Mapping[str, Any],
+    allow_untrusted_sources: bool = True,
+    allow_process_fallback: bool = True,
 ) -> str:
-    fallback = kwargs.get("session_id") or kwargs.get("client_id") or kwargs.get("connection_id")
-    if fallback:
-        return str(fallback)
-
     try:
         request_context = app.request_context
     except Exception:
@@ -75,11 +305,109 @@ def _derive_transport_session_id(
                 if header_val:
                     return str(header_val)
         meta = getattr(request_context, "meta", None)
-        client_id = getattr(meta, "client_id", None) if meta else None
-        if client_id:
-            return str(client_id)
+        if meta:
+            if isinstance(meta, dict):
+                for key in ("transport_session_id", "session_id", "client_id", "connection_id"):
+                    value = meta.get(key)
+                    if value:
+                        return str(value)
+            else:
+                for key in ("transport_session_id", "session_id", "client_id", "connection_id"):
+                    value = getattr(meta, key, None)
+                    if value:
+                        return str(value)
+
+    if allow_untrusted_sources:
+        fallback = kwargs.get("session_id") or kwargs.get("client_id") or kwargs.get("connection_id")
+        if fallback:
+            return str(fallback)
+
+    if not allow_process_fallback:
+        return ""
 
     return f"process:{fallback_process_id}"
+
+
+_ACTOR_SCOPE_SEPARATOR = "::actor="
+
+
+def _actor_scoped_transport_session_id(transport_session_id: str, agent: Any) -> str:
+    """Namespace a connection-level transport id by the calling actor.
+
+    Multiple actors can multiplex one MCP connection (one transport session,
+    e.g. a pooled client shared by several agents). The session->project
+    binding is keyed by the session derived from this id, so without actor
+    scoping the last set_project on the connection silently rebinds every
+    actor on it. Folding the required ``agent`` argument into the transport
+    identity gives each (connection, actor) pair its own session row and its
+    own project binding while keeping single-actor flows on one stable
+    session. Idempotent: an already-scoped id is returned unchanged.
+    """
+    actor = str(agent or "").strip()
+    if not transport_session_id or not actor:
+        return transport_session_id
+    if _ACTOR_SCOPE_SEPARATOR in transport_session_id:
+        return transport_session_id
+    return f"{transport_session_id}{_ACTOR_SCOPE_SEPARATOR}{actor}"
+
+
+def _collect_public_release_session_claims(
+    *,
+    context_payload: Mapping[str, Any],
+    kwargs: Mapping[str, Any],
+    app: Any,
+) -> Set[str]:
+    claims: Set[str] = set()
+    for key in _UNTRUSTED_CALLER_SESSION_KEYS:
+        value = context_payload.get(key)
+        if value:
+            claims.add(key)
+    for key in ("session_id", "client_id", "connection_id"):
+        value = kwargs.get(key)
+        if value:
+            claims.add(key)
+    try:
+        request_context = app.request_context
+    except Exception:
+        request_context = None
+    if request_context:
+        request = getattr(request_context, "request", None)
+        headers = getattr(request, "headers", None) if request is not None else None
+        if headers and headers.get("mcp-session-id"):
+            claims.add("mcp-session-id")
+    return claims
+
+
+def _set_scope_provenance(
+    payload: MutableMapping[str, Any],
+    *,
+    field: str,
+    label: str,
+) -> None:
+    if label not in _PROVENANCE_VALUES:
+        return
+    provenance = payload.get("scope_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    existing = provenance.get(field)
+    if existing not in _PROVENANCE_VALUES:
+        provenance[field] = label
+    elif _PROVENANCE_RANK[label] >= _PROVENANCE_RANK[existing]:
+        provenance[field] = label
+    payload["scope_provenance"] = provenance
+
+
+def _set_scope_defaults(context_payload: MutableMapping[str, Any]) -> None:
+    if not context_payload.get("resolution_source"):
+        context_payload["resolution_source"] = "runtime_context"
+    if context_payload.get("trust_level") not in _PROVENANCE_VALUES:
+        context_payload["trust_level"] = "claimed"
+
+
+def _derive_scoped_reuse_key(repo_root: str, project_name: str | None) -> str:
+    normalized_repo_root = os.path.realpath(repo_root) if repo_root else ""
+    normalized_project = (project_name or "").strip() or "__prebinding__"
+    return f"{normalized_repo_root}:{normalized_project}"
 
 
 def _derive_session_identity_preview(
@@ -93,13 +421,25 @@ def _derive_session_identity_preview(
         timestamp_utc = context_payload.get("timestamp_utc")
         if not timestamp_utc:
             timestamp_utc = datetime.now(timezone.utc).isoformat()
-        scope_key = str(timestamp_utc).split("T")[0]
+        scope_day = str(timestamp_utc).split("T")[0]
+        run_discriminator = str(context_payload.get("transport_session_id") or "").strip()
+        if bool(context_payload.get("public_release")) and not run_discriminator:
+            raise ValueError(
+                "Public release sentinel mode requires trusted runtime-derived "
+                "transport_session_id for identity isolation"
+            )
+        if run_discriminator:
+            scope_key = f"{scope_day}:{run_discriminator}"
+        else:
+            scope_key = scope_day
     else:
-        scope_key = str(
-            context_payload.get("transport_session_id")
-            or context_payload.get("session_id")
-            or datetime.now(timezone.utc).isoformat()
-        )
+        project_name = str(
+            context_payload.get("project_name")
+            or arguments.get("project")
+            or arguments.get("project_name")
+            or ""
+        ).strip()
+        scope_key = project_name or "__prebinding__"
 
     agent_key = arguments.get("agent")
     if not agent_key:
@@ -235,6 +575,65 @@ async def _resolve_mode(
     context_payload["affected_dev_projects"] = affected
 
 
+def _build_read_hook_context(name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
+    """Build a minimal GENERIC read-hook context.
+
+    Content-agnostic: carries only the calling ``agent`` (if any) and the tool
+    ``name``. No council/RI/codebase-intelligence fields ever appear here.
+    """
+    return {"agent": arguments.get("agent"), "tool": name}
+
+
+async def _dispatch_pre_read_hooks(path: Optional[str], context: Dict[str, Any]) -> None:
+    """Fire the generic pre_read event fail-open.
+
+    Both the sync plugin registry and the async bridge manager are invoked. Any
+    error is logged and swallowed — a read MUST NEVER fail because of a
+    read-hook. The dispatch methods already iterate only loaded (trusted /
+    allowlisted) plugins, so the existing trust-gate is preserved.
+    """
+    path_str = str(path) if path is not None else ""
+    try:
+        from scribe_mcp.plugins.registry import get_plugin_registry
+
+        get_plugin_registry().execute_hook_pre_read(path_str, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic pre_read plugin hooks failed (fail-open): %s", exc)
+    try:
+        from scribe_mcp.bridges.hooks import get_hook_manager
+
+        await get_hook_manager().execute_pre_read(path_str, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic pre_read bridge hooks failed (fail-open): %s", exc)
+
+
+async def _dispatch_post_read_hooks(
+    path: Optional[str], result: Dict[str, Any], context: Dict[str, Any]
+) -> None:
+    """Fire the generic post_read event fail-open, enriching ``result`` in place.
+
+    Plugin/bridge annotations land ONLY in the dedicated, generic
+    ``result["read_annotations"]`` list (the dispatch methods use
+    ``setdefault``); core result fields are never overwritten by hook output.
+    Any error is logged and swallowed — a read MUST NEVER fail because of a
+    read-hook. The existing per-plugin trust-gate is preserved (the dispatch
+    methods iterate only loaded plugins / ACTIVE bridges).
+    """
+    path_str = str(path) if path is not None else ""
+    try:
+        from scribe_mcp.plugins.registry import get_plugin_registry
+
+        get_plugin_registry().execute_hook_post_read(path_str, result, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic post_read plugin hooks failed (fail-open): %s", exc)
+    try:
+        from scribe_mcp.bridges.hooks import get_hook_manager
+
+        await get_hook_manager().execute_post_read(path_str, result, context)
+    except Exception as exc:  # fail-open: never break a read
+        logger.warning("Generic post_read bridge hooks failed (fail-open): %s", exc)
+
+
 async def execute_tool_call(
     *,
     name: str,
@@ -253,13 +652,24 @@ async def execute_tool_call(
 ) -> Any:
     func = registry.get(name)
 
+    bridge_resolution_attempted = False
+    bridge_resolution_available = bridge_tool_resolver is not None
     if not func and ":" in name and bridge_tool_resolver is not None:
+        bridge_resolution_attempted = True
         try:
             func = bridge_tool_resolver(name)
         except Exception:
             func = None
 
     if not func:
+        if ":" in name and not bridge_resolution_available:
+            raise ValueError(
+                f"Unknown tool '{name}' (bridge resolution unavailable for this runtime path)"
+            )
+        if ":" in name and bridge_resolution_attempted:
+            raise ValueError(
+                f"Unknown tool '{name}' (bridge tool not registered or bridge runtime unavailable)"
+            )
         raise ValueError(f"Unknown tool '{name}'")
 
     call_arguments = dict(arguments)
@@ -269,35 +679,199 @@ async def execute_tool_call(
         context_payload = kwargs.get("context")
     if not isinstance(context_payload, dict):
         context_payload = {}
+    context_payload["_server_derived_session_id"] = False
+    public_release = bool(getattr(settings, "public_release", False))
+    context_payload["public_release"] = public_release
+    current_context = None
+    if hasattr(router_context_manager, "get_current"):
+        try:
+            current_context = router_context_manager.get_current()
+        except Exception:
+            current_context = None
 
-    if not context_payload.get("repo_root"):
-        request_repo_root = _extract_request_repo_root(app)
-        if request_repo_root:
-            try:
-                request_path = Path(request_repo_root).expanduser()
-                if request_path.is_absolute():
-                    from scribe_mcp.config.repo_config import RepoDiscovery
+    application_identity = _resolve_runtime_application_identity(app)
 
-                    candidate_root = RepoDiscovery.find_repo_root(request_path)
-                    if candidate_root and candidate_root.exists():
-                        context_payload["repo_root"] = str(candidate_root.resolve())
-            except Exception:
-                pass
+    if public_release:
+        caller_claims = _collect_public_release_session_claims(
+            context_payload=context_payload,
+            kwargs=kwargs,
+            app=app,
+        )
+        # In public release, mixed caller identifiers are denied; single claims are ignored.
+        if len(caller_claims) > 1:
+            denied = ", ".join(sorted(caller_claims))
+            raise ValueError(
+                "Public release rejected untrusted caller session identifiers: "
+                f"{denied}"
+            )
+        for key in _UNTRUSTED_CALLER_SESSION_KEYS:
+            context_payload.pop(key, None)
+        context_payload.pop("stable_session_id", None)
+
+    if current_context is not None:
+        current_scope = getattr(current_context, "resolved_scope", None)
+        current_repo_root = getattr(current_scope, "repo_root", None)
+        current_project_name = getattr(current_scope, "project_name", None)
+        current_transport_session_id = getattr(current_scope, "transport_session_id", None)
+        current_stable_session_id = (
+            getattr(current_scope, "stable_session_id", None)
+            or getattr(current_context, "stable_session_id", None)
+        )
+        if current_repo_root:
+            context_payload["repo_root"] = str(current_repo_root)
+            _set_scope_provenance(context_payload, field="repo_root", label="verified")
+        if current_project_name:
+            context_payload["project_name"] = str(current_project_name)
+            _set_scope_provenance(context_payload, field="project_name", label="verified")
+        if current_transport_session_id:
+            context_payload["transport_session_id"] = str(current_transport_session_id)
+            _set_scope_provenance(context_payload, field="transport_session_id", label="verified")
+        if current_stable_session_id:
+            context_payload["stable_session_id"] = str(current_stable_session_id)
+            _set_scope_provenance(context_payload, field="stable_session_id", label="verified")
+        current_session_id = getattr(current_context, "session_id", None)
+        if current_session_id:
+            context_payload["session_id"] = str(current_session_id)
+            context_payload["_server_derived_session_id"] = True
+        current_execution_id = getattr(current_context, "execution_id", None)
+        if current_execution_id:
+            context_payload["parent_execution_id"] = str(current_execution_id)
+        if current_stable_session_id and not context_payload.get("_server_derived_session_id"):
+            context_payload["_server_derived_session_id"] = True
+    else:
+        context_payload.pop("parent_execution_id", None)
+
+    if application_identity is not None:
+        for key in (*_UNTRUSTED_CALLER_SESSION_KEYS, "stable_session_id", "compat_session_id"):
+            context_payload.pop(key, None)
+        context_payload["application_identity"] = application_identity
+        context_payload["transport_session_id"] = application_identity.identity_key
+        _set_scope_provenance(
+            context_payload,
+            field="transport_session_id",
+            label="verified",
+        )
+        context_payload["authoritative_session_key"] = application_identity.identity_key
+
+    configured_default_repo_root, configured_trusted_roots = _configured_repo_roots(settings)
+
+    repo_authority = build_repo_authority_snapshot(
+        current_context=current_context,
+        app=app,
+        scribe_user=kwargs.get("_scribe_user"),
+        authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+        enrolled_first_party_roots=configured_trusted_roots,
+    )
+    context_payload["repo_authority"] = repo_authority.as_dict()
+    if not context_payload.get("repo_root") and repo_authority.verified_request_root:
+        context_payload["repo_root"] = repo_authority.verified_request_root
+        _set_scope_provenance(context_payload, field="repo_root", label="verified")
+    if not context_payload.get("repo_root") and configured_default_repo_root:
+        context_payload["repo_root"] = configured_default_repo_root
+        context_payload["resolution_source"] = "configured_default_repo_root"
+        _set_scope_provenance(context_payload, field="repo_root", label="verified")
+
+    session_id_claimed = bool(context_payload.get("session_id"))
+
+    runtime_transport_session_id = (
+        application_identity.identity_key
+        if application_identity is not None
+        else _actor_scoped_transport_session_id(
+            _derive_transport_session_id(
+                app=app,
+                fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
+                kwargs={},
+                allow_untrusted_sources=False,
+                allow_process_fallback=False,
+            ),
+            arguments.get("agent"),
+        )
+    )
+    has_runtime_transport_identity = bool(runtime_transport_session_id) and not str(
+        runtime_transport_session_id
+    ).startswith("process:")
 
     repo_root_hint = _normalize_repo_root(context_payload.get("repo_root"), settings.project_root)
-    if not repo_root_hint:
+    existing_repo_root_provenance = (
+        (context_payload.get("scope_provenance") or {}).get("repo_root")
+        if isinstance(context_payload.get("scope_provenance"), dict)
+        else None
+    )
+    if repo_root_hint:
+        context_payload["repo_root"] = repo_root_hint
+        if repo_root_hint in configured_trusted_roots:
+            _set_scope_provenance(context_payload, field="repo_root", label="verified")
+        elif existing_repo_root_provenance != "verified":
+            _set_scope_provenance(context_payload, field="repo_root", label="claimed")
+    else:
         repo_root_hint = _normalize_repo_root(
             call_arguments.get("root") or call_arguments.get("repo_root"),
             settings.project_root,
         )
-    if repo_root_hint:
-        context_payload["repo_root"] = repo_root_hint
+        if repo_root_hint and name == "set_project":
+            context_payload["repo_root"] = repo_root_hint
+            _set_scope_provenance(context_payload, field="repo_root", label="claimed")
+        elif repo_root_hint:
+            context_payload["repo_root"] = repo_root_hint
+            if repo_root_hint in configured_trusted_roots:
+                _set_scope_provenance(context_payload, field="repo_root", label="verified")
+            else:
+                _set_scope_provenance(context_payload, field="repo_root", label="claimed")
 
-    if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
-        context_payload["transport_session_id"] = _derive_transport_session_id(
-            app=app,
-            fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
-            kwargs=kwargs,
+    if not context_payload.get("project_name"):
+        project_hint = call_arguments.get("project") or call_arguments.get("name")
+        if project_hint:
+            context_payload["project_name"] = str(project_hint)
+            _set_scope_provenance(context_payload, field="project_name", label="claimed")
+
+    if runtime_transport_session_id:
+        context_payload["transport_session_id"] = runtime_transport_session_id
+        _set_scope_provenance(context_payload, field="transport_session_id", label="verified")
+        if has_runtime_transport_identity and context_payload.get("session_id"):
+            context_payload["compat_session_id"] = str(context_payload.get("session_id"))
+            context_payload.pop("session_id", None)
+            session_id_claimed = False
+    elif not context_payload.get("transport_session_id"):
+        context_payload["transport_session_id"] = _actor_scoped_transport_session_id(
+            _derive_transport_session_id(
+                app=app,
+                fallback_process_id=str(getattr(router_context_manager, "_process_instance_id", "unknown")),
+                kwargs=kwargs,
+                allow_untrusted_sources=not public_release,
+                allow_process_fallback=not public_release,
+            ),
+            arguments.get("agent"),
+        )
+
+    if context_payload.get("transport_session_id") and application_identity is None:
+        context_payload["transport_session_id"] = _actor_scoped_transport_session_id(
+            str(context_payload["transport_session_id"]),
+            arguments.get("agent"),
+        )
+
+    if (
+        context_payload.get("transport_session_id")
+        and not has_runtime_transport_identity
+        and (
+            (context_payload.get("scope_provenance") or {}).get("transport_session_id")
+            if isinstance(context_payload.get("scope_provenance"), dict)
+            else None
+        ) != "verified"
+    ):
+        _set_scope_provenance(context_payload, field="transport_session_id", label="claimed")
+
+    transport_session_provenance = (
+        (context_payload.get("scope_provenance") or {}).get("transport_session_id")
+        if isinstance(context_payload.get("scope_provenance"), dict)
+        else None
+    )
+    if public_release and (
+        not str(context_payload.get("transport_session_id") or "").strip()
+        or transport_session_provenance != "verified"
+    ):
+        raise ValueError(
+            "Public release requires trusted runtime-derived transport_session_id "
+            "for session isolation"
         )
 
     if not context_payload.get("session_id") and context_payload.get("transport_session_id"):
@@ -307,40 +881,168 @@ async def execute_tool_call(
             )
             if existing and existing.get("session_id"):
                 context_payload["session_id"] = existing["session_id"]
-            if existing and not context_payload.get("repo_root"):
-                context_payload["repo_root"] = _normalize_repo_root(
+                context_payload["stable_session_id"] = existing["session_id"]
+                context_payload["_server_derived_session_id"] = True
+                _set_scope_provenance(context_payload, field="stable_session_id", label="verified")
+                context_payload["trust_level"] = "verified"
+                existing_repo_root = _normalize_repo_root(
                     existing.get("repo_root"),
                     settings.project_root,
                 )
+                if existing_repo_root and (
+                    has_runtime_transport_identity
+                    or str(context_payload.get("transport_session_id") or "").startswith("process:")
+                ):
+                    # The stored session root is a fallback for requests that
+                    # carry no root of their own — never an override. It must
+                    # not clobber a root the request already verified, and on
+                    # a set_project rebind to a DIFFERENT root the explicit
+                    # root must win: a stale stored root would otherwise wedge
+                    # the session against a repo the caller has explicitly
+                    # left, making every subsequent project lookup miss. A
+                    # same-root set_project still adopts (keeps the
+                    # verified-binding authority path for re-binds).
+                    current_repo_root = context_payload.get("repo_root")
+                    current_repo_root_scope = (
+                        (context_payload.get("scope_provenance") or {}).get("repo_root")
+                        if isinstance(context_payload.get("scope_provenance"), dict)
+                        else None
+                    )
+                    stored_root_applies = not current_repo_root or (
+                        current_repo_root_scope != "verified"
+                        and (name != "set_project" or existing_repo_root == current_repo_root)
+                    )
+                    if stored_root_applies:
+                        context_payload["repo_root"] = existing_repo_root
+                        _set_scope_provenance(context_payload, field="repo_root", label="verified")
         if not context_payload.get("session_id"):
             session_id = await router_context_manager.get_or_create_session_id(
                 context_payload["transport_session_id"]
             )
             context_payload["session_id"] = session_id
+            context_payload["stable_session_id"] = session_id
+            context_payload["_server_derived_session_id"] = True
+            _set_scope_provenance(context_payload, field="stable_session_id", label="inferred")
 
-    if not context_payload.get("repo_root") and storage_backend and hasattr(storage_backend, "fetch_project"):
+    if storage_backend and hasattr(storage_backend, "fetch_project"):
         explicit_project = call_arguments.get("project") or call_arguments.get("name")
-        if explicit_project:
-            project_record = await storage_backend.fetch_project(str(explicit_project))
+        explicit_root = call_arguments.get("root") or call_arguments.get("repo_root")
+        current_repo_root_provenance = (
+            (context_payload.get("scope_provenance") or {}).get("repo_root")
+            if isinstance(context_payload.get("scope_provenance"), dict)
+            else None
+        )
+        process_fallback_transport = str(context_payload.get("transport_session_id") or "").startswith("process:")
+        if (
+            name != "set_project"
+            and explicit_project
+            and (
+                not context_payload.get("repo_root")
+                or current_repo_root_provenance != "verified"
+            )
+        ):
+            context_payload["project_name"] = str(explicit_project)
+            _set_scope_provenance(context_payload, field="project_name", label="claimed")
+            lookup_root = explicit_root or context_payload.get("repo_root")
+            if lookup_root:
+                project_record = await storage_backend.fetch_project(
+                    str(explicit_project),
+                    repo_root=str(lookup_root),
+                )
+                if not project_record:
+                    # The caller named the project explicitly; a stale or
+                    # mismatched context root must not report it missing.
+                    # The unscoped lookup fails closed on ambiguous names.
+                    project_record = await storage_backend.fetch_project(str(explicit_project))
+            else:
+                project_record = await storage_backend.fetch_project(str(explicit_project))
             if project_record:
                 context_payload["repo_root"] = _normalize_repo_root(
                     project_record.repo_root,
                     settings.project_root,
                 )
-        if not context_payload.get("repo_root") and context_payload.get("session_id"):
+                _set_scope_provenance(context_payload, field="repo_root", label="verified")
+                _set_scope_provenance(context_payload, field="project_name", label="verified")
+        # Resolve the session->project binding under the SAME canonical key the
+        # write side (set_project -> resolve_context_authoritative_session_key)
+        # bound it with: stable_session_id preferred, session_id fallback (see
+        # session_utils.get_canonical_session_key). Reading with the raw
+        # session_id alone silently misses a binding that was written under a
+        # divergent stable_session_id -- the exact asymmetry that surfaces under
+        # concurrent multi-agent load as "ExecutionContext repo scope
+        # unresolved" for a session that WAS bound. Falling back to session_id
+        # keeps single-key flows byte-identical.
+        canonical_session_key = (
+            context_payload.get("stable_session_id")
+            or context_payload.get("session_id")
+        )
+        if (
+            not context_payload.get("repo_root")
+            and canonical_session_key
+            and (session_id_claimed or has_runtime_transport_identity or process_fallback_transport)
+        ):
             project_name = None
             if hasattr(storage_backend, "get_session_project"):
-                project_name = await storage_backend.get_session_project(context_payload.get("session_id"))
+                project_name = await storage_backend.get_session_project(canonical_session_key)
             if project_name:
-                project_record = await storage_backend.fetch_project(str(project_name))
+                context_payload["project_name"] = str(project_name)
+                _set_scope_provenance(context_payload, field="project_name", label="verified")
+                lookup_root = context_payload.get("repo_root")
+                if lookup_root:
+                    project_record = await storage_backend.fetch_project(
+                        str(project_name),
+                        repo_root=str(lookup_root),
+                    )
+                    if not project_record:
+                        # The session binding was set explicitly via
+                        # set_project; a stale context root must not orphan it.
+                        project_record = await storage_backend.fetch_project(str(project_name))
+                else:
+                    project_record = await storage_backend.fetch_project(str(project_name))
                 if project_record:
                     context_payload["repo_root"] = _normalize_repo_root(
                         project_record.repo_root,
                         settings.project_root,
                     )
+                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
+
+    repo_root_provenance = (
+        (context_payload.get("scope_provenance") or {}).get("repo_root")
+        if isinstance(context_payload.get("scope_provenance"), dict)
+        else None
+    )
+    if (
+        context_payload.get("repo_root")
+        and name != "set_project"
+        and repo_root_provenance != "verified"
+    ):
+        context_payload.pop("repo_root", None)
+
+    if not context_payload.get("repo_root") and name in _UNBOUND_REPO_SAFE_TOOLS:
+        diagnostic_repo_root = _normalize_repo_root(settings.project_root, settings.project_root)
+        if diagnostic_repo_root:
+            context_payload["repo_root"] = diagnostic_repo_root
+            context_payload["resolution_source"] = "diagnostic_server_root"
+            _set_scope_provenance(context_payload, field="repo_root", label="anonymous")
 
     if not context_payload.get("repo_root"):
-        context_payload["repo_root"] = str(settings.project_root.resolve())
+        if str(context_payload.get("mode", "")) == "sentinel" and name not in sentinel_allowed:
+            raise ValueError(
+                f"Tool '{name}' requires an active Scribe project. "
+                "No project is active in sentinel mode; run set_project first."
+            )
+        context_payload["resolution_source"] = "unresolved_repo_scope"
+        context_payload["scope_resolution_status"] = "unresolved"
+        context_payload["scope_resolution_reason"] = (
+            "repo_root_unresolved_no_verified_project_binding"
+        )
+        _set_scope_provenance(context_payload, field="repo_root", label="anonymous")
+        raise ValueError(
+            "ExecutionContext repo scope unresolved: no verified project binding "
+            "for this request/session was available."
+        )
+
+    _set_scope_defaults(context_payload)
 
     await _resolve_mode(
         tool_name=name,
@@ -350,6 +1052,16 @@ async def execute_tool_call(
         state_manager=state_manager,
     )
 
+    if (
+        public_release
+        and str(context_payload.get("mode", "")) == "sentinel"
+        and not str(context_payload.get("transport_session_id") or "").strip()
+    ):
+        raise ValueError(
+            "Public release sentinel mode requires trusted runtime-derived "
+            "transport_session_id for identity isolation"
+        )
+
     if not context_payload.get("session_id") and not context_payload.get("transport_session_id"):
         raise ValueError("ExecutionContext requires context.session_id or context.transport_session_id")
 
@@ -357,28 +1069,59 @@ async def execute_tool_call(
         context_payload["intent"] = f"tool:{name}"
 
     if storage_backend and hasattr(storage_backend, "upsert_session"):
+        # Only a VERIFIED repo root may be persisted as the session's stored
+        # root. Diagnostic fallbacks (the server's own install root) and
+        # claimed call-argument roots are request-local; persisting them lets
+        # a later request adopt them as verified session scope (provenance
+        # laundering), which wedges every project lookup for the session
+        # against the wrong repo. set_project persists the root it verified
+        # through its own authority checks.
+        persisted_repo_root = context_payload.get("repo_root")
+        persisted_root_scope = (
+            (context_payload.get("scope_provenance") or {}).get("repo_root")
+            if isinstance(context_payload.get("scope_provenance"), dict)
+            else None
+        )
+        if persisted_root_scope != "verified":
+            persisted_repo_root = None
         try:
             await storage_backend.upsert_session(
                 session_id=context_payload.get("session_id"),
                 transport_session_id=context_payload.get("transport_session_id"),
-                repo_root=context_payload.get("repo_root"),
+                repo_root=persisted_repo_root,
                 mode=context_payload.get("mode"),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist runtime session binding for tool '%s': %s",
+                name,
+                exc,
+            )
+            raise
 
     identity_hash, identity_parts = _derive_session_identity_preview(context_payload, call_arguments)
-    stable_session_id = context_payload.get("stable_session_id")
+    if not _accepts_keyword_argument(func, "agent"):
+        call_arguments.pop("agent", None)
+    derived_scoped_reuse_key = _derive_scoped_reuse_key(
+        identity_parts["repo_root"],
+        None if identity_parts["scope_key"] == "__prebinding__" else identity_parts["scope_key"],
+    )
+    context_payload["scoped_reuse_key"] = derived_scoped_reuse_key
+    context_payload["session_reuse_scope"] = derived_scoped_reuse_key
+    agent_session_id = context_payload.get("agent_session_id")
+    agent_session_source = "context" if agent_session_id else None
 
-    if not stable_session_id and hasattr(router_context_manager, "get_cached_agent_session_id"):
-        stable_session_id = await router_context_manager.get_cached_agent_session_id(identity_hash)
+    if not agent_session_id and hasattr(router_context_manager, "get_cached_agent_session_id"):
+        agent_session_id = await router_context_manager.get_cached_agent_session_id(identity_hash)
+        if agent_session_id:
+            agent_session_source = "cache"
 
     if (
-        not stable_session_id
+        not agent_session_id
         and storage_backend
         and hasattr(storage_backend, "get_or_create_agent_session")
     ):
-        stable_session_id = await storage_backend.get_or_create_agent_session(
+        agent_session_id = await storage_backend.get_or_create_agent_session(
             identity_key=identity_hash,
             agent_name=identity_parts["agent_key"],
             agent_key=identity_parts["agent_key"],
@@ -386,11 +1129,53 @@ async def execute_tool_call(
             mode=identity_parts["mode"],
             scope_key=identity_parts["scope_key"],
         )
-        if stable_session_id and hasattr(router_context_manager, "cache_agent_session_id"):
-            await router_context_manager.cache_agent_session_id(identity_hash, stable_session_id)
+        if agent_session_id:
+            agent_session_source = "allocator"
+        if agent_session_id and hasattr(router_context_manager, "cache_agent_session_id"):
+            await router_context_manager.cache_agent_session_id(identity_hash, agent_session_id)
+        if agent_session_id and not context_payload.get("session_reuse_status"):
+            context_payload["session_reuse_status"] = "allocated"
 
-    if stable_session_id:
-        context_payload["stable_session_id"] = stable_session_id
+    if agent_session_id and storage_backend and hasattr(storage_backend, "get_last_agent_session_allocation"):
+        allocation = await storage_backend.get_last_agent_session_allocation(identity_hash)
+        if isinstance(allocation, Mapping):
+            status = allocation.get("status")
+            scope = allocation.get("scoped_reuse_key")
+            allocation_session_id = allocation.get("session_id")
+            if isinstance(status, str) and status:
+                if allocation_session_id is None or str(allocation_session_id) == str(agent_session_id):
+                    context_payload["session_reuse_status"] = status
+            if isinstance(scope, str) and scope:
+                context_payload["scoped_reuse_key"] = scope
+                context_payload["session_reuse_scope"] = scope
+
+    if agent_session_id and not context_payload.get("session_reuse_status"):
+        if agent_session_source == "cache":
+            context_payload["session_reuse_status"] = "cache_hit_unverified"
+        else:
+            context_payload["session_reuse_status"] = "reused"
+
+    canonical_session_key = (
+        application_identity.identity_key
+        if application_identity is not None
+        else resolve_context_authoritative_session_key(current_context)
+    )
+    if not canonical_session_key:
+        canonical_session_key = (
+            str(context_payload.get("stable_session_id")).strip()
+            if str(context_payload.get("stable_session_id") or "").strip()
+            else None
+        ) or (
+            str(context_payload.get("session_id")).strip()
+            if str(context_payload.get("session_id") or "").strip()
+            else None
+        )
+    if canonical_session_key:
+        context_payload["authoritative_session_key"] = canonical_session_key
+
+    if agent_session_id:
+        context_payload["agent_session_id"] = agent_session_id
+        _set_scope_provenance(context_payload, field="agent_session_id", label="verified")
 
     exec_context = await router_context_manager.build_execution_context(context_payload)
 
@@ -400,7 +1185,10 @@ async def execute_tool_call(
             reason="tool_not_allowed_in_sentinel_mode",
             tool_name=name,
         )
-        raise ValueError(f"Tool '{name}' not allowed in sentinel mode")
+        raise ValueError(
+            f"Tool '{name}' requires an active Scribe project. "
+            "No project is active in sentinel mode; run set_project first."
+        )
 
     if exec_context.mode == "project" and name in sentinel_only and name != "append_event":
         raise ValueError(f"Tool '{name}' not allowed in project mode")
@@ -420,6 +1208,17 @@ async def execute_tool_call(
     # The schema was widened to accept both types; here we normalize before dispatch.
     call_arguments = _coerce_int_params(func, call_arguments)
 
+    # read-hook-dispatch: generic, fail-open read-event wiring. Fires the
+    # SCRIBEHOOK.1 pre_read/post_read vocabulary around the read result when
+    # (and only when) the tool name is a generic read tool. Keyed strictly on
+    # the tool name — no plugin/bridge/RI special-casing. Purely additive: all
+    # existing dispatch behavior and the return value are preserved exactly.
+    is_read_tool = name in _READ_TOOLS
+    read_hook_context: Optional[Dict[str, Any]] = None
+    if is_read_tool:
+        read_hook_context = _build_read_hook_context(name, arguments)
+        await _dispatch_pre_read_hooks(arguments.get("path"), read_hook_context)
+
     try:
         result = func(**call_arguments)
     except TypeError as exc:
@@ -427,10 +1226,19 @@ async def execute_tool_call(
 
     if inspect.isawaitable(result):
         try:
-            return await cast(Awaitable[Any], result)
+            result = await cast(Awaitable[Any], result)
+            if is_read_tool and isinstance(result, dict) and read_hook_context is not None:
+                await _dispatch_post_read_hooks(
+                    arguments.get("path"), result, read_hook_context
+                )
+            return result
         finally:
             router_context_manager.reset(token)
     try:
+        if is_read_tool and isinstance(result, dict) and read_hook_context is not None:
+            await _dispatch_post_read_hooks(
+                arguments.get("path"), result, read_hook_context
+            )
         return result
     finally:
         router_context_manager.reset(token)

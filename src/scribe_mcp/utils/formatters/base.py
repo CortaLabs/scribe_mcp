@@ -11,7 +11,7 @@ Note: PaginationInfo is imported from utils.estimator (not duplicated here).
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
 # Import PaginationInfo and PaginationCalculator from estimator (DRY - no duplication)
@@ -235,7 +235,7 @@ class BaseFormatter:
                 ts_dt = datetime.fromisoformat(timestamp)
 
             # Calculate time delta from now
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             delta = now - ts_dt
 
             # Format based on magnitude

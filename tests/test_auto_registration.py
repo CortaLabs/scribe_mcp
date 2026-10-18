@@ -12,10 +12,23 @@ import json
 import pytest
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.tools.manage_docs import _auto_register_document, manage_docs
+
+
+def _verified_context() -> SimpleNamespace:
+    return SimpleNamespace(
+        session_id="test-session",
+        stable_session_id="test-session",
+        resolved_scope=SimpleNamespace(
+            authoritative_session_key="test-session",
+            stable_session_id="test-session",
+            resolution_source="test",
+        ),
+    )
 
 
 class TestAutoRegisterDocument:
@@ -55,6 +68,8 @@ class TestAutoRegisterDocument:
         # Mock server_module.storage_backend
         with patch("scribe_mcp.tools.manage_docs.server_module") as mock_server:
             mock_server.storage_backend = storage
+            mock_server.state_manager = None
+            mock_server.get_execution_context = lambda: _verified_context()
 
             # Mock ProjectRegistry and append_entry
             with patch("scribe_mcp.tools.manage_docs._PROJECT_REGISTRY") as mock_registry:
@@ -105,6 +120,8 @@ class TestAutoRegisterDocument:
         # Mock server_module.storage_backend
         with patch("scribe_mcp.tools.manage_docs.server_module") as mock_server:
             mock_server.storage_backend = storage
+            mock_server.state_manager = None
+            mock_server.get_execution_context = lambda: _verified_context()
 
             # Execute & Verify: Should raise ValueError for missing file
             with pytest.raises(ValueError) as exc_info:
@@ -149,6 +166,8 @@ class TestAutoRegisterDocument:
 
         with patch("scribe_mcp.tools.manage_docs.server_module") as mock_server:
             mock_server.storage_backend = storage
+            mock_server.state_manager = None
+            mock_server.get_execution_context = lambda: _verified_context()
 
             with patch("scribe_mcp.tools.manage_docs._PROJECT_REGISTRY") as mock_registry:
                 mock_registry.record_doc_update = AsyncMock()
@@ -194,6 +213,8 @@ class TestAutoRegisterDocument:
 
         with patch("scribe_mcp.tools.manage_docs.server_module") as mock_server:
             mock_server.storage_backend = storage
+            mock_server.state_manager = None
+            mock_server.get_execution_context = lambda: _verified_context()
 
             with patch("scribe_mcp.tools.manage_docs._PROJECT_REGISTRY") as mock_registry:
                 mock_registry.record_doc_update = AsyncMock()

@@ -11,9 +11,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 COPY pyproject.toml ./
+COPY MANIFEST.in ./
+COPY README.md LICENSE ./
+COPY docs/ ./docs/
+COPY deploy/README.md ./deploy/README.md
+COPY skills/scribe-integration/SKILL.md ./skills/scribe-integration/SKILL.md
 COPY src/ ./src/
 
-# Install the slim core package only.
+# Install package runtime deps (including PostgreSQL driver from core deps).
 RUN pip install --no-cache-dir .
 
 # ===== STAGE 2: RUNTIME =====
@@ -51,9 +56,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends gosu \
 # Environment defaults
 ENV PYTHONPATH="/app/src" \
     SCRIBE_ROOT="/app" \
+    SCRIBE_RELEASE_PROFILE="public" \
     SCRIBE_TRANSPORT="sse" \
     SCRIBE_TRANSPORT_PORT="8200" \
     SCRIBE_TRANSPORT_HOST="0.0.0.0" \
+    SCRIBE_REMOTE_FALLBACK="false" \
     PYTHONUNBUFFERED="1"
 
 EXPOSE 8200

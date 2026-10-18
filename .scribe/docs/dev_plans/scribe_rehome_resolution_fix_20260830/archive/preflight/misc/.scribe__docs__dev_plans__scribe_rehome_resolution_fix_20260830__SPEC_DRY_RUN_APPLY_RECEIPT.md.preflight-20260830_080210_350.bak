@@ -1,0 +1,75 @@
+---
+id: scribe_rehome_resolution_fix_20260830-spec-dry-run-apply-receipt
+title: "SPEC \u2014 Dry-Run Apply Receipt"
+doc_type: spec
+doc_name: SPEC_DRY_RUN_APPLY_RECEIPT
+category: engineering
+status: scaffolded
+version: '0.1'
+last_updated: 2026-08-30 08:01:41 UTC
+maintained_by: agent-20260830-055830-d1c77587
+created_by: agent-20260830-055830-d1c77587
+owners: []
+related_docs: []
+tags: []
+summary: Problem-definition contract for applying an exact successful manage_docs
+  mutation preview without reconstructing the original call.
+canonical_doc_type: spec
+edit_trace:
+  tool: manage_docs
+  created_at: 2026-08-30 08:00:50 UTC
+  created_via: create_doc
+  last_edited_at: 2026-08-30 08:01:41 UTC
+  last_edited_by: agent-20260830-055830-d1c77587
+  last_action: replace_section
+---
+# SPEC — Dry-Run Apply Receipt
+
+## Problem Statement
+<!-- ID: problem_statement -->
+A successful mutating `manage_docs(..., dry_run=True)` currently proves the proposed change but leaves the caller to repeat the full request with `dry_run=False`. That repeats arguments, consumes tokens, can drift from the preview that was reviewed, and makes the safer preview-first path less attractive. The product needs a compact follow-up that applies exactly the successful preview, while preserving Scribe's authorization, path, concurrency, and audit guarantees.
+## Goals
+<!-- ID: goals -->
+- Every successful dry run for an applicable mutating `manage_docs` operation automatically advertises a compact apply affordance in its normal structured response; agents discover it without prompt, roster, or skill edits.
+- The follow-up applies the exact normalized mutation represented by that preview without the caller reconstructing the original arguments.
+- The response and follow-up are token-efficient, additive, and backwards compatible for existing callers.
+- Stale targets, actor/project mismatch, replay, expiry, and policy failures return explicit machine-readable outcomes.
+- Preview and apply remain linked in the audit trail.
+- The already-pending rehome repair stays intact and ships in the same final release boundary only after its existing verification is preserved.
+## Non-Goals
+<!-- ID: non_goals -->
+- Building a web button or other UI.
+- General-purpose transaction replay outside `manage_docs`.
+- Applying read-only discovery or quality-check dry runs.
+- Weakening path sandboxing, authorization, or optimistic-concurrency checks.
+- Requiring agents to cache or resend the original full request.
+- Runtime restart, deployment, merge to `main`, or production activation as part of this source package.
+## Constraints
+<!-- ID: constraints -->
+- Reuse existing response-normalization, session identity, project binding, storage, hashing, and audit primitives wherever they fit; do not create a parallel scheduler or unmanaged receipt store.
+- Keep the public delta minimal and additive. Existing action calls and successful dry-run payload fields must continue to work.
+- The apply capability must be issued only for successful mutation previews and must not expose secrets or serialized internal state.
+- Authority and path policy must be rechecked at apply time. A changed preimage must not silently apply.
+- A consumed or retried receipt must produce a deterministic, safe result.
+- Tests must cover representative create/edit/rehome behavior, inapplicable read-only dry runs, project/actor mismatch, expiry, drift, replay, and MCP result-shape compatibility.
+- Preserve unrelated dirty work and the source-authoritative MCP SDK v2 surfaces already merged into `main`.
+## Research Questions
+<!-- ID: research_questions -->
+1. Where is the narrowest shared response seam that sees all successful mutating dry runs without editing every action handler?
+2. Which existing CAS/hash, session/project identity, persistence, expiry, and audit primitives can carry a short-lived apply receipt safely?
+3. What is the smallest additive public invocation contract: a single new `manage_docs` action, a receipt-bearing existing action, or another already-supported seam?
+4. How should normalized arguments and preimage state be captured so the applied mutation is exactly the reviewed preview while policies are re-evaluated?
+5. Which actions are truly mutation-capable and which dry runs must never advertise Apply?
+6. What compatibility and MCP SDK v2 tests prove automatic exposure, host-valid content shape, and no regression to current tools?
+7. What is the exact current Git/PR/remote status of the MCP SDK v2 migration branches and the present maintenance branch?
+## Acceptance
+<!-- ID: acceptance -->
+- A representative successful mutating dry run returns a compact, documented apply affordance automatically.
+- A caller can execute the exact preview using only the server-issued opaque identifier/receipt and required actor context, without repeating the original mutation payload.
+- Apply succeeds once on an unchanged authorized target; a retry is deterministic and does not duplicate the mutation.
+- Expired, wrong-project, wrong-actor/session, changed-preimage, invalid, and inapplicable receipts fail closed with explicit stable result codes.
+- Read-only dry runs do not advertise a misleading apply operation.
+- Existing dry-run and non-dry-run callers remain compatible, including host-valid MCP result content.
+- Focused unit/integration, neighboring-module, import-smoke, lint, and diff checks pass.
+- Version surfaces and release notes describe the feature; changes are committed and the working branch is pushed.
+- The handoff reports source/test proof separately from runtime activation and gives an evidence-backed answer on MCP SDK v2 migration and branch closeout state.

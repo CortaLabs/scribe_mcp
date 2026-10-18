@@ -1,0 +1,227 @@
+
+# 🏗️ Architecture Guide — scribe_rehome_resolution_fix_20260830
+**Author:** Blueprint
+**Version:** v1.0
+**Status:** Draft
+**Last Updated:** 2026-08-30 05:59:02 UTC
+
+> Architecture guide for scribe_rehome_resolution_fix_20260830.
+
+---
+## 1. Problem Statement
+<!-- ID: problem_statement -->
+### APPROACH_SUMMARY
+
+Goal: add an exact-preview apply capability to `manage_docs` while preserving the pending rehome repair and failing closed on every unsupported storage or recovery path.
+
+Files to modify are limited to the package-owned storage, receipt-engine, runtime/rehome, targeted-test, and release surfaces listed in this guide and `PHASE_PLAN.md`. Generated prompts, rosters, skills, agent cards, MCP client arguments, deployment state, and unrelated dirty files are forbidden. Verification is package-local: targeted tests, direct-neighbor tests, and an import smoke for every modified Python module; the full test suite is explicitly out of scope.
+
+A successful mutation-capable dry run currently returns proof but no compact way to apply that exact proof. The new contract automatically adds `apply: {action: "apply_preview", receipt: opaque_token, expires_at: rfc3339_time}` to successful eligible previews. The only follow-up is `manage_docs(action="apply_preview", metadata={"receipt": opaque_token})`; mutation arguments accompanying the receipt are rejected.
+
+The design must also close two mandatory known risks: durable atomic receipt lifecycle parity across SQLite, PostgreSQL, and Remote backends, and composite rehome binding/recovery across both project authorities, paths, file states, registry mappings, indexes, preimages, locks, and crash states.
+
+
+
+---
+## 2. Requirements & Constraints
+<!-- ID: requirements_constraints -->
+### Functional requirements
+
+- Preserve every existing dry-run response field and add the `apply` object only when `ok is True`, `dry_run is True`, the action is mutation-capable, and the action is not `apply_preview`.
+- Add `apply_preview` through the existing runtime action manifest so host schemas discover it automatically. Do not edit prompts, rosters, skills, generated cards, or reconstruct client arguments.
+- Retain executable normalized intent only on the server; the caller sends only the opaque receipt.
+- Bind each receipt to verified principal and run/session identity, Scribe project, canonical repository root, action, action-specific targets, preconditions, predicted after-state, expiry, lifecycle, fence, and audit correlation.
+- Use 256 bits of random token entropy, return plaintext only in the issuance response, persist only SHA-256 token lookup material, default TTL to 600 seconds, and cap configuration at 1800 seconds.
+- Re-run authorization, write-barrier, project safety, path sandbox, canonical resolution, and preimage checks at apply time.
+- Return one stable `APPLY_RECEIPT_*` outcome and never expose retained intent, authority detail, bearer hashes, internal paths, or stack traces.
+- Preserve the current dirty rehome and 2.13.2 candidate changes; no implementation package may reset or replace them.
+
+### Fixed constraints
+
+- Receipt storage is a Scribe-owned backend feature. Extend the existing `StorageBackend`, SQLite schema, PostgreSQL init/migration, Remote proxy, and transport allowlist; do not use AgentKit or council-local migration lanes and do not create a parallel store.
+- Unsupported or unavailable receipt persistence is `APPLY_RECEIPT_STORAGE_UNAVAILABLE`; there is no process-local fallback.
+- Receipt replay is terminal-result replay, never delete-on-consume.
+- Cross-backend and composite-rehome risks require final behavioral and security evidence. Routine packages rely on targeted tests without a review train.
+- Correct release target is `2.14.0`: the public action and response affordance are additive functionality, so SemVer requires a minor bump from the dirty `2.13.2` bugfix candidate.
+
+
+
+---
+## 3. Architecture Overview
+<!-- ID: architecture_overview -->
+### Component flow
+
+1. The existing `handle_manage_docs_request` completes a successful mutation preview.
+2. A shared issuer in `doc_management.apply_preview` captures the server-normalized intent plus an action-specific binding/precondition snapshot and persists it through `StorageBackend`.
+3. Runtime attaches only the compact `apply` affordance before the create early return or common final return.
+4. `apply_preview` validates its receipt-only input, claims the durable row atomically, rechecks current authority and state, executes the retained intent through the normal mutation path, verifies after-state, and stores a terminal result.
+5. Retries return stored terminal output or a stable busy/recovery result without a second mutation.
+
+### Seam map and dependency DAG
+
+The Q2 shape is seven implementation/validation subsystems plus release, more than twelve owned files, more than two frozen contracts, and three waves. The dispatched contract requires a single planning pass, so this guide records the seam map and detailed packages together.
+
+| Subsystem | Sole ownership | Provides | Depends on |
+|---|---|---|---|
+| SS-CONTRACT | receipt records and `StorageBackend` API | C-RECEIPT-STORAGE | none |
+| SS-SQLITE | SQLite table and atomic methods | C-SQLITE-PARITY | SS-CONTRACT |
+| SS-POSTGRES | PostgreSQL DDL/migration and atomic methods | C-POSTGRES-PARITY | SS-CONTRACT |
+| SS-REMOTE | remote client/server operation parity | C-REMOTE-PARITY | SS-CONTRACT |
+| SS-ENGINE | issuance, claim/replay orchestration, multi-path locks | C-APPLY-ENGINE | SS-CONTRACT and all backends |
+| SS-RUNTIME | public action, automatic affordance, composite rehome executor | C-PUBLIC-APPLY and C-REHOME-COMPOSITE | SS-ENGINE and completed rehome baseline |
+| SS-VALIDATE | end-to-end parity and security evidence | evidence receipts | all implementation |
+| SS-RELEASE | 2.14.0 version/readme truth | release artifact | validation |
+
+DAG layers are `[SS-CONTRACT]`, `[SS-SQLITE, SS-POSTGRES, SS-REMOTE]`, `[SS-ENGINE]`, `[SS-RUNTIME]`, `[SS-VALIDATE]`, `[SS-RELEASE]`.
+
+I1: active package ownership is pairwise disjoint; the completed baseline package is historical, and `SCRIBE-REHOME-B3` remains the single live owner of dirty runtime/rehome files. I2: the layers above are acyclic. I3: every named cross-subsystem contract has one producer. I4: each subsystem maps to one package and owns no more than six files. I5: contract surfaces are concrete in Detailed Design. I6: the union covers the SPEC change surface; prompts, rosters, skills, generated outputs, deployment, Git delivery, and unrelated code are explicitly outside it.
+
+
+---
+## 4. Detailed Design
+<!-- ID: detailed_design -->
+### C-PUBLIC-APPLY: additive tool contract
+
+Successful eligible previews add:
+
+`apply = {"action": "apply_preview", "receipt": <opaque string>, "expires_at": <RFC3339 UTC>}`
+
+The follow-up accepts exactly `action="apply_preview"` and `metadata.receipt: str`. Any `doc`, `doc_name`, `section`, `content`, `patch`, `edit`, target path, project override, normalized intent, hashes, or other mutation field with the receipt returns `APPLY_RECEIPT_INVALID`. Existing live action-manifest derivation exposes the new action automatically.
+
+Eligibility uses the existing write-intent authority plus explicit exclusion of `apply_preview`, failed responses, read-only/quality/discovery actions, and previews that cannot produce a complete action-specific binding. Receipt issuance failure removes the affordance and returns the preview with a fail-closed structured warning; it must never invent a process-local receipt.
+
+### C-RECEIPT-STORAGE: typed durable lifecycle
+
+Add immutable `ApplyPreviewReceiptRecord` and `ApplyPreviewClaimResult` records in `storage.models`. Extend `StorageBackend` with these exact async operations:
+
+- `issue_apply_preview_receipt(record: ApplyPreviewReceiptRecord) -> ApplyPreviewReceiptRecord`
+- `fetch_apply_preview_receipt(token_sha256: str) -> ApplyPreviewReceiptRecord | None`
+- `claim_apply_preview_receipt(token_sha256: str, *, lease_seconds: int) -> ApplyPreviewClaimResult`
+- `finalize_apply_preview_receipt(token_sha256: str, *, fence: int, terminal_state: str, result_code: str, result_json: str) -> ApplyPreviewReceiptRecord`
+- `cleanup_apply_preview_receipts() -> int`
+
+Base methods raise `NotImplementedError`; the receipt engine translates missing capability or backend errors to `APPLY_RECEIPT_STORAGE_UNAVAILABLE`. No optional success path exists.
+
+The durable table stores token SHA-256, receipt version, lifecycle state, verified scope IDs, action, retained normalized-intent JSON, target-binding JSON, precondition JSON, predicted-after JSON, issued/expiry times, monotonic fence, apply-lease expiry, terminal result code/JSON, terminal timestamp, audit correlation, and updated time. Plaintext bearer material is forbidden.
+
+`claim_apply_preview_receipt` is one database atomic conditional update. It claims unexpired `issued` rows or takes over an expired `applying` lease by incrementing the fence. It returns exactly `claimed`, `recovery`, `terminal`, `busy`, `expired`, or `not_found`. Finalize is conditional on `state="applying"` and the exact fence. SQLite uses one `UPDATE ... RETURNING` under its write gate; PostgreSQL uses one conditional `UPDATE ... RETURNING`; Remote performs one RPC per atomic backend operation and never emulates CAS client-side.
+
+### C-APPLY-ENGINE: issuance, replay, and locking
+
+`ApplyPreviewService` receives the existing storage backend and a server-verified execution context. It validates TTL, generates the token, hashes it, persists the record, and returns the public affordance. Apply hashes the presented token, obtains a claim result, returns stored terminal output on replay, and invokes an action executor only for `claimed` or provable `recovery`.
+
+Extend the manager with a deterministic multi-path mutation lock context. It canonicalizes and deduplicates lock identities, sorts their lockfile paths lexically, then acquires them in that order. No caller may acquire source/destination/index locks independently.
+
+Apply-time order is: validate token syntax and receipt version; load/claim; compare verified principal, run/session, project, and repo; reacquire current project records; re-run write barrier, authorization, and path policy; acquire all action locks; re-resolve targets; verify composite preconditions; execute retained intent; verify predicted after-state; finalize by fence; append linked audit result. Storage, policy, drift, or unknown-state failures do not execute.
+
+### C-REHOME-COMPOSITE: source/destination transaction and recovery
+
+A rehome receipt binds both source and destination project names, canonical repo roots/IDs, docs directories, canonical document keys and paths, move/copy mode, overwrite flag, source file hash/existence, destination hash/nonexistence, source and destination registry mapping digests plus relevant keys, research indexes, review index, and predicted post-state for each component.
+
+The same `rehome_transaction` executor is used by direct rehome and retained receipt apply; no second rehome implementation is allowed. It acquires the sorted union of source file, destination file, source index, destination index, and review-index locks. It stages destination content to an atomic temporary write, updates target mapping, source mapping, state cache, and indexes, then removes the source only after the destination and mappings are durable for move mode.
+
+Crash recovery reacquires every lock and classifies each bound component as BEFORE, AFTER, or OTHER:
+
+- all BEFORE: resume once under the new fence;
+- all AFTER: finalize stored success without writing;
+- a recognized monotonic partial state: complete only missing idempotent registry/index/source-removal steps after reauthorization and hash checks;
+- any OTHER state or contradictory mapping/path authority: return `APPLY_RECEIPT_RECOVERY_REQUIRED` and perform no further mutation.
+
+Recognized partial repair never overwrites a file whose hash is neither the bound preimage nor predicted after-state. Cross-project registry updates and both indexes are part of success, not best-effort warnings.
+
+### Stable outcomes and audit
+
+Use the fixed codes `APPLY_RECEIPT_APPLIED`, `REPLAYED`, `INVALID`, `EXPIRED`, `SCOPE_MISMATCH`, `INAPPLICABLE`, `POLICY_DENIED`, `TARGET_DRIFT`, `BUSY`, `RECOVERY_REQUIRED`, and `STORAGE_UNAVAILABLE`. Unknown and scope-mismatch responses are detail-normalized.
+
+Audit events are `preview_receipt_issued` and `preview_receipt_apply_result`, linked by a non-secret correlation ID. Protected audit data records scope IDs, action, target IDs, times, pre/after hashes, lifecycle/fence, result code, and replay flag. It never records receipt plaintext, normalized intent, document bodies, or raw diffs.
+
+
+---
+## 5. Directory Structure (Keep Updated)
+<!-- ID: directory_structure -->
+### Owned implementation paths
+
+- Storage contract: `src/scribe_mcp/storage/models.py`, `src/scribe_mcp/storage/base.py`
+- SQLite: `src/scribe_mcp/storage/sqlite/schema.py`, `src/scribe_mcp/storage/sqlite/apply_preview_receipts.py`, `src/scribe_mcp/storage/sqlite/__init__.py`
+- PostgreSQL: `src/scribe_mcp/storage/postgres/__init__.py`, `src/scribe_mcp/db/init.sql`, `src/scribe_mcp/db/postgres_migrations/005_apply_preview_receipts.sql`
+- Remote: `src/scribe_mcp/storage/remote.py`, `src/scribe_mcp/server_sse.py`
+- Engine: `src/scribe_mcp/doc_management/apply_preview.py`, `src/scribe_mcp/doc_management/manager.py`
+- Runtime/rehome: `src/scribe_mcp/doc_management/runtime.py`, `src/scribe_mcp/doc_management/rehome_transaction.py`
+- Release: `pyproject.toml`, `src/scribe_mcp/__main__.py`, `README.md`
+- Tests: only the exact package-owned test files in `PHASE_PLAN.md`
+
+No new top-level module, scheduler, database, prompt/template surface, skill, roster entry, or client-specific adapter is permitted.
+
+
+---
+## 6. Data & Storage
+<!-- ID: data_storage -->
+The receipt table is Scribe backend state, not AgentKit shared schema and not a council-local extension. SQLite adds it through the existing `storage/sqlite/schema.py` initialization path. PostgreSQL adds it to the fresh-install `db/init.sql` and through additive numbered migration `005_apply_preview_receipts.sql`. Both define a primary key on token SHA-256 plus indexes on expiry and lifecycle/lease expiry.
+
+Lifecycle is `issued -> applying -> applied|failed_terminal`. An expired applying lease may transition to a new fenced recovery claim. Terminal rows are immutable and replayable until cleanup policy permits removal; cleanup must preserve the non-sensitive audit event. Finalize uses compare-and-set on token hash, applying state, and fence.
+
+Remote parity is server-side atomicity: the remote client exposes the same five methods, the authenticated internal transport allowlist permits them, and the server invokes its configured backend. The client must not fetch then update to simulate claim/finalize. Public-release transport continues to deny backend mutation operations.
+
+Retained intent and target/precondition JSON use the same storage access boundary as managed document state. The opaque token is never stored. Receipt configuration is limited to TTL and claim-lease duration, with a hard 1800-second TTL cap; defaults are owned by the receipt engine rather than duplicated per backend.
+
+
+---
+## 7. Testing & Validation Strategy
+<!-- ID: testing_strategy -->
+Each implementation package runs its named focused tests, direct neighbors that import from or are imported by modified files, and one import smoke per modified Python module. Full-suite execution is forbidden for this workstream.
+
+Required proof matrix:
+
+- Public shape: eligible create/edit/rehome previews automatically expose the three-field `apply` object; failed/read-only/quality/`apply_preview` calls do not.
+- Input boundary: receipt-only follow-up; any client-replayed mutation field fails closed.
+- Scope/policy: wrong principal, run/session, project, repo, path, write barrier, or authorization fails without mutation.
+- Lifecycle: default/max TTL, invalid/expired, concurrent claim exactly once, busy, terminal replay, stale fence rejection, storage unavailable, cleanup.
+- Backend parity: the same contract suite against SQLite and PostgreSQL; Remote proves one-RPC atomic delegation and fail-closed transport behavior.
+- Rehome: both authorities and paths are rebound, multi-lock order is deterministic, source/destination files and registries/indexes match predicted state, recognized partial crashes reconcile, and unknown mixtures stop.
+- Compatibility: current create-intent, rehome cleanup/target/index, session binding, action classification, schema-keystone, MCP adapter, and result formatter tests remain green.
+- Release: `pyproject.toml`, CLI `--version`, and README all report 2.14.0.
+
+The final validation package owns only cross-backend/end-to-end tests and requires behavioral plus security evidence. It must cite the exact focused commands and may not substitute document quality or unit-only proof for concurrency/recovery behavior.
+
+
+---
+## 8. Deployment & Operations
+<!-- ID: deployment_operations -->
+No deployment, runtime restart, production activation, main merge, push, or remote branch cleanup is authorized by this plan.
+
+Implementation lands in dependency order. The existing dirty rehome package is repaired from its queued custody state and completed before runtime apply integration is accepted. The existing release package is amended in place to 2.14.0 and runs only after final validation. Source/test proof and release-file proof remain distinct from deployment or runtime activation.
+
+PostgreSQL migration `005_apply_preview_receipts.sql` is additive and idempotent. Implementation validation proves fresh schema and migration behavior without applying against production. Operator deployment and any production-triggering main merge remain separate red-line actions.
+
+
+---
+## 9. Open Questions & Follow-Ups
+<!-- ID: open_questions -->
+No load-bearing design question remains open.
+
+Closed decisions:
+
+- Public contract: automatic `apply` affordance plus receipt-only `apply_preview`.
+- Storage: durable Scribe `StorageBackend` parity; no in-memory fallback.
+- Atomicity: backend CAS with fencing and terminal replay.
+- Rehome: one composite executor shared by direct and receipt apply.
+- Version: 2.14.0 minor release.
+- Prompt surfaces: unchanged.
+- Runtime activation: out of scope.
+
+Implementation must stop and return to Blueprint only if current source disproves one of these concrete contracts or requires a file outside the package ownership listed in `PHASE_PLAN.md`.
+
+
+---
+## 10. References & Appendix
+<!-- ID: references_appendix -->
+- `SPEC_DRY_RUN_APPLY_RECEIPT.md`
+- `research/RESEARCH_DRY_RUN_APPLY_REUSE.md`
+- `research/RESEARCH_DRY_RUN_APPLY_SECURITY.md`
+- Force-close decision in the active Scribe trail dated 2026-08-30
+- ai-trace dispatch capsule `aitrace:v1:capsule:955c8f9696161bdeb26556eb39b60e37d36c512e19fe5d10b15ccfa2aa116a04`
+- Current dirty baseline from `git status --short` and targeted `git diff`
+- Repo-intelligence scope-resolution failure is disclosed in the active trail; source reads and literal search provide the structural evidence used here.
+
+
+---

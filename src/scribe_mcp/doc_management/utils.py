@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
 
+from scribe_mcp.config.repo_config import RepoDiscovery, resolve_create_doc_type_config
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.utils.time import format_utc
 
@@ -19,6 +21,85 @@ CANONICAL_DEV_PLAN_DOCS: Dict[str, str] = {
     "PHASE_PLAN.md": "phase_plan",
     "CHECKLIST.md": "checklist",
 }
+
+
+def normalize_case_status(value: Optional[str]) -> str:
+    """Canonical normalization for case-registry status tokens.
+
+    Lower-cased, trimmed, spaces collapsed to underscores so multi-word statuses
+    ("won't fix", "false positive") compare consistently across link_fix and
+    list_open_cases. This is the single normalization both call sites must use.
+    """
+    if not value:
+        return ""
+    return str(value).strip().lower().replace(" ", "_")
+
+
+# Single source of truth for case-registry lifecycle vocabulary. Previously the
+# "what counts as closed" set was duplicated and divergent between link_fix (which
+# statuses close a case) and list_open_cases (which statuses filter a case out),
+# so a case could be closed to one and open to the other. All members are stored
+# in canonical (normalized) form.
+CASE_OPEN_STATUS_VALUES: frozenset[str] = frozenset({
+    "open",
+    "investigating",
+    "triage",
+    "in_progress",
+    "todo",
+    "new",
+})
+
+# Terminal statuses that close a case as a NON-fix outcome. link_fix preserves the
+# specific token as the case status so the closure reason survives (rather than
+# flattening everything to a generic "closed").
+CASE_NONFIX_CLOSED_STATUS_VALUES: frozenset[str] = frozenset({
+    "wontfix",
+    "won't_fix",
+    "won_t_fix",
+    "duplicate",
+    "false_positive",
+    "mitigated",
+})
+
+# Terminal statuses that close a case as a successful fix/landing.
+CASE_FIX_CLOSED_STATUS_VALUES: frozenset[str] = frozenset({
+    "closed",
+    "resolved",
+    "fixed",
+    "done",
+    "complete",
+    "completed",
+    "implemented",
+    "landed",
+    "merged",
+    "validated",
+})
+
+# The full closed/terminal vocabulary (fix + non-fix outcomes).
+CASE_CLOSED_STATUS_VALUES: frozenset[str] = (
+    CASE_FIX_CLOSED_STATUS_VALUES | CASE_NONFIX_CLOSED_STATUS_VALUES
+)
+
+
+def case_status_closes(value: Optional[str]) -> bool:
+    """True when *value* is a terminal (closed) case status."""
+    return normalize_case_status(value) in CASE_CLOSED_STATUS_VALUES
+
+
+def resolved_case_close_status(value: Optional[str]) -> Optional[str]:
+    """Return the status a case should be set to for landing status *value*.
+
+    - A non-fix terminal status (wontfix/duplicate/false_positive/...) is preserved
+      verbatim so the closure reason is recorded.
+    - A fix terminal status (merged/resolved/fixed/...) collapses to "closed".
+    - A non-terminal status returns ``None`` (the case stays open).
+    """
+    normalized = normalize_case_status(value)
+    if normalized in CASE_NONFIX_CLOSED_STATUS_VALUES:
+        return normalized
+    if normalized in CASE_FIX_CLOSED_STATUS_VALUES:
+        return "closed"
+    return None
 
 
 @dataclass(frozen=True)
@@ -37,6 +118,16 @@ class ScribeSourceDocument:
 def hash_text(content: str) -> str:
     """Return a deterministic hash for document content."""
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def strip_trailing_whitespace_lines(content: str) -> str:
+    """Remove trailing spaces/tabs from each line while preserving final newline shape."""
+    if not content:
+        return content
+    normalized = "\n".join(line.rstrip(" \t") for line in content.splitlines())
+    if content.endswith(("\n", "\r")):
+        normalized += "\n"
+    return normalized
 
 
 def _split_into_sections(raw: str) -> List[str]:
@@ -171,13 +262,14 @@ def _extract_metadata_hint(metadata: Dict[str, Any], *keys: str) -> Optional[str
     return None
 
 
-def _map_explicit_doc_type(value: Optional[str]) -> Optional[tuple[str, str]]:
+def _map_explicit_doc_type(value: Optional[str], *, project_root: Optional[Path] = None) -> Optional[tuple[str, str]]:
     normalized = (value or "").strip().lower().replace(" ", "_")
     if not normalized:
         return None
 
     mapping = {
         "research": ("dev_plan", "research"),
+        "spec": ("dev_plan", "spec"),
         "architecture": ("dev_plan", "architecture_guide"),
         "architecture_guide": ("dev_plan", "architecture_guide"),
         "phase": ("dev_plan", "phase_plan"),
@@ -188,6 +280,17 @@ def _map_explicit_doc_type(value: Optional[str]) -> Optional[tuple[str, str]]:
         "security": ("case_report", "security_report"),
         "security_report": ("case_report", "security_report"),
     }
+    if normalized not in mapping and project_root is not None:
+        try:
+            repo_config = RepoDiscovery.load_config(project_root.resolve(), seed_if_missing=False)
+            resolved_config = resolve_create_doc_type_config(repo_config)
+            alias_target = resolved_config.aliases.get(normalized)
+            if alias_target:
+                normalized = alias_target
+            elif normalized in resolved_config.template_doc_types:
+                return ("dev_plan", normalized)
+        except Exception:
+            pass
     return mapping.get(normalized)
 
 
@@ -198,6 +301,116 @@ def _classify_from_case_reference(case_reference: Optional[str]) -> Optional[tup
     if normalized.startswith("BUG-"):
         return ("case_report", "bug_report")
     return None
+
+
+def normalize_case_report_category(
+    value: Optional[str],
+    *,
+    case_reference: Optional[str] = None,
+) -> Optional[str]:
+    """Return the canonical manage_docs case category for BUG/SEC report aliases."""
+    normalized = (value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "bug": "bugs",
+        "bugs": "bugs",
+        "bug_report": "bugs",
+        "bug_reports": "bugs",
+        "security": "security",
+        "sec": "security",
+        "security_report": "security",
+        "security_reports": "security",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+
+    classification = _classify_from_case_reference(case_reference)
+    if classification is None:
+        return None
+    return "security" if classification[1] == "security_report" else "bugs"
+
+
+def case_report_doc_type_for_category(doc_category: Optional[str]) -> Optional[str]:
+    normalized = normalize_case_report_category(doc_category)
+    if normalized == "security":
+        return "security_report"
+    if normalized == "bugs":
+        return "bug_report"
+    return None
+
+
+def looks_like_case_report_reference(
+    value: Optional[str],
+    *,
+    doc_category: Optional[str] = None,
+) -> bool:
+    if normalize_case_report_category(doc_category, case_reference=value) is not None:
+        return True
+    if _classify_from_case_reference(value) is not None:
+        return True
+    normalized_path = str(value or "").strip().replace("\\", "/").lower()
+    return (
+        "/docs/bugs/" in normalized_path or "/docs/security/" in normalized_path
+    ) and normalized_path.endswith("/report.md")
+
+
+def case_registry_record_summary(record: Any) -> Optional[Dict[str, Any]]:
+    if record is None:
+        return None
+    summary: Dict[str, Any] = {}
+    for key in ("case_id", "case_type", "doc_name", "doc_path", "project_name"):
+        value = _normalize_metadata_value(_record_like_value(record, key))
+        if value is not None:
+            summary[key] = value
+    return summary if summary else None
+
+
+def resolve_governed_case_report_path(
+    project: Dict[str, Any],
+    case_reference: str,
+    *,
+    doc_category: Optional[str] = None,
+) -> Optional[Path]:
+    """Resolve a BUG/SEC case reference to a governed report path under project root."""
+    project_root_raw = str(project.get("root") or "").strip()
+    if not project_root_raw:
+        return None
+    project_root = Path(project_root_raw).expanduser().resolve()
+    canonical_category = normalize_case_report_category(
+        doc_category,
+        case_reference=case_reference,
+    )
+    desired_doc_type = case_report_doc_type_for_category(canonical_category)
+
+    candidate_path: Optional[Path] = None
+    raw_reference = str(case_reference or "").strip()
+    if raw_reference and ("/" in raw_reference or "\\" in raw_reference):
+        candidate = Path(raw_reference).expanduser()
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        candidate_path = candidate.resolve()
+    elif canonical_category is not None:
+        candidate_path = resolve_custom_doc_path(
+            project,
+            canonical_category,
+            raw_reference,
+        )
+
+    if candidate_path is None or not candidate_path.exists():
+        return None
+    try:
+        candidate_path.relative_to(project_root)
+    except ValueError:
+        return None
+
+    classification = classify_scribe_source_document(
+        candidate_path,
+        project_root=project_root,
+    )
+    if classification is None or classification.source_family != "case_report":
+        return None
+    if desired_doc_type is not None and classification.doc_type != desired_doc_type:
+        return None
+    return candidate_path
 
 
 def classify_scribe_source_document(
@@ -222,7 +435,7 @@ def classify_scribe_source_document(
         "template_type",
         "doc_category",
     )
-    classification = _map_explicit_doc_type(explicit_doc_type)
+    classification = _map_explicit_doc_type(explicit_doc_type, project_root=resolved_project_root)
     if classification is None:
         classification = _classify_from_case_reference(
             _extract_metadata_hint(combined_metadata, "case_id", "doc_name")
@@ -453,6 +666,13 @@ def resolve_custom_doc_path(
             project_root / "docs" / "bugs",
             project_root / "docs" / "security",
         ]
+        # Resolve by EXACT identity, and refuse on ambiguity rather than returning
+        # an arbitrary first glob hit. The previous `doc_name in report_dir_name`
+        # substring match could collapse a case path onto an unrelated report whose
+        # directory merely contained the name. 2.7.1 hardened the registry lookup;
+        # this hardens the filesystem report-resolution path the same way.
+        case_id_matches: list[Path] = []
+        suffix_matches: list[Path] = []
         for case_root in case_roots:
             if not case_root.exists():
                 continue
@@ -463,11 +683,20 @@ def resolve_custom_doc_path(
                 )
                 if classification is None or classification.doc_type != desired_doc_type:
                     continue
-                report_dir_name = report_file.parent.name
-                if report_dir_name.endswith(f"_{doc_name}") or doc_name in report_dir_name:
-                    return report_file
                 if classification.case_id and classification.case_id == doc_name:
-                    return report_file
+                    case_id_matches.append(report_file)
+                    continue
+                report_dir_name = report_file.parent.name
+                if report_dir_name.endswith(f"_{doc_name}"):
+                    suffix_matches.append(report_file)
+        # Exact case_id is the strongest identifier and wins outright when unique.
+        if len(case_id_matches) == 1:
+            return case_id_matches[0]
+        if len(case_id_matches) > 1:
+            return None  # ambiguous case_id collision — refuse
+        # Otherwise accept a unique slug-suffix match only.
+        if len(suffix_matches) == 1:
+            return suffix_matches[0]
         return None
 
     if doc_category == "reviews":
@@ -485,3 +714,317 @@ def resolve_custom_doc_path(
         return None
 
     return None
+
+
+def _normalize_case_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "_")
+    if normalized in {"", "unknown"}:
+        return "open"
+    if normalized in {"open", "investigating", "triage", "proposed", "in_progress", "active"}:
+        return "open"
+    if normalized in {"resolved", "closed", "fixed", "landed", "done", "completed"}:
+        return "closed"
+    return normalized
+
+
+def _derive_case_id_from_path(report_path: Path) -> Optional[str]:
+    # Expected governed layout: docs/{bugs|security}/{category}/{yyyy-mm-dd}_{slug}/report.md
+    report_dir = report_path.parent.name
+    if "_" not in report_dir:
+        return None
+    return _normalize_metadata_value(report_dir.split("_", 1)[1])
+
+
+def _normalize_doc_binding_path(value: str) -> str:
+    return str(Path(value).expanduser().resolve())
+
+
+def _case_doc_alias_kind(
+    alias: str,
+    *,
+    case_id: str,
+    primary_key: Optional[str],
+    canonical_doc_path: str,
+) -> str:
+    if alias == case_id:
+        return "primary"
+    if alias == canonical_doc_path or "/" in alias or "\\" in alias:
+        return "path_alias"
+    if alias.startswith(("bug_report_", "security_report_")):
+        return "legacy_compat"
+    if primary_key and alias == primary_key:
+        return "caller_alias"
+    return "caller_alias"
+
+
+def build_case_doc_binding_metadata(
+    case_id: str,
+    doc_path: str,
+    docs_mapping: Mapping[str, str],
+    *,
+    primary_key: str | None = None,
+) -> dict[str, object]:
+    """Build canonical case-report doc binding metadata from registered aliases."""
+    normalized_case_id = str(case_id or "").strip()
+    canonical_doc_path = _normalize_doc_binding_path(doc_path)
+    canonical_doc_name = normalized_case_id or str(primary_key or "").strip() or Path(canonical_doc_path).stem
+
+    aliases: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def _append_alias(alias: str) -> None:
+        alias_key = str(alias or "").strip()
+        if not alias_key or alias_key in seen:
+            return
+        seen.add(alias_key)
+        aliases.append(
+            {
+                "alias": alias_key,
+                "alias_kind": _case_doc_alias_kind(
+                    alias_key,
+                    case_id=canonical_doc_name,
+                    primary_key=primary_key,
+                    canonical_doc_path=canonical_doc_path,
+                ),
+                "doc_path": canonical_doc_path,
+            }
+        )
+
+    _append_alias(canonical_doc_name)
+    for alias, candidate_path in docs_mapping.items():
+        if _normalize_doc_binding_path(str(candidate_path)) == canonical_doc_path:
+            _append_alias(str(alias))
+    _append_alias(canonical_doc_path)
+
+    return {
+        "canonical_doc_name": canonical_doc_name,
+        "canonical_doc_path": canonical_doc_path,
+        "aliases": aliases,
+    }
+
+
+def extract_case_registry_metadata_from_report(
+    report_path: Path,
+    *,
+    project_root: Optional[Path] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    project: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build normalized case-registry metadata from a governed bug/security report."""
+    resolved_path = report_path.resolve()
+    resolved_project_root = project_root.resolve() if project_root else None
+    classification = classify_scribe_source_document(
+        resolved_path,
+        metadata=metadata,
+        project_root=resolved_project_root,
+    )
+    if classification is None or classification.source_family != "case_report":
+        return None
+
+    payload_metadata: Dict[str, Any] = dict(classification.metadata or {})
+    if metadata:
+        payload_metadata.update(metadata)
+
+    case_type = "security" if classification.doc_type == "security_report" else "bug"
+    case_id = (
+        _extract_metadata_hint(payload_metadata, "case_id", "slug", "doc_name")
+        or classification.case_id
+        or _derive_case_id_from_path(resolved_path)
+    )
+    if not case_id:
+        return None
+
+    report_root: Optional[Path] = resolved_project_root
+    if report_root is None and project:
+        report_root = Path(str(project.get("root", ""))).resolve()
+    project_name = _normalize_metadata_value(payload_metadata.get("project_name"))
+    if project_name is None and project:
+        project_name = _normalize_metadata_value(project.get("name"))
+
+    repo_root = _normalize_metadata_value(payload_metadata.get("project_root"))
+    if repo_root is None and project:
+        repo_root = _normalize_metadata_value(project.get("root"))
+    if repo_root is None and report_root is not None:
+        repo_root = str(report_root)
+
+    doc_binding = payload_metadata.get("doc_binding")
+    if not isinstance(doc_binding, dict) and project and isinstance(project.get("docs"), Mapping):
+        doc_binding = build_case_doc_binding_metadata(
+            case_id,
+            str(resolved_path),
+            project.get("docs", {}) or {},
+            primary_key=_normalize_metadata_value(payload_metadata.get("doc_name")),
+        )
+
+    registry_metadata: Dict[str, Any] = dict(payload_metadata)
+    if isinstance(doc_binding, dict):
+        registry_metadata["doc_binding"] = doc_binding
+
+    return {
+        "case_id": case_id,
+        "case_type": case_type,
+        "status": _normalize_case_status(payload_metadata.get("status")),
+        "category": classification.category or _extract_metadata_hint(payload_metadata, "category"),
+        "title": _extract_metadata_hint(payload_metadata, "title"),
+        "severity": _extract_metadata_hint(payload_metadata, "severity"),
+        "report_path": str(resolved_path),
+        "doc_type": classification.doc_type,
+        "source_family": classification.source_family,
+        "project_name": project_name,
+        "project_key": _extract_metadata_hint(payload_metadata, "project_key")
+        or (_normalize_metadata_value(project.get("project_key")) if project else None),
+        "repo_id": _extract_metadata_hint(payload_metadata, "repo_id")
+        or (_normalize_metadata_value(project.get("repo_id")) if project else None),
+        "repo_root": repo_root,
+        "reported_at": _extract_metadata_hint(payload_metadata, "reported_at", "timestamp"),
+        "provenance": {
+            "source": "governed_report_doc",
+            "doc_path": str(resolved_path),
+        },
+        "metadata": registry_metadata,
+    }
+
+
+def _record_like_value(record: Any, key: str) -> Any:
+    if record is None:
+        return None
+    if isinstance(record, dict):
+        return record.get(key)
+    return getattr(record, key, None)
+
+
+def merge_case_registry_metadata(
+    *,
+    existing: Optional[Dict[str, Any]],
+    updates: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Merge case metadata by namespace instead of replacing the full payload."""
+    merged: Dict[str, Any] = {}
+    if isinstance(existing, dict):
+        merged.update(existing)
+    if not isinstance(updates, dict):
+        return merged or None
+
+    for key, value in updates.items():
+        if value is None:
+            continue
+        if key in {"", None}:
+            continue
+        if key in {"category", "ownership", "execution_provenance", "fix_link", "reported_at"}:
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                nested = dict(merged.get(key) or {})
+                nested.update(value)
+                merged[key] = nested
+            else:
+                merged[key] = value
+            continue
+        merged[key] = value
+    return merged or None
+
+
+def build_case_registry_upsert_kwargs(
+    *,
+    extracted: Optional[Dict[str, Any]] = None,
+    existing_record: Optional[Any] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+    metadata_overrides: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build exact kwargs for StorageBackend.upsert_case_registry_record(...)."""
+    extracted_payload = extracted if isinstance(extracted, dict) else {}
+    override_payload = overrides if isinstance(overrides, dict) else {}
+
+    def _pick(*keys: str) -> Optional[str]:
+        for key in keys:
+            override_value = _normalize_metadata_value(override_payload.get(key))
+            if override_value is not None:
+                return override_value
+            extracted_value = _normalize_metadata_value(extracted_payload.get(key))
+            if extracted_value is not None:
+                return extracted_value
+            record_value = _normalize_metadata_value(_record_like_value(existing_record, key))
+            if record_value is not None:
+                return record_value
+        return None
+
+    case_id = _pick("case_id")
+    case_type = _pick("case_type")
+    project_name = _pick("project_name")
+    repo_root = _pick("repo_root")
+    doc_type = _pick("doc_type")
+    doc_name = _pick("doc_name") or case_id
+    doc_path = _pick("doc_path", "report_path")
+    if not all((case_id, case_type, project_name, repo_root, doc_type, doc_name, doc_path)):
+        return None
+
+    extracted_metadata: Dict[str, Any] = {}
+    if isinstance(extracted_payload.get("metadata"), dict):
+        extracted_metadata.update(extracted_payload["metadata"])
+    if extracted_payload.get("category") is not None:
+        extracted_metadata["category"] = extracted_payload.get("category")
+    if extracted_payload.get("reported_at") is not None:
+        extracted_metadata["reported_at"] = extracted_payload.get("reported_at")
+    if isinstance(extracted_payload.get("provenance"), dict):
+        extracted_metadata["provenance"] = extracted_payload.get("provenance")
+
+    merged_metadata = merge_case_registry_metadata(
+        existing=_record_like_value(existing_record, "metadata"),
+        updates=extracted_metadata,
+    )
+    merged_metadata = merge_case_registry_metadata(
+        existing=merged_metadata,
+        updates=metadata_overrides if isinstance(metadata_overrides, dict) else None,
+    )
+
+    return {
+        "case_id": case_id,
+        "case_type": case_type,
+        "project_name": project_name,
+        "repo_root": repo_root,
+        "doc_type": doc_type,
+        "doc_name": doc_name,
+        "doc_path": doc_path,
+        "title": _pick("title"),
+        "status": _pick("status"),
+        "severity": _pick("severity"),
+        "source_tool": _pick("source_tool"),
+        "metadata": merged_metadata,
+    }
+
+
+def build_case_registry_backfill_records(
+    project_root: Path,
+    *,
+    reports: Optional[List[Path]] = None,
+    project: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Enumerate existing governed bug/security reports into normalized registry rows."""
+    resolved_root = project_root.resolve()
+    candidates: List[Path]
+    if reports is not None:
+        candidates = sorted(path.resolve() for path in reports)
+    else:
+        candidates = []
+        for source_root in (resolved_root, resolved_root / ".scribe"):
+            for case_root in (source_root / "docs" / "bugs", source_root / "docs" / "security"):
+                if not case_root.exists():
+                    continue
+                candidates.extend(sorted(path.resolve() for path in case_root.glob("*/*/report.md")))
+
+    records: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        extraction_root = resolved_root
+        for source_root in (resolved_root, resolved_root / ".scribe"):
+            try:
+                candidate.relative_to(source_root / "docs")
+            except ValueError:
+                continue
+            extraction_root = source_root
+            break
+        extracted = extract_case_registry_metadata_from_report(
+            candidate,
+            project_root=extraction_root,
+            project=project,
+        )
+        if extracted is not None:
+            records.append(extracted)
+    return records

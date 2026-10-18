@@ -274,6 +274,28 @@ async def run_all_migrations(
     else:
         logger.debug("Skipping migration: tool_calls_repo_root_v1 (already completed)")
 
+    if not await migration_completed(fetchone_fn, "tool_calls_runtime_metadata_v1"):
+        logger.debug("Running migration: tool_calls_runtime_metadata_v1")
+        for column_name, column_definition in (
+            ("duration_ms", "REAL"),
+            ("status", "TEXT NOT NULL DEFAULT 'success'"),
+            ("format_requested", "TEXT"),
+            ("project_name", "TEXT"),
+            ("agent_id", "TEXT"),
+            ("error_message", "TEXT"),
+            ("response_size_bytes", "INTEGER"),
+            ("repo_root", "TEXT"),
+            ("correlation_id", "TEXT"),
+            ("measurement_scope", "TEXT"),
+        ):
+            await ensure_column_fn("tool_calls", column_name, column_definition)
+        await ensure_index_fn(
+            "CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);"
+        )
+        await mark_migration_complete(execute_fn, "tool_calls_runtime_metadata_v1", logger)
+    else:
+        logger.debug("Skipping migration: tool_calls_runtime_metadata_v1 (already completed)")
+
     if not await migration_completed(fetchone_fn, "projects_repo_index_v1"):
         logger.debug("Running migration: projects_repo_index_v1")
         await ensure_index_fn(

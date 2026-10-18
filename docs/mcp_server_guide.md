@@ -1,454 +1,194 @@
-# 🛠️ Building Model Context Protocol (MCP) Servers - Python Edition
+# MCP server guide
 
-## 🎯 What the Hell is MCP Anyway?
+Release line: `2.12.0`
+Updated: `2026-08-22`
 
-Model Context Protocol is Anthropic's way of letting AI assistants talk to external data sources and tools without hard-coding every goddamn integration. Think of it as a standard API that lets Claude (or other LLMs) interact with your databases, filesystems, APIs, or whatever cursed data source you're dealing with.
+This guide shows how to run Scribe as an MCP server for hosts such as Codex or Claude-compatible clients.
 
-## 📦 Core Components
+If you have not installed or bootstrapped Scribe yet, start with [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md).
 
-### 1. **The Server**
-Your MCP server exposes:
-- **Resources**: Static or dynamic data (files, database records, etc.)
-- **Tools**: Functions the AI can invoke
-- **Prompts**: Pre-configured prompt templates
+## The short version
 
-### 2. **The Protocol**
-JSON-RPC 2.0 over stdio or HTTP. Because apparently we needed another protocol in our lives.
+The usual public entry point is:
 
-## 🐍 Python Implementation - The Right Way
-
-### Prerequisites
 ```bash
-./install.sh
-source .venv/bin/activate
-```
-The script creates a virtual environment and installs the packages listed in `requirements.txt` (`mcp`, `asyncpg`, `rich`, `pytest`). If you prefer manual setup, run `pip install -r requirements.txt` inside your own environment.
-
-Copy `.env.example` to `.env` and tweak values (database URL, rate limits, default project) to match your environment.
-
-### Basic Server Structure
-
-```python
-from mcp.server import Server
-from mcp.types import Resource, Tool, TextContent
-import asyncio
-import psycopg2
-from typing import Any
-
-# Initialize the server
-app = Server("your-server-name")
-
-# Connection pool for Postgres (reuse connections, don't be wasteful)
-db_config = {
-    "dbname": "your_db",
-    "user": "your_user",
-    "password": "your_pass",
-    "host": "localhost",
-    "port": 5432
-}
+scribe-server
 ```
 
-### 🔧 Implementing Tools
+For most real installs, that means:
 
-Tools are functions the AI can call. Make them **idempotent** and **safe**.
+- install `scribe-mcp`
+- run `scribe install` (preview) and then explicit commit when ready
+- load the resulting `.env`
+- point your MCP host at `scribe-server`
 
-```python
-@app.tool()
-async def query_database(query: str, params: list[Any] | None = None) -> str:
-    """
-    Execute a READ-ONLY SQL query against Postgres.
+The package also ships a broader operational surface than just one stdio entry point:
 
-    Args:
-        query: SQL SELECT statement
-        params: Optional query parameters
+- `scribe-server` for stdio MCP
+- `scribe-server-sse` for the HTTP application: modern Streamable HTTP at `/mcp` plus explicit legacy `/sse` and `/messages/`
+- `scribe_doctor` and startup probes for diagnostics
+- bundled plugin assets under `plugins/` plus `scribe plugins project-codex` for Codex projection
+- write-barrier protected Postgres backup/restore helpers for Scribe-owned maintenance windows
 
-    Returns:
-        JSON string of results
-    """
-    # CRITICAL: Validate it's read-only
-    if not query.strip().upper().startswith("SELECT"):
-        return "Error: Only SELECT queries allowed, nice try hackerman."
+## Protocol and transport contract
 
-    conn = None
-    try:
-        conn = psycopg2.connect(**db_config)
-        cur = conn.cursor()
-        cur.execute(query, params or [])
+MCP Python SDK v2 is the Python package/API line; protocol `2026-07-28` is the modern wire revision. They are related but not interchangeable version labels. Scribe `2.12.0` supports server SDK `mcp>=2.0.0,<3.0` and defaults to the following paths:
 
-        results = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
+| Client mode | Transport | Protocol | Selection rule |
+| --- | --- | --- | --- |
+| Modern | stdio via `scribe-server` | `2026-07-28` | Default |
+| Modern | Streamable HTTP at `/mcp` | `2026-07-28` | Default HTTP MCP endpoint |
+| Named legacy | handshake stdio | `2025-11-25`; known client `mcp==1.26.0` | Explicit compatibility only |
+| Named legacy | HTTP+SSE at `/sse`, posting to `/messages/` | `2025-11-25`; known client `mcp==1.26.0` | Explicit compatibility only |
 
-        # Return as structured data
-        return json.dumps([
-            dict(zip(columns, row)) for row in results
-        ])
+Scribe never uses an automatic or error-driven downgrade. A legacy revision requires explicit legacy mode, and a modern authentication, protocol, capability, timeout, transport, or malformed-request error remains an error with zero fallback dispatch.
 
-    except Exception as e:
-        return f"Query failed: {str(e)}"
-    finally:
-        if conn:
-            conn.close()
+For HTTP, the static bearer is an **operator-root credential**, not scoped multi-user authorization. `/mcp`, `/sse`, `/messages/`, and existing protected REST routes share the same Origin validation, bearer authentication, request limits, and remote-tool authorization; `/health` is the only anonymous route. Legacy session continuity is supported only by the current single-worker, sticky-process model. Unknown-session or wrong-worker traffic fails before tool dispatch.
 
+## Quick host examples
 
-@app.tool()
-async def get_table_schema(table_name: str) -> str:
-    """Get the schema for a specific table."""
-    conn = None
-    try:
-        conn = psycopg2.connect(**db_config)
-        cur = conn.cursor()
-
-        cur.execute("""
-            SELECT column_name, data_type, character_maximum_length
-            FROM information_schema.columns
-            WHERE table_name = %s
-            ORDER BY ordinal_position;
-        """, (table_name,))
-
-        schema = cur.fetchall()
-        return json.dumps({
-            "table": table_name,
-            "columns": [
-                {
-                    "name": col[0],
-                    "type": col[1],
-                    "max_length": col[2]
-                }
-                for col in schema
-            ]
-        })
-    except Exception as e:
-        return f"Schema fetch failed: {str(e)}"
-    finally:
-        if conn:
-            conn.close()
-```
-
-### 📚 Implementing Resources
-
-Resources provide context data that the AI can read.
-
-```python
-@app.resource("db://tables/list")
-async def list_tables() -> Resource:
-    """Provide a list of all available tables."""
-    conn = None
-    try:
-        conn = psycopg2.connect(**db_config)
-        cur = conn.cursor()
-
-        cur.execute("""
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-            ORDER BY table_name;
-        """)
-
-        tables = [row[0] for row in cur.fetchall()]
-
-        return Resource(
-            uri="db://tables/list",
-            name="Available Database Tables",
-            mimeType="application/json",
-            text=json.dumps({"tables": tables})
-        )
-    except Exception as e:
-        return Resource(
-            uri="db://tables/list",
-            name="Error",
-            mimeType="text/plain",
-            text=f"Failed to list tables: {str(e)}"
-        )
-    finally:
-        if conn:
-            conn.close()
-
-
-@app.resource("db://tables/{table_name}")
-async def get_table_data(uri: str) -> Resource:
-    """Fetch recent rows from a specific table."""
-    table_name = uri.split("/")[-1]
-
-    # Basic SQL injection prevention (validate table name)
-    if not table_name.isidentifier():
-        return Resource(
-            uri=uri,
-            name="Error",
-            mimeType="text/plain",
-            text="Invalid table name"
-        )
-
-    conn = None
-    try:
-        conn = psycopg2.connect(**db_config)
-        cur = conn.cursor()
-
-        # Safe because we validated table_name is an identifier
-        cur.execute(f"SELECT * FROM {table_name} LIMIT 100;")
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-
-        data = [dict(zip(columns, row)) for row in rows]
-
-        return Resource(
-            uri=uri,
-            name=f"Table: {table_name}",
-            mimeType="application/json",
-            text=json.dumps(data)
-        )
-    except Exception as e:
-        return Resource(
-            uri=uri,
-            name="Error",
-            mimeType="text/plain",
-            text=f"Failed to fetch table data: {str(e)}"
-        )
-    finally:
-        if conn:
-            conn.close()
-```
-
-### 🚀 Running the Server
-
-```python
-async def main():
-    # Run the server on stdio (standard for MCP)
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## 🔒 Security Best Practices
-
-### 1. **Input Validation**
-```python
-def sanitize_table_name(name: str) -> str:
-    """Only allow alphanumeric and underscores."""
-    if not name.replace("_", "").isalnum():
-        raise ValueError("Invalid table name")
-    return name
-```
-
-### 2. **Use Connection Pooling**
-```python
-from psycopg2 import pool
-
-connection_pool = psycopg2.pool.SimpleConnectionPool(
-    1, 20,  # min and max connections
-    **db_config
-)
-
-def get_connection():
-    return connection_pool.getconn()
-
-def return_connection(conn):
-    connection_pool.putconn(conn)
-```
-
-### 3. **Rate Limiting**
-```python
-from collections import defaultdict
-from time import time
-
-rate_limits = defaultdict(list)
-
-def rate_limit(key: str, max_requests: int, window: int) -> bool:
-    """Simple rate limiter."""
-    now = time()
-    rate_limits[key] = [t for t in rate_limits[key] if now - t < window]
-
-    if len(rate_limits[key]) >= max_requests:
-        return False
-
-    rate_limits[key].append(now)
-    return True
-```
-
-### 4. **Read-Only Queries**
-```python
-def is_read_only(query: str) -> bool:
-    """Validate query is read-only."""
-    dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE"]
-    query_upper = query.strip().upper()
-    return not any(cmd in query_upper for cmd in dangerous)
-```
-
-## 📝 Configuration File
-
-Create `mcp-server-config.json`:
+### Generic `mcp.json`
 
 ```json
 {
   "mcpServers": {
-    "postgres-server": {
-      "command": "python",
-      "args": ["path/to/your_mcp_server.py"],
+    "scribe": {
+      "command": "scribe-server",
       "env": {
-        "DB_NAME": "your_db",
-        "DB_USER": "your_user",
-        "DB_PASSWORD": "your_pass",
-        "DB_HOST": "localhost",
-        "DB_PORT": "5432"
+        "SCRIBE_STORAGE_BACKEND": "postgres",
+        "SCRIBE_DB_URL": "postgresql://scribe_app:pass@127.0.0.1:5432/scribe"
       }
     }
   }
 }
 ```
 
-## 🎯 Pro Tips
+### Codex CLI
 
-1. **Always use async** - MCP servers should be async-first
-2. **Handle errors gracefully** - Don't crash, return error messages
-3. **Log everything** - You'll thank yourself later
-4. **Test with real Claude interactions** - The AI will do weird shit
-5. **Document your tools** - The AI reads your docstrings
-6. **Connection pooling is mandatory** - Don't open a new connection per request
-7. **Validate EVERYTHING** - Trust nothing from the AI
-8. **Keep tools atomic** - One clear purpose per tool
-
-## 🐛 Common Pitfalls
-
-- **Blocking I/O**: Use async libraries (asyncpg instead of psycopg2)
-- **No connection pooling**: You'll run out of connections fast
-- **Overly complex tools**: Keep them simple and composable
-- **Poor error messages**: The AI needs context to fix issues
-- **No timeout handling**: Set query timeouts
-
-## 📊 Example: Complete Server
-
-```python
-import asyncio
-import json
-import asyncpg
-from mcp.server import Server
-from mcp.types import Resource, Tool
-
-app = Server("postgres-mcp")
-db_pool = None
-
-async def init_pool():
-    global db_pool
-    db_pool = await asyncpg.create_pool(
-        host='localhost',
-        database='your_db',
-        user='your_user',
-        password='your_pass',
-        min_size=1,
-        max_size=10
-    )
-
-@app.tool()
-async def query(sql: str) -> str:
-    """Execute read-only SQL query."""
-    if not sql.strip().upper().startswith("SELECT"):
-        return json.dumps({"error": "Only SELECT allowed"})
-
-    async with db_pool.acquire() as conn:
-        try:
-            rows = await conn.fetch(sql)
-            return json.dumps([dict(row) for row in rows])
-        except Exception as e:
-            return json.dumps({"error": str(e)})
-
-@app.resource("db://schema")
-async def schema() -> Resource:
-    """Get complete database schema."""
-    async with db_pool.acquire() as conn:
-        tables = await conn.fetch("""
-            SELECT table_name FROM information_schema.tables
-            WHERE table_schema = 'public'
-        """)
-        return Resource(
-            uri="db://schema",
-            name="Database Schema",
-            mimeType="application/json",
-            text=json.dumps([t['table_name'] for t in tables])
-        )
-
-async def main():
-    await init_pool()
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
-    await db_pool.close()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## 🚀 Quickstart
-
-### Direct Tool Invocation
-```python
-import asyncio
-from scribe_mcp.tools import set_project, append_entry
-
-async def main():
-    await set_project.set_project(name="demo", root=".")
-    await append_entry.append_entry(
-        message="Hello from Scribe",
-        status="info",
-        meta={"component": "demo"},
-    )
-
-asyncio.run(main())
-```
-
-### Run as MCP Server (stdio)
 ```bash
-source .venv/bin/activate
-python -m MCP_SPINE.scribe_mcp.server
+codex mcp add scribe \
+  --env SCRIBE_STORAGE_BACKEND=postgres \
+  --env SCRIBE_DB_URL=postgresql://scribe_app:pass@127.0.0.1:5432/scribe \
+  -- scribe-server
 ```
-Configure your MCP-compatible client (Claude Code, etc.) to execute the command above for stdio transport.
 
-### Project Configuration
-Store project definitions under `config/projects/<name>.json`:
+### Codex projection path
 
-```json
-{
-  "name": "scribe_mcp",
-  "root": ".",
-  "progress_log": "docs/dev_plans/scribe_mcp/PROGRESS_LOG.md",
-  "docs_dir": "docs/dev_plans/scribe_mcp",
-  "defaults": { "emoji": "ℹ️", "agent": "Scribe" }
-}
+If you want Scribe's bundled Codex plugin projected into native Codex config surfaces:
+
+```bash
+scribe install --commit --yes --project-codex
 ```
-List available projects with `python scripts/scribe.py --list-projects` and select one via `--project <name>` or by setting `SCRIBE_DEFAULT_PROJECT` in `.env`.
 
-## 🎨 Optional Rich UI Modules
+Projection is explicit opt-in and is not part of base install preview/commit unless you pass `--project-codex`.
 
-The `example_code/modules/` directory contains reusable Rich-based UI components (menus, tables, progress bars, prompts) originally built for the Sanctum project. They are not wired into the Scribe MCP server yet, but can be adopted later for richer CLI output. See `example_code/modules/ui_readme.md` for details.
+## Runtime modes
 
-## 🎓 Additional Resources
+Scribe supports several runtime postures, but they are not equally important for public users.
 
-- Official MCP Spec: https://spec.modelcontextprotocol.io/
-- Anthropic MCP Docs: https://docs.anthropic.com/
-- asyncpg docs: https://magicstack.github.io/asyncpg/
+| Mode | Status | What it is for |
+| --- | --- | --- |
+| Local/core Postgres runtime | Default and recommended | The main public MCP-server posture |
+| Explicit standalone SQLite | Supported local-only opt-in | Small local demos or one-user experimentation |
+| Authenticated remote/client runtime | Internal compatibility only | Managed internal service access |
+| Open unauthenticated internet exposure | Unsupported | Not a supported deployment posture |
 
----
+## Environment variables you will care about
 
-## 🗄️ Scribe Storage Strategy (Hybrid)
+| Variable | Required | Typical value | Purpose |
+| --- | --- | --- | --- |
+| `SCRIBE_STORAGE_BACKEND` | Optional | `postgres` or `sqlite` | Select storage backend |
+| `SCRIBE_DB_URL` | Required for Postgres | `postgresql://...` | Postgres connection string |
+| `SCRIBE_DB_PATH` | Standalone SQLite only | `/path/to/.scribe/state/scribe.db` | SQLite database path |
+| `SCRIBE_REMOTE_URL` | Client mode | `https://...` | Remote Scribe service root |
+| `SCRIBE_REMOTE_AUTH_TOKEN` | Client mode | token string | Remote client auth token |
 
-Scribe’s MCP server now targets a **hybrid storage stack**:
+`SCRIBE_ROOT` can still be useful in some setups, but it is not the most important thing for new users to learn first. The key decision is runtime posture plus storage configuration.
 
-- **SQLite by default** for zero-dependency local installs. It excels at append-heavy workloads, ships in Python’s stdlib, and keeps first-run setup painless.
-- **PostgreSQL opt-in** via `SCRIBE_DB_URL` when teams need shared dashboards, multi-user access, or external analytics. Existing asyncpg helpers stay relevant.
-- A thin `StorageBackend` abstraction lets tools stay agnostic—log append, metrics, and queries call into a driver that picks SQLite or Postgres based on config.
+## A good first-run verification
 
-### Next Moves
-1. **Design storage interface** (`StorageBackend` + factory) and migrate current DB helpers onto it.
-2. **Implement SQLite backend** (probably `aiosqlite`) mirroring Postgres behaviour: projects table, entries table, metrics view.
-3. **Refine Postgres backend** to match the interface, centralising hash/metrics logic already in place.
-4. **Config UX**: expose `scribe.storage` settings in `settings.py` so MCP clients know which backend is active and where the DB file lives.
-5. **Testing matrix**: extend the new test suite with parametrised fixtures to validate both backends (Austin-run locally while sandbox settles).
+After configuring the environment:
 
-Defaulting to SQLite keeps “drop-in logging” fast, while the Postgres path remains available for the larger telemetry story. Now go build something that doesn’t suck—with the right database for the job.
+1. start `scribe-server`
+2. connect your MCP host
+3. run one real project-binding call such as `set_project`
+4. verify that the governed docs scaffold and progress log appear under `.scribe/docs/dev_plans/<project>/`
+5. verify that project inventory and health surfaces respond the way you expect
 
----
+That is a stronger proof than just checking that the process launches.
 
-Now go build something that doesn't suck.
+Good follow-up checks include:
+
+- `list_projects` for the project inventory surface
+- `read_recent` for immediate context rehydration
+- `manage_docs` / `project_health` to confirm the governed-doc surface is visible
+- `manage_docs(action="quality_check", metadata={"quality": {"bulk": true}}, dry_run=True)` to get Atlas-style project quality summaries, per-doc results, grouped warnings, and ranked agent actions
+
+## Remote/client naming
+
+For this release line, the public naming story is:
+
+- `SCRIBE_REMOTE_URL`
+- `SCRIBE_REMOTE_AUTH_TOKEN`
+- `SCRIBE_TRANSPORT_AUTH_TOKEN` for server-side transport enforcement
+
+Exported remote transport blocks local operator-only Scribe tools unless the tool metadata explicitly marks the tool as remote-invokable. Treat remote/client use as internal compatibility unless the deployment has its own reviewed trust boundary.
+
+Release-governance reminder for operators: missing accepted changelog coverage for the active package version raises `SCF_CHANGELOG_CURRENT_VERSION_MISSING` through `manage_docs` quality/readiness flows (`quality_check`, reminders, `project_health`) until coverage and reconciliation proof are complete.
+
+Compatibility aliases may exist, but these are the names public docs should lead with.
+
+## Rollback and retirement
+
+Rollback restores the previous dependency, adapter, and default protocol/transport policy from source control. It is not a runtime fallback mechanism: never reinterpret a failed modern request as legacy.
+
+Retire the `mcp==1.26.0` / `2025-11-25` lane and `/sse` plus `/messages/` only after protected usage telemetry shows no legacy consumers for the agreed observation window, supported clients have migrated to modern stdio or `/mcp`, parity and Origin/auth tests pass, and source policy plus public release docs are updated together.
+
+## Troubleshooting
+
+### `scribe-server` command not found
+
+Cause: package not installed in the active environment.
+
+Fix:
+
+```bash
+pip install scribe-mcp
+```
+
+### Server starts but Postgres connection fails
+
+Cause: invalid `SCRIBE_DB_URL`, unreachable database, or incomplete bootstrap.
+
+Fix:
+
+- rerun `scribe install` for preview, then `scribe install --commit` when ready
+- verify the connection string
+- verify local network/database access
+
+### SQLite path errors
+
+Cause: `SCRIBE_DB_PATH` points at a missing or non-writable parent directory.
+
+Fix: choose a writable path under your project and retry.
+
+### Remote auth failures
+
+Cause: missing or invalid auth token.
+
+Fix: verify `SCRIBE_REMOTE_AUTH_TOKEN` on the client and the matching server-side token configuration.
+
+### You installed Scribe, but you still want the product tour
+
+Cause: this guide is about wiring a host, not showing the day-to-day MCP loop.
+
+Fix: start with [TOUR.md](TOUR.md), then come back here once you are ready to wire a real host.
+
+## Related docs
+
+- [INSTALL_AND_BOOTSTRAP.md](INSTALL_AND_BOOTSTRAP.md)
+- [TOUR.md](TOUR.md)
+- [Scribe_Usage.md](Scribe_Usage.md)
+- [REMOTE_CLIENT.md](REMOTE_CLIENT.md)
+- [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md)
+- [RELEASE_SURFACE.md](RELEASE_SURFACE.md)

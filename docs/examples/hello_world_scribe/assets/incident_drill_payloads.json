@@ -1,0 +1,31 @@
+{
+  "scenario": "incident_drill",
+  "payloads": {
+    "lane_a_bug_case": {
+      "open_bug": {
+        "agent": "demo-agent",
+        "title": "Telemetry timestamp drift",
+        "symptoms": "Mission event timeline appears out of order",
+        "category": "logic"
+      }
+    },
+    "lane_b_security_case": {
+      "open_security": {
+        "agent": "demo-agent",
+        "title": "Unexpected public artifact path",
+        "symptoms": "Generated artifact appeared outside the approved public docs boundary",
+        "category": "security",
+        "customer_impact": "Possible publication boundary violation"
+      }
+    },
+    "resolution_link": {
+      "link_fix": {
+        "agent": "demo-agent",
+        "case_id": "BUG-0001",
+        "execution_id": "exec-demo-001",
+        "artifact_ref": "docs/examples/hello_world_scribe/publication_boundary.md:1",
+        "landing_status": "documented"
+      }
+    }
+  }
+}

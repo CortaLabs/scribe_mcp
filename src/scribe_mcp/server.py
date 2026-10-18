@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Protocol, Union, cast, get_origin, get_args
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Protocol, Union, cast, get_origin, get_args
 
 # Centralised logging -- must run before any getLogger() calls import modules.
 from scribe_mcp.config.logging import configure_logging as _configure_logging
@@ -20,13 +20,19 @@ _configure_logging()
 import logging as _logging
 logger = _logging.getLogger(__name__)
 
-try:  # pragma: no cover - optional dependency
-    from mcp.server import Server  # type: ignore
-    from mcp.server import stdio as mcp_stdio  # type: ignore
-    from mcp import types as mcp_types  # type: ignore
-    _MCP_AVAILABLE = True
-except Exception:  # pragma: no cover - optional dependency
-    _MCP_AVAILABLE = False
+from scribe_mcp.mcp_adapter import (
+    MCPCompatibilityPolicy,
+    ProtocolEra,
+    build_mcp_server,
+    configure_mcp_server,
+    load_mcp_runtime,
+    normalize_tool_definition,
+)
+
+MCP_RUNTIME = load_mcp_runtime()
+Server = MCP_RUNTIME.server_type
+mcp_types = MCP_RUNTIME.types
+_MCP_AVAILABLE = True
 
 # Bridge tool extension support (optional)
 try:
@@ -35,60 +41,29 @@ try:
 except ImportError:
     BRIDGES_AVAILABLE = False
 
-    class _ServerStub:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        def tool(self, _name: str | None = None, **_: Any):
-            def decorator(func):
-                return func
-
-            return decorator
-
-        def on_startup(self, func):
-            return func
-
-        def on_shutdown(self, func):
-            return func
-
-        def create_initialization_options(self) -> dict[str, Any]:
-            return {}
-
-        async def run(self, *args, **kwargs) -> None:
-            raise RuntimeError(
-                "MCP Python SDK not installed. Install the 'mcp' package to run the server."
-            )
-
-        def run_stdio(self) -> None:
-            raise RuntimeError(
-                "MCP Python SDK not installed. Install the 'mcp' package to run the server."
-            )
-
-    class _MissingStdIOServer:
-        async def __aenter__(self) -> tuple[Any, Any]:
-            raise RuntimeError(
-                "MCP Python SDK not installed. Install the 'mcp' package to run the stdio server."
-            )
-
-        async def __aexit__(self, exc_type, exc, tb) -> bool:
-            return False
-
-    def _missing_stdio_server() -> AsyncIterator[tuple[Any, Any]]:
-        return _MissingStdIOServer()
-
-    Server = _ServerStub  # type: ignore
-    mcp_stdio = type("_StubStdIO", (), {"stdio_server": _missing_stdio_server})()  # type: ignore
-    mcp_types = None  # type: ignore
-
 from scribe_mcp.config.settings import settings
 from scribe_mcp.state import StateManager
-from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.shared.execution_context import (
+    RouterContextManager,
+    get_current_execution_context,
+    resolve_bootstrap_execution_context,
+)
 from scribe_mcp.shared.tool_runtime import execute_tool_call
+from scribe_mcp.shared.tool_runtime import resolve_context_authoritative_session_key
+from scribe_mcp.shared.repo_authority import build_repo_authority_snapshot, project_root_is_first_party
 from scribe_mcp.utils.sentinel_logs import log_scope_violation
 from scribe_mcp.state.agent_manager import init_agent_context_manager
 from scribe_mcp.state.agent_identity import init_agent_identity
 from scribe_mcp.storage import create_storage_backend
 from scribe_mcp.config.mode_detection import detect_operating_mode, OperatingMode
+from scribe_mcp.readiness import BLOCKED_STORAGE_SETUP_REQUIRED
+from scribe_mcp.readiness import scribe_local_postgres_readiness_roundtrip_preflight as _roundtrip_preflight
+from scribe_mcp.selector_readback import scribe_private_context_selector_readback as _selector_readback
+from scribe_mcp.storage.affected_row_referential_inventory import (
+    readonly_authority_missing_report,
+    storage_backend_unavailable_report,
+)
+from scribe_mcp.tool_contracts import read_only_local_tool
 
 if TYPE_CHECKING:
     class ToolDecorator(Protocol):
@@ -106,10 +81,8 @@ if TYPE_CHECKING:
         def call_tool(self, *args: Any, **kwargs: Any) -> ToolDecorator: ...
 
 if TYPE_CHECKING:
-    _server_instance: ToolServer = cast("ToolServer", Server(settings.mcp_server_name))
-    app = _server_instance
-else:
-    app = Server(settings.mcp_server_name)
+    app: ToolServer
+app = build_mcp_server(settings.mcp_server_name, MCPCompatibilityPolicy())
 if not hasattr(app, "state"):
     app.state = SimpleNamespace()
 if not hasattr(app.state, "execution_context"):
@@ -119,12 +92,48 @@ state_manager = StateManager(storage_backend=storage_backend)
 agent_context_manager = None  # Will be initialized in startup
 agent_identity = None  # Will be initialized in startup
 router_context_manager = RouterContextManager(storage_backend=storage_backend)
+_SCRIBE_TOOL_REGISTRY: dict[str, Callable[..., Any]] = {}
+_SCRIBE_TOOL_DEFS: dict[str, Any] = {}
+Server._scribe_tool_registry = _SCRIBE_TOOL_REGISTRY
+Server._scribe_tool_defs = _SCRIBE_TOOL_DEFS
+app._scribe_tool_registry = _SCRIBE_TOOL_REGISTRY
+app._scribe_tool_defs = _SCRIBE_TOOL_DEFS
 _startup_complete = False
+_last_runtime_timing: dict[str, Any] = {}
 _journal_replay_complete = False  # Tracks background journal replay status
 
 # Background task management (prevents garbage collection of fire-and-forget tasks)
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 background_tasks: set[asyncio.Task] = set()
+_transport_shutdown_lock = asyncio.Lock()
+_transport_shutdown_phase = "running"  # running|draining|backend_close|closed
+_transport_inflight_operations = 0
+
+
+async def begin_transport_operation() -> str:
+    """Mark an in-flight transport request or return the active shutdown phase."""
+    global _transport_inflight_operations
+    async with _transport_shutdown_lock:
+        if _transport_shutdown_phase != "running":
+            return _transport_shutdown_phase
+        _transport_inflight_operations += 1
+        return "running"
+
+
+async def end_transport_operation() -> None:
+    """Release a previously tracked in-flight transport request."""
+    global _transport_inflight_operations
+    async with _transport_shutdown_lock:
+        if _transport_inflight_operations > 0:
+            _transport_inflight_operations -= 1
+
+
+def get_transport_shutdown_state() -> dict[str, Any]:
+    """Return a snapshot of transport shutdown progress."""
+    return {
+        "phase": _transport_shutdown_phase,
+        "inflight": _transport_inflight_operations,
+    }
 
 
 def _rebind_storage_backend_for_mode(mode: OperatingMode):
@@ -168,9 +177,11 @@ _SENTINEL_ALLOWED_TOOLS = _SENTINEL_ONLY_TOOLS | {
     "open_bug",
     "open_security",
     "link_fix",
+    "list_open_cases",
     "read_file",
     "query_entries",
     "read_recent",
+    "scribe_doctor",
     "set_project",
     "append_entry",
     "list_projects",
@@ -275,6 +286,44 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_asyncpg_shutdown_future(context: dict[str, object]) -> bool:
+    message = str(context.get("message") or "")
+    exception = context.get("exception")
+    return (
+        "Future exception was never retrieved" in message
+        and exception is not None
+        and exception.__class__.__module__.startswith("asyncpg.")
+        and exception.__class__.__name__ == "ConnectionDoesNotExistError"
+        and "closed in the middle of operation" in str(exception)
+    )
+
+
+def install_asyncpg_shutdown_exception_handler() -> None:
+    """Suppress known asyncpg connection-shutdown futures on the active loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if getattr(loop, "_scribe_asyncpg_shutdown_handler_installed", False):
+        return
+
+    previous_handler = loop.get_exception_handler()
+
+    def _handle_asyncpg_shutdown_future(
+        active_loop: asyncio.AbstractEventLoop,
+        context: dict[str, object],
+    ) -> None:
+        if _is_asyncpg_shutdown_future(context):
+            return
+        if previous_handler is not None:
+            previous_handler(active_loop, context)
+        else:
+            active_loop.default_exception_handler(context)
+
+    setattr(loop, "_scribe_asyncpg_shutdown_handler_installed", True)
+    loop.set_exception_handler(_handle_asyncpg_shutdown_future)
+
+
 async def _run_after_delay(
     delay_seconds: float,
     coroutine_factory: Callable[[], Awaitable[None]],
@@ -367,27 +416,30 @@ def schedule_background_task(
     def _on_done(completed_task: asyncio.Task) -> None:
         background_tasks.discard(completed_task)
 
+        if completed_task.cancelled():
+            if tracked_name:
+                service = _background_services.get(tracked_name)
+                if service is not None:
+                    service.status = "cancelled"
+                    service.last_error = "Task cancelled"
+            return
+
+        error: BaseException | None
+        try:
+            error = completed_task.exception()
+        except BaseException as exc:
+            error = exc
+
         if not tracked_name:
             return
 
+        duration_ms = int((asyncio.get_running_loop().time() - start_monotonic) * 1000)
         service = _background_services.get(tracked_name)
         if service is None:
             return
 
-        duration_ms = int((asyncio.get_running_loop().time() - start_monotonic) * 1000)
         service.last_duration_ms = duration_ms
         service.finished_at = _utc_now_iso()
-
-        if completed_task.cancelled():
-            service.status = "cancelled"
-            service.last_error = "Task cancelled"
-            return
-
-        error: Exception | None
-        try:
-            error = completed_task.exception()
-        except Exception as exc:
-            error = exc
 
         if error is not None:
             service.status = "failed"
@@ -411,10 +463,30 @@ def schedule_background_task(
     logger.debug("Task created and added to background_tasks (total: %d)", len(background_tasks))
     return task
 
-if _MCP_AVAILABLE:
-    from mcp import types as mcp_types
 
-    if not hasattr(app, "tool"):
+async def drain_background_tasks(*, timeout: float | None = None) -> list[BaseException]:
+    """Await currently tracked background tasks and observe their exceptions."""
+    tasks = tuple(background_tasks)
+    if not tasks:
+        return []
+
+    gatherer = asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        if timeout is None:
+            results = await gatherer
+        else:
+            results = await asyncio.wait_for(gatherer, timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        logger.warning("Timed out draining %d background task(s)", len(tasks))
+        return [exc]
+
+    return [result for result in results if isinstance(result, BaseException)]
+
+
+if _MCP_AVAILABLE:
+    # Always install Scribe's metadata-aware wrapper; upstream Server.tool does
+    # not populate the local registry used by CLI/tool readback contracts.
+    if not getattr(app, "_scribe_metadata_wrapper_installed", False):
         if not hasattr(Server, "_scribe_tool_registry"):
             Server._scribe_tool_registry = {}
             Server._scribe_tool_defs = {}
@@ -502,6 +574,17 @@ if _MCP_AVAILABLE:
                 schema["required"] = required
             return schema
 
+        def _with_runtime_agent_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+            normalized = dict(schema)
+            properties = dict(normalized.get("properties") or {})
+            properties.setdefault("agent", {"type": "string"})
+            required = list(normalized.get("required") or [])
+            if "agent" not in required:
+                required.append("agent")
+            normalized["properties"] = properties
+            normalized["required"] = required
+            return normalized
+
         def _tool_decorator(
             func: Callable[..., Awaitable[Any]] | None = None,
             *,
@@ -576,22 +659,25 @@ if _MCP_AVAILABLE:
                     schema = _build_schema_from_signature(target)
                 else:
                     schema = input_schema
+                schema = _with_runtime_agent_schema(schema)
                 tool_description = description or (inspect.getdoc(target) or "")
                 tool_annotations = _coerce_tool_annotations(annotations)
                 tool_icons = _coerce_icons(icons)
                 tool_execution = _coerce_tool_execution(execution)
                 tool_meta = _normalize_tool_meta(_meta, meta)
                 tool_tags = _normalize_tags(tags)
-                Server._scribe_tool_registry[tool_name] = target
-                Server._scribe_tool_defs[tool_name] = mcp_types.Tool(
+                _SCRIBE_TOOL_REGISTRY[tool_name] = target
+                _SCRIBE_TOOL_DEFS[tool_name] = normalize_tool_definition(
+                    runtime=MCP_RUNTIME,
+                    era=ProtocolEra.MODERN,
                     name=tool_name,
                     title=title,
                     description=tool_description,
-                    inputSchema=schema,
-                    outputSchema=output_schema,
+                    input_schema=schema,
+                    output_schema=output_schema,
                     icons=tool_icons,
                     annotations=tool_annotations,
-                    _meta=tool_meta,
+                    meta=tool_meta,
                     execution=tool_execution,
                     tags=tool_tags,
                 )
@@ -602,22 +688,25 @@ if _MCP_AVAILABLE:
             return register
 
         setattr(app, "tool", _tool_decorator)
+        setattr(app, "_scribe_metadata_wrapper_installed", True)
 
-        @app.list_tools()
-        async def _list_tools() -> list[mcp_types.Tool]:
+        async def _list_tools(_era: ProtocolEra) -> list[Any]:
             tools.ensure_all_tools_loaded()
-            defs = getattr(Server, "_scribe_tool_defs", {})
-            return list(defs.values())
+            return list(_SCRIBE_TOOL_DEFS.values())
 
-        @app.call_tool()
-        async def _call_tool(name: str, arguments: Dict[str, Any], **kwargs: Any) -> Any:
+        async def _call_tool(
+            name: str,
+            arguments: Dict[str, Any],
+            context: Any,
+            _era: ProtocolEra,
+        ) -> Any:
             tools.ensure_tool_loaded(name)
-            registry = getattr(Server, "_scribe_tool_registry", {})
+            kwargs = {"context": context} if context is not None else {}
             return await execute_tool_call(
                 name=name,
                 arguments=dict(arguments or {}),
                 kwargs=kwargs,
-                registry=registry,
+                registry=_SCRIBE_TOOL_REGISTRY,
                 app=app,
                 storage_backend=storage_backend,
                 settings=settings,
@@ -629,9 +718,122 @@ if _MCP_AVAILABLE:
                 bridge_tool_resolver=_resolve_bridge_tool,
             )
 
+        configure_mcp_server(
+            app,
+            runtime=MCP_RUNTIME,
+            definition_provider=lambda: _SCRIBE_TOOL_DEFS,
+            list_handler=_list_tools,
+            call_handler=_call_tool,
+        )
+
 
 # Import tool modules to register them with the server instance.
 from scribe_mcp import tools  # noqa: E402  # isort:skip
+
+
+class _NoTargetContactRoundtripRunner:
+    async def connect(self, private_target_handle_id: str) -> str:
+        return BLOCKED_STORAGE_SETUP_REQUIRED
+
+    async def roundtrip(self, proof_namespace_label: str) -> str:
+        return BLOCKED_STORAGE_SETUP_REQUIRED
+
+    async def cleanup(self, proof_namespace_label: str) -> str:
+        return BLOCKED_STORAGE_SETUP_REQUIRED
+
+
+@app.tool(
+    **read_only_local_tool(
+        title="Scribe Private Context Selector Readback",
+        tags=("context", "selector", "readback", "read-only"),
+        task_support="forbidden",
+    )
+)
+async def scribe_private_context_selector_readback(
+    agent: str,
+    selector_class_label: str,
+    target_fingerprint_binding_label: str,
+    runtime_role_label: str,
+    default_context_bypass_label: str,
+    active_runtime_exclusion_label: str,
+    source_authority_label: str,
+) -> dict[str, str | bool]:
+    """Emit public-safe Scribe selector/readback labels without runtime or target contact."""
+    _ = agent
+    return _selector_readback(
+        selector_class_label=selector_class_label,
+        target_fingerprint_binding_label=target_fingerprint_binding_label,
+        runtime_role_label=runtime_role_label,
+        default_context_bypass_label=default_context_bypass_label,
+        active_runtime_exclusion_label=active_runtime_exclusion_label,
+        source_authority_label=source_authority_label,
+    )
+
+
+@app.tool(
+    title="Scribe Local Postgres Readiness Roundtrip Preflight",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+    _meta={
+        "scribe": {
+            "trustTier": 1,
+            "trustLabel": "local_additive_write",
+            "riskClass": "bounded_mutation_preflight",
+            "surface": "operator",
+            "locality": "local",
+            "tags": ["readiness", "roundtrip", "bounded-preflight"],
+        }
+    },
+    execution={"taskSupport": "forbidden"},
+    tags=("readiness", "roundtrip", "bounded-preflight"),
+)
+async def scribe_local_postgres_readiness_roundtrip_preflight(
+    agent: str,
+    private_target_handle_id: str,
+    target_class_label: str,
+    selected_context_readback_status_label: str,
+    proof_namespace_label: str,
+) -> dict[str, str | bool]:
+    """Emit public-safe local Postgres readiness roundtrip labels without target contact."""
+    _ = agent
+    return await _roundtrip_preflight(
+        private_target_handle_id=private_target_handle_id,
+        target_class_label=target_class_label,
+        selected_context_readback_status_label=selected_context_readback_status_label,
+        proof_namespace_label=proof_namespace_label,
+        runner=_NoTargetContactRoundtripRunner(),
+    )
+
+
+@app.tool(
+    **read_only_local_tool(
+        title="Scribe Affected Row Referential Inventory Readonly Public Safe",
+        tags=("affected-row", "referential-inventory", "preflight", "read-only"),
+        task_support="forbidden",
+    )
+)
+async def scribe_affected_row_referential_inventory_readonly_public_safe(
+    agent: str,
+    target_binding_status_label: str,
+    selected_context_readback_status_label: str,
+    inventory_scope_label: str,
+) -> dict[str, object]:
+    """Emit public-safe affected-row referential inventory labels without mutation."""
+    _ = agent
+    if inventory_scope_label != "SOURCE_BACKED_SCRIBE_AFFECTED_ROW_REFERENTIAL_INVENTORY_READONLY_PUBLIC_SAFE":
+        return readonly_authority_missing_report().to_public_dict()
+    backend = storage_backend
+    if backend is None or not hasattr(backend, "affected_row_referential_inventory_readonly"):
+        return storage_backend_unavailable_report().to_public_dict()
+    report = await backend.affected_row_referential_inventory_readonly(
+        target_binding_status_label=target_binding_status_label,
+        selected_context_readback_status_label=selected_context_readback_status_label,
+    )
+    return report.to_public_dict()
 
 
 _HAS_LIFECYCLE_HOOKS = hasattr(app, "on_startup") and hasattr(app, "on_shutdown")
@@ -649,6 +851,7 @@ async def _replay_journals_background() -> None:
 
     from scribe_mcp.utils.files import WriteAheadLog
     from scribe_mcp.tools.list_projects import list_projects
+    from scribe_mcp.tools.project_utils import list_project_configs
     import glob
 
     try:
@@ -669,17 +872,31 @@ async def _replay_journals_background() -> None:
                 global_mode=True,
             )
             available_projects = projects_result.get("projects", [])
-            local_repo_root = settings.project_root.resolve()
+            try:
+                current_context = get_execution_context()
+            except Exception:
+                current_context = None
+            enrolled_first_party_roots = tuple(
+                str(Path(str(project.get("root", ""))).expanduser().resolve())
+                for project in list_project_configs().values()
+                if project.get("root")
+            )
+            authority_snapshot = build_repo_authority_snapshot(
+                current_context=current_context,
+                app=app,
+                scribe_user=os.environ.get("SCRIBE_USER"),
+                authoritative_session_key=resolve_context_authoritative_session_key(current_context),
+                enrolled_first_party_roots=enrolled_first_party_roots,
+            )
             for project_info in available_projects:
                 project_name = project_info.get("name")
                 project_root_value = project_info.get("root")
-                if project_root_value:
-                    try:
-                        project_root = Path(project_root_value).resolve()
-                        if project_root != local_repo_root:
-                            continue
-                    except Exception:
-                        continue
+                visible, _authority_source, _reason_code, _normalized_root = project_root_is_first_party(
+                    project_root=project_root_value,
+                    snapshot=authority_snapshot,
+                )
+                if not visible:
+                    continue
                 if not (project_name and project_info.get("progress_log")):
                     continue
 
@@ -884,14 +1101,17 @@ async def _bridge_health_monitor_service(monitor: Any) -> None:
         await monitor.stop()
 
 
-async def _startup() -> None:
+async def _startup(*, startup_profile: str = "full_server") -> None:
     """Initialise shared resources before handling requests."""
     global agent_context_manager, agent_identity, _startup_complete
     global storage_backend, state_manager, router_context_manager
+    global _transport_shutdown_phase
     if _startup_complete:
         return
+    _transport_shutdown_phase = "running"
     _startup_complete = True
     startup_started = perf_counter()
+    startup_phases_ms: dict[str, float] = {}
 
     # --- Mode detection (client/server/standalone) ---
     mode = await detect_operating_mode(settings)
@@ -903,6 +1123,8 @@ async def _startup() -> None:
         type(rebound_backend).__name__ if rebound_backend is not None else "None",
     )
 
+    run_server_background = startup_profile == "full_server"
+
     if storage_backend:
         storage_setup_started = perf_counter()
         await storage_backend.setup()
@@ -910,8 +1132,9 @@ async def _startup() -> None:
             "PERF storage.setup completed in %.1fms",
             (perf_counter() - storage_setup_started) * 1000.0,
         )
+        startup_phases_ms["storage.setup"] = (perf_counter() - storage_setup_started) * 1000.0
         # Server-only: entry cleanup contends on shared SQLite writers
-        if mode != OperatingMode.CLIENT:
+        if mode != OperatingMode.CLIENT and run_server_background:
             schedule_background_task(
                 _run_after_delay(
                     _STARTUP_CLEANUP_DELAY_SECONDS,
@@ -923,7 +1146,7 @@ async def _startup() -> None:
             )
 
     # Server-only background services: plugins, bridges, legacy migration
-    if mode != OperatingMode.CLIENT:
+    if mode != OperatingMode.CLIENT and run_server_background:
         schedule_background_task(
             _run_after_delay(
                 _STARTUP_PLUGIN_INIT_DELAY_SECONDS,
@@ -947,7 +1170,7 @@ async def _startup() -> None:
         logger.info("AgentIdentity system initialized for automatic agent detection")
 
         # Server-only: legacy migration and session cleanup loop
-        if mode != OperatingMode.CLIENT:
+        if mode != OperatingMode.CLIENT and run_server_background:
             schedule_background_task(
                 _run_after_delay(
                     _STARTUP_LEGACY_MIGRATION_DELAY_SECONDS,
@@ -966,7 +1189,7 @@ async def _startup() -> None:
             logger.info("Session cleanup task started")
 
     # Server-only: register bridge custom tools
-    if mode != OperatingMode.CLIENT:
+    if mode != OperatingMode.CLIENT and run_server_background:
         _register_bridge_custom_tools()
 
     # Initialize document store (object store layer)
@@ -982,11 +1205,12 @@ async def _startup() -> None:
             "PERF document_store.setup completed in %.1fms",
             (perf_counter() - doc_store_started) * 1000.0,
         )
+        startup_phases_ms["document_store.setup"] = (perf_counter() - doc_store_started) * 1000.0
     except Exception:
         logger.warning("Document store initialization failed — continuing without object store", exc_info=True)
 
     # Server-only: journal replay
-    if mode != OperatingMode.CLIENT:
+    if mode != OperatingMode.CLIENT and run_server_background:
         schedule_background_task(
             _replay_journals_background(),
             service_name="journal_replay",
@@ -995,14 +1219,17 @@ async def _startup() -> None:
 
     total_startup_ms = (perf_counter() - startup_started) * 1000.0
     logger.warning(
-        "PERF startup total=%.1fms (deferred services=%d, mode=%s)",
+        "PERF startup total=%.1fms (deferred services=%d, mode=%s, startup_profile=%s)",
         total_startup_ms,
         len(background_tasks),
         mode.value,
+        startup_profile,
     )
     # Protocol signal — Council MCP and other process managers pattern-match
     # stderr for "Server ready" to know the subprocess is ready for MCP
     # handshake. WARNING level ensures visibility at the default log level.
+    global _last_runtime_timing
+    _last_runtime_timing = {"startup_profile": startup_profile, "startup_phases_ms": startup_phases_ms, "startup_total_ms": total_startup_ms, "dispatch_path": "bound_server"}
     logger.warning("Server ready (mode=%s, journal replay %s)",
                    mode.value,
                    "skipped" if mode == OperatingMode.CLIENT else "continuing in background")
@@ -1010,6 +1237,30 @@ async def _startup() -> None:
 
 async def _shutdown() -> None:
     """Ensure resources are released when the server stops."""
+    global _transport_shutdown_phase
+
+    async with _transport_shutdown_lock:
+        if _transport_shutdown_phase == "closed":
+            return
+        _transport_shutdown_phase = "draining"
+
+    shutdown_deadline = perf_counter() + max(float(settings.storage_timeout_seconds), 0.0)
+    while True:
+        async with _transport_shutdown_lock:
+            inflight = _transport_inflight_operations
+        if inflight <= 0:
+            break
+        if perf_counter() >= shutdown_deadline:
+            logger.warning(
+                "Transport shutdown proceeding with %d in-flight operation(s) after timeout.",
+                inflight,
+            )
+            break
+        await asyncio.sleep(0.01)
+
+    async with _transport_shutdown_lock:
+        _transport_shutdown_phase = "backend_close"
+
     if background_tasks:
         for task in list(background_tasks):
             task.cancel()
@@ -1033,6 +1284,9 @@ async def _shutdown() -> None:
         except Exception:
             pass
 
+    async with _transport_shutdown_lock:
+        _transport_shutdown_phase = "closed"
+
 
 if _HAS_LIFECYCLE_HOOKS:
     app.on_startup(_startup)
@@ -1042,40 +1296,89 @@ if _HAS_LIFECYCLE_HOOKS:
 def get_agent_context_manager():
     """Get the global AgentContextManager instance."""
     global agent_context_manager
+    if storage_backend and state_manager and (
+        agent_context_manager is None
+        or getattr(agent_context_manager, "storage", None) is not storage_backend
+        or getattr(agent_context_manager, "state_manager", None) is not state_manager
+    ):
+        agent_context_manager = init_agent_context_manager(storage_backend, state_manager)
     return agent_context_manager
 
 
 def get_agent_identity():
     """Get the global AgentIdentity instance."""
     global agent_identity
+    if state_manager and (
+        agent_identity is None
+        or getattr(agent_identity, "state_manager", None) is not state_manager
+    ):
+        agent_identity = init_agent_identity(state_manager)
     return agent_identity
 
 
-def get_execution_context():
-    """Return the active ExecutionContext for the current request."""
-    current = router_context_manager.get_current()
+def get_execution_context(*, recovery_mode: str | None = None, include_metadata: bool = False):
+    """Return the active ExecutionContext for the current request.
+
+    Default behavior is fail-closed and only consults request-local contextvars.
+    Legacy app-state fallback remains available only through explicit recovery_mode.
+    """
+    current = get_current_execution_context()
     if current is not None:
-        return current
-    return getattr(getattr(app, "state", None), "execution_context", None)
+        metadata = {
+            "resolution_source": "runtime_context",
+            "trust_level": "verified",
+            "fallback_used": False,
+            "fallback_chain": [],
+        }
+        return (current, metadata) if include_metadata else current
+
+    recovered, metadata = resolve_bootstrap_execution_context(
+        getattr(app, "state", None),
+        recovery_mode=recovery_mode,
+    )
+    return (recovered, metadata) if include_metadata else recovered
 
 
 def list_registered_tools() -> list[str]:
     """Return sorted tool names currently registered on the MCP server."""
     tools.ensure_all_tools_loaded()
+    _ensure_registered_tool_metadata_complete()
     registry = getattr(Server, "_scribe_tool_registry", {})
     return sorted(str(name) for name in registry.keys())
+
+
+def _mcp_model_field(model: Any, snake_name: str, alias: str, default: Any = None) -> Any:
+    """Read a public MCP model field across snake-case and wire-alias spellings."""
+    value = getattr(model, snake_name, default)
+    if value is default:
+        value = getattr(model, alias, default)
+    return value
+
+
+def _ensure_registered_tool_metadata_complete() -> None:
+    defs = getattr(Server, "_scribe_tool_defs", {})
+    registry = getattr(Server, "_scribe_tool_registry", {})
+    for tool_name, tool_def in defs.items():
+        description = getattr(tool_def, "description", "")
+        if description:
+            continue
+        func = registry.get(tool_name)
+        fallback_description = (inspect.getdoc(func) if func is not None else None) or getattr(tool_def, "title", "")
+        if fallback_description:
+            tool_def.description = fallback_description
 
 
 def describe_registered_tools() -> dict[str, dict[str, Any]]:
     """Return tool metadata keyed by tool name for CLI discovery."""
     tools.ensure_all_tools_loaded()
+    _ensure_registered_tool_metadata_complete()
     registry = getattr(Server, "_scribe_tool_registry", {})
     defs = getattr(Server, "_scribe_tool_defs", {})
     description_map: dict[str, dict[str, Any]] = {}
     for tool_name, func in registry.items():
         tool_def = defs.get(tool_name)
-        schema = getattr(tool_def, "inputSchema", None) if tool_def else None
-        output_schema = getattr(tool_def, "outputSchema", None) if tool_def else None
+        schema = _mcp_model_field(tool_def, "input_schema", "inputSchema") if tool_def else None
+        output_schema = _mcp_model_field(tool_def, "output_schema", "outputSchema") if tool_def else None
         description = getattr(tool_def, "description", "") if tool_def else ""
         if not description:
             description = inspect.getdoc(func) or ""
@@ -1083,18 +1386,52 @@ def describe_registered_tools() -> dict[str, dict[str, Any]]:
         execution = getattr(tool_def, "execution", None) if tool_def else None
         meta = getattr(tool_def, "meta", None) if tool_def else None
         tags = getattr(tool_def, "tags", None) if tool_def else None
+        if tags is None and isinstance(meta, dict):
+            scribe_meta = meta.get("scribe")
+            if isinstance(scribe_meta, dict):
+                tags = scribe_meta.get("tags")
         description_map[str(tool_name)] = {
             "name": str(tool_name),
             "title": getattr(tool_def, "title", "") if tool_def else "",
             "description": description,
             "input_schema": schema if isinstance(schema, dict) else {},
             "output_schema": output_schema if isinstance(output_schema, dict) else {},
-            "annotations": annotations.model_dump() if hasattr(annotations, "model_dump") else annotations,
-            "execution": execution.model_dump() if hasattr(execution, "model_dump") else execution,
+            "annotations": annotations.model_dump(by_alias=True) if hasattr(annotations, "model_dump") else annotations,
+            "execution": execution.model_dump(by_alias=True) if hasattr(execution, "model_dump") else execution,
             "meta": meta if isinstance(meta, dict) else {},
             "tags": list(tags) if isinstance(tags, (list, tuple, set)) else [],
         }
     return description_map
+
+
+def resolve_tool_startup_profile(name: str) -> str:
+    """Classify tool startup dependency tier for one-shot execution."""
+    defs = getattr(Server, "_scribe_tool_defs", {})
+    tool_def = defs.get(name)
+    if tool_def is None:
+        return "full_server"
+
+    meta = getattr(tool_def, "meta", None)
+    scribe_meta = meta.get("scribe", {}) if isinstance(meta, dict) else {}
+    profile = scribe_meta.get("startupProfile")
+    if profile in {"local_only", "storage_only", "full_server"}:
+        return str(profile)
+
+    trust_tier = scribe_meta.get("trustTier")
+    if trust_tier == 0:
+        return "local_only"
+
+    annotations = getattr(tool_def, "annotations", None)
+    read_only_hint = _mcp_model_field(annotations, "read_only_hint", "readOnlyHint")
+    destructive_hint = _mcp_model_field(annotations, "destructive_hint", "destructiveHint")
+    open_world_hint = _mcp_model_field(annotations, "open_world_hint", "openWorldHint")
+    if bool(read_only_hint) and not bool(destructive_hint) and not bool(open_world_hint):
+        return "local_only"
+    return "storage_only"
+
+
+def _tool_can_skip_startup(name: str) -> bool:
+    return resolve_tool_startup_profile(name) == "local_only"
 
 
 async def invoke_tool(
@@ -1112,11 +1449,18 @@ async def invoke_tool(
     if context is not None:
         kwargs["context"] = context
 
-    await _startup()
+    tools.ensure_tool_loaded(name)
+    startup_profile = resolve_tool_startup_profile(name)
+    skip_startup = startup_profile == "local_only"
+    started = False
+    dispatch_path = "bound_server" if context is not None else "local_one_shot"
+    if not skip_startup:
+        await _startup(startup_profile=startup_profile)
+        started = True
     try:
-        tools.ensure_tool_loaded(name)
         registry = getattr(Server, "_scribe_tool_registry", {})
-        return await execute_tool_call(
+        bridge_tool_resolver = _resolve_bridge_tool if startup_profile == "full_server" else None
+        result = await execute_tool_call(
             name=name,
             arguments=payload,
             kwargs=kwargs,
@@ -1129,10 +1473,16 @@ async def invoke_tool(
             sentinel_only=_SENTINEL_ONLY_TOOLS,
             sentinel_allowed=_SENTINEL_ALLOWED_TOOLS,
             log_scope_violation_cb=log_scope_violation,
-            bridge_tool_resolver=_resolve_bridge_tool,
+            bridge_tool_resolver=bridge_tool_resolver,
         )
+        global _last_runtime_timing
+        _last_runtime_timing["dispatch_path"] = dispatch_path
+        _last_runtime_timing["last_tool"] = name
+        _last_runtime_timing["startup_profile"] = startup_profile
+        return result
     finally:
-        await _shutdown()
+        if started:
+            await _shutdown()
 
 
 async def _session_cleanup_task(agent_manager):
@@ -1153,20 +1503,11 @@ async def _session_cleanup_task(agent_manager):
 
 async def main() -> None:
     """Run the MCP server over stdio."""
-    if not _MCP_AVAILABLE:
-        raise RuntimeError(
-            "MCP Python SDK not installed. Install the 'mcp' package to run the server."
-        )
     set_transport_policy(build_transport_policy(transport="stdio", host="stdio", port=0, auth_required=False))
     await _startup()
 
     try:
-        async with mcp_stdio.stdio_server() as (read_stream, write_stream):
-            await app.run(
-                read_stream,
-                write_stream,
-                app.create_initialization_options(),
-            )
+        await app.run_stdio_async()
     finally:
         if not _HAS_LIFECYCLE_HOOKS:
             await _shutdown()

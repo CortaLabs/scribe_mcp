@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import difflib
+import fcntl
 import hashlib
-import json
 import logging
+import tempfile
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import IO, Any, AsyncContextManager, AsyncIterator, Dict, Optional, Sequence
 
 # Import with absolute paths from scribe_mcp root
+from scribe_mcp.doc_management import errors as doc_errors
 from scribe_mcp.utils.files import async_atomic_write, ensure_parent, preflight_backup
 from scribe_mcp.utils.slug import slugify_filename, slugify_project_name
-from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.utils.frontmatter import (
+    FrontmatterResult,
     apply_frontmatter_updates,
     build_frontmatter,
     parse_frontmatter,
@@ -27,6 +31,12 @@ from scribe_mcp.templates import template_root
 from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
+from scribe_mcp.doc_management.utils import strip_trailing_whitespace_lines
+from scribe_mcp.shared.write_barrier import WriteBarrierError, assert_writes_allowed
+from scribe_mcp.utils.error_handler import sanitize_error_message
+from scribe_mcp.doc_management.lifecycle import derive_canonical_doc_type, normalize_canonical_status
+from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
+from scribe_mcp.doc_management.topology import normalize_topology_edges
 import re
 
 # Setup logging for doc management operations
@@ -43,6 +53,8 @@ PATCH_MODE_STRUCTURED = "structured"
 PATCH_MODE_UNIFIED = "unified"
 PATCH_MODE_ALIASES = {"diff": PATCH_MODE_UNIFIED}
 PATCH_MODE_ALLOWED = {PATCH_MODE_STRUCTURED, PATCH_MODE_UNIFIED}
+_CODEX_PATCH_SUPPORTED_PATHS = ["single_doc_update_file", "unified_diff", "structured_edit"]
+_CODEX_PATCH_UNSUPPORTED_OPERATIONS = ["add_file", "delete_file", "multi_doc"]
 
 
 def _log_operation(
@@ -60,6 +72,8 @@ def _log_operation(
     metadata: Optional[Dict[str, Any]] = None
 ) -> None:
     """Log document operations with structured data."""
+    redacted_error_message = sanitize_error_message(error_message) if error_message else None
+    redacted_metadata = _redact_error_payload(metadata or {})
     log_data = {
         "timestamp": time.time(),
         "operation": operation,
@@ -72,21 +86,68 @@ def _log_operation(
         "file_size_after": file_size_after,
         "file_size_change": file_size_after - file_size_before,
         "success": success,
-        "error_message": error_message,
-        "metadata": metadata or {}
+        "error_message": redacted_error_message,
+        "metadata": redacted_metadata,
     }
 
-    # Convert to JSON for structured logging
-    log_message = json.dumps(log_data, separators=(',', ':'))
-
     if level == "error":
-        doc_logger.error(f"Document operation failed: {operation} on {doc_name} - {error_message or 'Unknown error'}", extra={"structured_log": log_data})
+        doc_logger.error(f"Document operation failed: {operation} on {doc_name} - {redacted_error_message or 'Unknown error'}", extra={"structured_log": log_data})
     elif level == "warning":
-        doc_logger.warning(f"Document operation warning: {operation} on {doc_name} - {error_message}", extra={"structured_log": log_data})
+        doc_logger.warning(f"Document operation warning: {operation} on {doc_name} - {redacted_error_message}", extra={"structured_log": log_data})
     elif level == "info":
         doc_logger.info(f"Document operation successful: {operation} on {doc_name}", extra={"structured_log": log_data})
     else:
         doc_logger.debug(f"Document operation: {operation} on {doc_name}", extra={"structured_log": log_data})
+
+
+def _redact_error_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_error_message(value)
+    if isinstance(value, dict):
+        return {key: _redact_error_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_error_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_error_payload(item) for item in value)
+    return value
+
+
+def _looks_like_codex_patch_text(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    stripped = value.lstrip()
+    return stripped.startswith("*** Begin Patch") or stripped.startswith("*** Update File:")
+
+
+def _codex_patch_boundary_extra(
+    *,
+    failure_kind: str,
+    target: Optional[str] = None,
+    operation: Optional[str] = None,
+    targets: Optional[list[str]] = None,
+    message: Optional[str] = None,
+) -> Dict[str, Any]:
+    diagnostics: Dict[str, Any] = {
+        "failure_kind": failure_kind,
+        "supported_paths": _CODEX_PATCH_SUPPORTED_PATHS,
+        "supported_codex_operation": "update_file_single_managed_doc",
+        "unsupported_operations": _CODEX_PATCH_UNSUPPORTED_OPERATIONS,
+        "guidance": (
+            "manage_docs apply_patch accepts one Codex-style *** Update File block only "
+            "when it targets the selected managed doc. Split multi-doc changes into one "
+            "manage_docs call per registered doc; use manage_docs(action='create') for new "
+            "managed docs; deletion is not supported by apply_patch."
+        ),
+    }
+    if target:
+        diagnostics["target"] = target
+    if operation:
+        diagnostics["operation"] = operation
+    if targets:
+        diagnostics["targets"] = targets
+    if message:
+        diagnostics["message"] = message
+    return {"patch_diagnostics": diagnostics}
 
 
 @dataclass
@@ -124,7 +185,269 @@ class DocumentValidationError(Exception):
     pass
 
 
-async def apply_doc_change(
+class AnchorCASDenied(DocumentOperationError):
+    """A managed-anchor compare-and-swap precondition was denied.
+
+    This exception intentionally crosses the edit action boundary so a denied
+    anchor write cannot emit a misleading doc-update log or registry receipt.
+    """
+
+
+ANCHOR_DIGEST_ALGORITHM = "managed_anchor_sha256_v1"
+
+
+@dataclass(frozen=True)
+class MutationLockTarget:
+    """One canonical repository path participating in a document mutation."""
+
+    repo_root: str = field(repr=False)
+    path: str | Path = field(repr=False)
+
+    def __post_init__(self) -> None:
+        root = Path(self.repo_root).expanduser().resolve()
+        path = Path(self.path).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        object.__setattr__(self, "repo_root", str(root))
+        object.__setattr__(self, "path", str(path.resolve()))
+
+    @property
+    def lock_identity(self) -> str:
+        return f"{self.repo_root}\0path:{self.path}"
+
+
+def _mutation_lock_path(lock_identity: str) -> Path:
+    lock_key = hashlib.sha256(lock_identity.encode("utf-8")).hexdigest()
+    return Path(tempfile.gettempdir()) / "scribe-managed-doc-locks" / f"{lock_key}.lock"
+
+
+async def _acquire_mutation_lock(lock_path: Path) -> IO[str]:
+    await asyncio.to_thread(lock_path.parent.mkdir, parents=True, exist_ok=True)
+    handle = await asyncio.to_thread(lock_path.open, "a+")
+    try:
+        await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_EX)
+    except BaseException:
+        await asyncio.to_thread(handle.close)
+        raise
+    return handle
+
+
+async def _release_mutation_lock(handle: IO[str]) -> None:
+    try:
+        await asyncio.to_thread(fcntl.flock, handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        await asyncio.to_thread(handle.close)
+
+
+@asynccontextmanager
+async def _mutation_locks_for_identities(
+    lock_identities: Sequence[str],
+) -> AsyncIterator[None]:
+    lock_paths = sorted(
+        {_mutation_lock_path(identity) for identity in lock_identities},
+        key=lambda path: path.as_posix(),
+    )
+    handles: list[IO[str]] = []
+    try:
+        for lock_path in lock_paths:
+            handles.append(await _acquire_mutation_lock(lock_path))
+        yield
+    finally:
+        for handle in reversed(handles):
+            await _release_mutation_lock(handle)
+
+
+@asynccontextmanager
+async def _document_mutation_locks(
+    targets: Sequence[MutationLockTarget],
+) -> AsyncIterator[None]:
+    """Acquire deduplicated cross-process mutation locks in deterministic order."""
+
+    if not targets:
+        raise ValueError("at least one mutation lock target is required")
+    canonical_targets = tuple(
+        target if isinstance(target, MutationLockTarget) else MutationLockTarget(**target)
+        for target in targets
+    )
+    async with _mutation_locks_for_identities(
+        [target.lock_identity for target in canonical_targets]
+    ):
+        yield
+
+
+def document_mutation_locks(
+    targets: Sequence[MutationLockTarget],
+) -> AsyncContextManager[None]:
+    """Return a deterministic multi-path document mutation lock context."""
+
+    return _document_mutation_locks(targets)
+
+
+@asynccontextmanager
+async def _document_mutation_lock(
+    project: Dict[str, Any], doc_name: str
+) -> AsyncIterator[None]:
+    """Hold one cross-process lock for the complete document mutation.
+
+    Resolve the physical managed-document path before deriving the lock
+    identity.  Registered names, absolute references, and other aliases for
+    one file must therefore share one cross-process lock.  Resolution here is
+    only for lock identity; the mutation transaction resolves and validates
+    the document again while the lock is held.
+    """
+    root = Path(str(project.get("root") or "")).resolve()
+    try:
+        physical_path = _resolve_doc_path(project, doc_name).resolve()
+        lock_identity = f"{root.as_posix()}\0path:{physical_path.as_posix()}"
+    except Exception:
+        # Preserve the existing error path for invalid/unknown documents while
+        # retaining a deterministic lock for operations that have no physical
+        # document to resolve yet (for example, create).
+        lock_identity = f"{root.as_posix()}\0doc:{doc_name}"
+    async with _mutation_locks_for_identities([lock_identity]):
+        yield
+
+
+def _derive_backup_family(
+    *,
+    doc_category: Optional[str],
+    doc_name: str,
+    doc_path: Path,
+) -> str:
+    """Derive archive backup family for managed docs."""
+    category_value = str(doc_category or "").strip().lower()
+    if category_value in {"planning", "research", "review"}:
+        return category_value
+    if category_value in {"agent", "agent_card", "agent-card"}:
+        return "agent"
+    if category_value in {"case", "bug", "security"}:
+        return "case"
+
+    planning_doc_keys = {
+        "architecture",
+        "phase_plan",
+        "checklist",
+        "progress_log",
+        "bug_log",
+        "security_log",
+        "doc_updates",
+    }
+    planning_filenames = {
+        "ARCHITECTURE_GUIDE.md",
+        "PHASE_PLAN.md",
+        "CHECKLIST.md",
+        "PROGRESS_LOG.md",
+        "BUG_LOG.md",
+        "SECURITY_LOG.md",
+        "DOC_UPDATES.md",
+    }
+    if doc_name.strip().lower() in planning_doc_keys or doc_path.name in planning_filenames:
+        return "planning"
+
+    path_tokens = [token.lower() for token in doc_path.parts]
+    if "research" in path_tokens or doc_name.strip().lower().startswith("research"):
+        return "research"
+
+    return "misc"
+
+
+def resolve_registered_doc_key(project: Dict[str, Any], doc_name: str) -> str:
+    """Resolve doc aliases and path/.md variants to a registered docs key when possible."""
+    candidate = str(doc_name or "").strip()
+    if not candidate:
+        return candidate
+
+    docs = project.get("docs") or {}
+    if candidate in docs:
+        return candidate
+
+    lowered_lookup = {str(key).strip().lower(): key for key in docs.keys()}
+    lowered_candidate = candidate.lower()
+    if lowered_candidate in lowered_lookup:
+        return lowered_lookup[lowered_candidate]
+
+    candidate_path = Path(candidate)
+    candidate_is_path_like = (
+        candidate_path.is_absolute()
+        or "/" in candidate
+        or "\\" in candidate
+    )
+    candidate_name = candidate_path.name
+    normalized_candidate_rel = candidate.replace("\\", "/").lstrip("./")
+    candidate_abs: Optional[Path] = None
+    try:
+        if candidate_path.is_absolute():
+            candidate_abs = candidate_path.resolve()
+    except Exception:
+        candidate_abs = None
+
+    if candidate_is_path_like:
+        for key, value in docs.items():
+            try:
+                value_path = Path(str(value))
+            except Exception:
+                continue
+
+            normalized_value_rel = str(value_path).replace("\\", "/")
+            if normalized_candidate_rel and (
+                normalized_value_rel == normalized_candidate_rel
+                or normalized_value_rel.endswith(f"/{normalized_candidate_rel}")
+            ):
+                return key
+
+            if candidate_abs is not None:
+                try:
+                    if value_path.resolve() == candidate_abs:
+                        return key
+                except Exception:
+                    pass
+        return candidate
+
+    candidate_name = candidate_path.name
+    if candidate_name in docs:
+        return candidate_name
+    if candidate_name.lower() in lowered_lookup:
+        return lowered_lookup[candidate_name.lower()]
+
+    candidate_has_md = candidate_name.lower().endswith(".md")
+    candidate_stem = candidate_name[:-3] if candidate_has_md else candidate_name
+    candidate_stem_lower = candidate_stem.lower()
+    if candidate_stem in docs:
+        return candidate_stem
+    if candidate_stem_lower in lowered_lookup:
+        return lowered_lookup[candidate_stem_lower]
+
+    for key, value in docs.items():
+        try:
+            value_path = Path(str(value))
+        except Exception:
+            continue
+
+        value_name = value_path.name
+        value_stem = value_path.stem
+        if candidate_name and value_name.lower() == candidate_name.lower():
+            return key
+        if candidate_stem and value_stem.lower() == candidate_stem_lower:
+            return key
+
+        normalized_value_rel = str(value_path).replace("\\", "/")
+        if normalized_candidate_rel and (
+            normalized_value_rel == normalized_candidate_rel
+            or normalized_value_rel.endswith(f"/{normalized_candidate_rel}")
+        ):
+            return key
+
+        if candidate_abs is not None:
+            try:
+                if value_path.resolve() == candidate_abs:
+                    return key
+            except Exception:
+                pass
+
+    return candidate
+
+
+async def _apply_doc_change_unlocked(
     project: Dict[str, Any],
     *,
     doc_name: Optional[str] = None,
@@ -135,6 +458,7 @@ async def apply_doc_change(
     content: Optional[str],
     patch: Optional[str] = None,
     patch_source_hash: Optional[str] = None,
+    expected_anchor_sha256: Optional[str] = None,
     edit: Optional[Dict[str, Any]] = None,
     patch_mode: Optional[str] = None,
     start_line: Optional[int] = None,
@@ -145,6 +469,16 @@ async def apply_doc_change(
     document_store: Optional[Any] = None,
 ) -> DocChangeResult:
     """Apply a document change with comprehensive error handling and verification."""
+    # The router cannot alter the compatibility-owned edit action signature,
+    # therefore the public manage_docs field arrives in this private metadata
+    # slot. Remove it before frontmatter/logging so it is never persisted.
+    if isinstance(metadata, dict):
+        metadata = dict(metadata)
+        if expected_anchor_sha256 is None:
+            expected_anchor_sha256 = metadata.pop("_expected_anchor_sha256", None)
+        else:
+            metadata.pop("_expected_anchor_sha256", None)
+    anchor_cas_enabled = expected_anchor_sha256 is not None
     # Auto-resolve document_store from app.state when not explicitly passed.
     if document_store is None:
         try:
@@ -180,6 +514,9 @@ async def apply_doc_change(
             doc_name, action, section, content, patch, patch_source_hash, edit,
             start_line, end_line, template, metadata
         )
+        repo_root = Path(project["root"]).resolve()
+        if not dry_run:
+            assert_writes_allowed(repo_root, operation_label="manage_docs")
 
         # Resolve and validate document path
         if action == "create_doc":
@@ -195,7 +532,6 @@ async def apply_doc_change(
                     doc_logger.info("Auto-registered '%s' at %s", doc_name, doc_path)
                 else:
                     raise DocumentOperationError(f"DOC_NOT_FOUND: doc_name '{doc_name}' is not registered")
-        repo_root = Path(project["root"]).resolve()
         await ensure_parent(doc_path, repo_root=repo_root)
 
         # Get original content and metadata
@@ -233,6 +569,30 @@ async def apply_doc_change(
         original_body = original_parsed.body
         frontmatter_line_count = len(original_parsed.frontmatter_raw.splitlines()) if original_parsed.has_frontmatter else 0
 
+        anchor_snapshot_before: Optional[Dict[str, str]] = None
+        if anchor_cas_enabled:
+            if action != "replace_section":
+                raise AnchorCASDenied(
+                    "ANCHOR_CAS_UNSUPPORTED: expected_anchor_sha256 is supported for replace_section only",
+                    extra={"precondition_failed": "ANCHOR_CAS_UNSUPPORTED"},
+                )
+            normalized_expected = _normalize_anchor_digest(expected_anchor_sha256)
+            anchor_snapshot_before = _managed_anchor_snapshot(
+                original_body,
+                section,
+                doc_path,
+            )
+            if anchor_snapshot_before["anchor_sha256"] != normalized_expected:
+                raise AnchorCASDenied(
+                    "ANCHOR_STALE: expected_anchor_sha256 does not match the current anchor",
+                    extra={
+                        "precondition_failed": "ANCHOR_DIGEST_MISMATCH",
+                        "anchor_id": anchor_snapshot_before["anchor_id"],
+                        "anchor_sha256_before": anchor_snapshot_before["anchor_sha256"],
+                        "anchor_digest_algorithm": ANCHOR_DIGEST_ALGORITHM,
+                    },
+                )
+
         # Render content when required
         rendered_content: Optional[str] = None
         if action in {"replace_section", "append"}:
@@ -247,14 +607,24 @@ async def apply_doc_change(
             if action == "replace_section":
                 assert rendered_content is not None
                 allow_append = False
+                preserve_authored = False
                 if isinstance(metadata, dict):
                     allow_append = bool(metadata.get("allow_append") or metadata.get("scaffold"))
+                    preserve_authored = bool(metadata.get("preserve_authored"))
+                replace_section_info: Dict[str, Any] = {}
                 updated_body = _replace_section(
                     original_body,
                     section,
                     rendered_content,
                     allow_append=allow_append,
+                    preserve_authored=preserve_authored,
+                    info=replace_section_info,
                 )
+                replace_section_info["hint"] = (
+                    "Replacement content should not restate the section heading; "
+                    "the heading lives above the <!-- ID: ... --> anchor and is preserved."
+                )
+                extra["replace_section"] = replace_section_info
             elif action == "append":
                 assert rendered_content is not None
                 meta_payload = metadata if isinstance(metadata, dict) else {}
@@ -267,6 +637,8 @@ async def apply_doc_change(
                 )
             elif action == "status_update":
                 updated_body = _toggle_checklist_status(original_body, section, metadata or {})
+            elif action == "frontmatter_update":
+                updated_body = original_body
             elif action == "apply_patch":
                 patch_text = patch or content
                 current_hash = _hash_text(original_body)
@@ -334,6 +706,17 @@ async def apply_doc_change(
                         "PATCH_MODE_UNIFIED_REQUIRES_PATCH: provide patch content"
                     )
 
+                if _looks_like_codex_patch_text(patch_used):
+                    patch_used, codex_patch_extra = _translate_codex_update_patch(
+                        original_body=original_body,
+                        patch_text=str(patch_used),
+                        doc_name=doc_name,
+                        doc_path=doc_path,
+                        repo_root=repo_root,
+                    )
+                    extra.update(codex_patch_extra)
+                patch_context_extra = dict(extra)
+
                 if patch_source_hash and current_hash != patch_source_hash:
                     raise DocumentOperationError(
                         "PATCH_STALE_SOURCE: patch_source_hash does not match current file content",
@@ -357,6 +740,7 @@ async def apply_doc_change(
                         original_body, patch_used, frontmatter_lines
                     )
                     extra = {
+                        **patch_context_extra,
                         "hunks_applied": hunks_applied,
                         "patch_source_hash": current_hash,
                         "patch_source_hash_source": patch_hash_source,
@@ -387,6 +771,7 @@ async def apply_doc_change(
                                 )
                                 smart_rebase_extra = {}
                             extra = {
+                                **patch_context_extra,
                                 "hunks_applied": hunks_applied,
                                 "patch_source_hash": current_hash,
                                 "patch_source_hash_source": "auto",
@@ -494,9 +879,24 @@ async def apply_doc_change(
                 find_text = metadata.get("find")
                 if not isinstance(find_text, str) or not find_text:
                     raise DocumentOperationError("REPLACE_TEXT_MISSING_FIND: metadata.find is required")
-                replace_text = metadata.get("replace")
-                if replace_text is None:
-                    replace_text = ""
+                # replace_text never reads `content`. Accepting it silently let a
+                # caller put the replacement in the wrong parameter and receive a
+                # deletion reported as a successful edit.
+                if content is not None:
+                    raise DocumentOperationError(
+                        "REPLACE_TEXT_UNEXPECTED_CONTENT: content is not supported for "
+                        "replace_text (pass the replacement as metadata.replace)"
+                    )
+                # Key absence, not falsiness: an explicit metadata.replace=""
+                # is a deliberate deletion, while an omitted key means the caller
+                # never supplied a replacement at all. Defaulting the omission to
+                # "" silently deletes the matched block and reports success.
+                if "replace" not in metadata or metadata["replace"] is None:
+                    raise DocumentOperationError(
+                        "REPLACE_TEXT_MISSING_REPLACE: metadata.replace is required "
+                        "(pass an explicit empty string to delete the matched text)"
+                    )
+                replace_text = metadata["replace"]
                 match_mode = str(metadata.get("match_mode") or "literal").strip().lower()
                 if match_mode not in {"literal", "regex", "prefix"}:
                     raise DocumentOperationError(
@@ -529,7 +929,28 @@ async def apply_doc_change(
                         "CREATE_DOC_EXISTS: target path already exists (use metadata.overwrite to replace or "
                         "metadata.register_existing to register without overwrite)"
                     )
-                updated_body = _build_create_doc_body(content, metadata)
+                has_explicit_body = False
+                if isinstance(content, str) and content.strip():
+                    has_explicit_body = True
+                elif isinstance(metadata, dict):
+                    raw_body = metadata.get("body") or metadata.get("snippet")
+                    if isinstance(raw_body, str) and raw_body.strip():
+                        has_explicit_body = True
+                    elif isinstance(metadata.get("sections"), list) and metadata.get("sections"):
+                        has_explicit_body = True
+
+                if has_explicit_body:
+                    updated_body = _build_create_doc_body(content, metadata)
+                elif isinstance(template, str) and template.strip():
+                    updated_body = await _render_content(project, None, template.strip(), metadata)
+                    if updated_body and not updated_body.endswith("\n"):
+                        updated_body += "\n"
+                else:
+                    updated_body = _build_create_doc_body(content, metadata)
+                if isinstance(updated_body, str):
+                    normalized_body = updated_body.strip().lower()
+                    if normalized_body in {"no message provided", "empty message"} or normalized_body.startswith("no message provided"):
+                        updated_body = "\n"
                 if isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict):
                     metadata.setdefault("frontmatter", {})
                 if isinstance(metadata, dict):
@@ -548,6 +969,7 @@ async def apply_doc_change(
         except Exception as e:
             raise DocumentOperationError(f"Failed to apply {action} operation: {e}")
 
+        updated_body = strip_trailing_whitespace_lines(updated_body)
         after_hash = _hash_text(updated_body)
 
         body_diff_preview = compile_unified_diff(
@@ -580,6 +1002,24 @@ async def apply_doc_change(
         verification_passed = False
 
         date_str = utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        actor_id = "Scribe"
+        explicit_actor = False
+        if isinstance(metadata, dict):
+            metadata_actor = metadata.get("agent_id")
+            if isinstance(metadata_actor, str) and metadata_actor.strip():
+                actor_id = metadata_actor.strip()
+                explicit_actor = True
+        if not explicit_actor:
+            try:
+                from scribe_mcp import server as server_module
+
+                agent_identity = server_module.get_agent_identity()
+                if agent_identity:
+                    resolved_actor = await agent_identity.get_or_create_agent_id()
+                    if isinstance(resolved_actor, str) and resolved_actor.strip():
+                        actor_id = resolved_actor.strip()
+            except Exception:
+                pass
         frontmatter_extra: Dict[str, Any] = {}
 
         # === AUTO-TRANSFORM HOOK (opt-in via frontmatter) ===
@@ -597,7 +1037,11 @@ async def apply_doc_change(
                 transforms_applied.append("normalize_headers")
             except Exception as e:
                 # Non-fatal - log but continue
-                doc_logger.warning(f"Auto-normalize failed for {doc_name}: {e}")
+                doc_logger.warning(
+                    "Auto-normalize failed for %s: %s",
+                    doc_name,
+                    sanitize_error_message(str(e)),
+                )
 
         if auto_toc and action not in ("normalize_headers", "generate_toc"):
             # Apply TOC generation to body
@@ -606,9 +1050,28 @@ async def apply_doc_change(
                 transforms_applied.append("generate_toc")
             except Exception as e:
                 # Non-fatal - log but continue
-                doc_logger.warning(f"Auto-TOC failed for {doc_name}: {e}")
+                doc_logger.warning(
+                    "Auto-TOC failed for %s: %s",
+                    doc_name,
+                    sanitize_error_message(str(e)),
+                )
 
-        allow_frontmatter_create = action != "status_update"
+        updated_body = strip_trailing_whitespace_lines(updated_body)
+        explicit_create_if_missing = bool(
+            isinstance(metadata, dict) and metadata.get("frontmatter_create_if_missing") is True
+        )
+        has_frontmatter_payload = bool(
+            isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict)
+        )
+        allow_frontmatter_create = (
+            action in {"frontmatter_update", "create_doc"}
+            or explicit_create_if_missing
+            or (action != "status_update" and has_frontmatter_payload)
+        )
+        frontmatter_metadata = metadata
+        if action == "status_update" and isinstance(metadata, dict) and "status" in metadata:
+            frontmatter_metadata = dict(metadata)
+            frontmatter_metadata.pop("status", None)
 
         try:
             updated_text, frontmatter_extra, frontmatter_line_count = _apply_frontmatter_pipeline(
@@ -617,11 +1080,27 @@ async def apply_doc_change(
                 doc_name=doc_name,
                 doc_category=doc_category,
                 project=project,
-                metadata=metadata,
+                metadata=frontmatter_metadata,
                 date_str=date_str,
+                action=action,
+                actor_id=actor_id,
                 allow_create=allow_frontmatter_create,
             )
             after_hash = _hash_text(updated_text)
+            if anchor_snapshot_before is not None:
+                anchor_snapshot_after = _managed_anchor_snapshot(
+                    updated_body,
+                    section,
+                    doc_path,
+                )
+                extra.update(
+                    {
+                        "anchor_id": anchor_snapshot_after["anchor_id"],
+                        "anchor_sha256_before": anchor_snapshot_before["anchor_sha256"],
+                        "anchor_sha256_after": anchor_snapshot_after["anchor_sha256"],
+                        "anchor_digest_algorithm": ANCHOR_DIGEST_ALGORITHM,
+                    }
+                )
             frontmatter_only = updated_body == original_body and bool(frontmatter_extra.get("frontmatter_updated"))
             frontmatter_extra.update(
                 {
@@ -643,6 +1122,12 @@ async def apply_doc_change(
             try:
                 if doc_path.exists():
                     try:
+                        docs_dir = project.get("docs_dir")
+                        backup_family = _derive_backup_family(
+                            doc_category=doc_category,
+                            doc_name=doc_name,
+                            doc_path=doc_path,
+                        )
                         backup_path = await asyncio.to_thread(
                             preflight_backup,
                             doc_path,
@@ -651,6 +1136,9 @@ async def apply_doc_change(
                                 "component": "files",
                                 "op": "backup",
                                 "project_name": project.get("name"),
+                                "managed_doc_archive": True,
+                                "project_docs_dir": docs_dir,
+                                "backup_family": backup_family,
                             },
                         )
                         frontmatter_extra.setdefault("preflight_backup", str(backup_path))
@@ -658,8 +1146,26 @@ async def apply_doc_change(
                         raise DocumentOperationError(
                             f"DOC_SNAPSHOT_FAILED: {exc}"
                         ) from exc
-                # Write the file
-                await async_atomic_write(doc_path, updated_text, mode="w", repo_root=repo_root, document_store=document_store)
+                # Write the file. A process can fail after os.replace has
+                # committed the complete bytes; recognize that state before
+                # attempting rollback so retry remains idempotent.
+                try:
+                    await async_atomic_write(
+                        doc_path,
+                        updated_text,
+                        mode="w",
+                        repo_root=repo_root,
+                        document_store=document_store,
+                    )
+                except Exception as write_error:
+                    try:
+                        observed_text = await asyncio.to_thread(
+                            doc_path.read_text, encoding="utf-8"
+                        )
+                    except Exception:
+                        raise write_error
+                    if observed_text != updated_text:
+                        raise
 
                 # Verify the write was successful
                 verification_passed = await _verify_file_write(doc_path, updated_text, after_hash)
@@ -706,7 +1212,10 @@ async def apply_doc_change(
                             file_size_after=file_size_before,  # Back to original
                             success=False,
                             error_message="Write failed, rolled back successfully",
-                            metadata={"rollback": True, "original_error": str(e)}
+                            metadata={
+                                "rollback": True,
+                                "original_error": sanitize_error_message(str(e)),
+                            }
                         )
                 except Exception as rollback_error:
                     duration_ms = (time.time() - start_time) * 1000
@@ -719,13 +1228,20 @@ async def apply_doc_change(
                         file_path=doc_path,
                         duration_ms=duration_ms,
                         file_size_before=file_size_before,
-                        file_size_after=file_size_before,
-                        success=False,
-                        error_message=f"Write failed and rollback failed: {rollback_error}",
-                        metadata={"rollback_failed": True, "original_error": str(e)}
-                    )
+                            file_size_after=file_size_before,
+                            success=False,
+                            error_message=sanitize_error_message(
+                                f"Write failed and rollback failed: {rollback_error}"
+                            ),
+                            metadata={
+                                "rollback_failed": True,
+                                "original_error": sanitize_error_message(str(e)),
+                            }
+                        )
 
-                raise DocumentOperationError(f"Failed to write document {doc_path}: {e}")
+                raise DocumentOperationError(
+                    sanitize_error_message(f"Failed to write document {doc_path}: {e}")
+                )
 
         include_frontmatter_extra = bool(
             isinstance(metadata, dict) and metadata.get("include_frontmatter_extra")
@@ -734,7 +1250,8 @@ async def apply_doc_change(
             frontmatter_extra = {
                 key: value
                 for key, value in frontmatter_extra.items()
-                if not key.startswith("frontmatter")
+                if key in {"frontmatter_updates", "frontmatter_ignored_keys", "attribution", "metadata_hints"}
+                or not key.startswith("frontmatter")
             }
 
         # Always include document structure info so agents know the coordinate
@@ -761,6 +1278,13 @@ async def apply_doc_change(
             extra={
                 **(extra if "extra" in locals() else {}),
                 **frontmatter_extra,
+                "scaffold_quality_warnings": collect_managed_doc_quality_warnings(
+                    text=updated_text,
+                    metadata=metadata if isinstance(metadata, dict) else None,
+                    doc_name=doc_name,
+                    path=doc_path,
+                    project=project,
+                ),
                 "document_info": document_info,
             },
             success=True,
@@ -769,7 +1293,10 @@ async def apply_doc_change(
             file_size_after=file_size_after,
         )
 
-    except (DocumentValidationError, DocumentOperationError, DocumentVerificationError) as e:
+    except AnchorCASDenied:
+        raise
+    except (DocumentValidationError, DocumentOperationError, DocumentVerificationError, WriteBarrierError) as e:
+        sanitized_error = sanitize_error_message(str(e))
         duration_ms = (time.time() - start_time) * 1000
         _log_operation(
             level="error",
@@ -782,14 +1309,14 @@ async def apply_doc_change(
             file_size_before=file_size_before,
             file_size_after=file_size_before,
             success=False,
-            error_message=str(e),
+            error_message=sanitized_error,
             metadata={"error_type": type(e).__name__}
         )
 
         extra: Dict[str, Any] = {}
         if isinstance(e, DocumentOperationError) and getattr(e, "extra", None):
             extra.update(e.extra)
-        if "PATCH_STALE_SOURCE" in str(e):
+        if "PATCH_STALE_SOURCE" in sanitized_error:
             extra.setdefault("precondition_failed", "SOURCE_HASH_MISMATCH")
 
         return DocChangeResult(
@@ -803,12 +1330,47 @@ async def apply_doc_change(
             diff_preview="",
             extra=extra,
             success=False,
-            error_message=str(e),
+            error_message=sanitized_error,
+            verification_passed=False,
+            file_size_before=file_size_before,
+            file_size_after=file_size_before,
+        )
+    except SecurityError as e:
+        sanitized_error = sanitize_error_message(str(e))
+        duration_ms = (time.time() - start_time) * 1000
+        _log_operation(
+            level="error",
+            operation="apply_doc_change",
+            doc_name=doc_name,
+            section=section,
+            action=action,
+            file_path=Path(""),
+            duration_ms=duration_ms,
+            file_size_before=file_size_before,
+            file_size_after=file_size_before,
+            success=False,
+            error_message=sanitized_error,
+            metadata={"error_type": type(e).__name__, "boundary_violation": True},
+        )
+
+        return DocChangeResult(
+            doc_name=doc_name,
+            section=section,
+            action=action,
+            path=Path(""),
+            before_hash="",
+            after_hash="",
+            content_written="",
+            diff_preview="",
+            extra={"boundary_violation": True},
+            success=False,
+            error_message=sanitized_error,
             verification_passed=False,
             file_size_before=file_size_before,
             file_size_after=file_size_before,
         )
     except Exception as e:
+        sanitized_error = sanitize_error_message(str(e))
         # Catch any unexpected errors
         duration_ms = (time.time() - start_time) * 1000
         _log_operation(
@@ -822,7 +1384,7 @@ async def apply_doc_change(
             file_size_before=file_size_before,
             file_size_after=file_size_before,
             success=False,
-            error_message=f"Unexpected error: {e}",
+            error_message=f"Unexpected error: {sanitized_error}",
             metadata={"error_type": type(e).__name__, "unexpected": True}
         )
 
@@ -837,10 +1399,56 @@ async def apply_doc_change(
             diff_preview="",
             extra={},
             success=False,
-            error_message=f"Unexpected error: {e}",
+            error_message=f"Unexpected error: {sanitized_error}",
             verification_passed=False,
             file_size_before=file_size_before,
             file_size_after=file_size_before,
+        )
+
+
+async def apply_doc_change(
+    project: Dict[str, Any],
+    *,
+    doc_name: Optional[str] = None,
+    doc: Optional[str] = None,
+    doc_category: Optional[str] = None,
+    action: str,
+    section: Optional[str],
+    content: Optional[str],
+    patch: Optional[str] = None,
+    patch_source_hash: Optional[str] = None,
+    expected_anchor_sha256: Optional[str] = None,
+    edit: Optional[Dict[str, Any]] = None,
+    patch_mode: Optional[str] = None,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
+    template: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    dry_run: bool,
+    document_store: Optional[Any] = None,
+) -> DocChangeResult:
+    """Serialize a complete managed-document read/compare/write transaction."""
+    resolved_doc_name = str(doc_name or doc or "")
+    async with _document_mutation_lock(project, resolved_doc_name):
+        return await _apply_doc_change_unlocked(
+            project,
+            doc_name=doc_name,
+            doc=doc,
+            doc_category=doc_category,
+            action=action,
+            section=section,
+            content=content,
+            patch=patch,
+            patch_source_hash=patch_source_hash,
+            expected_anchor_sha256=expected_anchor_sha256,
+            edit=edit,
+            patch_mode=patch_mode,
+            start_line=start_line,
+            end_line=end_line,
+            template=template,
+            metadata=metadata,
+            dry_run=dry_run,
+            document_store=document_store,
         )
 
 
@@ -858,6 +1466,7 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
     # Validate inputs
     if not doc_name:
         raise ValueError("doc_name cannot be empty")
+    doc_name = resolve_registered_doc_key(project, doc_name)
 
     project_name = project.get("name")
     if not project_name:
@@ -866,6 +1475,27 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
     project_root = Path(project.get("root", ""))
     if not project_root.exists():
         raise ValueError(f"Project root does not exist: {project_root}")
+
+    candidate_path = Path(doc_name)
+    if candidate_path.is_absolute() or "/" in doc_name or "\\" in doc_name:
+        resolved_candidate = (
+            candidate_path
+            if candidate_path.is_absolute()
+            else project_root / candidate_path
+        ).resolve()
+        try:
+            resolved_candidate.relative_to(project_root)
+        except ValueError as e:
+            raise SecurityError(
+                f"Document path {resolved_candidate} is outside project root {project_root}"
+            ) from e
+        if resolved_candidate.exists():
+            doc_logger.debug(
+                "Resolved doc path for %s using explicit path: %s",
+                doc_name,
+                resolved_candidate,
+            )
+            return resolved_candidate
 
     # Try explicit paths first
     docs = project.get("docs") or {}
@@ -927,6 +1557,22 @@ def _resolve_doc_path(project: Dict[str, Any], doc_name: str) -> Path:
                 resolved_path = alt_path
                 break
 
+    if not resolved_path.exists():
+        search_roots = [docs_dir] + [docs_dir / subfolder for subfolder in ["research", "architecture", "bugs"]]
+        target_stem = Path(filename).stem.lower()
+        target_name = Path(filename).name.lower()
+        for search_root in search_roots:
+            if not search_root.exists() or not search_root.is_dir():
+                continue
+            for child in search_root.iterdir():
+                if not child.is_file():
+                    continue
+                if child.name.lower() == target_name or child.stem.lower() == target_stem:
+                    resolved_path = child.resolve()
+                    break
+            if resolved_path.exists():
+                break
+
     # CRITICAL: Ensure fallback path is within project sandbox
     try:
         resolved_path.relative_to(project_root)
@@ -960,7 +1606,10 @@ def _resolve_create_doc_path(
     if not resolved_name:
         raise DocumentOperationError("CREATE_DOC_MISSING_NAME: doc_name or register_as is required")
 
-    safe_name = slugify_filename(resolved_name)
+    normalized_name = str(resolved_name)
+    while normalized_name.lower().endswith(".md"):
+        normalized_name = normalized_name[:-3]
+    safe_name = slugify_filename(normalized_name)
 
     docs_dir = project.get("docs_dir")
     if docs_dir:
@@ -981,7 +1630,8 @@ def _resolve_create_doc_path(
             ) from exc
         docs_dir = target_path
 
-    resolved_path = (docs_dir / f"{safe_name}.md").resolve()
+    filename = f"{safe_name}.md"
+    resolved_path = (docs_dir / filename).resolve()
     try:
         resolved_path.relative_to(project_root)
     except ValueError as exc:
@@ -1050,11 +1700,13 @@ async def _render_content(
             return rendered
 
         except TemplateEngineError as e:
-            doc_logger.error(f"Template engine error for '{template_name}': {e}")
-            raise DocumentOperationError(f"Failed to render template '{template_name}': {e}")
+            safe_error = sanitize_error_message(e)
+            doc_logger.error(f"Template engine error for '{template_name}': {safe_error}")
+            raise DocumentOperationError(f"Failed to render template '{template_name}': {safe_error}")
         except Exception as e:
-            doc_logger.error(f"Unexpected error rendering template '{template_name}': {e}")
-            raise DocumentOperationError(f"Unexpected template error: {e}")
+            safe_error = sanitize_error_message(e)
+            doc_logger.error(f"Unexpected error rendering template '{template_name}': {safe_error}")
+            raise DocumentOperationError(f"Unexpected template error: {safe_error}")
 
     if isinstance(content, str) and content:
         # Preserve author-provided formatting, but allow inline Jinja rendering when present.
@@ -1080,7 +1732,10 @@ async def _render_content(
                 )
                 return rendered_inline
             except Exception as e:  # pragma: no cover - defensive
-                doc_logger.error(f"Inline Jinja rendering failed, returning raw content: {e}")
+                safe_error = sanitize_error_message(e)
+                doc_logger.error(
+                    f"Inline Jinja rendering failed, returning raw content: {safe_error}"
+                )
                 return normalized
 
         return normalized
@@ -1095,8 +1750,244 @@ async def _load_fragment(name: str) -> str:
     return await asyncio.to_thread(fragment.read_text, encoding="utf-8")
 
 
-def _replace_section(text: str, section: Optional[str], content: str, *, allow_append: bool = False) -> str:
+def _pull_back_trailing_separator(
+    text: str, lower_bound: int, section_end: int
+) -> tuple[int, bool]:
+    """Exclude a trailing horizontal-rule separator from a section's body span.
+
+    The ``---`` between sections belongs to the document structure, not to the
+    section body being replaced; consuming it on replace_section corrupts the
+    section layout (live-reproduced defect, P1.4).
+    """
+    region = text[lower_bound:section_end]
+    lines = region.splitlines(keepends=True)
+    index = len(lines) - 1
+    while index >= 0 and not lines[index].strip():
+        index -= 1
+    if index < 0 or not re.match(r"^-{3,}\s*$", lines[index].strip()):
+        return section_end, False
+    cursor = index - 1
+    while cursor >= 0 and not lines[cursor].strip():
+        cursor -= 1
+    keep_from = sum(len(line) for line in lines[: cursor + 1])
+    return lower_bound + keep_from, True
+
+
+def _line_start_at(text: str, index: int) -> int:
+    line_start = text.rfind("\n", 0, index)
+    return 0 if line_start == -1 else line_start + 1
+
+
+def _associated_heading_start(text: str, marker_index: int) -> Optional[int]:
+    """Line-start offset of the markdown heading directly above a section anchor.
+
+    A section's heading (``## Title``) lives on the line above its
+    ``<!-- ID: ... -->`` anchor, so a section boundary is drawn at that heading
+    rather than the bare anchor. Returns ``None`` when the anchor has no
+    adjacent heading.
+    """
+    marker_line_start = _line_start_at(text, marker_index)
+    cursor = marker_line_start - 1
+    while cursor >= 0:
+        line_end = cursor + 1
+        prev_newline = text.rfind("\n", 0, line_end - 1)
+        line_start = 0 if prev_newline == -1 else prev_newline + 1
+        line = text[line_start:line_end]
+        stripped = line.strip()
+        if not stripped:
+            cursor = line_start - 1
+            continue
+        if _HEADER_LINE_PATTERN.match(stripped):
+            return line_start
+        return None
+    return None
+
+
+def _section_body_span(text: str, section: Optional[str]) -> Optional[tuple[int, int]]:
+    """Return the ``(start, end)`` offsets of a section's editable body.
+
+    The span matches exactly the region ``_replace_section`` overwrites: from
+    just after the section's ``<!-- ID: ... -->`` anchor to the start of the
+    next section's heading, with any trailing horizontal-rule separator pulled
+    back so it is not consumed. Returns ``None`` when the anchor is missing or
+    appears more than once (no single unambiguous body).
+    """
     marker = SECTION_MARKER.format(section=section)
+    idx = text.find(marker)
+    if idx == -1 or text.find(marker, idx + 1) != -1:
+        return None
+    start = idx + len(marker)
+    if start < len(text) and text[start] == "\r":
+        start += 1
+    if start < len(text) and text[start] == "\n":
+        start += 1
+    next_marker = text.find("<!-- ID:", start)
+    section_end = len(text)
+    if next_marker != -1:
+        next_heading_start = _associated_heading_start(text, next_marker)
+        section_end = (
+            next_heading_start if next_heading_start is not None else next_marker
+        )
+    section_end, _ = _pull_back_trailing_separator(text, start, section_end)
+    return start, section_end
+
+
+def _extract_section_body(text: str, section: Optional[str]) -> Optional[str]:
+    """Current body text of a section, or ``None`` when the anchor is missing/ambiguous."""
+    span = _section_body_span(text, section)
+    if span is None:
+        return None
+    return text[span[0] : span[1]]
+
+
+def _normalize_anchor_digest(value: Any) -> str:
+    """Validate a caller-provided managed-anchor digest."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()):
+        raise AnchorCASDenied(
+            "ANCHOR_DIGEST_INVALID: expected a 64-character SHA256 hex digest",
+            extra={"precondition_failed": "ANCHOR_DIGEST_INVALID"},
+        )
+    return value.strip().lower()
+
+
+def _normalized_anchor_block(value: str) -> str:
+    """Canonicalize line endings and trailing whitespace without losing prose."""
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
+
+
+def _managed_anchor_snapshot(
+    text: str,
+    section: Optional[str],
+    doc_path: Path,
+) -> Dict[str, str]:
+    """Resolve one well-formed section anchor and return its stable digest."""
+    anchor_id = str(section or "").strip()
+    if not anchor_id:
+        raise AnchorCASDenied(
+            "ANCHOR_MISSING: section is required for anchor CAS",
+            extra={"precondition_failed": "ANCHOR_MISSING"},
+        )
+    marker = SECTION_MARKER.format(section=anchor_id)
+    matches = list(re.finditer(re.escape(marker), text))
+    if not matches:
+        raise AnchorCASDenied(
+            f"ANCHOR_MISSING: '{anchor_id}' was not found",
+            extra={"precondition_failed": "ANCHOR_MISSING", "anchor_id": anchor_id},
+        )
+    if len(matches) != 1:
+        raise AnchorCASDenied(
+            f"ANCHOR_AMBIGUOUS: '{anchor_id}' appears {len(matches)} times",
+            extra={"precondition_failed": "ANCHOR_AMBIGUOUS", "anchor_id": anchor_id},
+        )
+
+    marker_index = matches[0].start()
+    marker_line_start = _line_start_at(text, marker_index)
+    marker_line_end = text.find("\n", marker_line_start)
+    if marker_line_end == -1:
+        marker_line_end = len(text)
+    marker_line = text[marker_line_start:marker_line_end]
+    if not marker_line[: marker_line.find(marker)].strip() == "":
+        raise AnchorCASDenied(
+            f"ANCHOR_MALFORMED: '{anchor_id}' must start its own line",
+            extra={"precondition_failed": "ANCHOR_MALFORMED", "anchor_id": anchor_id},
+        )
+
+    heading_start = _associated_heading_start(text, marker_index)
+    if heading_start is None:
+        raise AnchorCASDenied(
+            f"ANCHOR_MOVED: '{anchor_id}' is not attached to a markdown heading",
+            extra={"precondition_failed": "ANCHOR_MOVED", "anchor_id": anchor_id},
+        )
+    heading_end = text.find("\n", heading_start)
+    if heading_end == -1:
+        heading_end = len(text)
+    heading_line = text[heading_start:heading_end].strip()
+    if not _HEADER_LINE_PATTERN.match(heading_line):
+        raise AnchorCASDenied(
+            f"ANCHOR_MALFORMED: '{anchor_id}' has no valid heading",
+            extra={"precondition_failed": "ANCHOR_MALFORMED", "anchor_id": anchor_id},
+        )
+
+    heading_ordinal = sum(
+        1
+        for match in re.finditer(r"(?m)^[ \t]*#{1,6}[ \t]+\S.*$", text[:heading_start])
+    ) + 1
+    body_span = _section_body_span(text, anchor_id)
+    if body_span is None:
+        raise AnchorCASDenied(
+            f"ANCHOR_MALFORMED: unable to resolve block for '{anchor_id}'",
+            extra={"precondition_failed": "ANCHOR_MALFORMED", "anchor_id": anchor_id},
+        )
+    block = _normalized_anchor_block(text[heading_start : body_span[1]])
+    locator = f"heading={_normalized_anchor_block(heading_line)};ordinal={heading_ordinal}"
+    payload = "\n".join(
+        (
+            f"path={doc_path.resolve().as_posix()}",
+            f"anchor_id={anchor_id}",
+            f"locator={locator}",
+            f"block={block}",
+        )
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return {
+        "anchor_id": anchor_id,
+        "anchor_sha256": digest,
+        "anchor_digest_algorithm": ANCHOR_DIGEST_ALGORITHM,
+    }
+
+
+def _section_body_has_authored_content(body: str) -> bool:
+    """True when a section body holds authored content, not just scaffold structure.
+
+    Blank lines, markdown headings (``##``/``###`` subsection titles), and
+    horizontal-rule separators are structural; anything else — including
+    unfilled template placeholders — is treated as content to preserve rather
+    than overwrite. This deliberately biases toward preservation: a genuinely
+    empty section (structure only) may be filled, but anything a caller might
+    have authored is kept.
+    """
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _HEADER_LINE_PATTERN.match(stripped):
+            continue
+        if re.match(r"^-{3,}\s*$", stripped):
+            continue
+        return True
+    return False
+
+
+def _replace_section(
+    text: str,
+    section: Optional[str],
+    content: str,
+    *,
+    allow_append: bool = False,
+    preserve_authored: bool = False,
+    info: Optional[Dict[str, Any]] = None,
+) -> str:
+    marker = SECTION_MARKER.format(section=section)
+
+    # Additive mode: when the caller opts in via ``preserve_authored`` and the
+    # target section already holds authored content, append the new block to
+    # that content instead of overwriting it. Filling a genuinely-empty section
+    # (structure only) still replaces as normal. This is what makes fix-linking
+    # non-destructive to a report's authored prose/evidence.
+    if preserve_authored and content.strip():
+        existing_body = _extract_section_body(text, section)
+        if existing_body is not None and _section_body_has_authored_content(
+            existing_body
+        ):
+            if content.strip() in existing_body:
+                content = existing_body
+            else:
+                content = existing_body.rstrip() + "\n\n" + content.strip()
+            if info is not None:
+                info["preserved_authored_content"] = True
+
+    replacement_heading_prefix: Optional[str] = None
 
     # Strip redundant header+marker from content if present at the start.
     # This handles the common case where caller includes full section structure
@@ -1112,6 +2003,7 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
             re.match(r'^#+\s', line) or not line.strip()
             for line in prefix_clean.splitlines()
         ):
+            replacement_heading_prefix = prefix_clean if prefix_clean else None
             # Strip everything up to and including the marker
             after_marker = content_stripped[marker_pos + len(marker):]
             content = after_marker.lstrip('\n\r')
@@ -1119,8 +2011,19 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
     idx = text.find(marker)
     if idx == -1:
         if not allow_append:
+            available = doc_errors.document_anchor_ids(text)
+            near = doc_errors.find_near_misses(str(section or ""), available)
             raise DocumentOperationError(
-                f"SECTION_ANCHOR_MISSING: '{section}' not found (set metadata.allow_append=true to append)"
+                f"SECTION_ANCHOR_MISSING: '{section}' not found (set metadata.allow_append=true to append)",
+                extra=doc_errors.build_remediation_envelope(
+                    code="SECTION_ANCHOR_MISSING",
+                    remediation=(
+                        f"Target one of the document's existing section anchors: {', '.join(available) or '(none)'}. "
+                        + (f"Closest match: '{near[0]}'. " if near else "")
+                        + "Or set metadata.allow_append=true to append a new section."
+                    ),
+                    alternatives=near or available,
+                ),
             )
         doc_logger.warning(
             "Section anchor missing; auto-appending '%s' to document.",
@@ -1133,8 +2036,41 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
         return prefix + marker + "\n" + content.strip() + "\n"
     if text.find(marker, idx + 1) != -1:
         raise DocumentOperationError(
-            f"SECTION_ANCHOR_AMBIGUOUS: '{section}' appears multiple times; resolve duplicates first"
+            f"SECTION_ANCHOR_AMBIGUOUS: '{section}' appears multiple times; resolve duplicates first "
+            "or use replace_range/apply_patch for explicit boundaries",
+            extra=doc_errors.build_remediation_envelope(
+                code="SECTION_ANCHOR_AMBIGUOUS",
+                remediation=(
+                    "The anchor appears more than once; remove the duplicate marker first, "
+                    "or use action='replace_range' / action='apply_patch' with explicit boundaries."
+                ),
+                alternatives=["replace_range", "apply_patch"],
+            ),
         )
+    section_start = idx
+    if replacement_heading_prefix:
+        heading_start = _associated_heading_start(text, idx)
+        if heading_start is not None:
+            section_start = heading_start
+
+    # Strip a bare duplicate of the section's own heading from the content.
+    # Template headings live ABOVE the anchor, so callers restating the
+    # heading produce a duplicated heading inside the section body
+    # (live-reproduced defect, P1.4).
+    if replacement_heading_prefix is None:
+        content_lines = content.lstrip().splitlines()
+        if content_lines and _HEADER_LINE_PATTERN.match(content_lines[0].strip()):
+            heading_start = _associated_heading_start(text, idx)
+            if heading_start is not None:
+                heading_line_end = text.find("\n", heading_start)
+                if heading_line_end == -1:
+                    heading_line_end = len(text)
+                heading_line = text[heading_start:heading_line_end].strip()
+                if content_lines[0].strip() == heading_line:
+                    content = "\n".join(content_lines[1:]).lstrip("\n\r")
+                    if info is not None:
+                        info["stripped_duplicate_heading"] = heading_line
+
     start = idx + len(marker)
     # Skip newline right after marker
     if start < len(text) and text[start] == "\r":
@@ -1142,10 +2078,23 @@ def _replace_section(text: str, section: Optional[str], content: str, *, allow_a
     if start < len(text) and text[start] == "\n":
         start += 1
     next_marker = text.find("<!-- ID:", start)
-    if next_marker == -1:
-        next_marker = len(text)
-    new_block = marker + "\n" + content.strip() + "\n"
-    replacement = text[:idx] + new_block + text[next_marker:]
+    section_end = len(text)
+    if next_marker != -1:
+        next_heading_start = _associated_heading_start(text, next_marker)
+        section_end = next_heading_start if next_heading_start is not None else next_marker
+
+    section_end, preserved_separator = _pull_back_trailing_separator(text, start, section_end)
+    if preserved_separator and info is not None:
+        info["preserved_separator"] = True
+
+    new_block_lines: list[str] = []
+    if replacement_heading_prefix:
+        new_block_lines.append(replacement_heading_prefix)
+    new_block_lines.append(marker)
+    if content.strip():
+        new_block_lines.append(content.strip())
+    new_block = "\n".join(new_block_lines) + "\n"
+    replacement = text[:section_start] + new_block + text[section_end:]
     return replacement
 
 
@@ -1328,9 +2277,48 @@ def _replace_text_with_scope(
         )
 
     if hits == 0 and not allow_no_match:
-        raise DocumentOperationError("REPLACE_TEXT_NO_MATCH: no matches found")
+        message, near_line = _replace_text_no_match_error(target_text, find_text)
+        raise DocumentOperationError(
+            message,
+            extra=doc_errors.build_remediation_envelope(
+                code="REPLACE_TEXT_NO_MATCH",
+                remediation=(
+                    "Verify the find text matches the document exactly (including blank lines). "
+                    "Read the current content first, or use action='replace_section' for anchored "
+                    "sections / action='apply_patch' with context lines."
+                ),
+                alternatives=[near_line] if near_line else [],
+            ),
+        )
 
     return prefix + updated + suffix, hits
+
+
+def _replace_text_no_match_error(text: str, find_text: str) -> tuple[str, Optional[str]]:
+    """Build a REPLACE_TEXT_NO_MATCH error with a deterministic near-miss hint.
+
+    Returns (message, nearest_line_hint or None).
+    """
+    find_lines = find_text.splitlines() or [find_text]
+    parts = ["REPLACE_TEXT_NO_MATCH: no matches found"]
+    if len(find_lines) > 1:
+        parts.append(
+            f"find spans {len(find_lines)} lines; multi-line finds must match exactly, "
+            "including blank lines and line endings"
+        )
+    probe = next((line for line in find_lines if line.strip()), find_lines[0])
+    doc_lines = text.splitlines()
+    candidates = difflib.get_close_matches(probe, doc_lines, n=1, cutoff=0.6)
+    near_line: Optional[str] = None
+    if candidates:
+        candidate = candidates[0]
+        line_number = doc_lines.index(candidate) + 1
+        excerpt = candidate.strip()[:120]
+        near_line = f"line {line_number}: '{excerpt}'"
+        parts.append(f"nearest line in document: {near_line}")
+    else:
+        parts.append("no similar line found in the document")
+    return " | ".join(parts), near_line
 
 
 def _append_block(text: str, content: str, section: Optional[str] = None, position: str = "after") -> str:
@@ -1674,6 +2662,213 @@ def _compute_patch_ranges(patch_text: str) -> list[Dict[str, int]]:
     return ranges
 
 
+def _codex_target_matches_doc(
+    target: str,
+    *,
+    doc_name: str,
+    doc_path: Path,
+    repo_root: Path,
+) -> bool:
+    normalized = target.strip()
+    if not normalized:
+        return False
+    if normalized == doc_name or normalized == doc_path.name or normalized == str(doc_path):
+        return True
+    try:
+        if normalized == str(doc_path.resolve().relative_to(repo_root.resolve())):
+            return True
+    except ValueError:
+        pass
+    try:
+        target_path = (repo_root / normalized).resolve() if not Path(normalized).is_absolute() else Path(normalized).resolve()
+        return target_path == doc_path.resolve()
+    except OSError:
+        return False
+
+
+def _find_codex_hunk_start(original_lines: list[str], old_lines: list[str]) -> Optional[int]:
+    if not old_lines:
+        return None
+    max_start = len(original_lines) - len(old_lines)
+    for start in range(max_start + 1):
+        if original_lines[start:start + len(old_lines)] == old_lines:
+            return start
+    return None
+
+
+def _compile_codex_update_hunk(original_body: str, hunk_lines: list[str]) -> list[str]:
+    if not hunk_lines:
+        raise DocumentOperationError(
+            "CODEX_PATCH_INVALID_FORMAT: update block contains an empty hunk",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_invalid_format",
+                message="Each Codex update hunk must include context, deleted, or added lines.",
+            ),
+        )
+
+    old_lines: list[str] = []
+    new_lines: list[str] = []
+    for line in hunk_lines:
+        if line.startswith("\\"):
+            continue
+        if not line:
+            raise DocumentOperationError(
+                "CODEX_PATCH_INVALID_FORMAT: hunk lines must start with space, '+', or '-'",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Blank hunk lines must keep their leading diff prefix.",
+                ),
+            )
+        prefix = line[0]
+        text = line[1:]
+        if prefix == " ":
+            old_lines.append(text)
+            new_lines.append(text)
+        elif prefix == "-":
+            old_lines.append(text)
+        elif prefix == "+":
+            new_lines.append(text)
+        else:
+            raise DocumentOperationError(
+                f"CODEX_PATCH_INVALID_FORMAT: unsupported hunk line prefix {prefix!r}",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Codex update hunks support only context, deletion, and addition lines.",
+                ),
+            )
+
+    original_lines = original_body.splitlines()
+    start_index = _find_codex_hunk_start(original_lines, old_lines)
+    if start_index is None:
+        raise DocumentOperationError(
+            "PATCH_CONTEXT_NOT_FOUND: Codex update hunk context was not found in managed doc",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_context_not_found",
+                message="Re-read the managed doc and regenerate the Codex update block from current content.",
+            ),
+        )
+
+    old_count = len(old_lines)
+    new_count = len(new_lines)
+    return [f"@@ -{start_index + 1},{old_count} +{start_index + 1},{new_count} @@", *hunk_lines]
+
+
+def _translate_codex_update_patch(
+    *,
+    original_body: str,
+    patch_text: str,
+    doc_name: str,
+    doc_path: Path,
+    repo_root: Path,
+) -> tuple[str, Dict[str, Any]]:
+    lines = patch_text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[0].strip() == "*** Begin Patch":
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "*** End Patch":
+        lines = lines[:-1]
+
+    operations: list[tuple[str, str, list[str]]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith("*** "):
+            raise DocumentOperationError(
+                f"CODEX_PATCH_INVALID_FORMAT: expected operation header, got {line!r}",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Use one *** Update File: <managed-doc-path> block per manage_docs call.",
+                ),
+            )
+        if line.startswith("*** Update File:"):
+            operation = "update_file"
+            target = line.split(":", 1)[1].strip()
+        elif line.startswith("*** Add File:"):
+            operation = "add_file"
+            target = line.split(":", 1)[1].strip()
+        elif line.startswith("*** Delete File:"):
+            operation = "delete_file"
+            target = line.split(":", 1)[1].strip()
+        else:
+            raise DocumentOperationError(
+                f"CODEX_PATCH_INVALID_FORMAT: unsupported operation header {line!r}",
+                extra=_codex_patch_boundary_extra(
+                    failure_kind="codex_patch_invalid_format",
+                    message="Only *** Update File is accepted for managed-doc patch compatibility.",
+                ),
+            )
+        index += 1
+        block: list[str] = []
+        while index < len(lines) and not lines[index].startswith("*** "):
+            block.append(lines[index])
+            index += 1
+        operations.append((operation, target, block))
+
+    if len(operations) != 1:
+        raise DocumentOperationError(
+            "CODEX_PATCH_MULTI_DOC_UNSUPPORTED: provide one managed-doc update per call",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_multi_doc_unsupported",
+                targets=[target for _, target, _ in operations],
+                message="Split the Codex patch into one manage_docs apply_patch call per registered doc.",
+            ),
+        )
+
+    operation, target, block = operations[0]
+    if operation != "update_file":
+        raise DocumentOperationError(
+            f"CODEX_PATCH_OPERATION_UNSUPPORTED: {operation} is outside manage_docs apply_patch scope",
+            extra=_codex_patch_boundary_extra(
+                failure_kind=f"codex_patch_{operation}_unsupported",
+                target=target,
+                operation=operation,
+            ),
+        )
+    if not _codex_target_matches_doc(target, doc_name=doc_name, doc_path=doc_path, repo_root=repo_root):
+        raise DocumentOperationError(
+            "CODEX_PATCH_TARGET_MISMATCH: update target does not match selected managed doc",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_target_mismatch",
+                target=target,
+                message=f"Selected managed doc is {doc_name!r} at {doc_path}.",
+            ),
+        )
+
+    unified_lines = [f"--- {target}", f"+++ {target}"]
+    current_hunk: list[str] = []
+    for line in block:
+        if line.startswith("@@"):
+            if current_hunk:
+                unified_lines.extend(_compile_codex_update_hunk(original_body, current_hunk))
+                current_hunk = []
+            continue
+        current_hunk.append(line)
+    if current_hunk:
+        unified_lines.extend(_compile_codex_update_hunk(original_body, current_hunk))
+    if len(unified_lines) == 2:
+        raise DocumentOperationError(
+            "CODEX_PATCH_INVALID_FORMAT: update block contains no hunks",
+            extra=_codex_patch_boundary_extra(
+                failure_kind="codex_patch_invalid_format",
+                target=target,
+                message="Add at least one @@ hunk with context/deletion/addition lines.",
+            ),
+        )
+
+    return "\n".join(unified_lines), {
+        "codex_patch_adapter": {
+            "translated": True,
+            "operation": operation,
+            "target": target,
+            "managed_doc": doc_name,
+            "translated_patch_mode": PATCH_MODE_UNIFIED,
+        }
+    }
+
+
 def _build_bounded_preview(
     original_text: str,
     updated_text: str,
@@ -1851,7 +3046,6 @@ def _apply_unified_patch_smart(
             raise DocumentOperationError(f"PATCH_INVALID_FORMAT: expected hunk header: {header!r}")
 
         hunk_old_start = int(match.group(1))
-        hunk_old_count = int(match.group(2)) if match.group(2) else 1
         i += 1
 
         # Collect all lines in this hunk
@@ -1898,17 +3092,29 @@ def _apply_unified_patch_smart(
         if actual_pos is None:
             # Context not found anywhere
             context_preview = context_lines[:3] if context_lines else ["<no context>"]
+            patch_remediation = doc_errors.build_remediation_envelope(
+                code="PATCH_CONTEXT_NOT_FOUND",
+                remediation=(
+                    "The document changed since the diff was generated. Re-read the current "
+                    "content and regenerate the patch, or use action='apply_patch' with "
+                    "patch_mode='structured' (replace_section/replace_range edits), which does "
+                    "not depend on stale context lines."
+                ),
+                alternatives=["apply_patch patch_mode='structured'", "replace_section", "replace_range"],
+            )
             delete_lines = [line[1:] for line in hunk_lines if line.startswith("-")]
             if delete_lines:
                 raise DocumentOperationError(
                     f"PATCH_DELETE_MISMATCH: hunk {hunks_applied + 1} delete lines not found in document "
                     f"context (PATCH_CONTEXT_NOT_FOUND). Expected at line {hunk_old_start}. "
-                    f"Delete starts with: {delete_lines[:3]}"
+                    f"Delete starts with: {delete_lines[:3]}",
+                    extra={**patch_remediation, "code": "PATCH_DELETE_MISMATCH"},
                 )
             raise DocumentOperationError(
                 f"PATCH_CONTEXT_NOT_FOUND: hunk {hunks_applied + 1} context not found in document. "
                 f"Expected at line {hunk_old_start}, searched entire file. "
-                f"Context starts with: {context_preview}"
+                f"Context starts with: {context_preview}",
+                extra=patch_remediation,
             )
 
         # Copy unchanged content up to the patch position
@@ -1931,7 +3137,7 @@ def _apply_unified_patch_smart(
                 # Context line - verify and copy
                 if original_index >= len(original_lines):
                     raise DocumentOperationError(
-                        f"PATCH_CONTEXT_MISMATCH: unexpected EOF at context line"
+                        "PATCH_CONTEXT_MISMATCH: unexpected EOF at context line"
                     )
                 if not _line_matches(patched_line, original_lines[original_index]):
                     raise DocumentOperationError(
@@ -1943,7 +3149,7 @@ def _apply_unified_patch_smart(
                 # Delete line - verify and skip
                 if original_index >= len(original_lines):
                     raise DocumentOperationError(
-                        f"PATCH_DELETE_MISMATCH: unexpected EOF at delete line"
+                        "PATCH_DELETE_MISMATCH: unexpected EOF at delete line"
                     )
                 if not _line_matches(patched_line, original_lines[original_index]):
                     raise DocumentOperationError(
@@ -2520,6 +3726,12 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     done_states = {"done", "completed", "complete", "true", "yes", "checked", "finished"}
     pending_states = {"pending", "todo", "not done", "open", "incomplete", "undone"}
 
+    def html_id_pattern(section_id: str) -> re.Pattern[str]:
+        return re.compile(
+            r"<!--\s*id\s*:\s*" + re.escape(section_id) + r"\s*-->",
+            re.IGNORECASE,
+        )
+
     def resolve_token(existing_line: Optional[str]) -> str:
         if desired in done_states:
             return "[x]"
@@ -2537,7 +3749,7 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
             label_text = trimmed[len("- [x] "):]
         else:
             return None
-        label_text = re.sub(r"\s*<!--\s*ID:\s*[^>]+-->\s*$", "", label_text).rstrip()
+        label_text = re.sub(r"\s*<!--\s*id\s*:\s*[^>]+-->\s*$", "", label_text, flags=re.IGNORECASE).rstrip()
         return label_text.split(" | ", 1)[0].strip()
 
     def update_checklist_line(line: str, token: str) -> str:
@@ -2547,7 +3759,7 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
             new_line = line.replace("- [ ]", f"- {token}", 1)
 
         trailing_anchor = ""
-        anchor_match = re.search(r"\s*(<!--\s*ID:\s*[^>]+-->)\s*$", new_line)
+        anchor_match = re.search(r"\s*(<!--\s*id\s*:\s*[^>]+-->)\s*$", new_line, flags=re.IGNORECASE)
         if anchor_match:
             trailing_anchor = " " + anchor_match.group(1)
             new_line = new_line[: anchor_match.start()].rstrip()
@@ -2567,19 +3779,20 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     section_end_idx: int = len(lines)
 
     if section_marker:
+        inline_id_pattern = html_id_pattern(section)
         for idx, line in enumerate(lines):
             stripped = line.strip()
             if stripped == section_marker:
                 section_start_idx = idx
                 break
-            if section_marker in line:
+            if section_marker in line or inline_id_pattern.search(line):
                 inline_target_idx = idx
                 break
 
         if section_start_idx is not None:
             for idx in range(section_start_idx + 1, len(lines)):
                 stripped = lines[idx].strip()
-                if stripped.startswith("<!-- ID:") and stripped != section_marker:
+                if re.match(r"<!--\s*id\s*:", stripped, flags=re.IGNORECASE) and stripped != section_marker:
                     section_end_idx = idx
                     break
         elif inline_target_idx is None and not allow_append:
@@ -2606,7 +3819,7 @@ def _toggle_checklist_status(text: str, section: Optional[str], metadata: Dict[s
     replacement = False
     search_start = (section_start_idx + 1) if section_start_idx is not None else 0
     search_end = section_end_idx
-    candidate_indices: List[int]
+    candidate_indices: list[int]
     if inline_target_idx is not None:
         candidate_indices = [inline_target_idx]
     else:
@@ -2732,6 +3945,7 @@ def _default_frontmatter(
     project_name: str,
     body_text: str,
     date_str: str,
+    actor_id: str = "Scribe",
 ) -> Dict[str, Any]:
     project_slug = slugify_project_name(project_name or "project")
     doc_name_slug = doc_name.lower().replace("_", "-")
@@ -2747,11 +3961,11 @@ def _default_frontmatter(
         "doc_type": doc_name,
         "doc_name": doc_name,
         "category": category_str,
-        "status": "draft",
+        "status": "scaffolded",
         "version": "0.1",
         "last_updated": date_str,
-        "maintained_by": "Corta Labs",
-        "created_by": "Corta Labs",
+        "maintained_by": actor_id,
+        "created_by": actor_id,
         "owners": [],
         "related_docs": [],
         "tags": [],
@@ -2759,8 +3973,55 @@ def _default_frontmatter(
     }
 
 
+_WORKFLOW_FRONTMATTER_KEYS = {
+    "summary",
+    "tags",
+    "owners",
+    "category",
+    "status",
+    "version",
+    "related_docs",
+    "maintained_by",
+}
+_TRACE_INPUT_KEYS = ("run_id", "stage", "session_id", "work_item_id")
+_LIST_WORKFLOW_KEYS = {"tags", "owners"}
+_WORKFLOW_RESERVED_DOC_FIELDS = {"case_id", "doc_name", "doc_type", "project_name", "project_key", "repo_root", "repo_id"}
+_RUNTIME_OWNED_FRONTMATTER_FIELDS = {"created_by", "maintained_by", "edit_trace"}
+_RESERVED_DELETE_FIELDS = _RUNTIME_OWNED_FRONTMATTER_FIELDS | _WORKFLOW_RESERVED_DOC_FIELDS
+_PRESERVED_WORKFLOW_KEYS = {
+    "title",
+    "summary",
+    "tags",
+    "owners",
+    "category",
+    "status",
+    "version",
+    "related_docs",
+    "maintained_by",
+}
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    values: list[str] = []
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = [item for item in value if isinstance(item, str)]
+    else:
+        return []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        cleaned = raw.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        deduped.append(cleaned)
+    return deduped
+
+
 def _apply_frontmatter_pipeline(
-    parsed: "FrontmatterResult",
+    parsed: FrontmatterResult,
     updated_body: str,
     *,
     doc_name: str,
@@ -2768,14 +4029,37 @@ def _apply_frontmatter_pipeline(
     project: Dict[str, Any],
     metadata: Optional[Dict[str, Any]],
     date_str: str,
+    action: str,
+    actor_id: str,
     allow_create: bool = True,
 ) -> tuple[str, Dict[str, Any], int]:
+    is_create = action == "create_doc"
+    metadata_hints: list[Dict[str, str]] = []
+    frontmatter_ignored_keys: list[Dict[str, str]] = []
+    frontmatter_updates_summary: Dict[str, list[str]] = {
+        "updated_keys": [],
+        "defaulted_keys": [],
+        "preserved_keys": [],
+    }
+
     if metadata and metadata.get("frontmatter_disable") is True:
         line_count = len(parsed.frontmatter_raw.splitlines()) if parsed.has_frontmatter else 0
+        summary = {
+            "frontmatter_updated": False,
+            "frontmatter_updates": frontmatter_updates_summary,
+            "frontmatter_ignored_keys": frontmatter_ignored_keys,
+            "metadata_hints": metadata_hints,
+            "attribution": {
+                "actor_id": actor_id,
+                "created_by": parsed.frontmatter_data.get("created_by") if parsed.has_frontmatter else actor_id,
+                "maintained_by": parsed.frontmatter_data.get("maintained_by") if parsed.has_frontmatter else actor_id,
+                "edit_trace_updated": False,
+            },
+        }
         if parsed.has_frontmatter:
             return (
                 parsed.frontmatter_raw + updated_body,
-                {"frontmatter_updated": False},
+                summary,
                 line_count,
             )
         updated_parsed = parse_frontmatter(updated_body)
@@ -2783,13 +4067,21 @@ def _apply_frontmatter_pipeline(
             line_count = len(updated_parsed.frontmatter_raw.splitlines())
             return (
                 updated_body,
-                {"frontmatter_updated": False},
+                summary,
                 line_count,
             )
-        return updated_body, {"frontmatter_updated": False}, 0
+        return updated_body, summary, 0
 
     updates: Dict[str, Any] = {}
-    updates["title"] = _extract_title(updated_body, doc_name.replace("_", " ").title())
+    delete_keys: set[str] = set()
+    # Only infer the title from the first body heading when the doc has no
+    # explicit frontmatter title yet (i.e. on create, or a doc that never had
+    # one). An existing explicit title must survive managed body edits — see
+    # BUG-2026-06-17-0002. A caller-supplied title via metadata.frontmatter.title
+    # is applied authoritatively later in the override loop.
+    existing_title = (parsed.frontmatter_data or {}).get("title")
+    if not (parsed.has_frontmatter and str(existing_title or "").strip()):
+        updates["title"] = _extract_title(updated_body, doc_name.replace("_", " ").title())
 
     auto_related_docs_disabled = (
         bool(metadata.get("frontmatter_disable_related_docs")) if isinstance(metadata, dict) else False
@@ -2801,12 +4093,211 @@ def _apply_frontmatter_pipeline(
     if isinstance(metadata, dict):
         if metadata.get("doc_type"):
             updates["doc_type"] = metadata["doc_type"]
+        if metadata.get("intended_doc_type"):
+            updates["intended_doc_type"] = metadata["intended_doc_type"]
         if metadata.get("doc_name"):
             updates["doc_name"] = metadata["doc_name"]
+
+    explicit_created_by: Optional[str] = None
+    explicit_maintained_by: Optional[str] = None
+    trace_overrides: Dict[str, Any] = {}
+
+    if isinstance(metadata, dict):
+        requested_delete_keys = set(_normalize_string_list(metadata.get("frontmatter_delete")))
+        delete_keys = set()
+        for key in requested_delete_keys:
+            if key in _RESERVED_DELETE_FIELDS:
+                frontmatter_ignored_keys.append(
+                    {"field": f"metadata.frontmatter_delete.{key}", "reason": "reserved_field_delete_ignored"}
+                )
+                metadata_hints.append(
+                    {
+                        "code": "reserved_frontmatter_delete_ignored",
+                        "message": f"{key} is reserved/runtime-owned and cannot be deleted via frontmatter_delete.",
+                    }
+                )
+                continue
+            delete_keys.add(key)
+        if is_create and not str(metadata.get("summary", "")).strip():
+            metadata_hints.append(
+                {
+                    "code": "summary_missing_on_create",
+                    "message": "summary is recommended on create for workflow routing context.",
+                }
+            )
+
+        for key in _WORKFLOW_FRONTMATTER_KEYS:
+            if key not in metadata:
+                continue
+            if key == "maintained_by":
+                if is_create:
+                    updates[key] = metadata.get(key)
+                    explicit_maintained_by = str(metadata.get(key) or "").strip() or None
+                    frontmatter_updates_summary["updated_keys"].append(key)
+                else:
+                    frontmatter_ignored_keys.append(
+                        {"field": "metadata.maintained_by", "reason": "reserved_field_managed_by_tool"}
+                    )
+                    metadata_hints.append(
+                        {
+                            "code": "maintained_by_ignored",
+                            "message": "maintained_by is reserved and authored by manage_docs.",
+                        }
+                    )
+                continue
+            if key in _LIST_WORKFLOW_KEYS:
+                normalized = _normalize_string_list(metadata.get(key))
+                if isinstance(metadata.get(key), str):
+                    metadata_hints.append(
+                        {
+                            "code": f"{key}_scalar_normalized_to_list",
+                            "message": f"{key} scalar input was normalized to a single-item list.",
+                        }
+                    )
+                updates[key] = normalized
+            else:
+                updates[key] = metadata.get(key)
+            frontmatter_updates_summary["updated_keys"].append(key)
+
+        for trace_key in _TRACE_INPUT_KEYS:
+            if trace_key in metadata and metadata.get(trace_key) is not None:
+                trace_overrides[trace_key] = metadata.get(trace_key)
+
+        if "edit_trace" in metadata:
+            frontmatter_ignored_keys.append(
+                {"field": "metadata.edit_trace", "reason": "reserved_field_managed_by_tool"}
+            )
+            metadata_hints.append(
+                {"code": "edit_trace_ignored", "message": "edit_trace is reserved and authored by manage_docs."}
+            )
+
+        if "created_by" in metadata:
+            if is_create:
+                explicit_created_by = str(metadata.get("created_by") or "").strip() or None
+            else:
+                frontmatter_ignored_keys.append(
+                    {"field": "metadata.created_by", "reason": "edit_time_override_ignored"}
+                )
+                metadata_hints.append(
+                    {
+                        "code": "created_by_edit_override_ignored",
+                        "message": "created_by is immutable after create in the generic frontmatter contract.",
+                    }
+                )
+
     if isinstance(metadata, dict) and isinstance(metadata.get("frontmatter"), dict):
-        updates.update(metadata["frontmatter"])
+        for key, value in metadata["frontmatter"].items():
+            if key in _WORKFLOW_RESERVED_DOC_FIELDS and doc_name in {"BUG_REPORT", "SECURITY_REPORT"}:
+                frontmatter_ignored_keys.append(
+                    {"field": f"metadata.frontmatter.{key}", "reason": "workflow_reserved_field_managed_by_tool"}
+                )
+                metadata_hints.append(
+                    {
+                        "code": "workflow_reserved_field_ignored",
+                        "message": f"{key} is workflow-reserved for {doc_name} and authored by manage_docs.",
+                    }
+                )
+                continue
+            if key == "edit_trace":
+                frontmatter_ignored_keys.append(
+                    {"field": "metadata.frontmatter.edit_trace", "reason": "reserved_field_managed_by_tool"}
+                )
+                metadata_hints.append(
+                    {"code": "edit_trace_ignored", "message": "edit_trace is reserved and authored by manage_docs."}
+                )
+                continue
+            if key == "created_by":
+                if is_create:
+                    explicit_created_by = str(value or "").strip() or None
+                else:
+                    frontmatter_ignored_keys.append(
+                        {"field": "metadata.frontmatter.created_by", "reason": "edit_time_override_ignored"}
+                    )
+                    metadata_hints.append(
+                        {
+                            "code": "created_by_edit_override_ignored",
+                            "message": "created_by is immutable after create in the generic frontmatter contract.",
+                        }
+                    )
+                continue
+            if key in _TRACE_INPUT_KEYS:
+                if value is not None:
+                    trace_overrides[key] = value
+                continue
+            if key == "maintained_by":
+                frontmatter_ignored_keys.append(
+                    {"field": "metadata.frontmatter.maintained_by", "reason": "reserved_field_managed_by_tool"}
+                )
+                metadata_hints.append(
+                    {"code": "maintained_by_ignored", "message": "maintained_by is reserved and authored by manage_docs."}
+                )
+                continue
+            if key in _LIST_WORKFLOW_KEYS and isinstance(value, str):
+                updates[key] = _normalize_string_list(value)
+                metadata_hints.append(
+                    {
+                        "code": f"{key}_scalar_normalized_to_list",
+                        "message": f"{key} scalar input was normalized to a single-item list.",
+                    }
+                )
+            else:
+                updates[key] = value
+            if key not in frontmatter_updates_summary["updated_keys"]:
+                frontmatter_updates_summary["updated_keys"].append(key)
+
+    existing_frontmatter = dict(parsed.frontmatter_data or {})
+    existing_trace = (
+        dict(existing_frontmatter.get("edit_trace"))
+        if isinstance(existing_frontmatter.get("edit_trace"), dict)
+        else {}
+    )
 
     updates["last_updated"] = date_str
+    created_by = (
+        existing_frontmatter.get("created_by")
+        if (parsed.has_frontmatter and existing_frontmatter.get("created_by"))
+        else None
+    )
+    if not created_by:
+        created_by = explicit_created_by or actor_id
+        frontmatter_updates_summary["defaulted_keys"].append("created_by")
+    if str(created_by).strip() == "Corta Labs":
+        metadata_hints.append(
+            {
+                "code": "legacy_created_by_placeholder_preserved",
+                "message": "created_by legacy placeholder preserved; only maintained_by/edit_trace were refreshed.",
+            }
+        )
+
+    maintained_by = explicit_maintained_by or actor_id
+    if explicit_maintained_by is None:
+        frontmatter_updates_summary["defaulted_keys"].append("maintained_by")
+    updates["created_by"] = created_by
+    updates["maintained_by"] = maintained_by
+    updates["status"] = normalize_canonical_status(updates.get("status") or existing_frontmatter.get("status"))
+    updates["canonical_doc_type"] = derive_canonical_doc_type(
+        str(updates.get("doc_type") or existing_frontmatter.get("doc_type") or ""),
+        str(updates.get("intended_doc_type") or existing_frontmatter.get("intended_doc_type") or ""),
+    )
+
+    edit_trace: Dict[str, Any] = {
+        "tool": "manage_docs",
+        "created_at": existing_trace.get("created_at") or date_str,
+        "created_via": existing_trace.get("created_via") or ("create_doc" if is_create else action),
+        "last_edited_at": date_str,
+        "last_edited_by": actor_id,
+        "last_action": action,
+    }
+    for key in _TRACE_INPUT_KEYS:
+        if key in trace_overrides:
+            edit_trace[key] = trace_overrides[key]
+        elif key in existing_trace:
+            edit_trace[key] = existing_trace[key]
+    updates["edit_trace"] = edit_trace
+
+    for key in _PRESERVED_WORKFLOW_KEYS:
+        if parsed.has_frontmatter and key not in updates and key in existing_frontmatter:
+            frontmatter_updates_summary["preserved_keys"].append(key)
 
     if not parsed.has_frontmatter:
         updated_parsed = parse_frontmatter(updated_body)
@@ -2816,6 +4307,7 @@ def _apply_frontmatter_pipeline(
                     updated_parsed.frontmatter_raw,
                     updated_parsed.frontmatter_data,
                     updates,
+                    delete_keys=delete_keys,
                 )
                 line_count = len(frontmatter_raw.splitlines())
                 new_text = frontmatter_raw + updated_parsed.body
@@ -2825,35 +4317,109 @@ def _apply_frontmatter_pipeline(
                         "frontmatter_updated": True,
                         "frontmatter_created": False,
                         "frontmatter": merged,
+                        "frontmatter_updates": frontmatter_updates_summary,
+                        "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                        "metadata_hints": metadata_hints,
+                        "attribution": {
+                            "actor_id": actor_id,
+                            "created_by": merged.get("created_by"),
+                            "maintained_by": merged.get("maintained_by"),
+                            "edit_trace_updated": True,
+                        },
                     },
                     line_count,
                 )
             line_count = len(updated_parsed.frontmatter_raw.splitlines())
             return (
                 updated_body,
-                {"frontmatter_updated": False, "frontmatter_created": False},
+                {
+                    "frontmatter_updated": False,
+                    "frontmatter_created": False,
+                    "frontmatter_updates": frontmatter_updates_summary,
+                    "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                    "metadata_hints": metadata_hints,
+                    "attribution": {
+                        "actor_id": actor_id,
+                        "created_by": created_by,
+                        "maintained_by": maintained_by,
+                        "edit_trace_updated": False,
+                    },
+                },
                 line_count,
             )
         if not allow_create:
             return (
                 updated_body,
-                {"frontmatter_updated": False, "frontmatter_created": False},
+                {
+                    "frontmatter_updated": False,
+                    "frontmatter_created": False,
+                    "frontmatter_updates": frontmatter_updates_summary,
+                    "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                    "metadata_hints": metadata_hints,
+                    "attribution": {
+                        "actor_id": actor_id,
+                        "created_by": created_by,
+                        "maintained_by": maintained_by,
+                        "edit_trace_updated": False,
+                    },
+                },
                 0,
             )
 
-        defaults = _default_frontmatter(doc_name, doc_category, project.get("name", ""), updated_body, date_str)
+        defaults = _default_frontmatter(
+            doc_name,
+            doc_category,
+            project.get("name", ""),
+            updated_body,
+            date_str,
+            actor_id=actor_id,
+        )
         defaults.update(updates)
         frontmatter_block = build_frontmatter(defaults)
         line_count = len(frontmatter_block.splitlines())
         new_text = frontmatter_block + updated_body
-        return new_text, {"frontmatter_updated": True, "frontmatter_created": True}, line_count
+        return (
+            new_text,
+            {
+                "frontmatter_updated": True,
+                "frontmatter_created": True,
+                "frontmatter": defaults,
+                "frontmatter_updates": frontmatter_updates_summary,
+                "frontmatter_ignored_keys": frontmatter_ignored_keys,
+                "metadata_hints": metadata_hints,
+                "attribution": {
+                    "actor_id": actor_id,
+                    "created_by": defaults.get("created_by"),
+                    "maintained_by": defaults.get("maintained_by"),
+                    "edit_trace_updated": True,
+                },
+            },
+            line_count,
+        )
 
     frontmatter_raw, merged = apply_frontmatter_updates(
-        parsed.frontmatter_raw, parsed.frontmatter_data, updates
+        parsed.frontmatter_raw, parsed.frontmatter_data, updates, delete_keys=delete_keys
     )
     line_count = len(frontmatter_raw.splitlines())
     new_text = frontmatter_raw + updated_body
-    return new_text, {"frontmatter_updated": True, "frontmatter_created": False, "frontmatter": merged}, line_count
+    return (
+        new_text,
+        {
+            "frontmatter_updated": True,
+            "frontmatter_created": False,
+            "frontmatter": merged,
+            "frontmatter_updates": frontmatter_updates_summary,
+            "frontmatter_ignored_keys": frontmatter_ignored_keys,
+            "metadata_hints": metadata_hints,
+            "attribution": {
+                "actor_id": actor_id,
+                "created_by": merged.get("created_by"),
+                "maintained_by": merged.get("maintained_by"),
+                "edit_trace_updated": True,
+            },
+        },
+        line_count,
+    )
 
 
 def _validate_comparison_symbols(value: Any) -> bool:
@@ -2886,13 +4452,16 @@ def _build_create_doc_body(
     metadata: Optional[Dict[str, Any]],
 ) -> str:
     if content:
-        body = str(content)
+        content_text = str(content)
+        sentinel = content_text.strip().lower()
+        body = "" if sentinel in {"no message provided", "empty message"} or sentinel.startswith("no message provided") else content_text
     else:
         metadata = metadata or {}
         body = ""
         raw_body = metadata.get("body") or metadata.get("snippet")
         if isinstance(raw_body, str):
-            body = raw_body
+            sentinel = raw_body.strip().lower()
+            body = "" if sentinel in {"no message provided", "empty message"} or sentinel.startswith("no message provided") else raw_body
         elif isinstance(metadata.get("sections"), list):
             sections = []
             for section in metadata["sections"]:
@@ -2904,17 +4473,21 @@ def _build_create_doc_body(
                     continue
                 if title:
                     sections.append(f"## {title}")
+                # Emit a stable anchor per section (template-macro shape) so
+                # created sections are durable replace_section targets and
+                # appear in editable_sections (P2, D1 unified create contract).
+                anchor = str(section.get("id") or "").strip()
+                if not anchor and title:
+                    anchor = slugify_project_name(title)
+                if anchor:
+                    sections.append(f"<!-- ID: {anchor} -->")
                 if text:
                     sections.append(text)
                 sections.append("")
             body = "\n".join(sections).rstrip()
-    if not body:
-        raise DocumentOperationError(
-            "CREATE_DOC_MISSING_CONTENT: provide content, body, snippet, or sections"
-        )
     if not body.endswith("\n"):
         body += "\n"
-    return body
+    return strip_trailing_whitespace_lines(body)
 
 
 def _extract_header_anchors(text: str) -> set[str]:
@@ -2956,30 +4529,38 @@ def _validate_crosslinks(
         if not isinstance(related_docs, list):
             related_docs = []
 
-    check_anchors = bool(metadata.get("check_anchors")) if isinstance(metadata, dict) else False
     docs_dir = project.get("docs_dir")
     project_root = Path(project.get("root", ""))
     base_dir = Path(docs_dir) if docs_dir else _resolve_doc_path(project, "architecture").parent
     diagnostics: list[Dict[str, Any]] = []
-
-    for entry in related_docs:
-        target = str(entry)
-        path_part, anchor_part = (target.split("#", 1) + [None])[:2]
-        candidate = Path(path_part)
-        if not candidate.is_absolute():
-            candidate = base_dir / candidate
-        resolved = candidate.resolve()
-        exists = resolved.exists()
+    check_anchors = bool(metadata.get("check_anchors")) if isinstance(metadata, dict) else False
+    docs_map = project.get("docs")
+    registered_docs: Dict[str, Path] = {}
+    if isinstance(docs_map, dict):
+        for key, value in docs_map.items():
+            if isinstance(key, str) and isinstance(value, str):
+                registered_docs[key] = Path(value)
+    edges = normalize_topology_edges(
+        source_doc_id="source",
+        source_doc_path=_resolve_doc_path(project, "source"),
+        edge_map={"related_docs": related_docs},
+        docs_dir=base_dir,
+        project_root=project_root,
+        registered_docs=registered_docs,
+    )
+    for edge in edges:
+        anchor = edge.get("target_anchor")
+        resolved_path = Path(edge["target_path"]) if isinstance(edge.get("target_path"), str) else None
         anchor_found = None
-        if exists and check_anchors and anchor_part:
-            anchors = _extract_header_anchors(resolved.read_text(encoding="utf-8"))
-            anchor_found = anchor_part in anchors
+        if check_anchors and resolved_path and resolved_path.exists() and isinstance(anchor, str) and anchor:
+            anchors = _extract_header_anchors(resolved_path.read_text(encoding="utf-8"))
+            anchor_found = anchor in anchors
         diagnostics.append(
             {
-                "target": target,
-                "path": str(resolved),
-                "exists": exists,
-                "anchor": anchor_part,
+                "target": edge.get("target_ref"),
+                "path": edge.get("target_path"),
+                "exists": bool(edge.get("target_resolved")),
+                "anchor": anchor,
                 "anchor_found": anchor_found,
             }
         )
@@ -3016,7 +4597,7 @@ def _validate_and_correct_inputs(
         "action": {
             "type": str,
             "required": True,
-            "allowed_values": {"replace_section", "append", "status_update", "list_sections", "batch",
+            "allowed_values": {"replace_section", "append", "status_update", "frontmatter_update", "list_sections", "batch",
                              "apply_patch", "replace_range", "replace_text", "normalize_headers", "generate_toc", "create_doc", "validate_crosslinks",
                              "search", "create_research_doc", "create_bug_report", "create_review_report", "create_agent_report_card"},
             "default": "append"
@@ -3140,9 +4721,21 @@ def _validate_and_correct_inputs(
             if corrected_action in {"normalize_headers", "generate_toc"}:
                 corrected_content = None
                 corrected_template = None
-            if corrected_action in {"create_doc", "validate_crosslinks"}:
+            if corrected_action == "replace_text":
+                # replace_text takes its replacement from metadata.replace, so a
+                # caller-supplied `content` is a real (rejectable) signal. Clear
+                # the corrector's fabricated sentinel first, or every call looks
+                # like it supplied content.
+                if corrected_content in {"No message provided", "Empty message"}:
+                    corrected_content = None
+            if corrected_action == "validate_crosslinks":
                 corrected_content = corrected_content if corrected_content not in {"No message provided", "Empty message"} else None
                 corrected_template = None
+            if corrected_action == "create_doc":
+                if isinstance(corrected_content, str):
+                    sentinel = corrected_content.strip().lower()
+                    if sentinel in {"no message provided", "empty message"} or sentinel.startswith("no message provided"):
+                        corrected_content = None
         elif not corrected_content and not corrected_template:
             corrected_content = f"## {corrected_action.replace('_', ' ').title()}\n\nContent placeholder."
 

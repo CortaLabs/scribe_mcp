@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
+import difflib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from jinja2 import (
     Environment,
@@ -35,6 +35,16 @@ def get_template_root():
     """Get template root directory."""
     return templates_dir()
 
+
+def _strip_trailing_whitespace_lines(content: str) -> str:
+    """Keep rendered text git-clean without changing paragraph structure."""
+    if not content:
+        return content
+    normalized = "\n".join(line.rstrip(" \t") for line in content.splitlines())
+    if content.endswith(("\n", "\r")):
+        normalized += "\n"
+    return normalized
+
 # Setup logging for template engine
 template_logger = logging.getLogger(__name__)
 
@@ -45,11 +55,23 @@ LEGACY_PATTERN = r'\{(\w+)\}'
 DEFAULT_VARIABLES = {
     "project_name": "",
     "project_slug": "",
+    "project_description": "",
+    "product_name": "",
+    "repo_role": "",
+    "organization": "",
+    "description": "",
+    "project_type": "",
+    "purpose": "",
     "timestamp": "",
+    "created_date": "",
     "agent": "",
     "utcnow": "",
     "version": "1.0",
     "status": "active",
+    "tags": [],
+    "objectives": [],
+    "features": [],
+    "team": [],
 }
 
 # Restricted builtins for security
@@ -214,6 +236,29 @@ class Jinja2TemplateEngine:
             add_dir(builtin_root / "fragments", "builtin_fragments")
 
         return template_dirs
+
+    def _template_resolution_diagnostics(self, template_name: str) -> Dict[str, Any]:
+        available: Set[str] = set()
+        for template_dir in self.template_dirs:
+            for candidate in template_dir.glob("*.md"):
+                available.add(candidate.name)
+        close_matches = difflib.get_close_matches(
+            template_name,
+            sorted(available),
+            n=5,
+            cutoff=0.45,
+        )
+        return {
+            "failure_kind": "template_resolution",
+            "requested_template": template_name,
+            "searched_template_roots": [str(path) for path in self.template_dirs],
+            "available_templates": sorted(available),
+            "nearest_alternatives": close_matches,
+            "recommended_action": (
+                "Choose one of available_templates, or for manage_docs create use "
+                "metadata.doc_type='custom' with content/body when no bundled template is needed."
+            ),
+        }
 
     def _create_jinja2_environment(self) -> Environment:
         """Create Jinja2 environment with appropriate security settings."""
@@ -385,7 +430,7 @@ class Jinja2TemplateEngine:
             safe_context = SafeDict(context)
             result = template_string.format_map(safe_context)
             template_logger.debug("Legacy template rendering successful")
-            return result
+            return _strip_trailing_whitespace_lines(result)
         except Exception as e:
             template_logger.error(f"Legacy template rendering failed: {e}")
             raise TemplateRenderError(f"Both Jinja2 and legacy template rendering failed: {e}")
@@ -423,12 +468,19 @@ class Jinja2TemplateEngine:
 
             # Render template (environment already has StrictUndefined configured)
             result = template.render(**context)
+            result = _strip_trailing_whitespace_lines(result)
 
             template_logger.debug(f"Successfully rendered template '{template_name}' ({len(result)} chars)")
             return result
 
-        except TemplateNotFound as e:
-            raise TemplateNotFoundError(f"Template '{template_name}' not found in template directories: {self.template_dirs}")
+        except TemplateNotFound:
+            diagnostics = self._template_resolution_diagnostics(template_name)
+            raise TemplateNotFoundError(
+                f"Template resolution failed for '{template_name}'. "
+                f"Searched roots: {diagnostics['searched_template_roots']}. "
+                f"Nearest alternatives: {diagnostics['nearest_alternatives']}. "
+                f"Recommended action: {diagnostics['recommended_action']}"
+            )
         except (TemplateSyntaxError, TemplateRuntimeError) as e:
             # In strict mode, bypass legacy fallback and raise immediately.
             use_fallback = fallback and not strict
@@ -474,6 +526,7 @@ class Jinja2TemplateEngine:
 
             # Render template string (environment already has StrictUndefined configured)
             result = template.render(**context)
+            result = _strip_trailing_whitespace_lines(result)
 
             template_logger.debug(f"Successfully rendered template string ({len(result)} chars)")
             return result
@@ -497,9 +550,17 @@ class Jinja2TemplateEngine:
         except Exception as e:
             raise TemplateRenderError(f"Unexpected error rendering template string: {e}")
 
-    def validate_template(self, template_name: str) -> Dict[str, Any]:
+    def validate_template(
+        self,
+        template_name: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        *,
+        render_check: bool = False,
+        strict: bool = True,
+        fallback: bool = False,
+    ) -> Dict[str, Any]:
         """
-        Validate a template without rendering it.
+        Validate a template.
 
         Returns:
             Validation result with success status and any errors
@@ -507,10 +568,15 @@ class Jinja2TemplateEngine:
         result = {
             "template": template_name,
             "valid": False,
+            "syntax_valid": False,
+            "render_checked": render_check,
+            "render_valid": None,
             "errors": [],
             "warnings": [],
             "line_count": 0,
             "size_bytes": 0,
+            "path": None,
+            "template_type": "unknown",
         }
 
         try:
@@ -519,14 +585,41 @@ class Jinja2TemplateEngine:
 
             # Get template stats
             if filename:
+                result["path"] = filename
                 result["size_bytes"] = Path(filename).stat().st_size if Path(filename).exists() else 0
                 result["line_count"] = len(source.splitlines())
+                for template_dir in self.template_dirs:
+                    try:
+                        Path(filename).resolve().relative_to(template_dir.resolve())
+                    except ValueError:
+                        continue
+                    result["template_type"] = self._template_dir_types.get(template_dir, "unknown")
+                    break
 
             # Parse without rendering to validate syntax
             self.env.parse(source)
+            result["syntax_valid"] = True
 
-            result["valid"] = True
-            template_logger.debug(f"Template '{template_name}' validation passed")
+            if render_check:
+                try:
+                    self.render_template(
+                        template_name,
+                        metadata=metadata,
+                        strict=strict,
+                        fallback=fallback,
+                    )
+                    result["render_valid"] = True
+                except Exception as exc:
+                    result["render_valid"] = False
+                    result["errors"].append(f"Render error: {exc}")
+            result["valid"] = bool(
+                result["syntax_valid"] and (not render_check or result["render_valid"] is True)
+            )
+            template_logger.debug(
+                "Template '%s' validation passed (render_check=%s)",
+                template_name,
+                render_check,
+            )
 
         except TemplateNotFound:
             result["errors"].append(f"Template '{template_name}' not found")
@@ -536,6 +629,42 @@ class Jinja2TemplateEngine:
             result["errors"].append(f"Validation error: {e}")
 
         return result
+
+    def validate_templates(
+        self,
+        template_names: Optional[Iterable[str]] = None,
+        *,
+        extension: str = ".md",
+        metadata: Optional[Dict[str, Any]] = None,
+        render_check: bool = False,
+        strict: bool = True,
+        fallback: bool = False,
+    ) -> Dict[str, Any]:
+        """Validate one or many templates and return a summary payload."""
+        if template_names is None:
+            template_names = self.list_templates(extension=extension)
+
+        ordered_templates = list(dict.fromkeys(template_names))
+        results = [
+            self.validate_template(
+                template_name,
+                metadata=metadata,
+                render_check=render_check,
+                strict=strict,
+                fallback=fallback,
+            )
+            for template_name in ordered_templates
+        ]
+        invalid_count = sum(1 for result in results if not result.get("valid", False))
+
+        return {
+            "valid": invalid_count == 0,
+            "render_checked": render_check,
+            "checked": len(results),
+            "invalid_count": invalid_count,
+            "valid_count": len(results) - invalid_count,
+            "templates": results,
+        }
 
     def list_templates(self, extension: str = ".md") -> List[str]:
         """List all available templates with the given extension (recursive)."""

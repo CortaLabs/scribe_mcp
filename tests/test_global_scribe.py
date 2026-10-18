@@ -2,9 +2,14 @@
 """Simple integration test for global Scribe deployment."""
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
+
+@pytest.mark.regression
 def test_repo_discovery():
     """Test repository discovery functionality."""
     print("🧪 Testing repository discovery...")
@@ -25,6 +30,46 @@ def test_repo_discovery():
 
             discovered = RepoDiscovery.find_repo_root(repo_path)
             assert discovered == repo_path, f"Expected {repo_path}, got {discovered}"
+
+            council_repo = temp_path / "council-repo"
+            council_marker = council_repo / ".council" / "council.yaml"
+            nested_path = council_repo / "nested" / "child"
+            council_marker.parent.mkdir(parents=True)
+            council_marker.write_text("council: test\n", encoding="utf-8")
+            nested_path.mkdir(parents=True)
+
+            assert RepoDiscovery.find_repo_root(council_repo) == council_repo
+            assert RepoDiscovery.find_repo_root(nested_path) == council_repo
+
+            refusal_cases = {
+                "bare-council-dir": lambda root: (root / ".council").mkdir(parents=True),
+                "misplaced-council-yaml": lambda root: (root / "council.yaml").write_text(
+                    "council: misplaced\n",
+                    encoding="utf-8",
+                ),
+                "similar-council-marker": lambda root: (
+                    (root / ".council").mkdir(parents=True),
+                    (root / ".council" / "council.yml").write_text(
+                        "council: similar\n",
+                        encoding="utf-8",
+                    ),
+                ),
+            }
+            for name, create_marker in refusal_cases.items():
+                candidate = temp_path / name
+                candidate.mkdir()
+                create_marker(candidate)
+                tree_before = {
+                    path.relative_to(candidate)
+                    for path in candidate.rglob("*")
+                }
+
+                assert RepoDiscovery.find_repo_root(candidate) is None
+                assert {
+                    path.relative_to(candidate)
+                    for path in candidate.rglob("*")
+                } == tree_before
+
             print("   ✅ Repository discovery works")
 
         except Exception as e:
@@ -99,17 +144,12 @@ def test_sandbox_isolation():
         (repo2 / ".git").mkdir()
 
         try:
-            from scribe_mcp.config.repo_config import RepoDiscovery, RepoConfig
             from scribe_mcp.security.sandbox import get_safety_instance, SecurityError
-
-            # Create basic configs
-            config1 = RepoConfig.defaults_for_repo(repo1)
-            config2 = RepoConfig.defaults_for_repo(repo2)
 
             # Get safety instance and sandboxes
             safety = get_safety_instance()
             sandbox1 = safety.get_sandbox(repo1)
-            sandbox2 = safety.get_sandbox(repo2)
+            _sandbox2 = safety.get_sandbox(repo2)
 
             # Test isolation
             file1 = repo1 / "docs" / "test.md"

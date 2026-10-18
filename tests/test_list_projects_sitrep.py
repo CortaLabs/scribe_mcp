@@ -278,9 +278,19 @@ class TestJSONFormatFullMetadata:
              patch('scribe_mcp.tools.list_projects._PROJECT_REGISTRY') as mock_registry, \
              patch('scribe_mcp.tools.list_projects.detect_project_state') as mock_detect:
 
-            # Setup mocks
+            # Setup mocks — provide a backend record matching the state project
+            # so backend_records lookup succeeds and count_entries is called.
+            mock_record = MagicMock()
+            mock_record.name = "project1"
+            mock_record.repo_root = "/p1"
+            mock_record.progress_log_path = "/p1/PROGRESS_LOG.md"
+
             mock_backend = AsyncMock()
-            mock_backend.list_projects.return_value = []
+            mock_backend.list_projects.return_value = [mock_record]
+            # Production prefers list_projects_by_repo when present (a bare AsyncMock
+            # always "has" it); configure both branches or backend_records stays empty
+            # and entry_count never picks up the count_entries value.
+            mock_backend.list_projects_by_repo = AsyncMock(return_value=[mock_record])
             mock_backend.count_entries.return_value = 25
             mock_server.storage_backend = mock_backend
 
@@ -410,9 +420,21 @@ class TestInfrastructureReuse:
              patch('scribe_mcp.tools.list_projects._PROJECT_REGISTRY') as mock_registry, \
              patch('scribe_mcp.tools.list_projects.detect_project_state') as mock_detect:
 
-            # Setup mocks
+            # Setup mocks — provide a backend record matching the state project so the
+            # backend_records dict is populated and count_entries is actually called.
+            # Production builds record_key = (name, _normalise_project_root(root)).
+            mock_record = MagicMock()
+            mock_record.name = "test_proj"
+            mock_record.repo_root = "/test"
+            mock_record.progress_log_path = "/test/PROGRESS_LOG.md"
+
             mock_backend = AsyncMock()
-            mock_backend.list_projects.return_value = []
+            mock_backend.list_projects.return_value = [mock_record]
+            # Production prefers the repo-scoped query when the backend exposes
+            # list_projects_by_repo (a bare AsyncMock always "has" it), so configure
+            # both branches to return the record — otherwise backend_records is empty
+            # and count_entries is never reached.
+            mock_backend.list_projects_by_repo = AsyncMock(return_value=[mock_record])
             mock_backend.count_entries = AsyncMock(return_value=42)
             mock_server.storage_backend = mock_backend
 
@@ -431,8 +453,9 @@ class TestInfrastructureReuse:
             # Execute
             await list_projects(format="structured", include_test=True)
 
-            # Verify backend.count_entries was called
-            mock_backend.count_entries.assert_called_once_with("test_proj")
+            # Verify backend.count_entries was called with the project record (not the name string).
+            # Production passes the full record object to count_entries.
+            mock_backend.count_entries.assert_called_once_with(mock_record)
 
     def test_reuses_detect_project_state_function(self):
         """Verify detect_project_state is imported from Phase 4.1."""

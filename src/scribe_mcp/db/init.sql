@@ -8,10 +8,91 @@ CREATE TABLE IF NOT EXISTS scribe_migrations (
     completed_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS apply_preview_receipts (
+    token_sha256 TEXT PRIMARY KEY
+        CHECK (token_sha256 ~ '^[0-9a-f]{64}$'),
+    receipt_version INTEGER NOT NULL
+        CHECK (receipt_version >= 1),
+    state TEXT NOT NULL
+        CHECK (state IN ('issued', 'applying', 'applied', 'failed_terminal')),
+    principal_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    project_key TEXT NOT NULL,
+    repo_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    normalized_intent_json JSONB NOT NULL,
+    target_binding_json JSONB NOT NULL,
+    precondition_json JSONB NOT NULL,
+    predicted_after_json JSONB NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    fence BIGINT NOT NULL DEFAULT 0
+        CHECK (fence >= 0),
+    apply_lease_expires_at TIMESTAMPTZ,
+    terminal_result_code TEXT
+        CHECK (
+            terminal_result_code IS NULL
+            OR terminal_result_code IN (
+                'APPLY_RECEIPT_APPLIED',
+                'APPLY_RECEIPT_REPLAYED',
+                'APPLY_RECEIPT_INVALID',
+                'APPLY_RECEIPT_EXPIRED',
+                'APPLY_RECEIPT_SCOPE_MISMATCH',
+                'APPLY_RECEIPT_INAPPLICABLE',
+                'APPLY_RECEIPT_POLICY_DENIED',
+                'APPLY_RECEIPT_TARGET_DRIFT',
+                'APPLY_RECEIPT_BUSY',
+                'APPLY_RECEIPT_RECOVERY_REQUIRED',
+                'APPLY_RECEIPT_STORAGE_UNAVAILABLE'
+            )
+        ),
+    terminal_result_json JSONB,
+    terminal_at TIMESTAMPTZ,
+    audit_correlation_id TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CHECK (expires_at > issued_at),
+    CHECK (updated_at >= issued_at),
+    CHECK (
+        (
+            state = 'issued'
+            AND fence = 0
+            AND apply_lease_expires_at IS NULL
+            AND terminal_result_code IS NULL
+            AND terminal_result_json IS NULL
+            AND terminal_at IS NULL
+        )
+        OR (
+            state = 'applying'
+            AND fence >= 1
+            AND apply_lease_expires_at IS NOT NULL
+            AND terminal_result_code IS NULL
+            AND terminal_result_json IS NULL
+            AND terminal_at IS NULL
+        )
+        OR (
+            state IN ('applied', 'failed_terminal')
+            AND fence >= 1
+            AND apply_lease_expires_at IS NULL
+            AND terminal_result_code IS NOT NULL
+            AND terminal_result_json IS NOT NULL
+            AND terminal_at IS NOT NULL
+        )
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_expires_at
+    ON apply_preview_receipts (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_state_lease
+    ON apply_preview_receipts (state, apply_lease_expires_at);
+
 CREATE TABLE IF NOT EXISTS scribe_projects (
     id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
     repo_root TEXT NOT NULL,
+    repo_id TEXT,
+    project_key TEXT,
     progress_log_path TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -111,7 +192,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 
 CREATE TABLE IF NOT EXISTS agent_projects (
     agent_id TEXT PRIMARY KEY,
-    project_name TEXT REFERENCES scribe_projects(name) ON DELETE SET NULL,
+    project_name TEXT,
     version INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_by TEXT,
@@ -146,14 +227,14 @@ CREATE TABLE IF NOT EXISTS scribe_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS session_projects (
-    session_id TEXT PRIMARY KEY,
-    project_name TEXT REFERENCES scribe_projects(name) ON DELETE SET NULL,
+    session_id TEXT PRIMARY KEY REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
+    project_name TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS agent_recent_projects (
     agent_id TEXT NOT NULL,
-    project_name TEXT NOT NULL REFERENCES scribe_projects(name) ON DELETE CASCADE,
+    project_name TEXT NOT NULL,
     last_access_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (agent_id, project_name)
 );
@@ -356,7 +437,9 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     agent_id TEXT,
     error_message TEXT,
     response_size_bytes INTEGER,
-    repo_root TEXT
+    repo_root TEXT,
+    correlation_id TEXT,
+    measurement_scope TEXT
 );
 
 CREATE TABLE IF NOT EXISTS scribe_bridges (
@@ -420,7 +503,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_projects_updated_at ON agent_projects(updat
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_agent_id ON agent_project_events(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_created_at ON agent_project_events(created_at);
 
-CREATE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id);
+WITH ranked AS (
+    SELECT
+        ctid,
+        ROW_NUMBER() OVER (
+            PARTITION BY transport_session_id
+            ORDER BY last_active_at DESC NULLS LAST, started_at DESC NULLS LAST, session_id DESC
+        ) AS rn
+    FROM scribe_sessions
+    WHERE transport_session_id IS NOT NULL
+)
+UPDATE scribe_sessions AS s
+SET transport_session_id = NULL
+FROM ranked
+WHERE s.ctid = ranked.ctid
+  AND ranked.rn > 1;
+
+DROP INDEX IF EXISTS idx_scribe_sessions_transport;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id) WHERE transport_session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_agent ON scribe_sessions(agent_id);
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_last_active ON scribe_sessions(last_active_at DESC);
 
@@ -458,6 +558,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);
 
 CREATE INDEX IF NOT EXISTS idx_bridges_state ON scribe_bridges(state);
 CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at DESC);

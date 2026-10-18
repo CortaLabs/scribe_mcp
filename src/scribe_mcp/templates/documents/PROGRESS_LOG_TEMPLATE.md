@@ -1,10 +1,11 @@
 {% extends "documents/base_log.md" %}
 {% from "documents/base_log.md" import rotation_notice with context %}
+{% set product = product_name | default(project_name or "this project") %}
 
 {% block log_metadata %}
 {% set log_config.title = "Progress Log" %}
 {% set log_config.icon = "📜" %}
-{% set log_config.summary = "Generated automatically. Use `append_entry` (or scripts/scribe.py) to append new entries. Never edit past lines by hand." %}
+{% set log_config.summary = "Generated automatically for " ~ product ~ ". Use `append_entry` (or scripts/scribe.py) to append new entries. Never edit past lines by hand." %}
 {% endblock %}
 
 {% block log_body %}
@@ -27,7 +28,7 @@
 ---
 
 ## Reminders
-- Append after every meaningful change (code, docs, decisions).
+- Append after every meaningful {{ product }} change (code, docs, decisions).
 - Mention updated docs explicitly (e.g., `docs=architecture,phase_plan`).
 - Rotate the log (`rotate_log`) when it nears 200 entries.
 - All rotations are cryptographically verified and auditable.

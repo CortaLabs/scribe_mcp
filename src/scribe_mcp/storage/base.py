@@ -6,7 +6,13 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from scribe_mcp.storage.models import ProjectRecord
+from scribe_mcp.storage.models import (
+    ApplyPreviewClaimResult,
+    ApplyPreviewReceiptRecord,
+    CaseRegistryRecord,
+    ProjectRecord,
+    RepoScopeGrantRecord,
+)
 
 
 class ConflictError(Exception):
@@ -21,6 +27,40 @@ class RemoteUnavailableError(Exception):
 
 class StorageBackend(ABC):
     """Unified interface for persistence layers."""
+
+    async def issue_apply_preview_receipt(
+        self, record: ApplyPreviewReceiptRecord
+    ) -> ApplyPreviewReceiptRecord:
+        """Persist a new apply-preview receipt without storing its bearer token."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def fetch_apply_preview_receipt(
+        self, token_sha256: str
+    ) -> ApplyPreviewReceiptRecord | None:
+        """Fetch an apply-preview receipt by its SHA-256 bearer digest."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def claim_apply_preview_receipt(
+        self, token_sha256: str, *, lease_seconds: int
+    ) -> ApplyPreviewClaimResult:
+        """Atomically claim or recover a receipt execution lease."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def finalize_apply_preview_receipt(
+        self,
+        token_sha256: str,
+        *,
+        fence: int,
+        terminal_state: str,
+        result_code: str,
+        result_json: str,
+    ) -> ApplyPreviewReceiptRecord:
+        """Finalize a claimed receipt only when its monotonic fence matches."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    async def cleanup_apply_preview_receipts(self) -> int:
+        """Delete receipts eligible for cleanup and return the deleted count."""
+        raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
 
     async def setup(self) -> None:
         """Perform any startup work. Optional for some backends."""
@@ -51,8 +91,18 @@ class StorageBackend(ABC):
         """
 
     @abstractmethod
-    async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
-        """Return the project by name when present."""
+    async def fetch_project(
+        self,
+        name: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_key: Optional[str] = None,
+    ) -> Optional[ProjectRecord]:
+        """Return the project when present.
+
+        `project_key` is authoritative. Name-only lookup is compatibility behavior
+        and may return None when the name is ambiguous across repositories.
+        """
 
     @abstractmethod
     async def list_projects(self) -> List[ProjectRecord]:
@@ -74,7 +124,13 @@ class StorageBackend(ABC):
         """Delete a project and all associated data. Returns True if project was deleted."""
 
     @abstractmethod
-    async def update_project_docs(self, name: str, docs_json: str) -> bool:
+    async def update_project_docs(
+        self,
+        name: str,
+        docs_json: str,
+        *,
+        repo_root: Optional[str] = None,
+    ) -> bool:
         """Update only the docs_json field for a project. Returns True if updated."""
 
     @abstractmethod
@@ -97,6 +153,26 @@ class StorageBackend(ABC):
         log_type: Optional[str] = None,
     ) -> None:
         """Insert a progress log entry and update metrics."""
+
+    @abstractmethod
+    async def fetch_entry_by_id(
+        self,
+        *,
+        entry_id: str,
+        repo_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return minimal mirrored-entry proof for an entry id scoped by repo/project."""
+
+    async def update_entry_meta(
+        self,
+        *,
+        entry_id: str,
+        project: ProjectRecord,
+        meta: Dict[str, Any],
+    ) -> bool:
+        """Update metadata for an existing progress-log entry. Returns True if updated."""
+        raise NotImplementedError("update_entry_meta is not implemented for this storage backend")
 
     async def record_doc_change(
         self,
@@ -384,6 +460,62 @@ class StorageBackend(ABC):
 
     async def get_session_by_transport(self, transport_session_id: str) -> Optional[dict]:
         """Look up a session by its transport-level session ID."""
+        raise NotImplementedError
+
+    async def create_repo_scope_grant(
+        self,
+        *,
+        authoritative_session_key: str,
+        repo_root: str,
+        reason: str,
+        ttl_minutes: int = 30,
+    ) -> RepoScopeGrantRecord:
+        """Create a repo-scope authorization grant."""
+        raise NotImplementedError
+
+    async def fetch_repo_scope_grant(self, grant_id: str) -> Optional[RepoScopeGrantRecord]:
+        """Fetch a non-expired repo-scope authorization grant by ID."""
+        raise NotImplementedError
+
+    async def upsert_case_registry_record(
+        self,
+        *,
+        case_id: str,
+        case_type: str,
+        project_name: str,
+        repo_root: str,
+        doc_type: str,
+        doc_name: str,
+        doc_path: str,
+        title: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        source_tool: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CaseRegistryRecord:
+        """Create or update a shared case-registry record for bug/security lifecycle docs."""
+        raise NotImplementedError
+
+    async def fetch_case_registry_record(
+        self,
+        case_id: str,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Optional[CaseRegistryRecord]:
+        """Fetch one case-registry record by case_id, optionally scoped by repo/project."""
+        raise NotImplementedError
+
+    async def query_case_registry_records(
+        self,
+        *,
+        repo_root: Optional[str] = None,
+        project_name: Optional[str] = None,
+        case_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[CaseRegistryRecord]:
+        """Query shared case-registry records with repo/project/case-type filters."""
         raise NotImplementedError
 
     async def upsert_agent_recent_project(self, agent_id: str, project_name: str) -> None:

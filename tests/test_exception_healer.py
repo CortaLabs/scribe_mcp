@@ -171,73 +171,6 @@ class TestExceptionHealer:
         assert result["healing_method"] == "generic_fallback"
         assert result["fallback_strategy"] == "unknown"
 
-    def test_analyze_exception_pattern_parameter_validation(self):
-        """Test exception pattern analysis for validation errors."""
-        exception = ValueError("Invalid parameter validation")
-        context = {
-            "operation_type": "read_recent",
-            "parameters": {"n": 5, "page": 1}
-        }
-
-        result = ExceptionHealer.analyze_exception_pattern(exception, context)
-
-        assert "pattern_analysis" in result
-        assert "context_analysis" in result
-        assert "healing_recommendation" in result
-
-        assert result["pattern_analysis"]["exception_type"] == "ValueError"
-        assert result["pattern_analysis"]["exception_category"] == "parameter_validation"
-        assert result["context_analysis"]["operation_type"] == "read_recent"
-        assert result["context_analysis"]["parameter_count"] == 2
-
-        # Check healing recommendation
-        rec = result["healing_recommendation"]
-        assert rec["primary_strategy"] == "intelligent_parameter_correction"
-        assert rec["success_probability"] == 0.90
-        assert "< 1 second" in rec["estimated_recovery_time"]
-
-    def test_analyze_exception_pattern_resource_access(self):
-        """Test exception pattern analysis for resource access errors."""
-        exception = FileNotFoundError("File access denied")
-        context = {
-            "operation_type": "manage_docs",
-            "parameters": {"file_path": "/path/to/file"}
-        }
-
-        result = ExceptionHealer.analyze_exception_pattern(exception, context)
-
-        assert result["pattern_analysis"]["exception_category"] == "resource_access"
-        assert result["healing_recommendation"]["primary_strategy"] == "resource_healing"
-        assert result["healing_recommendation"]["success_probability"] == 0.75
-
-    def test_analyze_exception_pattern_operation_logic(self):
-        """Test exception pattern analysis for operation logic errors."""
-        exception = RuntimeError("Operation logic error")
-        context = {
-            "operation_type": "bulk_processing",
-            "parameters": {"items": [1, 2, 3]}
-        }
-
-        result = ExceptionHealer.analyze_exception_pattern(exception, context)
-
-        assert result["pattern_analysis"]["exception_category"] == "operation_logic"
-        assert result["healing_recommendation"]["primary_strategy"] == "operation_transformation"
-        assert result["healing_recommendation"]["success_probability"] == 0.80
-
-    def test_analyze_exception_pattern_unknown_category(self):
-        """Test exception pattern analysis for unknown error category."""
-        exception = CustomError("Unknown error type")
-        context = {
-            "operation_type": "unknown",
-            "parameters": {}
-        }
-
-        result = ExceptionHealer.analyze_exception_pattern(exception, context)
-
-        assert result["pattern_analysis"]["exception_category"] == "unknown"
-        assert result["healing_recommendation"]["primary_strategy"] == "general_healing"
-        assert result["healing_recommendation"]["success_probability"] == 0.65
-
     @patch('scribe_mcp.utils.parameter_validator.BulletproofParameterCorrector')
     def test_heal_parameter_validation_error_read_recent(self, mock_corrector):
         """Test parameter validation error healing for read_recent."""
@@ -571,58 +504,6 @@ class TestExceptionHealer:
         mock_validation.assert_called_once()
         mock_recovery.assert_called_once()
         mock_emergency.assert_called_once()
-
-    def test_helper_categorize_exception(self):
-        """Test exception categorization helper."""
-        validation_error = ValueError("Invalid validation")
-        file_error = FileNotFoundError("File missing")
-        operation_error = RuntimeError("Operation failed")
-        custom_error = CustomError("Custom error")
-
-        assert ExceptionHealer._categorize_exception(validation_error) == "parameter_validation"
-        assert ExceptionHealer._categorize_exception(file_error) == "resource_access"
-        assert ExceptionHealer._categorize_exception(operation_error) == "operation_logic"
-        assert ExceptionHealer._categorize_exception(custom_error) == "unknown"
-
-    def test_helper_assess_severity(self):
-        """Test exception severity assessment helper."""
-        critical_error = RuntimeError("CriticalError")  # Mock critical error type
-        value_error = ValueError("Value error")
-        custom_error = CustomError("Custom error")
-
-        # Test with actual exception types
-        assert ExceptionHealer._assess_severity(value_error) == "medium"
-        assert ExceptionHealer._assess_severity(custom_error) == "low"
-
-    def test_helper_identify_risk_factors(self):
-        """Test risk factor identification helper."""
-        exception = ValueError("Test error")
-        context_complex = {
-            "parameters": {f"param_{i}": f"value_{i}" for i in range(15)},
-            "operation_type": "bulk_processing"
-        }
-        context_simple = {
-            "parameters": {"param1": "value1"},
-            "operation_type": "simple"
-        }
-
-        risk_factors_complex = ExceptionHealer._identify_risk_factors(exception, context_complex)
-        risk_factors_simple = ExceptionHealer._identify_risk_factors(exception, context_simple)
-
-        assert "high_parameter_complexity" in risk_factors_complex
-        assert "complex_operation" in risk_factors_complex
-        assert len(risk_factors_simple) == 0
-
-    def test_helper_analyze_environment(self):
-        """Test environment analysis helper."""
-        exception = ValueError("Test error")
-        context = {"parameters": {"test": "value"}}
-
-        env_analysis = ExceptionHealer._analyze_environment(context)
-
-        assert "system_load" in env_analysis
-        assert "resource_availability" in env_analysis
-        assert "concurrent_operations" in env_analysis
 
     def test_helper_get_alternative_document_paths(self):
         """Test alternative document path generation helper."""

@@ -10,8 +10,9 @@ from typing import Any, Callable, Dict, Iterable, List, Tuple
 import hashlib
 
 from scribe_mcp import server as server_module
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.config.settings import settings
+from scribe_mcp.config.downstream_assets import ensure_downstream_seed_assets
 from scribe_mcp.tools.project_utils import slugify_project_name
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import additive_local_tool
@@ -40,7 +41,7 @@ class _GenerateDocTemplatesHelper(LoggingToolMixin):
 
 
 _GENERATE_DOC_TEMPLATES_HELPER = _GenerateDocTemplatesHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 
 
 @app.tool(**additive_local_tool(title="Generate Document Templates", tags=("docs", "templates", "write")))
@@ -73,11 +74,12 @@ async def generate_doc_templates(
             "created": [],
             "warnings": [],
         }
+    explicit_project = None if base_dir else project_name
     try:
         logging_context = await _GENERATE_DOC_TEMPLATES_HELPER.prepare_context(
             tool_name="generate_doc_templates",
             agent_id=None,
-            explicit_project=project_name,
+            explicit_project=explicit_project,
             require_project=False,
             state_snapshot=state_snapshot,
         )
@@ -90,9 +92,15 @@ async def generate_doc_templates(
         payload.setdefault("reminders", [])
         return payload
 
+    effective_repo_root = _resolve_effective_repo_root(logging_context, base_dir=base_dir)
+    try:
+        await asyncio.to_thread(ensure_downstream_seed_assets, effective_repo_root)
+    except Exception as exc:
+        logger.warning("Downstream seed/adopt skipped for %s: %s", effective_repo_root, exc)
+
     templates: Dict[str, str] = {}
     if legacy_fallback:
-        templates = await load_templates()
+        templates = await load_templates(repo_root=effective_repo_root)
 
     # INTELLIGENT PARAMETER HANDLING: Support custom context with bulletproof error recovery
     try:
@@ -100,24 +108,24 @@ async def generate_doc_templates(
             # If custom_context is provided, use it for enhanced template rendering
             if isinstance(custom_context, dict):
                 # Merge with base context
-                base_context = substitution_context(project_name, author)
+                base_context = substitution_context(project_name, author, repo_root=effective_repo_root)
                 base_context.update(custom_context)
                 render_context = base_context
             else:
                 # Try to convert to dict if it's not already
-                render_context = substitution_context(project_name, author)
+                render_context = substitution_context(project_name, author, repo_root=effective_repo_root)
                 logger.warning("custom_context should be a dict, got %s", type(custom_context).__name__)
         else:
-            render_context = substitution_context(project_name, author)
+            render_context = substitution_context(project_name, author, repo_root=effective_repo_root)
     except Exception as e:
         # Graceful fallback if context handling fails
-        render_context = substitution_context(project_name, author)
+        render_context = substitution_context(project_name, author, repo_root=effective_repo_root)
         logger.warning("Error handling custom_context: %s. Using base context.", e)
 
     engine_error: Exception | None = None
     try:
         engine = Jinja2TemplateEngine(
-            project_root=settings.project_root,
+            project_root=effective_repo_root,
             project_name=project_name,
             security_mode="sandbox",
         )
@@ -142,12 +150,7 @@ async def generate_doc_templates(
     # Treat legacy overwrite as opt-in force, but gate overwrites behind force for safety.
     force_overwrite = bool(force or overwrite)
 
-    project_root_for_docs = settings.project_root
-    try:
-        if logging_context.project and logging_context.project.get("root"):
-            project_root_for_docs = Path(str(logging_context.project["root"])).resolve()
-    except Exception:
-        project_root_for_docs = settings.project_root
+    project_root_for_docs = effective_repo_root
 
     written: List[str] = []
     skipped: List[str] = []
@@ -290,6 +293,35 @@ def _path_has_suffix(path: Path, suffix: Tuple[str, ...]) -> bool:
     return len(parts) >= len(suffix) and tuple(parts[-len(suffix):]) == suffix
 
 
+def _resolve_effective_repo_root(logging_context: Any, *, base_dir: str | None) -> Path:
+    try:
+        if logging_context.project and logging_context.project.get("root"):
+            return Path(str(logging_context.project["root"])).resolve()
+    except Exception:
+        pass
+
+    if base_dir:
+        base_path = Path(base_dir).expanduser().resolve()
+        canonical_suffix = tuple(settings.dev_plans_base.parts)
+        legacy_suffix = ("docs", "dev_plans")
+        suffixes = (canonical_suffix, legacy_suffix)
+
+        # base_dir points at docs root: <repo>/.scribe/docs/dev_plans or <repo>/docs/dev_plans
+        for suffix in suffixes:
+            if _path_has_suffix(base_path, suffix):
+                return base_path.parents[len(suffix) - 1].resolve()
+
+        # base_dir points at docs project slug dir:
+        # <repo>/.scribe/docs/dev_plans/<slug> or <repo>/docs/dev_plans/<slug>
+        for suffix in suffixes:
+            if _path_has_suffix(base_path.parent, suffix):
+                return base_path.parent.parents[len(suffix) - 1].resolve()
+
+        return base_path
+
+    return settings.project_root.resolve()
+
+
 def _target_directory(project_name: str, base_dir: str | None, *, project_root: Path) -> Path:
     slug = slugify_project_name(project_name)
     canonical_suffix = tuple(settings.dev_plans_base.parts)
@@ -327,6 +359,7 @@ def _render_template(template: str, context: Dict[str, str]) -> str:
 
 def _write_template(path: Path, content: str, overwrite: bool, repo_root: Path | None = None) -> None:
     _effective_root = repo_root or settings.project_root
+    path.parent.mkdir(parents=True, exist_ok=True)
     if overwrite and path.exists():
         # Create centralized backup directory
         from datetime import datetime, timezone
@@ -541,74 +574,15 @@ def _architecture_metadata(project_name: str, context: Dict[str, str]) -> Dict[s
 def _phase_plan_metadata(project_name: str, context: Dict[str, str]) -> Dict[str, Any]:
     return {
         "summary": f"Execution roadmap for {project_name}.",
-        "phases": [
-            {
-                "name": "Phase 0 — Foundation",
-                "anchor": "phase_0",
-                "goal": "Stabilize document writes and storage.",
-                "deliverables": ["Async atomic write", "SQLite mirror"],
-                "confidence": 0.9,
-                "tasks": ["Fix async bug", "Add verification"],
-                "acceptance": [
-                    {"label": "No silent failures", "proof": "tests"},
-                ],
-                "dependencies": "Existing storage layer",
-                "notes": "Must complete before template overhaul.",
-            },
-            {
-                "name": "Phase 1 — Templates",
-                "anchor": "phase_1",
-                "goal": "Introduce advanced Jinja2 template system.",
-                "deliverables": ["Base templates", "Custom template discovery"],
-                "confidence": 0.8,
-                "tasks": ["Add inheritance", "Add sandboxing"],
-                "acceptance": [
-                    {"label": "All built-in templates render", "proof": "pytest"},
-                ],
-                "dependencies": "Phase 0",
-                "notes": "Focus on template authoring UX.",
-            },
-        ],
-        "milestones": [
-            {
-                "name": "Foundation Complete",
-                "target": "2025-10-29",
-                "owner": "DevTeam",
-                "status": "🚧 In Progress",
-                "evidence": "PROGRESS_LOG.md",
-            },
-            {
-                "name": "Template Engine Ship",
-                "target": "2025-11-02",
-                "owner": "DevTeam",
-                "status": "⏳ Planned",
-                "evidence": "Phase 1 tasks",
-            },
-        ],
+        "phases": [],
+        "milestones": [],
     }
 
 
 def _checklist_metadata(project_name: str, context: Dict[str, str]) -> Dict[str, Any]:
     return {
         "summary": f"Acceptance checklist for {project_name}.",
-        "sections": [
-            {
-                "title": "Documentation Hygiene",
-                "anchor": "documentation_hygiene",
-                "items": [
-                    {"label": "Architecture guide updated", "proof": "ARCHITECTURE_GUIDE.md"},
-                    {"label": "Phase plan current", "proof": "PHASE_PLAN.md"},
-                ],
-            },
-            {
-                "title": "Phase 0",
-                "anchor": "phase_0",
-                "items": [
-                    {"label": "Async write fix merged", "proof": "commit"},
-                    {"label": "Verification enabled", "proof": "tests"},
-                ],
-            },
-        ],
+        "sections": [],
     }
 
 

@@ -9,6 +9,7 @@ from .manifest import BridgeManifest, BridgeState
 from .hooks import BridgeHookManager
 from .plugin import BridgePlugin
 from .runtime import bind_bridge_runtime
+from scribe_mcp.utils.error_handler import sanitize_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class BridgeRegistry:
             bridge_id=manifest.bridge_id,
             name=manifest.name,
             version=manifest.version,
-            manifest_json=manifest.to_json(),
+            manifest_json=manifest.to_json(for_persistence=True),
             state=BridgeState.REGISTERED.value
         )
 
@@ -169,13 +170,14 @@ class BridgeRegistry:
             # Update state to ERROR
             bridge.state = BridgeState.ERROR
             await self._storage.update_bridge_state(bridge_id, BridgeState.ERROR.value)
-            error_msg = f"Failed to activate bridge {bridge_id}: {e}"
+            safe_error = sanitize_error_message(str(e))
+            error_msg = f"Failed to activate bridge {bridge_id}: {safe_error}"
             logger.error(error_msg)
             # Update health with error
             await self._storage.update_bridge_health(
                 bridge_id,
                 '{"healthy": false}',
-                error=str(e)
+                error=safe_error
             )
             raise RuntimeError(error_msg) from e
 
@@ -207,7 +209,8 @@ class BridgeRegistry:
             await self._storage.update_bridge_state(bridge_id, BridgeState.INACTIVE.value)
             logger.info(f"Deactivated bridge: {bridge_id}")
         except Exception as e:
-            logger.error(f"Error during deactivation of bridge {bridge_id}: {e}")
+            safe_error = sanitize_error_message(str(e))
+            logger.error(f"Error during deactivation of bridge {bridge_id}: {safe_error}")
             # Still mark as inactive - deactivation should be best-effort
             bridge.state = BridgeState.INACTIVE
             await self._storage.update_bridge_state(bridge_id, BridgeState.INACTIVE.value)
@@ -319,7 +322,8 @@ class BridgeRegistry:
                 manifests.append(manifest)
                 logger.info(f"Loaded manifest: {manifest.bridge_id} from {path}")
             except Exception as e:
-                logger.error(f"Failed to load manifest {path}: {e}")
+                safe_error = sanitize_error_message(str(e))
+                logger.error(f"Failed to load manifest {path}: {safe_error}")
 
         return manifests
 
@@ -349,17 +353,18 @@ class BridgeRegistry:
                 )
 
             except Exception as e:
-                logger.error(f"Health check failed for bridge {bridge_id}: {e}")
+                safe_error = sanitize_error_message(str(e))
+                logger.error(f"Health check failed for bridge {bridge_id}: {safe_error}")
                 results[bridge_id] = {
                     "healthy": False,
-                    "error": str(e)
+                    "error": safe_error
                 }
 
                 # Update database with error
                 await self._storage.update_bridge_health(
                     bridge_id,
                     '{"healthy": false}',
-                    error=str(e)
+                    error=safe_error
                 )
 
         return results

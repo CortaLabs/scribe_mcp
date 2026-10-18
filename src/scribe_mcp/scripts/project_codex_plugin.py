@@ -18,6 +18,7 @@ PUBLIC_SAFE_AGENT_SLUGS = (
     "scribe-review-agent",
     "scribe-security-agent",
 )
+SHIPPED_CODEX_SKILLS = ("scribe-integration", "scribe-onboarding")
 PRIVATE_PUBLIC_ASSET_MARKERS = (
     "ask agent",
     "ask council",
@@ -226,6 +227,32 @@ def _sync_text_file(*, target_path: Path, source_text: str) -> str:
     return "created"
 
 
+def _sync_bytes_file(*, target_path: Path, source_bytes: bytes) -> str:
+    if target_path.exists():
+        existing_bytes = target_path.read_bytes()
+        if existing_bytes == source_bytes:
+            return "unchanged"
+        return "preserved_existing"
+
+    target_path.write_bytes(source_bytes)
+    return "created"
+
+
+def _sync_skill_tree(*, source_dir: Path, target_dir: Path) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for source_file in sorted(source_dir.rglob("*")):
+        if not source_file.is_file():
+            continue
+        target_file = target_dir / source_file.relative_to(source_dir)
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        statuses[str(target_file)] = _sync_bytes_file(
+            target_path=target_file,
+            source_bytes=source_file.read_bytes(),
+        )
+    return statuses
+
+
 def _write_text_if_changed(*, target_path: Path, source_text: str) -> str:
     if target_path.exists():
         existing_text = target_path.read_text(encoding="utf-8")
@@ -309,25 +336,34 @@ def project_codex_plugin(
     plugin_root = plugin_root.expanduser().resolve()
     if not (plugin_root / ".codex-plugin" / "plugin.json").exists():
         raise FileNotFoundError(f"Codex plugin manifest not found under {plugin_root}")
-    if not (plugin_root / "skills" / "scribe-mcp-usage" / "SKILL.md").exists():
-        raise FileNotFoundError(f"Codex plugin skill bundle is incomplete under {plugin_root}")
+    missing_skills = [
+        skill
+        for skill in SHIPPED_CODEX_SKILLS
+        if not (plugin_root / "skills" / skill / "SKILL.md").exists()
+    ]
+    if missing_skills:
+        raise FileNotFoundError(
+            f"Codex plugin skill bundle is incomplete under {plugin_root}: "
+            f"missing {', '.join(missing_skills)}"
+        )
 
     codex_home = (codex_home or _default_codex_home()).expanduser().resolve()
     config_path = (config_path or (codex_home / "config.toml")).expanduser().resolve()
     agents_dir = codex_home / "agents"
     skills_dir = codex_home / "skills"
-    projected_skill_dir = skills_dir / "scribe-mcp-usage"
 
     catalog = _load_catalog(plugin_root)
 
     agents_dir.mkdir(parents=True, exist_ok=True)
-    projected_skill_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir.mkdir(parents=True, exist_ok=True)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     projected_agent_configs: list[str] = []
     projected_agent_markdown: list[str] = []
+    projected_skills: list[str] = []
     projected_agent_config_status: dict[str, str] = {}
     projected_agent_markdown_status: dict[str, str] = {}
+    projected_skill_status: dict[str, str] = {}
 
     for agent in catalog.get("agents", []):
         name = agent["name"]
@@ -356,12 +392,13 @@ def project_codex_plugin(
         projected_agent_configs.append(str(target_toml))
         projected_agent_markdown.append(str(target_md))
 
-    source_skill = plugin_root / "skills" / "scribe-mcp-usage" / "SKILL.md"
-    target_skill = projected_skill_dir / "SKILL.md"
-    projected_skill_status = _sync_text_file(
-        target_path=target_skill,
-        source_text=source_skill.read_text(encoding="utf-8"),
-    )
+    for skill in SHIPPED_CODEX_SKILLS:
+        skill_statuses = _sync_skill_tree(
+            source_dir=plugin_root / "skills" / skill,
+            target_dir=skills_dir / skill,
+        )
+        projected_skill_status.update(skill_statuses)
+        projected_skills.extend(sorted(skill_statuses))
 
     merged_config = _merge_projection(_load_config(config_path), catalog)
     projected_config_text = _dump_toml(merged_config)
@@ -378,8 +415,8 @@ def project_codex_plugin(
         "projected_agent_config_status": projected_agent_config_status,
         "projected_agent_markdown": projected_agent_markdown,
         "projected_agent_markdown_status": projected_agent_markdown_status,
-        "projected_skills": [str(target_skill)],
-        "projected_skill_status": {str(target_skill): projected_skill_status},
+        "projected_skills": projected_skills,
+        "projected_skill_status": projected_skill_status,
         "config_status": config_status,
     }
 

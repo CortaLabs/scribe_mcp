@@ -20,6 +20,25 @@ AsyncInitialise = Callable[[], Awaitable[None]]
 ConnectFn = Callable[[], sqlite3.Connection]
 
 
+def ensure_tool_call_metadata_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(tool_calls)").fetchall()}
+    column_definitions = {
+        "duration_ms": "REAL",
+        "status": "TEXT NOT NULL DEFAULT 'success'",
+        "format_requested": "TEXT",
+        "project_name": "TEXT",
+        "agent_id": "TEXT",
+        "error_message": "TEXT",
+        "response_size_bytes": "INTEGER",
+        "repo_root": "TEXT",
+        "correlation_id": "TEXT",
+        "measurement_scope": "TEXT",
+    }
+    for column_name, column_definition in column_definitions.items():
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE tool_calls ADD COLUMN {column_name} {column_definition}")
+
+
 async def record_agent_report_card(
     *,
     initialise_fn: AsyncInitialise,
@@ -116,16 +135,20 @@ def record_tool_call_sync(
     error_message: Optional[str] = None,
     response_size_bytes: Optional[int] = None,
     repo_root: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    measurement_scope: Optional[str] = None,
 ) -> None:
     try:
         conn = sqlite3.connect(str(db_path))
         conn.execute("PRAGMA journal_mode=WAL")
+        ensure_tool_call_metadata_columns(conn)
         conn.execute(
             """
             INSERT INTO tool_calls (
                 session_id, tool_name, timestamp, duration_ms, status,
-                format_requested, project_name, agent_id, error_message, response_size_bytes, repo_root
-            ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
+                format_requested, project_name, agent_id, error_message, response_size_bytes,
+                repo_root, correlation_id, measurement_scope
+            ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -138,6 +161,8 @@ def record_tool_call_sync(
                 error_message,
                 response_size_bytes,
                 repo_root,
+                correlation_id,
+                measurement_scope,
             ),
         )
         conn.commit()

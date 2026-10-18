@@ -12,14 +12,17 @@ from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.project_utils import load_active_project, load_project_config
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
-from scribe_mcp.shared.logging_utils import LoggingContext, ProjectResolutionError
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.logging_utils import (
+    LoggingContext,
+    ProjectResolutionError,
+    build_resolution_metadata,
+)
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.shared.logging_utils import resolve_log_definition
 from scribe_mcp.shared.project_utils import detect_project_state
 from scribe_mcp.config import log_config as log_config_module
 from scribe_mcp.utils.logs import parse_log_line, read_all_lines
 from scribe_mcp.utils.slug import normalize_project_input
-from datetime import datetime, timezone
 
 
 class _GetProjectHelper(LoggingToolMixin):
@@ -28,7 +31,7 @@ class _GetProjectHelper(LoggingToolMixin):
 
 
 _GET_PROJECT_HELPER = _GetProjectHelper()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
 logger = logging.getLogger(__name__)
 
 
@@ -45,6 +48,25 @@ async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str
     """
     info = _PROJECT_REGISTRY.get_project(project_name)
     if not info:
+        registry_context = {}
+        get_context = getattr(_PROJECT_REGISTRY, "get_registry_advisory_context", None)
+        if callable(get_context):
+            try:
+                registry_context = dict(get_context() or {})
+            except Exception:
+                registry_context = {}
+        if registry_context and not registry_context.get("available", False):
+            return {
+                "available": False,
+                "classification": registry_context.get("classification", "environment_mismatch"),
+                "reason_code": registry_context.get("reason_code", "runtime_registry_unavailable"),
+                "message": registry_context.get(
+                    "message",
+                    "Document status is unavailable because planning registry is disabled for this runtime.",
+                ),
+                "mode": registry_context.get("mode"),
+                "storage_backend": registry_context.get("storage_backend"),
+            }
         return {}
     docs_meta = (info.meta or {}).get("docs") or {}
     flags = docs_meta.get("flags") or {}
@@ -102,7 +124,7 @@ async def _count_log_entries(log_path) -> int:
 
 async def _compute_log_counts(project: Dict[str, Any]) -> Dict[str, Any]:
     counts: Dict[str, Any] = {}
-    logs = log_config_module.load_log_config()
+    logs = log_config_module.load_log_config(project.get("root"))
     for log_type in sorted(logs.keys()):
         try:
             path, _definition = resolve_log_definition(project, log_type)
@@ -376,19 +398,73 @@ async def _gather_doc_info(project: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.tool(**read_only_local_tool(title="Get Active Project", tags=("projects", "context", "read-only")))
-async def get_project(agent: str = "Codex", project: Optional[str] = None, format: str = "structured", verbose: bool = False) -> Dict[str, Any]:
+async def get_project(
+    agent: str = "Codex",
+    project: Optional[str] = None,
+    format: str = "structured",
+    verbose: bool = False,
+    recovery_mode: Optional[str] = None,
+) -> Dict[str, Any]:
     """Return the active project selection, resolving defaults when necessary.
 
     Args:
         project: Optional project name to retrieve
         format: Output format - "readable" (human-friendly), "structured" (full JSON), "compact" (minimal)
         verbose: If True, include recent log entries in readable format (default: False)
+        recovery_mode: Optional explicit compatibility recovery branch.
+            Supported values: "compat_active_project", "compat_last_known_project".
     """
     state_snapshot = await server_module.state_manager.record_tool("get_project")
     agent_identity = server_module.get_agent_identity()
-    agent_id = None
-    if agent_identity:
+    # The public ``agent`` argument is the session-isolation key.  Ignoring it
+    # made get_project resolve the process-global identity instead, which both
+    # selected the wrong row and discarded the agent_projects CAS version that
+    # set_project(expected_version=...) needs for safe recovery.
+    requested_agent = str(agent or "").strip()
+    agent_id = (
+        requested_agent
+        if requested_agent and requested_agent != "Codex"
+        else None
+    )
+    if agent_id is None and agent_identity:
         agent_id = await agent_identity.get_or_create_agent_id()
+    selection_version: Optional[int] = None
+    if agent_id:
+        try:
+            agent_manager = server_module.get_agent_context_manager()
+            selection = (
+                await agent_manager.get_current_project(agent_id)
+                if agent_manager is not None
+                else None
+            )
+            raw_version = (
+                selection.get("version") if isinstance(selection, dict) else None
+            )
+            if type(raw_version) is int and raw_version >= 0:
+                selection_version = raw_version
+        except Exception:
+            selection_version = None
+
+    def _with_selection_version(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if selection_version is not None:
+            payload["selection_version"] = selection_version
+        return payload
+
+    exec_context = None
+    if hasattr(server_module, "get_execution_context"):
+        try:
+            exec_context = server_module.get_execution_context()
+        except Exception:
+            exec_context = None
+
+    effective_recovery_mode = recovery_mode
+    if not effective_recovery_mode and not project and not exec_context:
+        try:
+            state = await server_module.state_manager.load()
+        except Exception:
+            state = None
+        if state and getattr(state, "current_project", None):
+            effective_recovery_mode = "compat_active_project"
 
     try:
         context: LoggingContext = await _GET_PROJECT_HELPER.prepare_context(
@@ -397,6 +473,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
             explicit_project=project,
             require_project=False,
             state_snapshot=state_snapshot,
+            recovery_mode=effective_recovery_mode,
         )
     except ProjectResolutionError as exc:
         payload = _GET_PROJECT_HELPER.translate_project_error(exc)
@@ -405,19 +482,35 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
             "Invoke set_project or add a config/projects/<name>.json entry",
         )
         payload.setdefault("reminders", [])
-        return payload
+        return _with_selection_version(payload)
 
     recent_projects = list(context.recent_projects)
+    allowed_recovery_modes = {"compat_active_project", "compat_last_known_project"}
+    compatibility_mode = effective_recovery_mode in allowed_recovery_modes
+    recovery_applied = False
+    recovery_reason: Optional[str] = None
+
+    def _resolution_payload() -> Dict[str, Any]:
+        payload = build_resolution_metadata(context, include_project=False)
+        fallback_chain = list(payload.get("fallback_chain") or [])
+        if recovery_applied and compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
+            fallback_chain.append(recovery_mode)
+            payload["fallback_chain"] = fallback_chain
+            payload["fallback_used"] = True
+            payload["resolution_summary"] = (
+                f"Resolved via '{payload.get('resolution_source', 'unresolved')}' "
+                f"with recovery chain: {', '.join(fallback_chain)}"
+            )
+        payload["compatibility_recovery"] = {
+            "requested": compatibility_mode,
+            "mode": recovery_mode if compatibility_mode else None,
+            "applied": recovery_applied,
+            "reason": recovery_reason,
+        }
+        return payload
 
     target_project = context.project if context.project else None
     current_name = target_project.get("name") if target_project else None
-
-    exec_context = None
-    if hasattr(server_module, "get_execution_context"):
-        try:
-            exec_context = server_module.get_execution_context()
-        except Exception:
-            exec_context = None
 
     if project:
         requested_project = project
@@ -448,34 +541,47 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
                 resolved_name = project_data.get("name") or candidate
                 break
         if not project_data:
-            return _GET_PROJECT_HELPER.apply_context_payload(
+            response = _GET_PROJECT_HELPER.apply_context_payload(
                 _GET_PROJECT_HELPER.error_response(
                     f"Project '{requested_project}' not found.",
                     suggestion="Ensure the project is registered via set_project or exists in config/projects/",
                 ),
                 context,
             )
+            response.update(_resolution_payload())
+            return _with_selection_version(response)
         target_project = dict(project_data)
         current_name = target_project.get("name") or resolved_name or requested_project
     else:
         if exec_context and getattr(exec_context, "mode", None) in {"project", "sentinel"}:
             if not target_project:
-                return _GET_PROJECT_HELPER.apply_context_payload(
+                response = _GET_PROJECT_HELPER.apply_context_payload(
                     _GET_PROJECT_HELPER.error_response(
                         "No session-scoped project configured.",
                         suggestion="Invoke set_project before using this tool",
                     ),
                     context,
                 )
-        if not target_project and not exec_context:
+                response.update(_resolution_payload())
+                return _with_selection_version(response)
+            if compatibility_mode:
+                recovery_reason = "session_authority_present"
+        if not target_project and not exec_context and compatibility_mode and effective_recovery_mode == "compat_active_project":
             active_project, current_name, recent = await load_active_project(server_module.state_manager)
             if active_project:
                 target_project = dict(active_project)
                 recent_projects = list(recent)
+                recovery_applied = True
+                recovery_reason = "compat_active_project"
+            else:
+                recovery_reason = "compat_active_project_not_found"
         if not target_project:
             extra: Dict[str, Any] = {}
             try:
-                last_known = _PROJECT_REGISTRY.get_last_known_project(candidates=recent_projects)
+                last_known = None
+                if compatibility_mode and effective_recovery_mode == "compat_last_known_project":
+                    last_known = _PROJECT_REGISTRY.get_last_known_project_for_recovery(candidates=recent_projects)
+                    recovery_reason = "compat_last_known_project_lookup"
                 if last_known and last_known.last_access_at:
                     from datetime import datetime, timezone
 
@@ -491,7 +597,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
             except Exception:
                 extra = {}
 
-            return _GET_PROJECT_HELPER.apply_context_payload(
+            response = _GET_PROJECT_HELPER.apply_context_payload(
                 _GET_PROJECT_HELPER.error_response(
                     "No project configured.",
                     suggestion="Invoke set_project or add a config/projects/<name>.json entry",
@@ -499,11 +605,18 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
                 ),
                 context,
             )
+            response.update(_resolution_payload())
+            return _with_selection_version(response)
 
     response = dict(target_project)
+    if selection_version is not None:
+        response.setdefault("version", selection_version)
     response.setdefault("meta", {})
     if current_name:
         response["meta"]["current_project"] = current_name
+    response["meta"].update(_resolution_payload())
+    if current_name:
+        response["meta"]["planning_advisories"] = _PROJECT_REGISTRY.get_planning_advisories(current_name)
 
     # Enrich with doc status + per-log entry counts for quick situational awareness.
     try:
@@ -607,6 +720,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         if context.reminders:
             payload["reminders"] = list(context.reminders)
 
+        payload.update(_resolution_payload())
         return await default_formatter.finalize_tool_response(
             payload,
             format="readable",
@@ -644,6 +758,8 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
             },
             "recent_entries": recent_entries,
         }
+        if selection_version is not None:
+            payload["selection_version"] = selection_version
 
         # Add pagination info for recent_entries
         from scribe_mcp.utils.estimator import PaginationCalculator
@@ -653,6 +769,7 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         pagination_info = calc.create_pagination_info(page, page_size, len(recent_entries))
         payload["pagination"] = pagination_info.to_dict() if hasattr(pagination_info, 'to_dict') else pagination_info
 
+        payload.update(_resolution_payload())
         return _GET_PROJECT_HELPER.apply_context_payload(payload, context)
 
     # Fallback for unknown formats
@@ -661,4 +778,5 @@ async def get_project(agent: str = "Codex", project: Optional[str] = None, forma
         "project": response,
         "recent_projects": recent_projects,
     }
+    payload.update(_resolution_payload())
     return _GET_PROJECT_HELPER.apply_context_payload(payload, context)

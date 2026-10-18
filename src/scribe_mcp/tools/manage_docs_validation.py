@@ -18,6 +18,21 @@ from typing import Any, Dict, Iterable, List, Optional
 
 
 COMPARISON_REGEX = re.compile(r"\b\d+(?:\.\d+)?\s*(?:<=|>=|<|>)\s*\d+(?:\.\d+)?\b")
+SUPPORTED_WORKFLOW_METADATA_KEYS = (
+    "summary",
+    "tags",
+    "owners",
+    "category",
+    "status",
+    "version",
+    "related_docs",
+    "maintained_by",
+    "run_id",
+    "stage",
+    "session_id",
+    "work_item_id",
+)
+RESERVED_LIFECYCLE_FIELDS = ("created_by", "edit_trace")
 
 
 def _validate_comparison_symbols(text: str) -> bool:
@@ -169,6 +184,60 @@ def create_manage_docs_validator() -> EnhancedManageDocsValidator:
     return EnhancedManageDocsValidator()
 
 
+def summarize_frontmatter_metadata_hints(
+    metadata: Dict[str, Any],
+    *,
+    action: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    """Return additive hints for supported/ignored generic workflow metadata fields."""
+    hints: List[Dict[str, str]] = []
+    if not isinstance(metadata, dict):
+        return hints
+
+    if action == "create_doc" and not str(metadata.get("summary", "")).strip():
+        hints.append(
+            {
+                "code": "summary_missing_on_create",
+                "message": "summary is recommended on create for workflow routing context.",
+            }
+        )
+
+    if isinstance(metadata.get("tags"), str):
+        hints.append(
+            {
+                "code": "tags_scalar_normalized_to_list",
+                "message": "tags scalar input will be normalized to a single-item list.",
+            }
+        )
+    if isinstance(metadata.get("owners"), str):
+        hints.append(
+            {
+                "code": "owners_scalar_normalized_to_list",
+                "message": "owners scalar input will be normalized to a single-item list.",
+            }
+        )
+
+    if "edit_trace" in metadata or (
+        isinstance(metadata.get("frontmatter"), dict) and "edit_trace" in metadata["frontmatter"]
+    ):
+        hints.append(
+            {"code": "edit_trace_ignored", "message": "edit_trace is reserved and authored by manage_docs."}
+        )
+
+    if action and action != "create_doc":
+        if "created_by" in metadata or (
+            isinstance(metadata.get("frontmatter"), dict) and "created_by" in metadata["frontmatter"]
+        ):
+            hints.append(
+                {
+                    "code": "created_by_edit_override_ignored",
+                    "message": "created_by is immutable after create in the generic frontmatter contract.",
+                }
+            )
+
+    return hints
+
+
 def _validate_inputs(
     *,
     doc: Any,
@@ -177,6 +246,7 @@ def _validate_inputs(
     content: Any,
     patch: Any = None,
     patch_source_hash: Any = None,
+    expected_anchor_sha256: Any = None,
     edit: Any = None,
     patch_mode: Any = None,
     start_line: Any = None,
@@ -198,6 +268,9 @@ def _validate_inputs(
 
     validator.validate_string_param(doc, "doc")
     validator.validate_string_param(action, "action")
+
+    if expected_anchor_sha256 is not None:
+        validator.validate_string_param(expected_anchor_sha256, "expected_anchor_sha256")
 
     allowed_actions = {
         "replace_section",
@@ -232,8 +305,6 @@ def _validate_inputs(
 
     if action == "apply_patch":
         if patch or content:
-            if not patch_mode:
-                raise DocumentValidationError("patch_mode is required when providing a patch")
             if isinstance(patch_mode, str) and patch_mode not in {"structured", "unified"}:
                 raise DocumentValidationError("patch_mode must be 'structured' or 'unified'")
         else:
@@ -252,6 +323,13 @@ def _validate_inputs(
         validator.validate_metadata(metadata, "metadata")
         if not metadata.get("find"):
             raise DocumentValidationError("metadata.find is required for replace_text")
+        # replace_text never reads `content`. Accepting it silently let a caller
+        # supply the replacement in the wrong parameter and get a deletion.
+        if content is not None:
+            raise DocumentValidationError(
+                "content is not supported for replace_text: pass the replacement "
+                "text as metadata.replace"
+            )
 
     if action == "create_doc":
         if metadata is None:

@@ -1,142 +1,102 @@
 # Release File Map
 
-Frozen on **2026-04-05** for the **2.5 compatibility-release** documentation wave.
-
-This document is the authoritative file-map reference for the frozen public contract. Use it to distinguish:
-
-- **tracked repo truth**
-- **shipped package source**
-- **tracked support material**
-- **local runtime/operator-only state**
-- **generated or stale build output**
+Baseline date: **2026-08-26**
+Coverage: **v2.13.x MCP SDK v2 migration line (current: 2.13.0)**
 
 ## Table of contents
 
-- [How to read this map](#how-to-read-this-map)
+- [How to use this map](#how-to-use-this-map)
 - [Public contract anchors](#public-contract-anchors)
 - [Shipped package source](#shipped-package-source)
-- [Tracked support material](#tracked-support-material)
-- [Runtime-local paths](#runtime-local-paths)
-- [Repo-local overlays and operator material](#repo-local-overlays-and-operator-material)
-- [Generated and stale output](#generated-and-stale-output)
-- [Cross-repo pointer](#cross-repo-pointer)
+- [Public support material](#public-support-material)
+- [Public skills](#public-skills)
+- [Local/operator-only paths](#localoperator-only-paths)
+- [Generated output](#generated-output)
 
-## How to read this map
+## How to use this map
 
 | Classification | Meaning |
 | --- | --- |
-| **Public contract** | Tracked files that define what downstream users should read, install, or configure. |
-| **Shipped package source** | Tracked source/manifests that feed built wheels or sdists. |
-| **Tracked support material** | Versioned repo content that is useful for development, deployment, or verification, but is not itself local runtime state. |
-| **Runtime-local** | Mutable local state produced while running Scribe. Not release truth. |
-| **Overlay/local operator** | Workstation-specific or repo-local convenience material. Not release truth. |
-| **Generated/stale output** | Build output or caches. Never release truth. |
+| Public contract | Files that define what users should install, run, and read. |
+| Shipped package source | Tracked source/manifests that feed release artifacts. |
+| Public support material | Tracked docs/examples that are safe to reference publicly. |
+| Local/operator-only | Workstation/runtime state; not part of release contract. |
+| Generated output | Build/cache artifacts; never source of truth. |
 
 ## Public contract anchors
 
-These are the first files to consult for the frozen release contract:
-
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `README.md` | Public contract | High-signal overview for the 2.5 compatibility wave. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp`, version `2.2`, and CLI entry points including `scribe`, `scribe-mcp`, and `scribe-server`. |
-| `MANIFEST.in` | Public contract / shipped manifest | Controls what package data enters build artifacts. |
-| `LICENSE` | Public contract | Licensing terms. |
-| `docs/COMPATIBILITY_MATRIX.md` | Public contract | Frozen package/runtime compatibility decision; explicitly defers `v3`. |
-| `docs/RELEASE_SURFACE.md` | Public contract | Repo-truth vs overlay/runtime policy. |
-| `docs/REMOTE_CLIENT.md` | Public contract | Optional authenticated remote/client posture. |
-| `docs/RELEASE_FILE_MAP.md` | Public contract | This detailed file map. |
+| `README.md` | Public contract | Primary public overview. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.13.0`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
+| `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
+| `LICENSE` | Public contract | License terms. |
+| `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
+| `docs/TOUR.md` | Public contract | Product tour and first-run artifact story. |
+| `docs/DOCUMENT_TOPOLOGY.md` | Public contract | Document topology, lifecycle, scan/repair, handoff, and downstream export contract. |
+| `docs/RELEASE_SURFACE.md` | Public contract | Public vs local boundary policy. |
+| `docs/RELEASE_FILE_MAP.md` | Public contract | This map. |
 
 ## Shipped package source
 
-### Core package: `src/scribe_mcp/**`
+### Core package (`scribe-mcp`)
 
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `src/scribe_mcp/__main__.py` | Shipped package source | Installed CLI/server entry target. |
-| `src/scribe_mcp/server.py` | Shipped package source | Core MCP server runtime. |
-| `src/scribe_mcp/server_sse.py` | Shipped package source | SSE transport entry point. |
-| `src/scribe_mcp/tools/**` | Shipped package source | Public MCP tool implementations. |
-| `src/scribe_mcp/doc_management/**` | Shipped package source | Managed document lifecycle engine. |
-| `src/scribe_mcp/storage/**` | Shipped package source | SQLite/Postgres/remote storage backends. |
-| `src/scribe_mcp/bridges/**` | Shipped package source | Core bridge runtime, registry, policy, and hooks. |
-| `src/scribe_mcp/config/**` | Shipped package source | Settings, runtime-path helpers, and config payloads. |
-| `src/scribe_mcp/templates/**` | Shipped package source | Tracked template assets that belong to `scribe-mcp`. |
-| `src/scribe_mcp/council_templates/__init__.py` | Shipped package source | Deprecated compatibility shim only; removal is deferred to the later breaking release. |
+| `src/scribe_mcp/__main__.py` | Shipped package source | CLI/server entry target. |
+| `src/scribe_mcp/server.py` | Shipped package source | Core server runtime. |
+| `src/scribe_mcp/server_sse.py` | Shipped package source | SSE entry path. |
+| `src/scribe_mcp/tools/**` | Shipped package source | Tool implementations. |
+| `src/scribe_mcp/storage/**` | Shipped package source | Storage backends. |
+| `src/scribe_mcp/doc_management/**` | Shipped package source | Document management runtime. |
+| `src/scribe_mcp/bridges/**` | Shipped package source | Bridge/plugin runtime framework. |
+| `src/scribe_mcp/config/**` | Shipped package source | Runtime settings and config helpers. |
+| `src/scribe_mcp/plugins_bundle/**` | Shipped package source | Plugin bundles (Claude + Codex, including hidden `.claude-plugin`/`.codex-plugin` manifests) vendored into the wheel via package-data as of 2.8.0. `config/paths.py:resolve_codex_plugin_root()` prefers this packaged bundle so plugin projection works from a plain `pip install scribe-mcp`; `config/paths.py:onboarding_skill_path()` points at the shipped Codex `/scribe-onboarding` skill in this bundle. |
 
-### Optional package: `packages/scribe_council/**`
+## Versioning contract
 
-| Path | Classification | Notes |
-| --- | --- | --- |
-| `packages/scribe_council/pyproject.toml` | Shipped package source | Defines the optional `scribe-council` package, version `2.2`. |
-| `packages/scribe_council/src/scribe_council/**` | Shipped package source | Optional council/template assets. |
-| `packages/scribe_council/src/scribe_council/council_templates/**` | Shipped package source | Owns the optional `council.templates` provider for this frozen wave. |
+| Rule | Why it exists |
+| --- | --- |
+| Release-bound pushes to `main` must include a fresh package version in `pyproject.toml`. | `main` auto-triggers PyPI publishing for package/release-surface changes. |
+| Compatibility docs must be updated in the same change as the version bump. | Prevents repo docs from lagging the published package contract. |
+| Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
+| Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
 
-## Tracked support material
+The four release-truth surfaces for this migration are `pyproject.toml`, `src/scribe_mcp/__main__.py`, `docs/COMPATIBILITY_MATRIX.md`, and this file. They report `2.13.0` and the same Python, SDK, modern-protocol, exact-candidate, and named-legacy contract. The optional `packages/scribe_council/pyproject.toml` package is independently versioned and is not changed in lockstep with the core release.
 
-These paths are versioned repo truth, but they are not runtime-local state.
-
-| Path | Classification | Notes |
-| --- | --- | --- |
-| `docs/**` | Tracked support material | Release docs, guides, examples, whitepapers, and historical notes. |
-| `docs/examples/**` | Tracked support material | Public example configuration files; prefer these over repo-root overlays. |
-| `deploy/**` | Tracked support material | Dockerfile, compose overlay, entrypoint, and deployment guide. |
-| `tests/**` | Tracked support material | Verification and regression coverage. |
-| `examples/**` | Tracked support material | Example project material kept in the repo. |
-| `benchmarks/**` | Tracked support material | Benchmark harness and artifacts. |
-| `research/**`, `architecture/**` | Tracked support material | Versioned design/research context, not runtime state. |
-
-## Runtime-local paths
-
-These paths are mutable local runtime state. They are **not** release truth and should not be used as public guidance.
+## Public support material
 
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `.scribe/cli/*.json` | Runtime-local | Per-operator CLI/session state. |
-| `.scribe/state/**` | Runtime-local | Local runtime bookkeeping and state files. |
-| `.scribe/logs/**` | Runtime-local | Local logs. |
-| `.scribe/backups/**` | Runtime-local | Local backup material created during operation. |
-| `.scribe/data/**` | Runtime-local | Local data generated by a running environment. |
-| `.scribe/sentinel/**` | Runtime-local | Local sentinel-mode state. |
+| `docs/**` | Public support material | User-facing docs and guides. |
+| `docs/examples/**` | Public support material | Public example configs and snippets. |
+| `skills/**` | Public support material | Public skills copied from generated output when intentionally promoted. |
+| `tests/**` | Public support material | Verification material (not runtime state). |
+| `deploy/**` | Public support material | Deployment references. |
 
-If repo-root `state/` or `logs/` residue exists in a workstation checkout, treat it as local residue rather than as part of the release contract.
-
-## Repo-local overlays and operator material
-
-These paths may be useful on a particular workstation, but they are **not** the public contract:
+## Public skills
 
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `.mcp.json` | Overlay/local operator | Local client bootstrap convenience only. |
-| `opencode.json` | Overlay/local operator | Local operator convenience only. |
-| `AGENTS.md` | Overlay/local operator | Repo-specific operator/agent context, not shipped package truth. |
-| `CLAUDE.md` | Overlay/local operator | Local/operator instruction overlay. |
-| `.claude/**` | Overlay/local operator | Generated/local Claude-specific material. |
-| `.codex/**` | Overlay/local operator | Generated/local Codex-specific material. |
-| `.council/**` | Overlay/local operator | Local council scaffolding and overlays. |
-| `.agents/**`, `.opencode/**` | Overlay/local operator | Local plugin/agent operator material. |
+| `skills/scribe-integration/SKILL.md` | Public support material | Public copy of the generated Scribe integration skill. In 2.8.0 this skill was completed to cover the full ~28-tool surface. The template source is not published here. |
+| `src/scribe_mcp/plugins_bundle/*/skills/scribe-onboarding/SKILL.md` | Shipped package source | Lean onboarding/install skill shipped inside the Claude/Codex plugin bundles. Broad usage coverage belongs in `scribe-integration` plus repo docs, not a second package-onboarding tree. |
 
-When public docs need examples, point to tracked files under `docs/examples/**` instead.
-
-## Generated and stale output
-
-These paths must never define the release contract:
+## Local/operator-only paths
 
 | Path | Classification | Notes |
 | --- | --- | --- |
-| `build/**` | Generated/stale output | Local build output. |
-| `dist/**` | Generated/stale output | Local wheels/sdists after a build. |
-| `*.egg-info/**` | Generated/stale output | Build metadata, not source of truth. |
-| `__pycache__/**` | Generated/stale output | Python cache output. |
-| `.pytest_cache/**` | Generated/stale output | Test cache output. |
-| `.coverage` | Generated/stale output | Local coverage artifact. |
+| `.scribe/**` | Local/operator-only | Local runtime state, logs, and data. |
+| Repo-root operator overlays/config files | Local/operator-only | Workstation convenience; not public contract. |
+| Agent/tooling workspace directories | Local/operator-only | Local authoring/runtime aids only. |
+| Generated authoring/runtime overlays | Local/operator-only / generated | Not public Scribe release truth unless a future exported copy is deliberately tracked. |
 
-Release truth comes from tracked source/manifests/docs and the fresh artifacts inspected against them, not from leftover generated trees.
+## Generated output
 
-## Cross-repo pointer
-
-For the synchronized Council pairing documented in this wave, use:
-
-- the matching `council_mcp` release docs from that checkout
-
-That document freezes the `council_mcp 2.0.0` side of the installed-package contract while keeping local/core as default and remote/client as optional and authenticated.
+| Path | Classification | Notes |
+| --- | --- | --- |
+| `build/**` | Generated output | Local build artifacts. |
+| `dist/**` | Generated output | Local wheel/sdist output. |
+| `*.egg-info/**` | Generated output | Package metadata artifacts. |
+| `__pycache__/**` | Generated output | Python bytecode cache. |
+| `.pytest_cache/**` | Generated output | Test cache. |
+| `.coverage` | Generated output | Local coverage output. |

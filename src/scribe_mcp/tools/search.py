@@ -16,6 +16,7 @@ from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.shared.execution_context import ExecutionContext
 from scribe_mcp.utils.response import default_formatter
+from scribe_mcp.utils.error_handler import ErrorHandler
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,11 @@ _BINARY_CHECK_BYTES = 8192
 # Maximum characters per line in search results (prevents output explosion)
 MAX_LINE_LENGTH = 500  # characters - safety limit for output size
 MAX_REGEX_PATTERN_LENGTH = 256
+
+# Single source of truth for the accepted ``output_mode`` values. Both the boundary
+# validation in ``search`` and the documented host ``input_schema`` enum derive from
+# this tuple, so they can never drift apart.
+VALID_OUTPUT_MODES: Tuple[str, ...] = ("content", "files_with_matches", "count")
 _ADVANCED_REGEX_GROUP_RE = re.compile(r"\(\?(?!:)")
 _BACKREFERENCE_RE = re.compile(r"\\[1-9]")
 _NESTED_QUANTIFIER_RE = re.compile(r"\((?:[^()\\]|\\.)*[+*{](?:[^()\\]|\\.)*\)(?:[+*]|\{\d)")
@@ -586,7 +592,77 @@ def _format_search_readable(data: Dict[str, Any], line_numbers: bool) -> str:
 # MCP Tool (Task 1.1 + integration)
 # ---------------------------------------------------------------------------
 
-@app.tool(**read_only_local_tool(title="Search Codebase", tags=("files", "search", "read-only")))
+def _build_search_input_schema() -> Dict[str, Any]:
+    """Hand-authored host input schema for ``search``.
+
+    Mirrors the committed ``manage_docs`` override pattern
+    (``manage_docs.py`` / ``_MANAGE_DOCS_INPUT_SCHEMA``): the host uses this
+    schema verbatim and the server's ``_with_runtime_agent_schema`` then injects
+    the required ``agent`` field. The one enrichment over the auto-built schema is
+    that ``output_mode`` (and the ``format`` field, which is likewise a
+    free-form string that is really an enum) carry an ``enum`` plus a teaching
+    ``description``, so a mistyped mode is correctable at the host instead of
+    surfacing an opaque downstream error.
+
+    ``output_mode.enum`` is sourced live from :data:`VALID_OUTPUT_MODES`, the same
+    single source of truth the boundary validation uses — never a hand-copied
+    literal, so the documented enum follows the accepted values automatically.
+
+    ``additionalProperties`` stays ``True`` so passthrough kwargs are not
+    regressed into hard rejections.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "pattern": {"type": "string"},
+            "path": {"type": "string"},
+            "glob": {"type": "string"},
+            "type": {"type": "string"},
+            "output_mode": {
+                "type": "string",
+                "enum": list(VALID_OUTPUT_MODES),
+                "description": (
+                    "Shape of the result payload. One of: 'content' (matching "
+                    "lines), 'files_with_matches' (paths only), 'count' (per-file "
+                    "match counts). Defaults to 'content'."
+                ),
+            },
+            "format": {
+                "type": "string",
+                "enum": ["readable", "structured", "compact"],
+                "description": (
+                    "Rendering of the response. 'readable' (human text, default), "
+                    "'structured' (raw dict), or 'compact' (terse)."
+                ),
+            },
+            "page": {"type": ["integer", "string"]},
+            "page_size": {"type": ["integer", "string"]},
+            "context_lines": {"type": ["integer", "string"]},
+            "before_context": {"type": ["integer", "string"]},
+            "after_context": {"type": ["integer", "string"]},
+            "case_insensitive": {"type": "boolean"},
+            "regex": {"type": "boolean"},
+            "multiline": {"type": "boolean"},
+            "max_matches_per_file": {"type": ["integer", "string"]},
+            "max_total_matches": {"type": ["integer", "string"]},
+            "max_files": {"type": ["integer", "string"]},
+            "line_numbers": {"type": "boolean"},
+            "skip_binary": {"type": "boolean"},
+            "max_file_size_mb": {"type": ["integer", "string"]},
+        },
+        "required": ["pattern"],
+        "additionalProperties": True,
+    }
+
+
+_SEARCH_INPUT_SCHEMA: Dict[str, Any] = _build_search_input_schema()
+
+
+@app.tool(
+    **read_only_local_tool(title="Search Codebase", tags=("files", "search", "read-only")),
+    input_schema=_SEARCH_INPUT_SCHEMA,
+)
 async def search(
     # REQUIRED
     agent: str,
@@ -776,9 +852,17 @@ async def search(
         return error_response
 
     # --- Validate output_mode ---
-    valid_modes = {"content", "files_with_matches", "count"}
-    if output_mode not in valid_modes:
-        return {"ok": False, "error": f"Invalid output_mode '{output_mode}'. Must be one of: {', '.join(sorted(valid_modes))}"}
+    if output_mode not in VALID_OUTPUT_MODES:
+        return ErrorHandler.create_validation_error(
+            f"Invalid output_mode '{output_mode}'.",
+            suggestion=(
+                "Use one of: "
+                f"{', '.join(VALID_OUTPUT_MODES)}. "
+                "'content' returns matching lines, 'files_with_matches' returns "
+                "paths only, 'count' returns per-file match counts."
+            ),
+            context={"output_mode": output_mode},
+        )
 
     # --- Resolve context line counts ---
     ctx_before = before_context if before_context is not None else context_lines

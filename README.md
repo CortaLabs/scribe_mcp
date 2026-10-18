@@ -1,111 +1,412 @@
 # Scribe MCP
 
-Scribe MCP is Corta Labs' documentation and audit subsystem for agent-driven development. It provides structured logs, governed planning documents, checklist/progress workflows, release-safe examples, and file-reading/search/editing tools for operators and agents.
+[![PyPI version](https://img.shields.io/pypi/v/scribe-mcp)](https://pypi.org/project/scribe-mcp/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/scribe-mcp/)
+[![License](https://img.shields.io/badge/license-Scribe%20MCP%20Community%201.0-orange)](https://github.com/CortaLabs/scribe_mcp/blob/main/LICENSE)
 
-> **Release note — 2026-04-05:** this README reflects the frozen **2.5 compatibility-release** documentation wave. The artifact-backed package matrix for this wave is `scribe-mcp 2.2`, optional `scribe-council 2.2`, and synchronized `council_mcp 2.0.0`. **`v3` is explicitly deferred** to the later structural/refinement release.
+Scribe MCP is the accountability layer for agent-driven engineering work.
 
-## Table of contents
+It gives your agents a durable audit trail, governed engineering documents, and repo-safe tool contracts so plans, edits, and verification do not disappear into chat history or terminal scrollback.
 
-- [What Scribe is](#what-scribe-is)
-- [Supported install profiles](#supported-install-profiles)
-- [Quickstart](#quickstart)
-- [Supported runtime postures](#supported-runtime-postures)
-- [What `scribe-council` is](#what-scribe-council-is)
-- [Release docs and navigation](#release-docs-and-navigation)
-- [Deployment](#deployment)
-- [License](#license)
+Scribe is strongest when you want three things at the same time:
 
-## What Scribe is
+- a project-scoped execution record you can query later
+- managed docs that stay tied to the work instead of drifting away from it
+- MCP-safe read/search/edit primitives that are easier to automate than ad hoc shell mutations
 
-Scribe is the persistent documentation and audit layer that sits beside agent runtimes:
+If you want the fast product tour first, start here:
+- [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)
 
-- **Local/core by default** for normal usage
-- **Tracked docs and examples** for release-safe guidance
-- **Governed planning surfaces** for architecture, phase plans, checklists, and progress logs
-- **Optional authenticated remote/client access** for operators who intentionally deploy Scribe as a managed service
+## Why teams reach for Scribe
 
-If you are deciding what is public contract versus workstation-local state, start with:
+Without Scribe, agent-heavy work tends to fragment:
 
-- [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md)
-- [`docs/RELEASE_SURFACE.md`](docs/RELEASE_SURFACE.md)
-- [`docs/RELEASE_FILE_MAP.md`](docs/RELEASE_FILE_MAP.md)
+- plans live in one place, edits happen somewhere else, and rationale disappears
+- project docs become stale snapshots instead of active engineering artifacts
+- logs exist, but they are too noisy or too unstructured to explain what actually happened
+- automation can touch files, but it is harder to keep the changes reviewable and reproducible
 
-## Supported install profiles
+Scribe turns that into a tighter loop:
 
-| Use case | Install | Notes |
-| --- | --- | --- |
-| Standard Scribe usage | `pip install scribe-mcp` | Default local/core posture. Installs CLI entry points including `scribe` and `scribe-server`. |
-| Optional council/template assets | `pip install scribe-mcp scribe-council` | Add only when you also need Scribe's optional `council.templates` provider and template payload. |
-| Council ↔ Scribe compatibility review | See [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md) | The frozen compatibility set for this wave is `scribe-mcp 2.2`, optional `scribe-council 2.2`, and `council_mcp 2.0.0`. |
+1. bind a project and repo root
+2. generate or manage the project docs
+3. log meaningful actions as the work happens
+4. query the resulting history later by project, status, message, or scope
 
-## Quickstart
+## What Scribe gives you
 
-Minimal local/core setup:
+- project and session binding with explicit repo scope
+- governed docs such as `ARCHITECTURE_GUIDE.md`, `PHASE_PLAN.md`, and `CHECKLIST.md`
+- audit logs such as `PROGRESS_LOG.md`, `DOC_LOG.md`, `SECURITY_LOG.md`, and `BUG_LOG.md`
+- MCP tools for reading, searching, editing, and logging without leaving the repo boundary
+- a Postgres-first runtime for shared use, plus explicit standalone SQLite for local-only workflows
+- CLI helpers for bootstrap, MCP server startup, migrations, backups, metrics, and Codex projection
+- host-facing tool discoverability and onboarding skills (`/scribe-integration`, `/scribe-onboarding`) so agents can learn the tool surface in place
+
+## Current release highlights
+
+Release contract: `scribe-mcp 2.14.0` · Updated: `2026-08-30`
+
+`2.14.0` preserves the `2.13.2` fixes for canonical nested-path resolution after same-project rehome and special-review `create` dry-run MCP content shape, plus the `2.13.1` SDK v2 agent-project selection-version contract required for safe optimistic-concurrency recovery. Eligible successful mutation dry-runs now automatically expose a compact `apply` affordance for `apply_preview`; apply uses an opaque, durable, cross-backend receipt lifecycle with exactly-once, fail-closed behavior. Receipt-based rehome executes against immutable composite authority, registry, index, file, mode, and path state and safely recovers recognized partial states. The `2.14.0` commit/push records source-level release truth only; it does not establish runtime adoption or deployment. SDK and wire versions remain different contracts: Scribe supports the installed compatible MCP SDK `2.1.1` within `mcp>=2.0.0,<3.0`, while the modern wire default is protocol revision `2026-07-28`.
+
+### MCP v2 default and compatibility boundary
+
+| Client path | Transport and endpoint | Protocol | Policy |
+| --- | --- | --- | --- |
+| Modern default | stdio through `scribe-server` | `2026-07-28` | Default local host path |
+| Modern HTTP | Streamable HTTP at `/mcp` | `2026-07-28` | Requires the same Origin and bearer-auth checks as every protected HTTP route |
+| Named legacy | handshake stdio, or HTTP+SSE at `/sse` with posts to `/messages/` | `2025-11-25` with known client `mcp==1.26.0` | Explicit compatibility only; never selected because a modern call failed |
+
+The static HTTP bearer is an **operator-root credential**. It is suitable only for an operator-controlled trust boundary; it is not scoped multi-user authorization. All HTTP MCP routes except `/health` require authentication, and modern `/mcp` and legacy `/sse` plus `/messages/` enforce the same Origin and authorization policy. Authentication, protocol, transport, capability, timeout, and malformed-request failures fail closed with no silent downgrade.
+
+Legacy HTTP session continuity is limited to the current single-worker, sticky-process model. Unknown-session or wrong-worker traffic fails before tool dispatch. Operators should retire the legacy lane only after telemetry shows no named legacy use and compatibility, schema/result parity, auth/Origin, and client migration gates pass. Rollback restores the prior dependency, adapter, and default-policy sources from version control; it never reinterprets modern failures as legacy. See the [compatibility matrix](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/COMPATIBILITY_MATRIX.md) and [remote client contract](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/REMOTE_CLIENT.md).
+
+The release also rejects hollow `append_entry` payloads before any write, fixes readable `read_recent(compact=True)` output, adds clearer internal repo-local plugin diagnostics in `scribe_doctor`, improves `manage_docs` registration/drift diagnostics, adds advisory reminder guidance fields, accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input, and carries the public-safe affected-row inventory primitive plus the tool-discoverability, onboarding, install-ergonomics, runtime-honesty, registration, lean-plugin, and cleanbuild repairs. Repo-local plugins remain diagnostics/probe-only for trusted local runtimes, require explicit opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus restart/reinitialization, and are not enabled by production defaults. Reminder hook/context injection remains security-blocked future work:
+
+- A new read-only affected-row referential inventory preflight is available through MCP as `scribe_affected_row_referential_inventory_readonly_public_safe` and through the CLI as `scribe affected-row-inventory preflight --dry-run`. It inspects SQLite/Postgres project-row repair readiness using public-safe labels, booleans, and aggregate buckets only; it fails closed on unproven target binding, ambiguous selected context, incomplete reference inventory, low-cardinality/private-output risk, missing storage backend, and mutation-shaped invocations.
+- `manage_docs` now auto-registers existing physical managed docs for targeted actions instead of rejecting them as `DOC_NOT_FOUND` when the registry is stale; path-like registration also preserves existing basename aliases.
+- Clean-room plugin sync now works from a checkout that does not have ignored generated `.claude/skills` or `.codex/skills` trees, which fixes the GitHub cleanbuild/publish blocker.
+- The shipped plugin/wheel surface is intentionally lean: only `/scribe-integration` and `/scribe-onboarding` ship in the Claude/Codex plugin bundles. Legacy broad-form `scribe-mcp-usage` content is not shipped; `scribe-integration`, `scribe-onboarding`, and repo docs cover the supported usage surface.
+- Codex projection now projects every shipped Codex skill from the packaged plugin bundle, and clean-room install proof verifies the wheel install, runtime version, bundled skills, and projection output.
+- Completed bug/security reports whose managed frontmatter status is `complete` are treated as terminal by the shared case-status filter.
+- Host-facing `manage_docs` now advertises a live `action` enum and documented `metadata` keys in its MCP input schema (with `additionalProperties` preserved), so an MCP host can teach an agent about a mistyped action instead of failing silently.
+- `append_entry` and `health_check` tool descriptions were rewritten, and the `manage_docs`/`read_file` docstrings now surface the full governance action set plus `read_file` scan flags.
+- A completed `/scribe-integration` skill (the full ~28-tool surface) and a new `/scribe-onboarding` install skill ship in the package; new-project reminders now point to both.
+- The install story no longer requires a clone: the Codex/Claude plugin and onboarding bundles are vendored into the wheel via package-data, and `resolve_codex_plugin_root()` prefers the packaged bundle, so `pip install scribe-mcp` followed by `scribe install --commit --yes --project-codex` projects them with no checkout required. The repo `plugins/` tree remains the canonical development and marketplace fallback.
+- `query_entries` with a non-project `search_scope` now returns an honest `ok: false` teaching error instead of a silent no-op (a non-breaking behavior change — project-scoped behavior is unchanged); emergency and degraded paths likewise return honest `ok: false` envelopes instead of fabricated rows.
+- `read_file` gained real pagination slicing, a single-pass AST structure visitor, and SQL-pushdown of the message predicate on both SQLite and Postgres — the headline performance fix, filtering in the database instead of after the fact.
+- The reminder engine is wired live: 16 previously-dead conditions, category-keyed priority sorting, and warm-rebind refresh with configurable knobs.
+- Managed-doc frontmatter no longer clobbers a user-set `title` (BUG-2026-06-17-0002).
+- A plain `pip install scribe-mcp` is Postgres-ready out of the box: `asyncpg` is a core dependency and Postgres is the default runtime posture. SQLite standalone is the explicit opt-out (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`). The `[postgres]` extra remains only as a harmless no-op alias for anyone who prefers to make the Postgres intent visible in their dependency list.
+- Maintainability: the dead cross-project search engine in `query_entries` (-728 lines) and dead self-healing in the error handler were removed.
+
+This builds on the 2.7.x runtime work — queryable tool-runtime telemetry, `append_entry` phase timing, fast same-binding `set_project` reuse, agent-ready `quality_check` output with ranked `agent_actions`, Scribe-owned write barriers around mutation surfaces, and the furnace-project quality-check O(N^2) elimination from 2.7.2. Release governance still treats missing current-version changelog coverage as blocking quality truth via `SCF_CHANGELOG_CURRENT_VERSION_MISSING`.
+
+## What makes Scribe different
+
+The pitch is simple: keep the work record, the docs, and the repo operations in one system. The reason it holds up in practice is the machinery underneath it.
+
+- Scribe keeps a project registry with lifecycle and hygiene metadata, not just loose markdown files.
+- It tracks doc readiness and drift using stored hashes, last-update timestamps, and advisory flags such as `doc_drift_suspected`.
+- It computes activity signals like `days_since_last_entry`, `days_since_last_access`, `staleness_level`, and `activity_score` so projects become queryable operational objects instead of folders you have to inspect manually.
+- Managed docs are anchored with stable section IDs like `<!-- ID: problem_statement -->`, which is what makes later `replace_section` and checklist `status_update` operations deterministic.
+- The bootstrap and migration toolchain is deeper than most projects in this space: `scribe-bootstrap-postgres`, `scribe-migrate`, `scribe-migrate-postgres`, `scribe-migrate-objects`, `scribe-backup-postgres`, `scribe-metrics-postgres`, and `scribe-soak-postgres` all ship in the package.
+
+## Five-minute quickstart
+
+Install the package:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
 pip install scribe-mcp
+```
 
+Sanity-check the shipped commands:
+
+```bash
 scribe --help
+scribe install --help
 scribe-server --help
 ```
 
-Optional extension install when you need council/template assets:
+### Recommended: run the install wizard
+
+Use the install wizard first. It is the preferred default path for a real installation.
 
 ```bash
-pip install scribe-council
+scribe install
 ```
 
-## Supported runtime postures
+Default `scribe install` behavior is preview-only and safe-by-default:
 
-| Posture | Status | Notes |
-| --- | --- | --- |
-| Local/core stdio or loopback-local usage | **Default / supported** | This is the primary public story for Scribe. |
-| Authenticated remote/client usage on a managed private mesh or Tailscale-style network | **Supported optional posture** | Use only as an intentional operator choice with auth in place. |
-| Casual public exposure | **Unsupported** | Do not present open or casually internet-reachable Scribe as the normal deployment model. |
+- no DB mutation
+- no `.env` mutation
+- no Codex projection
 
-Client-side remote/client configuration is optional and authenticated:
+Apply mutations only when you explicitly confirm commit mode:
 
 ```bash
-export SCRIBE_REMOTE_URL="https://your-private-scribe.example"
-export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-your-client-token"
+scribe install --commit
 ```
 
-Public docs should prefer the canonical client token name `SCRIBE_REMOTE_AUTH_TOKEN`. See [`docs/REMOTE_CLIENT.md`](docs/REMOTE_CLIENT.md) for the full posture and auth contract.
+For non-interactive commit flows, use the approved confirmation path:
 
-## What `scribe-council` is
+```bash
+scribe install --commit --yes
+```
 
-`scribe-council` is a separate, optional package. It is **not** the core Scribe runtime.
+The commit flow is designed to handle the setup work for you:
 
-Use it only when you also need Scribe's council/template assets:
+- create or update database roles
+- provision the Scribe app database
+- apply schema grants
+- write or update repo-root runtime keys in `.env`
 
-- it owns the optional `council.templates` provider for this frozen wave
-- it depends on `scribe-mcp==2.2`
-- it is additive, not required, for standard local/core Scribe usage
+After a successful commit, Scribe runs post-install diagnostics/readiness checks using the existing verification seam.
 
-The compatibility matrix explains where it fits in the synchronized release set: [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md).
+After bootstrap, load the environment and start the server:
 
-## Release docs and navigation
+```bash
+set -a
+source .env
+set +a
+scribe-server
+```
 
-Start here, then follow the tracked docs that match your task:
+### Just want to try Scribe locally?
 
-- **Compatibility and release framing:** [`docs/COMPATIBILITY_MATRIX.md`](docs/COMPATIBILITY_MATRIX.md)
-- **Repo truth vs runtime/local overlays:** [`docs/RELEASE_SURFACE.md`](docs/RELEASE_SURFACE.md)
-- **Detailed repo/package/runtime boundary:** [`docs/RELEASE_FILE_MAP.md`](docs/RELEASE_FILE_MAP.md)
-- **Remote/client auth posture:** [`docs/REMOTE_CLIENT.md`](docs/REMOTE_CLIENT.md)
-- **Release-safe client examples:** [`docs/examples/mcp.json.example`](docs/examples/mcp.json.example), [`docs/examples/opencode.json.example`](docs/examples/opencode.json.example)
+You can use explicit standalone SQLite for a local-only demo or one-user workflow:
 
-## Deployment
+```bash
+export SCRIBE_MODE=standalone
+export SCRIBE_STORAGE_BACKEND=sqlite
+export SCRIBE_DB_PATH=".scribe/state/scribe.db"
+scribe-server
+```
 
-Container and compose guidance lives in [`deploy/README.md`](deploy/README.md).
+### Create your first governed project scaffold
 
-That guide keeps the same frozen contract:
+Once your runtime is configured, bind a project:
 
-- local/core remains the default public posture
-- authenticated SSE/remote is optional, not default
-- `0.0.0.0` guidance is limited to operator-managed deployments
+```bash
+scribe call set_project \
+  --agent demo-agent \
+  --repo-root "$PWD" \
+  --arg name=demo_docs \
+  --arg root="$PWD" \
+  --arg format=structured \
+  --pretty
+```
+
+On a fresh project, that one call can generate the core scaffold:
+
+```text
+.scribe/docs/dev_plans/demo_docs/
+  ARCHITECTURE_GUIDE.md
+  PHASE_PLAN.md
+  CHECKLIST.md
+  PROGRESS_LOG.md
+  DOC_LOG.md
+  SECURITY_LOG.md
+  BUG_LOG.md
+```
+
+That scaffold is the point. Scribe is not just starting a server. It is creating a project surface that later MCP calls can work against.
+
+### Downstream customization now lives in the repo
+
+On first bind/bootstrap, Scribe also seeds the downstream customization surface under `.scribe/` so each repo can own its local scaffolding and settings without forking the library:
+
+```text
+.scribe/
+  config/
+    scribe.yaml
+    seed_registry.json
+  templates/
+    documents/
+      ARCHITECTURE_GUIDE_TEMPLATE.md
+      PHASE_PLAN_TEMPLATE.md
+      CHECKLIST_TEMPLATE.md
+      PROGRESS_LOG_TEMPLATE.md
+      DOC_LOG_TEMPLATE.md
+      SECURITY_LOG_TEMPLATE.md
+      BUG_LOG_TEMPLATE.md
+  .env.example
+```
+
+That seeded surface is live, not decorative:
+
+- `generate_doc_templates` and template-driven doc flows now resolve repo-local `.scribe/templates/` first
+- repo-local seeded files are tracked in `.scribe/config/seed_registry.json` so refreshes can update untouched files without clobbering customized ones
+- `.scribe/.env.example` is a discovery artifact only; runtime never auto-loads it
+
+The ownership split is intentional:
+
+- shared infrastructure defaults such as `SCRIBE_DB_URL`, backend mode, and pool settings belong in user/global config by default
+- repo-specific runtime overrides belong in repo root `.env`
+- repo-scoped structured behavior belongs in `.scribe/config/scribe.yaml`
+
+The user/global config home resolves in this order:
+
+1. `SCRIBE_CONFIG_DIR`
+2. `XDG_CONFIG_HOME/scribe_mcp`
+3. `~/.config/scribe_mcp`
+
+Inside that directory, use:
+
+- `runtime.env` for shared env-backed defaults across repos
+- `scribe.yaml` for user-level structured defaults such as display preferences
+
+That means you do not need to restate DB credentials in every downstream Scribe project just to make the runtime work.
+
+The tour walks through that loop in more detail:
+- [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)
+
+If you want to see the registry surface after that first bind, Scribe also exposes project inventory and health-oriented views through tools such as `list_projects` and managed-doc `project_health`.
+
+## How governed docs work
+
+Generated docs are not just blank markdown files. They are structured scaffolds designed for later managed updates.
+
+Example excerpt from a generated `ARCHITECTURE_GUIDE.md`:
+
+```md
+## 1. Problem Statement
+<!-- ID: problem_statement -->
+...
+
+## 3. Architecture Overview
+<!-- ID: architecture_overview -->
+...
+```
+
+Those stable anchor IDs are what let Scribe patch sections deterministically later through managed doc operations instead of relying on brittle freeform edits.
+
+Example excerpt from a generated `CHECKLIST.md`:
+
+```md
+## Phase 0
+<!-- ID: phase_0 -->
+- [ ] Add package-specific acceptance item with expected verification command
+```
+
+The value is not just that Scribe writes docs. It writes docs that agents and operators can update without turning them into mush.
+
+## The project registry and drift story
+
+Scribe does more than remember that a project exists.
+
+The runtime keeps registry-backed metadata for each project, including:
+
+- lifecycle timestamps such as `created_at`, `last_entry_at`, and `last_access_at`
+- activity signals such as `days_since_last_entry`, `days_since_last_access`, `staleness_level`, and `activity_score`
+- doc hygiene metadata such as `baseline_hashes`, `current_hashes`, `doc_drift_days_since_update`, `drift_score`, and `doc_drift_suspected`
+
+This is the useful part: Scribe is not just storing docs and logs side by side. It keeps enough structured state to warn when active work has outpaced the planning docs.
+
+If you want the template-side view of those fields, start with:
+- [Template variables reference](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TEMPLATE_VARIABLES.md)
+- [Scribe MCP whitepaper](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/whitepapers/scribe_mcp_whitepaper.md)
+
+## The `.scribe/` working surface
+
+Once Scribe is active, your repo grows a real working surface under `.scribe/`. Depending on runtime mode and the tools you use, that can include:
+
+```text
+.scribe/
+  .env.example
+  config/
+    scribe.yaml
+    seed_registry.json
+  templates/
+    documents/
+      ARCHITECTURE_GUIDE_TEMPLATE.md
+      PHASE_PLAN_TEMPLATE.md
+      CHECKLIST_TEMPLATE.md
+      PROGRESS_LOG_TEMPLATE.md
+      DOC_LOG_TEMPLATE.md
+      SECURITY_LOG_TEMPLATE.md
+      BUG_LOG_TEMPLATE.md
+  state/
+  vectors/
+  backups/
+  sentinel/
+  cli/
+  docs/
+    agent_report_cards/
+    dev_plans/<project>/
+      ARCHITECTURE_GUIDE.md
+      PHASE_PLAN.md
+      CHECKLIST.md
+      PROGRESS_LOG.md
+      DOC_LOG.md
+      SECURITY_LOG.md
+      BUG_LOG.md
+      TOOL_LOG.jsonl
+```
+
+That layout is part of the product story. Scribe gives agents and operators a durable project memory layer inside the repo boundary instead of scattering evidence across chat threads, shell history, and CI logs.
+
+The important new bit is that `.scribe/templates/` and `.scribe/config/` are now first-class downstream surfaces. Customize templates there when you want repo-specific scaffolds, keep repo behavior in `.scribe/config/scribe.yaml`, keep repo-specific env overrides in repo root `.env`, and keep shared cross-repo runtime defaults in the user/global config home.
+
+## Run Scribe as an MCP server
+
+For MCP hosts such as Codex or Claude-compatible setups, the usual entry point is:
+
+```bash
+scribe-server
+```
+
+Generic `mcp.json` example:
+
+```json
+{
+  "mcpServers": {
+    "scribe": {
+      "command": "scribe-server",
+      "env": {
+        "SCRIBE_STORAGE_BACKEND": "postgres",
+        "SCRIBE_DB_URL": "postgresql://scribe_app:pass@127.0.0.1:5432/scribe"
+      }
+    }
+  }
+}
+```
+
+Codex-specific guidance lives here:
+- [MCP server guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/mcp_server_guide.md)
+- [Codex projection path](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/INSTALL_AND_BOOTSTRAP.md#codex-projection-path)
+
+The Codex and Claude plugin bundles ship inside the installed package as of the 2.8.0 line, vendored into the wheel via package-data, so the MCP server surface is not the only integration story. Because projection prefers the packaged bundle, a plain `pip install scribe-mcp` followed by `scribe install --commit --yes --project-codex` projects those assets into your Codex surfaces with no clone required. The repo `plugins/` tree stays the canonical source for development and is used as a fallback when you run projection from a cloned checkout.
+
+## Documentation map
+
+Start with these:
+
+- [Install and Bootstrap](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/INSTALL_AND_BOOTSTRAP.md)  
+  The canonical install guide, including Postgres bootstrap, standalone mode, and Codex projection.
+- [Tour: Scribe as an MCP product](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TOUR.md)  
+  A short MCP-first walkthrough with verified live response shapes.
+- [Document Topology and Downstream Export](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/DOCUMENT_TOPOLOGY.md)
+  The managed-doc lifecycle, topology edge, scan/repair, handoff, and downstream export contract.
+- [Scribe Usage Guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/Scribe_Usage.md)  
+  The day-to-day operating loop and the tool families you will actually use.
+- [MCP Server Guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/mcp_server_guide.md)  
+  How to connect Scribe to Codex or other MCP hosts.
+
+Reference and release docs:
+
+- [Compatibility matrix](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/COMPATIBILITY_MATRIX.md)
+- [Release surface](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/RELEASE_SURFACE.md)
+- [Release file map](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/RELEASE_FILE_MAP.md)
+- [Remote client contract](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/REMOTE_CLIENT.md)
+- [Template variables reference](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/TEMPLATE_VARIABLES.md)
+- [Bridge development](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/BRIDGE_DEVELOPMENT.md)
+- [Global deployment guide](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/GLOBAL_DEPLOYMENT_GUIDE.md)
+- [Deployment README](https://github.com/CortaLabs/scribe_mcp/blob/main/deploy/README.md)
+- [Scribe MCP whitepaper](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/whitepapers/scribe_mcp_whitepaper.md)
+
+Examples:
+
+- [mcp.json example](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/examples/mcp.json.example)
+- [opencode.json example](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/examples/opencode.json.example)
+
+## Who Scribe is for
+
+Scribe is a strong fit if you are:
+
+- building with MCP-hosted agents and want better operational memory
+- running multi-agent engineering workflows that need a durable trail
+- trying to keep specs, plans, and checklists attached to implementation reality
+- tired of reconstructing "why did the agent do this?" from scattered logs
+
+## What still needs work
+
+As of `2.8.1` the no-clone install path is real: the lean Scribe plugin bundle ships inside the wheel, so `pip install scribe-mcp` plus `scribe install --commit --yes --project-codex` projects it without a checkout. What is not yet in place:
+
+- an automated, clean-room CI proof of that full pip-installed path — from a fresh environment through bootstrap to a first live MCP host integration — so the public install story is continuously verified end-to-end, not just verified once by hand.
+
+That matters because the install story should stay proven as the package evolves, not re-checked manually each release.
 
 ## License
 
-See [`LICENSE`](LICENSE).
+See [LICENSE](https://github.com/CortaLabs/scribe_mcp/blob/main/LICENSE).

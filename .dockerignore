@@ -38,6 +38,9 @@ tests/
 # Documentation (not needed in image)
 *.md
 !README.md
+!skills/
+!skills/scribe-integration/
+!skills/scribe-integration/SKILL.md
 
 # Environment and secrets (never bake into image)
 .env

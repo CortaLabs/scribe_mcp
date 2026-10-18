@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import shutil
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +33,125 @@ def run(coro):
     """Execute an async coroutine from a synchronous test."""
 
     return asyncio.run(coro)
+
+
+def test_mcp_v2_call_dispatches_once_through_execute_tool_call(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "tool": kwargs["name"]}
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+    result = run(
+        server.app.call_tool(
+            "scribe_private_context_selector_readback",
+            {
+                "agent": "test-agent",
+                "selector_class_label": "selector",
+                "target_fingerprint_binding_label": "bound",
+                "runtime_role_label": "role",
+                "default_context_bypass_label": "disabled",
+                "active_runtime_exclusion_label": "excluded",
+                "source_authority_label": "source",
+            },
+        )
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["name"] == "scribe_private_context_selector_readback"
+    assert calls[0]["registry"] is server._SCRIBE_TOOL_REGISTRY
+    assert calls[0]["state_manager"] is server.state_manager
+    assert calls[0]["router_context_manager"] is server.router_context_manager
+    assert calls[0]["sentinel_only"] is server._SENTINEL_ONLY_TOOLS
+    assert calls[0]["sentinel_allowed"] is server._SENTINEL_ALLOWED_TOOLS
+    assert result.structured_content == {
+        "ok": True,
+        "tool": "scribe_private_context_selector_readback",
+    }
+    assert result.is_error is False
+
+
+def test_mcp_v2_invalid_schema_has_zero_handler_side_effects(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+
+    with pytest.raises(ValueError, match="invalid arguments"):
+        run(server.app.call_tool("scribe_private_context_selector_readback", {}))
+
+    assert calls == []
+
+
+def test_mcp_named_legacy_list_and_call_preserve_contract(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {
+            "content": [{"type": "text", "text": "legacy-ok"}],
+            "structuredContent": {"ok": True, "era": "legacy"},
+            "isError": False,
+        }
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+    listed = run(server.app.list_tools(protocol_era=server.ProtocolEra.LEGACY))
+    result = run(
+        server.app.call_tool(
+            "scribe_private_context_selector_readback",
+            {
+                "agent": "test-agent",
+                "selector_class_label": "selector",
+                "target_fingerprint_binding_label": "bound",
+                "runtime_role_label": "role",
+                "default_context_bypass_label": "disabled",
+                "active_runtime_exclusion_label": "excluded",
+                "source_authority_label": "source",
+            },
+            protocol_era=server.ProtocolEra.LEGACY,
+        )
+    )
+
+    tool = next(item for item in listed if item.name == "scribe_private_context_selector_readback")
+    assert tool.input_schema["required"] == [
+        "agent",
+        "selector_class_label",
+        "target_fingerprint_binding_label",
+        "runtime_role_label",
+        "default_context_bypass_label",
+        "active_runtime_exclusion_label",
+        "source_authority_label",
+    ]
+    assert tool.meta["scribe"]["tags"] == ["context", "selector", "readback", "read-only"]
+    assert len(calls) == 1
+    assert result.content[0].text == "legacy-ok"
+    assert result.structured_content == {"ok": True, "era": "legacy"}
+    assert result.is_error is False
+
+
+def test_mcp_unsupported_era_has_zero_handler_side_effects(monkeypatch):
+    calls = []
+
+    async def fake_execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(server, "execute_tool_call", fake_execute_tool_call)
+
+    with pytest.raises(ValueError, match="unsupported MCP protocol era"):
+        run(
+            server.app.call_tool(
+                "scribe_private_context_selector_readback",
+                {"agent": "test-agent"},
+                protocol_era="legacy",
+            )
+        )
+
+    assert calls == []
 
 
 @pytest.fixture
@@ -82,6 +203,7 @@ def isolated_state(tmp_path, monkeypatch):
 def project_root(tmp_path):
     root = settings.project_root / "tmp_tests" / str(uuid.uuid4())
     root.mkdir(parents=True, exist_ok=True)
+    (root / ".git").mkdir(exist_ok=True)
     yield root
     if root.exists():
         shutil.rmtree(root)
@@ -109,6 +231,88 @@ def test_set_and_get_project_roundtrip(isolated_state, project_root):
     assert project["progress_log"] == str((docs_dir / "PROGRESS_LOG.md").resolve())
     assert project["docs"]["architecture"].endswith("ARCHITECTURE_GUIDE.md")
     assert active["recent_projects"][0] == "test-project"
+
+
+def test_set_project_handles_legacy_sqlite_project_schema(monkeypatch, tmp_path):
+    db_path = tmp_path / "legacy.db"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / ".git").mkdir(exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE scribe_projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            repo_root TEXT NOT NULL,
+            progress_log_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            docs_json TEXT
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO scribe_projects (name, repo_root, progress_log_path, docs_json)
+        VALUES (?, ?, ?, ?);
+        """,
+        ("legacy-project", str(repo_root), str(repo_root / "PROGRESS_LOG.md"), None),
+    )
+    conn.commit()
+    conn.close()
+
+    storage = SQLiteStorage(db_path)
+    run(storage.setup())
+    manager = StateManager(path=tmp_path / "state.json", storage_backend=storage)
+
+    monkeypatch.setattr(server, "storage_backend", storage, raising=False)
+    monkeypatch.setattr(server, "state_manager", manager, raising=False)
+
+    result = run(
+        set_project.set_project(
+            agent="test_agent",
+            name="legacy-project",
+            root=str(repo_root),
+            format="structured",
+        )
+    )
+    assert result["ok"] is True
+
+    fetched = run(storage.fetch_project("legacy-project", repo_root=str(repo_root)))
+    assert fetched is not None
+    assert fetched.name == "legacy-project"
+
+    run(storage.close())
+
+
+def test_server_lazy_agent_helpers_reinitialize_after_storage_swap(monkeypatch, tmp_path):
+    first_storage = SQLiteStorage(tmp_path / "first.db")
+    second_storage = SQLiteStorage(tmp_path / "second.db")
+    run(first_storage.setup())
+    run(second_storage.setup())
+    first_manager = StateManager(path=tmp_path / "first_state.json", storage_backend=first_storage)
+    second_manager = StateManager(path=tmp_path / "second_state.json", storage_backend=second_storage)
+
+    monkeypatch.setattr(server, "storage_backend", first_storage, raising=False)
+    monkeypatch.setattr(server, "state_manager", first_manager, raising=False)
+    first_context_manager = server.get_agent_context_manager()
+    first_identity = server.get_agent_identity()
+
+    monkeypatch.setattr(server, "storage_backend", second_storage, raising=False)
+    monkeypatch.setattr(server, "state_manager", second_manager, raising=False)
+    second_context_manager = server.get_agent_context_manager()
+    second_identity = server.get_agent_identity()
+
+    assert second_context_manager is not first_context_manager
+    assert second_context_manager.storage is second_storage
+    assert second_context_manager.state_manager is second_manager
+    assert second_identity is not first_identity
+    assert second_identity.state_manager is second_manager
+
+    run(first_storage.close())
+    run(second_storage.close())
 
 
 def test_append_and_read_recent(isolated_state, project_root):
@@ -225,6 +429,54 @@ def test_append_entry_accepts_sequence_metadata(isolated_state, project_root):
     assert "sequence_meta" in log_content
 
 
+def test_append_entry_returns_and_persists_phase_timing(isolated_state, project_root):
+    root = project_root
+    project_name = "timing-success-test"
+    run(set_project.set_project(agent="test_agent", name=project_name, root=str(root), format="structured"))
+
+    result = run(
+        append_entry.append_entry(
+            agent="test_agent",
+            message="Timing success visibility test",
+            status="info",
+            format="structured",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["db_mirror"]["status"] == "ok"
+    phases = result["timing"]["phases_ms"]
+    assert phases["total_ms"] > 0
+    for phase_name in [
+        "file_append_wal_ms",
+        "db_fetch_project_ms",
+        "db_insert_entry_ms",
+        "state_update_ms",
+        "reminders_ms",
+        "format_response_ms",
+    ]:
+        assert phase_name in phases
+        assert phases[phase_name] >= 0
+
+    storage = server.storage_backend
+    project_record = run(storage.fetch_project(project_name))
+    entries = run(storage.fetch_recent_entries(project=project_record, limit=1))
+    persisted_timing = entries[0]["meta"]["append_entry_timing"]
+    assert persisted_timing["schema_version"] == "append-entry-timing.v1"
+    persisted_phases = persisted_timing["phases_ms"]
+    for phase_name in [
+        "file_append_wal_ms",
+        "db_fetch_project_ms",
+        "db_insert_entry_ms",
+        "state_update_ms",
+        "reminders_ms",
+        "format_response_ms",
+        "total_ms",
+    ]:
+        assert phase_name in persisted_phases
+        assert persisted_phases[phase_name] >= 0
+
+
 def test_append_entry_surfaces_db_mirror_failures(monkeypatch, isolated_state, project_root):
     root = project_root
     run(set_project.set_project(agent="test_agent", name="db-mirror-status-test", root=str(root), format="structured"))
@@ -249,6 +501,32 @@ def test_append_entry_surfaces_db_mirror_failures(monkeypatch, isolated_state, p
     assert result["db_mirror"]["enabled"] is True
     assert result["db_mirror"]["status"] == "error"
     assert "forced mirror failure" in str(result["db_mirror"]["error"])
+    phases = result["timing"]["phases_ms"]
+    assert phases["total_ms"] > 0
+    assert phases["file_append_wal_ms"] >= 0
+    assert phases["db_insert_entry_ms"] >= 0
+
+
+def test_append_entry_bulk_returns_summary_timing(isolated_state, project_root):
+    root = project_root
+    run(set_project.set_project(agent="test_agent", name="bulk-timing-test", root=str(root), format="structured"))
+
+    result = run(
+        append_entry.append_entry(
+            agent="test_agent",
+            message="",
+            status="info",
+            items_list=[{"message": "Bulk timing one"}, {"message": "Bulk timing two"}],
+            format="structured",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["bulk_mode"] is True
+    phases = result["timing"]["phases_ms"]
+    assert phases["total_ms"] > 0
+    assert phases["file_append_wal_ms"] >= 0
+    assert all("timing" not in item for item in result["results"])
 
 
 def test_append_entry_items_list_string_meta(isolated_state, project_root):
@@ -319,6 +597,63 @@ def test_generate_doc_templates_renders_files(tmp_path, isolated_state):
         architecture = (target_dir / "ARCHITECTURE_GUIDE.md").read_text(encoding="utf-8")
         assert str(target_dir) in architecture
         assert str(settings_default_dir) not in architecture
+    finally:
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+
+
+def test_generate_doc_templates_with_base_dir_skips_explicit_project_rebind(monkeypatch, tmp_path, isolated_state):
+    project_name = "UnitTestDocsBypass"
+    docs_root = tmp_path / "render-root" / "docs" / "dev_plans"
+    target_dir = docs_root / slugify_project_name(project_name)
+    active_project = "integrate_bug_management_system_20260417"
+
+    async def _record_tool(_tool_name: str):
+        return {"tool": _tool_name}
+
+    async def _load_state():
+        return SimpleNamespace(recent_projects=[active_project], current_project=active_project)
+
+    async def _get_session_project(session_id: str):
+        if session_id == "session-security":
+            return active_project
+        return None
+
+    async def _fetch_project(name: str):
+        if name == active_project:
+            return SimpleNamespace(
+                name=active_project,
+                repo_root=str(tmp_path / "bound-root"),
+                progress_log_path=str(tmp_path / "bound-root" / "PROGRESS_LOG.md"),
+                docs_json=None,
+            )
+        return None
+
+    fake_server = SimpleNamespace(
+        state_manager=SimpleNamespace(record_tool=_record_tool, load=_load_state),
+        storage_backend=SimpleNamespace(get_session_project=_get_session_project, fetch_project=_fetch_project),
+        get_execution_context=lambda: SimpleNamespace(
+            mode="project",
+            stable_session_id="session-security",
+            session_id="session-security",
+        ),
+        get_agent_identity=lambda: None,
+    )
+
+    monkeypatch.setattr(generate_doc_templates, "server_module", fake_server)
+    monkeypatch.setattr(generate_doc_templates._GENERATE_DOC_TEMPLATES_HELPER, "server_module", fake_server)
+
+    try:
+        result = run(
+            generate_doc_templates.generate_doc_templates(
+                agent="test_agent",
+                project_name=project_name,
+                author="QA",
+                base_dir=str(docs_root),
+            )
+        )
+        assert result["ok"]
+        assert (target_dir / "ARCHITECTURE_GUIDE.md").exists()
     finally:
         if target_dir.exists():
             shutil.rmtree(target_dir)

@@ -18,6 +18,7 @@ import asyncio
 
 from scribe_mcp import server as server_module
 from scribe_mcp.config.settings import settings
+from scribe_mcp.config.repo_config import RepoDiscovery
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import additive_local_tool
 from scribe_mcp.utils.bulk_processor import BulkProcessor, ParallelBulkProcessor
@@ -39,6 +40,7 @@ from scribe_mcp.shared.logging_utils import (
     resolve_log_definition as shared_resolve_log_definition,
     resolve_logging_context,
 )
+from scribe_mcp.shared.write_barrier import assert_writes_allowed
 from scribe_mcp.shared.log_enums import (
     LogPriority,
     LogCategory,
@@ -63,7 +65,14 @@ except ImportError:
 # Import validation helpers for backwards-compatible test globals.
 from . import manage_docs_validation as _manage_docs_validation  # noqa: F401
 from scribe_mcp.tools.config.append_entry_config import AppendEntryConfig
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
+from scribe_mcp.shared.path_policy import (
+    PathPolicyResult,
+    PathPolicyViolation,
+    apply_path_policy,
+    load_path_policy,
+    looks_like_local_absolute_path,
+)
 
 _RATE_TRACKER: Dict[str, deque[float]] = defaultdict(deque)
 _RATE_LOCKS: Dict[str, asyncio.Lock] = {}
@@ -81,7 +90,47 @@ _PARALLEL_PROCESSOR = ParallelBulkProcessor()
 # Phase 3 Enhanced utilities integration
 _PARAMETER_CORRECTOR = BulletproofParameterCorrector()
 _EXCEPTION_HEALER = ExceptionHealer()
-_PROJECT_REGISTRY = ProjectRegistry()
+_PROJECT_REGISTRY = get_runtime_project_registry()
+
+
+class _AppendEntryPhaseTimer:
+    """Small additive timer for append_entry phase visibility."""
+
+    def __init__(self) -> None:
+        self._started = time.perf_counter()
+        self._phases_ms: Dict[str, float] = {}
+
+    def elapsed(self, phase_name: str, started: float) -> None:
+        self._phases_ms[phase_name] = round((time.perf_counter() - started) * 1000.0, 3)
+
+    def snapshot(self) -> Dict[str, float]:
+        return dict(self._phases_ms)
+
+    def mark_total(self) -> Dict[str, float]:
+        self._phases_ms["total_ms"] = round((time.perf_counter() - self._started) * 1000.0, 3)
+        return dict(self._phases_ms)
+
+
+def _append_entry_timing_payload(phases_ms: Dict[str, float]) -> Dict[str, Any]:
+    return {
+        "schema_version": "append-entry-timing.v1",
+        "phases_ms": phases_ms,
+    }
+
+
+def _summarize_bulk_timing(results: List[Dict[str, Any]], total_ms: float) -> Dict[str, Any]:
+    phases_ms: Dict[str, float] = {}
+    for result in results:
+        timing = result.get("timing")
+        phase_map = timing.get("phases_ms") if isinstance(timing, dict) else None
+        if not isinstance(phase_map, dict):
+            continue
+        for phase_name, value in phase_map.items():
+            if phase_name == "total_ms" or not isinstance(value, (int, float)):
+                continue
+            phases_ms[phase_name] = round(phases_ms.get(phase_name, 0.0) + float(value), 3)
+    phases_ms["total_ms"] = round(total_ms, 3)
+    return _append_entry_timing_payload(phases_ms)
 
 
 def _sanitize_message(message: str) -> str:
@@ -92,7 +141,38 @@ def _sanitize_message(message: str) -> str:
     # Replace literal newlines with escaped newlines for MCP protocol
     # This allows multiline content to pass through validation
     sanitized = message.replace('\r\n', '\\n').replace('\r', '\\n').replace('\n', '\\n')
+    # Pipe is the rendered log line's message↔meta delimiter; heal to the
+    # visually equivalent broken bar instead of rejecting the entry
+    # (logging must never be blocked — P1.7, friction audit F-pipe).
+    sanitized = sanitized.replace('|', '¦')
     return sanitized
+
+
+def _has_append_content(
+    message: Any,
+    items: Optional[str],
+    items_list: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """Return whether a single or bulk append payload contains log text."""
+    if isinstance(message, str) and message.strip():
+        return True
+
+    bulk_items: Any = items_list
+    if bulk_items is None and isinstance(items, str):
+        try:
+            bulk_items = json.loads(items)
+        except json.JSONDecodeError:
+            return False
+
+    if not isinstance(bulk_items, list):
+        return False
+
+    return any(
+        isinstance(item, dict)
+        and item.get("message") is not None
+        and str(item["message"]).strip()
+        for item in bulk_items
+    )
 
 
 def _get_repo_slug(project_root: str) -> str:
@@ -189,7 +269,11 @@ def _validate_and_prepare_parameters(
         healing_applied = False
 
         if message:
-            healed_message = _PARAMETER_CORRECTOR.correct_message_parameter(message)
+            # Uncapped: the entry message is the audit trail itself, and this
+            # healed value is what reaches both the file trail and the DB mirror.
+            healed_message = _PARAMETER_CORRECTOR.correct_message_parameter(
+                message, max_length=None
+            )
             if healed_message != message:
                 healed_params["message"] = healed_message
                 healing_applied = True
@@ -281,9 +365,32 @@ def _validate_and_prepare_parameters(
                 final_category = None
 
         # Validate confidence
+        # Heal toward truth, never toward MAX: clamp out-of-range numerics into
+        # [0.0, 1.0] and omit non-numeric values entirely. Promoting a bad value
+        # to 1.0 (the previous behavior) hid exactly the low-confidence signal the
+        # reminder engine relies on. Surface every correction via parameter_healing.
         if final_confidence is not None:
-            if not isinstance(final_confidence, (int, float)) or not (0.0 <= final_confidence <= 1.0):
-                final_confidence = 1.0  # Out of range → default
+            if isinstance(final_confidence, bool):
+                # bool is an int subclass; a True/False confidence is non-numeric intent.
+                healed_params["confidence_healing"] = (
+                    f"non-numeric confidence {final_confidence!r} omitted"
+                )
+                final_confidence = None
+                healing_applied = True
+            elif isinstance(final_confidence, (int, float)):
+                clamped = max(0.0, min(1.0, float(final_confidence)))
+                if clamped != final_confidence:
+                    healed_params["confidence_healing"] = (
+                        f"confidence {final_confidence!r} clamped to {clamped}"
+                    )
+                    healing_applied = True
+                final_confidence = clamped
+            else:
+                healed_params["confidence_healing"] = (
+                    f"non-numeric confidence {final_confidence!r} omitted"
+                )
+                final_confidence = None
+                healing_applied = True
 
         # Create configuration using dual parameter support
         if config is not None:
@@ -378,6 +485,7 @@ async def _process_single_entry(
     append_entry function and adds bulletproof error handling.
     """
     try:
+        phase_timer = _AppendEntryPhaseTimer()
         message = final_config.message
         status = final_config.status
         emoji = final_config.emoji
@@ -392,10 +500,17 @@ async def _process_single_entry(
         tags = final_config.tags
         confidence = final_config.confidence
 
-        # Validate message content - fail if invalid
+        # Validate message content — heal delimiter/newline collisions instead
+        # of rejecting (logging must never be blocked).
+        # The escaping below exists to keep the file record on one line. The DB
+        # mirror has no such constraint, so it keeps the caller's real text.
+        db_message = message
         validation_error = _validate_message(message)
         if validation_error:
-            return {"ok": False, "error": f"Message validation failed: {validation_error}"}
+            message = _sanitize_message(message)
+            validation_error = _validate_message(message)
+            if validation_error:
+                return {"ok": False, "error": f"Message validation failed: {validation_error}"}
 
         # Rate limiting removed; logging must never be blocked.
 
@@ -461,6 +576,13 @@ async def _process_single_entry(
 
         meta_payload.setdefault("log_type", entry_log_type)
         meta_payload.setdefault("content_type", "log")
+        policy_error = _apply_append_path_policy(meta_payload, project)
+        if policy_error is not None:
+            return _path_policy_rejection_response(
+                policy_error,
+                recent=recent,
+                project_name=project.get("name"),
+            )
 
         # Generate deterministic entry_id with error handling
         try:
@@ -483,6 +605,7 @@ async def _process_single_entry(
         line = None  # Initialize to prevent UnboundLocalError
         repo_root = Path(project.get("root") or settings.project_root).resolve()
         log_context = {"component": "logs", "project_name": project.get("name")}
+        file_append_started = time.perf_counter()
         try:
             # Convert meta dict to meta_pairs tuple for _compose_line
             meta_pairs = tuple(meta_payload.items()) if meta_payload else ()
@@ -546,6 +669,8 @@ async def _process_single_entry(
             else:
                 # Ultimate fallback
                 raise write_error
+        finally:
+            phase_timer.elapsed("file_append_wal_ms", file_append_started)
 
         tee_paths: List[str] = []
         tee_reminders: List[Dict[str, Any]] = []
@@ -615,6 +740,8 @@ async def _process_single_entry(
         # Mirror entry into database-backed storage when available, without
         # impacting the primary file append path.
         backend = server_module.storage_backend
+        db_meta_payload: Optional[Dict[str, Any]] = None
+        db_project_record = None
         db_mirror: Dict[str, Any] = {
             "enabled": bool(backend),
             "backend": type(backend).__name__ if backend else None,
@@ -626,32 +753,50 @@ async def _process_single_entry(
             try:
                 timeout = settings.storage_timeout_seconds
                 # Ensure project row exists
-                async with asyncio.timeout(timeout):
-                    record = await backend.fetch_project(project["name"])
-                if not record:
+                db_fetch_started = time.perf_counter()
+                try:
                     async with asyncio.timeout(timeout):
-                        record = await backend.upsert_project(
-                            name=project["name"],
-                            repo_root=project.get("root", str(Path("."))),
-                            progress_log_path=str(log_path),
+                        record = await backend.fetch_project(
+                            project["name"],
+                            repo_root=project.get("root"),
                         )
+                finally:
+                    phase_timer.elapsed("db_fetch_project_ms", db_fetch_started)
+                if not record:
+                    db_upsert_started = time.perf_counter()
+                    try:
+                        async with asyncio.timeout(timeout):
+                            record = await backend.upsert_project(
+                                name=project["name"],
+                                repo_root=project.get("root", str(Path("."))),
+                                progress_log_path=project.get("progress_log", str(log_path)),
+                            )
+                    finally:
+                        phase_timer.elapsed("db_upsert_project_ms", db_upsert_started)
 
                 # Prepare and insert mirrored entry
+                db_project_record = record
                 sha_value = hashlib.sha256((line or "").encode("utf-8")).hexdigest()
                 ts_dt = timestamp_dt or utcnow()
-                async with asyncio.timeout(timeout):
-                    await backend.insert_entry(
-                        entry_id=entry_id,
-                        project=record,
-                        ts=ts_dt,
-                        emoji=resolved_emoji,
-                        agent=resolved_agent,
-                        message=message,
-                        meta=meta_payload,
-                        raw_line=line or "",
-                        sha256=sha_value,
-                        log_type=entry_log_type,
-                    )
+                db_meta_payload = dict(meta_payload)
+                db_meta_payload["append_entry_timing"] = _append_entry_timing_payload(phase_timer.snapshot())
+                db_insert_started = time.perf_counter()
+                try:
+                    async with asyncio.timeout(timeout):
+                        await backend.insert_entry(
+                            entry_id=entry_id,
+                            project=record,
+                            ts=ts_dt,
+                            emoji=resolved_emoji,
+                            agent=resolved_agent,
+                            message=db_message,
+                            meta=db_meta_payload,
+                            raw_line=line or "",
+                            sha256=sha_value,
+                            log_type=entry_log_type,
+                        )
+                finally:
+                    phase_timer.elapsed("db_insert_entry_ms", db_insert_started)
                 db_mirror["status"] = "ok"
             except Exception as db_exc:
                 # Database mirror failures should never block logging.
@@ -661,12 +806,20 @@ async def _process_single_entry(
 
         # Update project state with exception handling
         try:
-            await server_module.state_manager.update_project_activity(
-                project["name"], entry_id, message, len(line)
-            )
+            state_update_started = time.perf_counter()
+            try:
+                await server_module.state_manager.update_project_activity(
+                    project["name"], entry_id, message, len(line)
+                )
+            finally:
+                phase_timer.elapsed("state_update_ms", state_update_started)
             # Touch Project Registry entry for this project (best-effort).
             try:
-                _PROJECT_REGISTRY.touch_entry(project["name"], log_type=final_config.log_type)
+                registry_touch_started = time.perf_counter()
+                try:
+                    _PROJECT_REGISTRY.touch_entry(project["name"], log_type=final_config.log_type)
+                finally:
+                    phase_timer.elapsed("registry_touch_ms", registry_touch_started)
             except Exception:
                 pass
         except Exception as state_error:
@@ -674,6 +827,10 @@ async def _process_single_entry(
             pass
 
         # Prepare response
+        format_response_started = time.perf_counter()
+        reminders_started = time.perf_counter()
+        response_reminders = list(getattr(context, "reminders", []) or []) + tee_reminders
+        phase_timer.elapsed("reminders_ms", reminders_started)
         response = {
             "ok": True,
             "id": entry_id,
@@ -686,12 +843,36 @@ async def _process_single_entry(
             "line_id": line_id,
             "project_name": project["name"],  # For concurrent session clarity
             "recent_projects": list(recent),
-            "reminders": list(getattr(context, "reminders", []) or []) + tee_reminders,
+            "reminders": response_reminders,
             "db_mirror": db_mirror,
         }
 
         if timestamp_warning:
             response["warning"] = timestamp_warning
+
+        phase_timer.elapsed("format_response_ms", format_response_started)
+        final_timing = _append_entry_timing_payload(phase_timer.mark_total())
+        response["timing"] = final_timing
+
+        if (
+            backend
+            and db_mirror.get("status") == "ok"
+            and db_project_record is not None
+            and db_meta_payload is not None
+            and hasattr(backend, "update_entry_meta")
+        ):
+            try:
+                timeout = settings.storage_timeout_seconds
+                final_db_meta_payload = dict(db_meta_payload)
+                final_db_meta_payload["append_entry_timing"] = final_timing
+                async with asyncio.timeout(timeout):
+                    await backend.update_entry_meta(
+                        entry_id=entry_id,
+                        project=db_project_record,
+                        meta=final_db_meta_payload,
+                    )
+            except Exception as db_exc:
+                logger.warning("append_entry timing metadata update failed: %s", db_exc)
 
         return response
 
@@ -719,6 +900,7 @@ async def _process_bulk_entries(
     function and adds bulletproof error handling with intelligent recovery.
     """
     try:
+        bulk_started = time.perf_counter()
         items = final_config.items
         items_list = final_config.items_list
         auto_split = final_config.auto_split
@@ -889,7 +1071,7 @@ async def _process_bulk_entries(
                 alternative_items = healed_bulk.get("healed_values", {}).get("bulk_items", bulk_items[:1])
                 results = []
 
-                for item in alternative_items:
+                for item_index, item in enumerate(alternative_items):
                     try:
                         item_config = AppendEntryConfig.from_legacy_params(
                             message=item.get("message", "Bulk item processed after error"),
@@ -916,7 +1098,7 @@ async def _process_bulk_entries(
                         results.append({
                             "ok": False,
                             "error": f"Failed to process bulk item: {str(item_error)}",
-                            "item_index": i
+                            "item_index": item_index
                         })
             else:
                 # No items to process - return clean error
@@ -928,6 +1110,10 @@ async def _process_bulk_entries(
                 }
 
         # Prepare bulk response
+        timing = _summarize_bulk_timing(results, (time.perf_counter() - bulk_started) * 1000.0)
+        for result in results:
+            result.pop("timing", None)
+
         successful_results = [r for r in results if r.get("ok", False)]
         failed_results = [r for r in results if not r.get("ok", False)]
 
@@ -939,6 +1125,7 @@ async def _process_bulk_entries(
             "failed": len(failed_results),
             "results": results,
             "recent_projects": list(recent),
+            "timing": timing,
         }
 
         # Backwards-compatible bulk response fields.
@@ -971,9 +1158,16 @@ async def _process_bulk_entries(
         }
 
 
-def _should_use_bulk_mode(message: str, items: Optional[str] = None, items_list: Optional[List[Dict[str, Any]]] = None) -> bool:
+def _should_use_bulk_mode(
+    message: str,
+    items: Optional[str] = None,
+    items_list: Optional[List[Dict[str, Any]]] = None,
+    auto_split: bool = True,
+) -> bool:
     """Detect if content should be processed as bulk entries using BulkProcessor utility."""
-    return BulkProcessor.detect_bulk_mode(message, items, items_list, length_threshold=500)
+    return BulkProcessor.detect_bulk_mode(
+        message, items, items_list, length_threshold=500, auto_split=auto_split
+    )
 
 
 def _split_multiline_message(message: str, delimiter: str = "\n") -> List[Dict[str, Any]]:
@@ -1080,6 +1274,7 @@ async def append_entry(
     stagger_seconds: int = 1,
     agent_id: Optional[str] = None,  # Agent identification (auto-detected if not provided)
     log_type: Optional[str] = "progress",
+    project: Optional[str] = None,  # Explicit project override for cross-project logging
     priority: Optional[str] = None,  # Entry priority (critical|high|medium|low)
     category: Optional[str] = None,  # Entry category (decision|investigation|bug|etc.)
     tags: Optional[List[str]] = None,  # List of tags for entry
@@ -1089,10 +1284,18 @@ async def append_entry(
     **_kwargs: Any,  # tolerate unknown kwargs (contract: tools never TypeError)
 ) -> Union[Dict[str, Any], str]:
     """
-    Enhanced append_entry with robust multiline handling and bulk mode support.
+    Record a Scribe audit-trail log entry for the active project.
+
+    This is the primary logging tool: call it to record what you did and why —
+    findings, decisions, code changes, test results, bugs, and phase milestones —
+    so progress is traceable across sessions and agents. Log every 2-3 significant
+    actions; if it is not logged here, it did not happen. Pass `items`/`items_list`
+    to record several entries at once (e.g. backfilling), and put reasoning in
+    `meta` (why/what/how) to make the trail auditable.
 
     Args:
-        message: Log message (auto-splits multiline if auto_split=True)
+        message: Non-empty log message (required unless items/items_list supplies bulk entries;
+            auto-splits multiline content if auto_split=True)
         status: Status type (info|success|warn|error|bug|plan)
         emoji: Custom emoji override
         agent: Agent identifier
@@ -1103,7 +1306,7 @@ async def append_entry(
         auto_split: Automatically split multiline messages into separate entries (default: True)
         split_delimiter: Delimiter for splitting multiline messages (default: newline)
         stagger_seconds: Seconds to stagger timestamps for bulk/split entries (default: 1)
-        log_type: Target log identifier (progress/doc_updates/etc.) defined in config/log_config.json
+        log_type: Target log identifier (progress/doc_updates/etc.) defined in .scribe/config/scribe.yaml logs
         priority: Entry priority (critical|high|medium|low). Auto-inferred from status if not provided. Default: medium
         category: Entry category (decision|investigation|bug|implementation|test|milestone|config|security|performance|documentation)
         tags: List of tags for entry
@@ -1126,10 +1329,9 @@ async def append_entry(
     # Phase 3 Task 3.5: Enhanced Function Decomposition
     # This function now uses decomposed sub-functions with bulletproof error handling
 
-    try:
-        state_snapshot = await server_module.state_manager.record_tool("append_entry")
-    except Exception:
-        state_snapshot = {}
+    _tool_started_perf_counter = time.perf_counter()
+    state_snapshot: Dict[str, Any] = {}
+    explicit_agent_id = agent_id is not None
 
     exec_context = None
     if hasattr(server_module, "get_execution_context"):
@@ -1139,6 +1341,35 @@ async def append_entry(
             exec_context = None
 
     try:
+        config_message = config.message if config is not None else None
+        config_items = config.items if config is not None else None
+        config_items_list = config.items_list if config is not None else None
+        raw_message = message if message not in (None, "") else config_message
+        raw_items = items if items is not None else config_items
+        raw_items_list = items_list if items_list is not None else config_items_list
+        if not _has_append_content(raw_message, raw_items, raw_items_list):
+            unexpected_parameters = sorted(str(key) for key in _kwargs)
+            suggestion = (
+                "Pass log text with message='...' or provide non-empty items/items_list "
+                "entries containing a message field."
+            )
+            if unexpected_parameters:
+                suggestion += (
+                    " Unsupported parameter(s) received: "
+                    f"{', '.join(unexpected_parameters)}. Rename the log-text field to 'message'."
+                )
+            return ErrorHandler.create_validation_error(
+                error_message=(
+                    "append_entry requires non-empty message content or bulk items; "
+                    "no log entry was written."
+                ),
+                suggestion=suggestion,
+                context={
+                    "error_code": "APPEND_ENTRY_CONTENT_REQUIRED",
+                    "unexpected_parameters": unexpected_parameters,
+                },
+            )
+
         # === PHASE 3 ENHANCED PARAMETER VALIDATION AND PREPARATION ===
         # Replace monolithic parameter handling with bulletproof validation and healing
         final_config, validation_info = _validate_and_prepare_parameters(
@@ -1176,25 +1407,18 @@ async def append_entry(
         stagger_seconds = final_config.stagger_seconds
         agent_id = final_config.agent_id
         log_type = final_config.log_type
+        explicit_project = project.strip() if isinstance(project, str) and project.strip() else None
+        if not explicit_project:
+            raw_project = _kwargs.get("project")
+            if isinstance(raw_project, str):
+                explicit_project = raw_project.strip() or None
 
         # Normalize metadata early for consistent handling throughout the function
         meta_pairs = _normalise_meta(meta)
         meta_payload = {key: value for key, value in meta_pairs}
 
-        # Auto-detect agent ID if not provided
-        if agent_id is None:
-            agent_identity = server_module.get_agent_identity()
-            if agent_identity:
-                agent_id = await agent_identity.get_or_create_agent_id()
-            else:
-                agent_id = "Scribe"  # Fallback
-
-        # Update agent activity tracking
-        agent_identity = server_module.get_agent_identity()
-        if agent_identity:
-            await agent_identity.update_agent_activity(
-                agent_id, "append_entry", {"message_length": len(message), "status": status, "bulk_mode": items is not None}
-            )
+        explicit_agent_id = explicit_agent_id or final_config.agent_id is not None
+        resolution_agent_id = agent_id or agent or "Scribe"
 
         def _collect_bulk_items(raw_items: Optional[str], raw_items_list: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
             if isinstance(raw_items_list, list):
@@ -1264,7 +1488,7 @@ async def append_entry(
 
             return {"ok": True, "written_count": written, "mode": "sentinel"}
 
-        if exec_context and getattr(exec_context, "mode", None) == "sentinel":
+        if exec_context and getattr(exec_context, "mode", None) == "sentinel" and not explicit_project:
             bulk_items = _collect_bulk_items(items, items_list)
             split_parts = (
                 [part for part in message.split(split_delimiter) if part]
@@ -1287,14 +1511,15 @@ async def append_entry(
             context = await resolve_logging_context(
                 tool_name="append_entry",
                 server_module=server_module,
-                agent_id=agent_id,
+                agent_id=resolution_agent_id,
+                explicit_project=explicit_project,
                 require_project=True,
                 state_snapshot=state_snapshot,
             )
         except ProjectResolutionError as exc:
             # Apply Phase 2 ExceptionHealer for project resolution errors
             healed_context = _EXCEPTION_HEALER.heal_parameter_validation_error(
-                exc, {"tool_name": "append_entry", "agent_id": agent_id}
+                exc, {"tool_name": "append_entry", "agent_id": resolution_agent_id}
             )
 
             if healed_context["success"]:
@@ -1303,12 +1528,13 @@ async def append_entry(
                     context = await resolve_logging_context(
                         tool_name="append_entry",
                         server_module=server_module,
-                        agent_id=healed_context["healed_values"].get("agent_id", agent_id),
+                        agent_id=healed_context["healed_values"].get("agent_id", resolution_agent_id),
+                        explicit_project=explicit_project,
                         require_project=True,
                         state_snapshot=state_snapshot,
                     )
                 except Exception:
-                    if exec_context:
+                    if exec_context and not explicit_project:
                         bulk_items = _collect_bulk_items(items, items_list)
                         split_parts = (
                             [part for part in message.split(split_delimiter) if part]
@@ -1331,12 +1557,12 @@ async def append_entry(
                     error_response = ErrorHandler.create_project_resolution_error(
                         error=exc,
                         tool_name="append_entry",
-                        suggestion=f"Invoke set_project with agent_id='{agent_id}' before appending entries"
+                        suggestion=f"Invoke set_project with agent_id='{resolution_agent_id}' before appending entries"
                     )
                 error_response["debug_path"] = "project_resolution_failed_healed"
                 return error_response
             else:
-                if exec_context:
+                if exec_context and not explicit_project:
                     bulk_items = _collect_bulk_items(items, items_list)
                     split_parts = (
                         [part for part in message.split(split_delimiter) if part]
@@ -1358,7 +1584,7 @@ async def append_entry(
                 error_response = ErrorHandler.create_project_resolution_error(
                     error=exc,
                     tool_name="append_entry",
-                    suggestion=f"Invoke set_project with agent_id='{agent_id}' before appending entries"
+                    suggestion=f"Invoke set_project with agent_id='{resolution_agent_id}' before appending entries"
                 )
             error_response["debug_path"] = "project_resolution_failed"
             return error_response
@@ -1366,28 +1592,35 @@ async def append_entry(
         project = context.project or {}
         recent = list(context.recent_projects)
         reminders_payload: List[Dict[str, Any]] = list(context.reminders)
+        assert_writes_allowed(
+            Path(project.get("root") or settings.project_root),
+            operation_label="append_entry",
+        )
+        try:
+            state_snapshot = await server_module.state_manager.record_tool("append_entry")
+        except Exception:
+            state_snapshot = {}
 
-        # === INPUT VALIDATION ===
-        # Validate that either message, items, or items_list is provided
-        if not items and not items_list and not message:
-            fallback_message = None
-            if config is not None:
-                try:
-                    fallback_message = config.message
-                except Exception:
-                    fallback_message = None
-            message = fallback_message or "No message provided"
-            if status is None:
-                status = "warn"
-            final_config.message = message
-            final_config.status = status
+        agent_identity = server_module.get_agent_identity()
+        if agent_identity and not explicit_agent_id:
+            agent_id = await agent_identity.get_or_create_agent_id()
+            final_config.agent_id = agent_id
+        elif agent_id is None:
+            agent_id = resolution_agent_id
+            final_config.agent_id = agent_id
+
+        # Update agent activity tracking after the write barrier has allowed mutation.
+        if agent_identity:
+            await agent_identity.update_agent_activity(
+                agent_id, "append_entry", {"message_length": len(message), "status": status, "bulk_mode": items is not None}
+            )
 
         log_cache: Dict[str, Tuple[Path, Dict[str, Any]]] = {}
         base_log_type = (log_type or "progress").lower()
 
         # === ENHANCED PROCESSING MODE SELECTION ===
         # Determine if we should use bulk mode with intelligent detection
-        use_bulk_mode = _should_use_bulk_mode(message, items, items_list)
+        use_bulk_mode = _should_use_bulk_mode(message, items, items_list, auto_split=auto_split)
 
         if use_bulk_mode:
             # === BULK PROCESSING WITH ENHANCED ERROR HANDLING ===
@@ -1412,11 +1645,38 @@ async def append_entry(
             else:
                 result["meta"]["parameter_healing"] = True
 
+        if explicit_project and exec_context and getattr(exec_context, "mode", None) == "sentinel":
+            reminders_list = result.setdefault("reminders", [])
+            reminders_list.append(
+                {
+                    "emoji": "⚠️",
+                    "message": (
+                        f"Logged to explicit project '{project.get('name', explicit_project)}' while the session is in "
+                        "sentinel mode. Run set_project before relying on project-scoped follow-up tools."
+                    ),
+                    "tool": "append_entry",
+                }
+            )
+            override_warning = "explicit_project_logged_without_rebinding_session"
+            existing_warning = result.get("warning")
+            result["warning"] = (
+                f"{existing_warning}; {override_warning}"
+                if isinstance(existing_warning, str) and existing_warning
+                else override_warning
+            )
+
         # Route through formatter for readable/structured/compact output
+        timing = result.get("timing") if isinstance(result.get("timing"), dict) else {}
+        phases_ms = timing.get("phases_ms") if isinstance(timing, dict) else None
         return await default_formatter.finalize_tool_response(
             data=result,
             format=format,
-            tool_name="append_entry"
+            tool_name="append_entry",
+            telemetry={
+                "started_perf_counter": _tool_started_perf_counter,
+                "measurement_scope": "tool_only",
+                "tool_phase_ms": phases_ms if isinstance(phases_ms, dict) else None,
+            },
         )
 
     except Exception as e:
@@ -1468,6 +1728,65 @@ def _normalise_meta(meta: Optional[Any]) -> tuple[tuple[str, str], ...]:
     except Exception as exc:
         error_str = str(exc)
         return (("meta_error", f"Metadata normalization failed: {error_str[:50]}"),)
+
+
+def _apply_append_path_policy(
+    meta_payload: Dict[str, Any],
+    project: Dict[str, Any],
+) -> Optional[PathPolicyResult]:
+    repo_root = Path(project.get("root") or settings.project_root).resolve()
+    repo_config = RepoDiscovery.load_config(repo_root, seed_if_missing=False)
+    policy = load_path_policy(repo_config, project)
+    result = apply_path_policy(meta_payload, policy=policy, scope="append")
+    if not policy.enabled:
+        return None
+    if result.violations and policy.unresolved == "reject":
+        return result
+    meta_payload.clear()
+    meta_payload.update(result.mapped)
+    if result.violations and policy.unresolved == "non_exportable":
+        meta_payload["non_exportable"] = True
+        meta_payload["path_policy_unresolved"] = "non_exportable"
+    return None
+
+
+def _safe_metadata_key(key: str) -> str:
+    if looks_like_local_absolute_path(key) or "/" in key or "\\" in key:
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+        return f"unsafe_key:{digest}"
+    return key
+
+
+def _path_policy_issue_payload(violation: PathPolicyViolation) -> Dict[str, Any]:
+    return {
+        "issue_code": violation.reason,
+        "metadata_key": _safe_metadata_key(violation.key),
+        "scope": violation.scope,
+        "safe_descriptor": violation.safe_descriptor,
+        "value_sha256_prefix": violation.value_sha256_prefix,
+    }
+
+
+def _path_policy_rejection_response(
+    result: PathPolicyResult,
+    *,
+    recent: List[Any],
+    project_name: Optional[str],
+) -> Dict[str, Any]:
+    issues = [_path_policy_issue_payload(violation) for violation in result.violations]
+    return {
+        "ok": False,
+        "error": "Path policy rejected structured metadata before append.",
+        "issue_code": "path_policy_rejected",
+        "issues": issues,
+        "path_policy": {
+            "scope": "append",
+            "unresolved": "reject",
+            "issue_count": len(issues),
+        },
+        "project_name": project_name,
+        "recent_projects": list(recent),
+    }
 
 
 def _compose_line(
@@ -1565,6 +1884,9 @@ async def _tee_entry_to_log_type(
     log_path, log_definition = _resolve_log_target(project, log_type, log_cache)
     meta_copy = dict(meta_payload)
     meta_copy["log_type"] = log_type
+    policy_error = _apply_append_path_policy(meta_copy, project)
+    if policy_error is not None:
+        return None, ["path_policy_rejected"]
     missing = _missing_required_meta(log_definition, meta_copy)
     if missing:
         return None, missing
@@ -1747,13 +2069,13 @@ async def _process_single_item(
             }
         }
 
-    # Enhanced message validation with auto-sanitization
+    # Enhanced message validation with auto-sanitization (newlines and pipes)
     validation_error = _validate_message(item_message)
     if validation_error:
-        if "newline" in validation_error:
-            item_message = _sanitize_message(item_message)
-            item["message"] = item_message
-        else:
+        item_message = _sanitize_message(item_message)
+        item["message"] = item_message
+        validation_error = _validate_message(item_message)
+        if validation_error:
             return {
                 "success": False,
                 "failed_item": {
@@ -1780,6 +2102,17 @@ async def _process_single_item(
 
     entry_log_type = (item.get("log_type") or base_log_type).lower()
     log_path, log_definition = _resolve_log_target(project, entry_log_type, log_cache)
+    meta_payload.setdefault("log_type", entry_log_type)
+    policy_error = _apply_append_path_policy(meta_payload, project)
+    if policy_error is not None:
+        return {
+            "success": False,
+            "failed_item": {
+                "index": index,
+                "error": "path_policy_rejected",
+                "issues": [_path_policy_issue_payload(violation) for violation in policy_error.violations],
+            },
+        }
 
     # Rotate if needed (only once per path)
     if log_path not in rotated_paths:
@@ -1796,8 +2129,6 @@ async def _process_single_item(
                 "item": item
             }
         }
-
-    meta_payload.setdefault("log_type", entry_log_type)
 
     # Compose the log line
     repo_slug = _get_repo_slug(project["root"])
@@ -1871,7 +2202,10 @@ async def _append_bulk_entries(
         try:
             timeout = settings.storage_timeout_seconds
             async with asyncio.timeout(timeout):
-                record = await backend.fetch_project(project["name"])
+                record = await backend.fetch_project(
+                    project["name"],
+                    repo_root=project.get("root"),
+                )
             if not record:
                 async with asyncio.timeout(timeout):
                     record = await backend.upsert_project(
@@ -1953,15 +2287,13 @@ async def _append_bulk_entries(
                 })
                 continue
 
-            # Enhanced message validation with auto-sanitization
+            # Enhanced message validation with auto-sanitization (newlines and pipes)
             validation_error = _validate_message(item_message)
             if validation_error:
-                # Try to auto-fix common issues
-                if "newline" in validation_error:
-                    # Sanitize newlines for this item
-                    item_message = _sanitize_message(item_message)
-                    item["message"] = item_message  # Update for later processing
-                else:
+                item_message = _sanitize_message(item_message)
+                item["message"] = item_message  # Update for later processing
+                validation_error = _validate_message(item_message)
+                if validation_error:
                     failed_items.append({
                         "index": i,
                         "error": validation_error,
@@ -1986,6 +2318,16 @@ async def _append_bulk_entries(
 
             entry_log_type = (item.get("log_type") or base_log_type).lower()
             log_path, log_definition = _resolve_log_target(project, entry_log_type, log_cache)
+            meta_payload.setdefault("log_type", entry_log_type)
+            policy_error = _apply_append_path_policy(meta_payload, project)
+            if policy_error is not None:
+                failed_items.append({
+                    "index": i,
+                    "error": "path_policy_rejected",
+                    "issues": [_path_policy_issue_payload(violation) for violation in policy_error.violations],
+                })
+                continue
+
             if log_path not in rotated_paths:
                 await _rotate_if_needed(log_path, repo_root=Path(project.get("root") or settings.project_root).resolve())
                 rotated_paths.add(log_path)
@@ -1998,7 +2340,6 @@ async def _append_bulk_entries(
                     "item": item
                 })
                 continue
-            meta_payload.setdefault("log_type", entry_log_type)
 
             # Generate deterministic entry_id for bulk item
             repo_slug = _get_repo_slug(project["root"])
@@ -2019,7 +2360,7 @@ async def _append_bulk_entries(
                 agent=resolved_agent,
                 project_name=project["name"],
                 message=item_message,
-                meta_pairs=meta_pairs,
+                meta_pairs=tuple(meta_payload.items()),
                 entry_id=entry_id,
             )
 

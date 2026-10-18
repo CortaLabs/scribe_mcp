@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from scribe_mcp.storage.models import ProjectRecord
-from scribe_mcp.utils.search import message_matches
+from scribe_mcp.utils.search import (
+    message_matches,
+    message_predicate_pushable,
+    sqlite_message_clause,
+)
 from scribe_mcp.utils.time import format_utc, utcnow
 
 
@@ -15,6 +19,12 @@ AsyncExecute = Callable[[str, tuple[Any, ...]], Awaitable[Any]]
 AsyncFetchOne = Callable[[str, tuple[Any, ...]], Awaitable[Any]]
 AsyncFetchAll = Callable[[str, tuple[Any, ...] | tuple], Awaitable[List[Any]]]
 AsyncInitialise = Callable[[], Awaitable[None]]
+
+# Upper bound on rows scanned when a message predicate cannot be pushed into SQL
+# (regex mode only). substring/exact are exhaustive via SQL and never hit this.
+# This is the single, shared cap for both the page fetch and the count path so
+# their regex windows are identical (F5 parity).
+_MESSAGE_POSTFILTER_SCAN_CAP = 10000
 
 
 def _build_filtered_clauses(
@@ -155,6 +165,29 @@ async def insert_entry(
         )
 
 
+async def update_entry_meta(
+    *,
+    initialise_fn: AsyncInitialise,
+    write_lock: Any,
+    execute_fn: AsyncExecute,
+    entry_id: str,
+    project: ProjectRecord,
+    meta: Dict[str, Any],
+) -> bool:
+    await initialise_fn()
+    meta_json = json.dumps(meta or {}, sort_keys=True)
+    async with write_lock:
+        cursor = await execute_fn(
+            """
+            UPDATE scribe_entries
+            SET meta = ?
+            WHERE id = ? AND project_id = ?;
+            """,
+            (meta_json, entry_id, project.id),
+        )
+    return bool(getattr(cursor, "rowcount", 0))
+
+
 async def fetch_recent_entries(
     *,
     initialise_fn: AsyncInitialise,
@@ -216,6 +249,46 @@ async def fetch_recent_entries(
     return results
 
 
+async def fetch_entry_by_id(
+    *,
+    initialise_fn: AsyncInitialise,
+    fetchone_fn: AsyncFetchOne,
+    entry_id: str,
+    repo_id: Optional[str] = None,
+    project_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    await initialise_fn()
+    clauses = ["e.id = ?"]
+    params: List[Any] = [entry_id]
+    if repo_id:
+        clauses.append("p.repo_id = ?")
+        params.append(repo_id)
+    if project_name:
+        clauses.append("p.name = ?")
+        params.append(project_name)
+
+    row = await fetchone_fn(
+        f"""
+        SELECT e.id AS entry_id, p.name AS project_name, p.repo_id, e.ts, e.agent, e.log_type
+        FROM scribe_entries e
+        JOIN scribe_projects p ON p.id = e.project_id
+        WHERE {' AND '.join(clauses)}
+        LIMIT 1;
+        """,
+        tuple(params),
+    )
+    if row is None:
+        return None
+    return {
+        "entry_id": row["entry_id"],
+        "project_name": row["project_name"],
+        "repo_id": row["repo_id"],
+        "timestamp": row["ts"],
+        "agent": row["agent"],
+        "log_type": row["log_type"],
+    }
+
+
 async def query_entries(
     *,
     initialise_fn: AsyncInitialise,
@@ -234,7 +307,6 @@ async def query_entries(
 ) -> List[Dict[str, Any]]:
     await initialise_fn()
     limit = max(1, min(limit, 500))
-    fetch_limit = min(max(limit * 3, limit), 1000)
 
     clauses = ["project_id = ?"]
     params: List[Any] = [project.id]
@@ -262,41 +334,109 @@ async def query_entries(
             params.append(f"$.{key}")
             params.append(value)
 
+    # F1/F5 fix: push substring/exact message predicate INTO SQL so the match is
+    # exhaustive (not limited to a recent ~1000-row window) and so the page fetch
+    # shares the SAME predicate + ordering as count_query_entries. ``regex`` is
+    # not portably expressible in SQL, so it stays a bounded Python post-filter.
+    pushable = message_predicate_pushable(message, message_mode)
+    if pushable:
+        clause, clause_params = sqlite_message_clause(
+            message, mode=message_mode, case_sensitive=case_sensitive
+        )
+        clauses.append(clause)
+        params.extend(clause_params)
+
     where_clause = " AND ".join(clauses)
+
+    if pushable or not message:
+        # SQL is authoritative: apply the real limit/offset directly. No window,
+        # no Python re-filter — the page is exact and exhaustive over all rows.
+        rows = await fetchall_fn(
+            f"""
+            SELECT id, ts, ts_iso, emoji, agent, message, meta, raw_line
+            FROM scribe_entries
+            WHERE {where_clause}
+            ORDER BY ts_iso DESC
+            LIMIT ? OFFSET ?;
+            """,
+            (*params, limit, offset),
+        )
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            meta_value = json.loads(row["meta"]) if row["meta"] else {}
+            results.append(
+                {
+                    "id": row["id"],
+                    "ts": row["ts"],
+                    "emoji": row["emoji"],
+                    "agent": row["agent"],
+                    "message": row["message"],
+                    "meta": meta_value,
+                    "raw_line": row["raw_line"],
+                }
+            )
+        return results
+
+    # regex post-filter path: predicate cannot be pushed to SQL. Stream rows in
+    # newest-first order, applying offset/limit AFTER the Python match so the
+    # page is consistent with count_query_entries' regex path. Bounded by
+    # _MESSAGE_POSTFILTER_SCAN_CAP to keep the scan finite (documented caveat).
     rows = await fetchall_fn(
         f"""
         SELECT id, ts, ts_iso, emoji, agent, message, meta, raw_line
         FROM scribe_entries
         WHERE {where_clause}
         ORDER BY ts_iso DESC
-        LIMIT ? OFFSET ?;
+        LIMIT ?;
         """,
-        (*params, fetch_limit, offset),
+        (*params, _MESSAGE_POSTFILTER_SCAN_CAP),
     )
 
-    results: List[Dict[str, Any]] = []
+    results = []
+    skipped = 0
     for row in rows:
-        meta_value = json.loads(row["meta"]) if row["meta"] else {}
-        entry = {
-            "id": row["id"],
-            "ts": row["ts"],
-            "emoji": row["emoji"],
-            "agent": row["agent"],
-            "message": row["message"],
-            "meta": meta_value,
-            "raw_line": row["raw_line"],
-        }
         if not message_matches(
-            entry["message"],
+            row["message"],
             message,
             mode=message_mode,
             case_sensitive=case_sensitive,
         ):
             continue
-        results.append(entry)
+        if skipped < offset:
+            skipped += 1
+            continue
+        meta_value = json.loads(row["meta"]) if row["meta"] else {}
+        results.append(
+            {
+                "id": row["id"],
+                "ts": row["ts"],
+                "emoji": row["emoji"],
+                "agent": row["agent"],
+                "message": row["message"],
+                "meta": meta_value,
+                "raw_line": row["raw_line"],
+            }
+        )
         if len(results) >= limit:
             break
     return results
+
+
+def _metrics_counter_for_filters(filters: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return the scribe_metrics column name that satisfies *filters*, or None.
+
+    Only the empty/None filter case is mapped to ``total_entries``.  All other
+    filters (log_type, agent, priority, category, min_confidence, …) are NOT
+    tracked in scribe_metrics and must fall through to the full COUNT(*) path.
+
+    Q1 resolution: success_count/warn_count/error_count are maintained by
+    emoji (✅/⚠️/❌), NOT by the ``status`` field used in _build_filtered_clauses,
+    so no status→column mapping is safe here.
+    """
+    if not filters:
+        return "total_entries"
+    # Any non-empty filter dict — cannot use fast path
+    return None
 
 
 async def count_entries(
@@ -307,6 +447,20 @@ async def count_entries(
     filters: Optional[Dict[str, Any]] = None,
 ) -> int:
     await initialise_fn()
+
+    # Fast path: O(1) read from scribe_metrics when no filters are applied.
+    # Falls through to COUNT(*) when (a) filters are present, or (b) no
+    # metrics row exists yet for this project.
+    metric_col = _metrics_counter_for_filters(filters)
+    if metric_col is not None:
+        metrics_row = await fetchone_fn(
+            f"SELECT {metric_col} AS count FROM scribe_metrics WHERE project_id = ?;",
+            (project.id,),
+        )
+        if metrics_row is not None:
+            return int(metrics_row["count"] or 0)
+        # No metrics row yet — fall through to COUNT(*)
+
     clauses, params = _build_filtered_clauses(project_id=project.id, filters=filters or {})
     where_clause = " AND ".join(clauses)
     row = await fetchone_fn(
@@ -362,40 +516,53 @@ async def count_query_entries(
             params.append(f"$.{key}")
             params.append(value)
 
-    where_clause = " AND ".join(clauses)
-    row = await fetchone_fn(
-        f"""
-        SELECT COUNT(*) as count
-        FROM scribe_entries
-        WHERE {where_clause};
-        """,
-        tuple(params),
-    )
-    count = row["count"] if row else 0
-
-    if message:
-        fetch_limit = min(count, 10000)
-        rows = await fetchall_fn(
-            f"""
-            SELECT message
-            FROM scribe_entries
-            WHERE {where_clause}
-            LIMIT ?;
-            """,
-            (*params, fetch_limit),
+    # F5 fix: count shares the EXACT same predicate + ordering as query_entries.
+    # For substring/exact the message clause is pushed into the COUNT(*) so the
+    # total is exhaustive and matches what the page fetch can surface. ``regex``
+    # uses the same bounded, newest-first scan window as the fetch path.
+    pushable = message_predicate_pushable(message, message_mode)
+    if pushable:
+        clause, clause_params = sqlite_message_clause(
+            message, mode=message_mode, case_sensitive=case_sensitive
         )
-        matching_count = 0
-        for row in rows:
-            if message_matches(
-                row["message"],
-                message,
-                mode=message_mode,
-                case_sensitive=case_sensitive,
-            ):
-                matching_count += 1
-        return matching_count
+        clauses.append(clause)
+        params.extend(clause_params)
 
-    return count
+    where_clause = " AND ".join(clauses)
+
+    if pushable or not message:
+        row = await fetchone_fn(
+            f"""
+            SELECT COUNT(*) as count
+            FROM scribe_entries
+            WHERE {where_clause};
+            """,
+            tuple(params),
+        )
+        return row["count"] if row else 0
+
+    # regex post-filter path: same scan cap + ordering as query_entries so the
+    # count agrees with what pagination can actually surface.
+    rows = await fetchall_fn(
+        f"""
+        SELECT message
+        FROM scribe_entries
+        WHERE {where_clause}
+        ORDER BY ts_iso DESC
+        LIMIT ?;
+        """,
+        (*params, _MESSAGE_POSTFILTER_SCAN_CAP),
+    )
+    matching_count = 0
+    for row in rows:
+        if message_matches(
+            row["message"],
+            message,
+            mode=message_mode,
+            case_sensitive=case_sensitive,
+        ):
+            matching_count += 1
+    return matching_count
 
 
 async def cleanup_old_entries(
@@ -409,7 +576,7 @@ async def cleanup_old_entries(
     archive: bool = True,
 ) -> int:
     await initialise_fn()
-    cutoff_date = (datetime.utcnow() - timedelta(days=retention_days)).isoformat()
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
 
     if project_id is not None:
         where_clause = "WHERE ts_iso < ? AND project_id = ?"

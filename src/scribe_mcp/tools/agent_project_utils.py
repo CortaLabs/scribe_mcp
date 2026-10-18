@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp import server as server_module
+from scribe_mcp.shared.session_scope import ResolvedScope
 from scribe_mcp.tools.project_utils import (
     load_active_project,
     load_project_config,
@@ -162,6 +163,44 @@ async def validate_agent_session(agent_id: str, session_id: str) -> bool:
         return False
     except Exception:
         return False
+
+
+def resolve_authoritative_write_scope(
+    *,
+    context: Any,
+    agent_session_id: Optional[str],
+) -> Dict[str, Any]:
+    """Resolve authoritative write-path session inputs from request-local scope."""
+    resolved_scope: Optional[ResolvedScope] = getattr(context, "resolved_scope", None) if context else None
+
+    # Trust-ordered: server-derived scope keys first (verified provenance),
+    # then the request's own session_id, then raw stable_session_id LAST among
+    # context fields — a bare context.stable_session_id without resolved_scope
+    # is an unverified carried-over claim, and preferring it over the request's
+    # session_id is how stale-session write capture happens (BUG-2026-06-11-0004;
+    # contract pinned in 08d4d22, regressed by e320b3d).
+    authoritative_candidates = (
+        getattr(resolved_scope, "authoritative_session_key", None),
+        getattr(context, "authoritative_session_key", None),
+        getattr(resolved_scope, "stable_session_id", None),
+        getattr(context, "session_id", None) if context else None,
+        getattr(context, "stable_session_id", None) if context else None,
+        getattr(resolved_scope, "agent_session_id", None),
+        agent_session_id,
+    )
+    authoritative_session_id = None
+    for candidate in authoritative_candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            authoritative_session_id = candidate.strip()
+            break
+
+    return {
+        "resolved_scope": resolved_scope,
+        "authoritative_session_key": authoritative_session_id,
+        "authoritative_session_id": authoritative_session_id,
+        "scope_resolution_source": getattr(resolved_scope, "resolution_source", None)
+        or ("execution_context" if context else "none"),
+    }
 
 async def _project_from_state_or_config(project_name: str) -> Optional[Dict[str, Any]]:
     """Load project definition from JSON state or config files."""

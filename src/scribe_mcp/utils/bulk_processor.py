@@ -8,7 +8,7 @@ duplication and improve maintainability.
 Extracted from TOOL_AUDIT_1112025 refactoring project - Phase 1 Task 1.4
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Union, Tuple
 import re
 import json
@@ -23,7 +23,7 @@ except ImportError:
     # Fallback implementations for compatibility
     def utcnow() -> datetime:
         """Get current UTC datetime."""
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
     def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
         """Parse timestamp string to datetime object."""
@@ -46,7 +46,8 @@ class BulkProcessor:
         message: str = "",
         items: Optional[str] = None,
         items_list: Optional[List[Dict[str, Any]]] = None,
-        length_threshold: int = 500
+        length_threshold: int = 500,
+        auto_split: bool = True,
     ) -> bool:
         """
         Detect if content should be processed as bulk entries.
@@ -58,6 +59,10 @@ class BulkProcessor:
             items: JSON string items indicator
             items_list: Direct list items indicator
             length_threshold: Character length threshold for bulk mode
+            auto_split: Whether multiline content may be split into entries. When
+                False the caller has asked for one entry, so multiline content
+                must NOT route to bulk — the splitter never populates the item
+                list in that case, and bulk mode would write nothing at all.
 
         Returns:
             True if content should be processed in bulk mode
@@ -68,7 +73,7 @@ class BulkProcessor:
         # Check for multiline content. Bulk mode is intended for multi-entry operations
         # (explicit `items`/`items_list`) or auto-splitting multiline content.
         # Long single-line messages and pipe characters should remain single-entry logs.
-        return message.count("\n") > 0
+        return auto_split and message.count("\n") > 0
 
     @staticmethod
     def split_multiline_content(

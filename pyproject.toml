@@ -4,16 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.2"
+version = "2.14.0"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = "LicenseRef-Scribe-MCP-Community-1.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Scribe MCP Contributors" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Documentation",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
+  "asyncpg~=0.29",
   "httpx~=0.27",
   "jinja2~=3.1",
-  "mcp==1.26.0",
+  "mcp>=2.0.0,<3.0",
+  "markdown-it-py~=3.0",
   "portalocker~=2.0",
   "python-dotenv~=1.0",
   "psutil~=7.1",
@@ -24,12 +34,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-postgres = ["asyncpg~=0.29"]
 dev = [
   "pytest~=7.4",
   "pytest-asyncio~=0.23",
 ]
 s3 = ["boto3>=1.28"]
+# asyncpg is already a core dependency (see [project].dependencies); this extra
+# exists so that `pip install 'scribe-mcp[postgres]'` resolves cleanly and the
+# Postgres install path advertised by install.sh / docs is truthful.
+postgres = ["asyncpg~=0.29"]
+
+[project.urls]
+Homepage = "https://github.com/CortaLabs/scribe_mcp"
+Documentation = "https://github.com/CortaLabs/scribe_mcp/blob/main/docs/INSTALL_AND_BOOTSTRAP.md"
+Repository = "https://github.com/CortaLabs/scribe_mcp"
+Issues = "https://github.com/CortaLabs/scribe_mcp/issues"
 
 [project.scripts]
 scribe = "scribe_mcp.cli.main:main"
@@ -38,6 +57,7 @@ scribe-server = "scribe_mcp.__main__:main"
 scribe-migrate = "scribe_mcp.scripts.migrate_state:main"
 scribe-migrate-postgres = "scribe_mcp.scripts.migrate_sqlite_to_postgres:main"
 scribe-backup-postgres = "scribe_mcp.scripts.postgres_backup:main"
+scribe-restore-postgres = "scribe_mcp.scripts.postgres_restore:main"
 scribe-bootstrap-postgres = "scribe_mcp.scripts.bootstrap_postgres:main"
 scribe-metrics-postgres = "scribe_mcp.scripts.postgres_metrics:main"
 scribe-soak-postgres = "scribe_mcp.scripts.postgres_soak_test:main"
@@ -55,6 +75,7 @@ include = ["scribe_mcp*"]
 "scribe_mcp" = [
   "py.typed",
   "config/*.json",
+  "config/reminders/*.json",
   "config/*.yaml",
   "config/*.yml",
   "db/*.sql",
@@ -62,6 +83,51 @@ include = ["scribe_mcp*"]
   "plugins/*.json",
   "templates/*",
   "templates/**/*",
+  # Wheel-shipped Claude/Codex plugin bundles (byte-identical to repo plugins/).
+  # Explicit dotfile/dotdir globs because setuptools '**/*' does not reliably
+  # match hidden paths like .codex-plugin/, .claude-plugin/, .mcp.json, .app.json.
+  "plugins_bundle/**/*",
+  "plugins_bundle/*/.*",
+  "plugins_bundle/*/.*/*",
+  "plugins_bundle/claude/.claude-plugin/*",
+  "plugins_bundle/codex/.codex-plugin/*",
+]
+
+[tool.setuptools.data-files]
+"share/doc/scribe-mcp" = [
+  "README.md",
+  "docs/INSTALL_AND_BOOTSTRAP.md",
+  "docs/TOUR.md",
+  "docs/DOCUMENT_TOPOLOGY.md",
+  "docs/COMPATIBILITY_MATRIX.md",
+  "docs/RELEASE_SURFACE.md",
+  "docs/RELEASE_FILE_MAP.md",
+  "docs/Scribe_Usage.md",
+  "docs/mcp_server_guide.md",
+  "docs/REMOTE_CLIENT.md",
+  "docs/BRIDGE_DEVELOPMENT.md",
+  "docs/TEMPLATE_VARIABLES.md",
+  "docs/GLOBAL_DEPLOYMENT_GUIDE.md",
+  "docs/STARTUP_PROBE_CONTRACT.md",
+  "docs/next_steps.md",
+  "deploy/README.md",
+]
+"share/doc/scribe-mcp/examples" = [
+  "docs/examples/mcp.json.example",
+  "docs/examples/opencode.json.example",
+]
+"share/doc/scribe-mcp/skills/scribe-integration" = [
+  "skills/scribe-integration/SKILL.md",
+]
+"share/doc/scribe-mcp/guides" = [
+  "docs/guides/LIVE_MCP_IMPACT_REPORT_2026-04-17.md",
+  "docs/guides/hooks_setup.md",
+  "docs/guides/manage_docs_agent_guide.md",
+  "docs/guides/manage_docs_troubleshooting.md",
+  "docs/guides/scribe_onboarding_prompt.md",
+]
+"share/doc/scribe-mcp/whitepapers" = [
+  "docs/whitepapers/scribe_mcp_whitepaper.md",
 ]
 
 [tool.setuptools.exclude-package-data]

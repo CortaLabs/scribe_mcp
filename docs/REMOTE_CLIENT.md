@@ -1,48 +1,64 @@
-# Remote/Client Auth Posture
+# Remote/Client Posture
 
-`scribe-mcp` ships with **local/standard core usage as the default public posture**. Remote/client mode is supported only as an **optional authenticated capability** for operators who intentionally deploy a managed remote Scribe service.
+Release line: `2.12.0`
+Updated: `2026-08-22`
 
-## 1. Default vs. optional posture
+`scribe-mcp` public onboarding is Postgres-first and fail-closed for remote/client mode.
+For this release line, remote/client is internal compatibility only and excluded when `SCRIBE_RELEASE_PROFILE=public`.
 
-- **Default shipped posture:** local standalone usage, loopback-local server usage, and the standard core flows documented elsewhere in `scribe-mcp`.
-- **Optional posture:** `remote/client` mode using `SCRIBE_REMOTE_URL` plus an auth token.
-- **Not a default recipe:** setting a remote URL or binding a server broadly is **not** the normal public guidance for first-run or casual use.
+## Canonical public names
 
-If you enable remote/client mode, document and configure it as an explicit operator choice. Do not present it as the default way to run Scribe.
+Use these names:
 
-## 2. Auth contract for remote/client mode
+- `SCRIBE_REMOTE_URL`: remote service root URL (for example `http://127.0.0.1:8200`)
+- `SCRIBE_REMOTE_AUTH_TOKEN`: client bearer token used for `Authorization: Bearer ...`
+- `SCRIBE_TRANSPORT_AUTH_TOKEN`: server-side token that the deployed Scribe service validates
 
-Use the canonical client token variable:
+Compatibility aliases may still load in mixed environments (`SCRIBE_AUTH_TOKEN` and, on the client side, `SCRIBE_TRANSPORT_AUTH_TOKEN`), but they are not the primary public naming story.
 
-- `SCRIBE_REMOTE_AUTH_TOKEN`
+## Endpoint distinction
 
-Compatibility aliases still load for single-env deployments:
+- Health probe path: `<SCRIBE_REMOTE_URL>/health` (used during mode detection)
+- Modern MCP path: `<SCRIBE_REMOTE_URL>/mcp` (Streamable HTTP, protocol `2026-07-28`)
+- Named legacy SSE stream path: `<SCRIBE_REMOTE_URL>/sse`
+- Named legacy message post path: `<SCRIBE_REMOTE_URL>/messages/`
 
-- `SCRIBE_TRANSPORT_AUTH_TOKEN`
-- `SCRIBE_AUTH_TOKEN`
+MCP Python SDK v2 and the wire protocol are separate version axes. The Scribe server supports SDK `mcp>=2.0.0,<3.0`; the modern wire default is `2026-07-28`. The only preserved legacy client contract is `mcp==1.26.0` using protocol `2025-11-25`, handshake stdio, or the explicitly named `/sse` plus `/messages/` HTTP path.
 
-Public docs should prefer the canonical client name. Remote/client mode is only supported when that auth contract is in place.
+## Supported Posture
 
-## 3. Release postures
-
-| Posture | Bind / network expectation | Auth expectation | Support status |
+| Posture | Network expectation | Auth expectation | Status |
 | --- | --- | --- | --- |
-| **Loopback-local** | Local process, stdio, or loopback bind such as `127.0.0.1` | Standard local posture; remote/client auth is not the default concern here | **Default / supported** |
-| **Managed private-mesh / Tailscale** | Private mesh, VPN, or other managed operator-controlled network | **Required** for remote/client access | **Supported optional deployment** |
-| **Casual public exposure** | Open or casually internet-reachable deployment | Not enough on its own; this posture is not a supported public recipe | **Unsupported** |
+| Local/core modern stdio | Local-only usage | Parent-process trust boundary | Default / supported |
+| Modern `/mcp` on loopback or a managed private network | Operator-controlled reachability | Valid Origin plus bearer auth on non-health routes | Default HTTP protocol path; remote/client runtime remains internal only (`SCRIBE_RELEASE_PROFILE=internal`) |
+| Named legacy `/sse` plus `/messages/` | Operator-controlled reachability; current single-worker/sticky process only | Same Origin and bearer-auth policy as `/mcp` | Explicit compatibility only |
+| Casual public internet exposure | Open or casually internet-reachable endpoint | Not a supported public recipe | Unsupported |
 
-## 4. Bind/auth split
+## Bind and Auth Rules
 
-- `0.0.0.0` is allowed **only** for managed/private-mesh deployment guidance.
-- Any `0.0.0.0` guidance must be paired with auth and an operator-managed private network boundary.
-- Do **not** document unauthenticated `0.0.0.0` exposure as supported.
-- Do **not** imply that remote/client mode is supported merely because the server is reachable.
+- Treat remote/client as internal compatibility only for this release line.
+- Treat `SCRIBE_TRANSPORT_AUTH_TOKEN` as an **operator-root credential**, not a scoped multi-user token. It grants the operator trust boundary access to every remotely permitted Scribe action.
+- Apply the same Origin validation, authentication, request limits, and remote-tool authorization to `/mcp`, `/sse`, and `/messages/`; only `/health` is anonymous.
+- Never derive authorization from an MCP session ID, agent label, `clientInfo`, request ID, capability, or caller-selected identifier.
+- Never silently downgrade a failed modern request. Authentication, authorization, protocol, transport, capability, timeout, TLS, and malformed-request failures stay failures. Legacy mode is entered only by explicit compatibility policy or a recognized legacy endpoint.
+- Legacy HTTP session continuity is supported only by the current single-worker, sticky-process deployment. Unknown-session and wrong-worker requests fail before dispatch; adding workers does not create a supported shared-session configuration.
+- `0.0.0.0` guidance is only for managed deployments with explicit auth and private network controls.
+- Do not publish unauthenticated broad-bind deployment as supported.
+- Reachability alone does not make a deployment supported.
 
-## 5. Public guidance rule
+## Rollback and legacy retirement
 
-When writing release or operator guidance for this repo:
+Rollback is source-owned: restore the prior dependency, MCP adapter, and default protocol/transport policy from version control, then rerun the compatibility and auth/Origin checks. Do not implement rollback by treating a modern error as a legacy request.
 
-1. Keep local/standard core usage as the default public story.
-2. Treat remote/client mode as opt-in and authenticated.
-3. Limit broad-bind (`0.0.0.0`) guidance to managed private-mesh/Tailscale deployments.
-4. Reject casual public exposure as an endorsed deployment posture.
+Retire `/sse`, `/messages/`, protocol `2025-11-25`, and the `mcp==1.26.0` client lane only when all of these are true:
+
+- protected telemetry shows no named legacy use for the agreed observation window
+- every supported client has moved to modern stdio or `/mcp`
+- modern and legacy tool schemas/results have passed the final parity gate
+- Origin, bearer-auth, isolation, and malformed-no-fallback checks pass
+- the source compatibility policy, public docs, and release notes are changed together
+
+## Output safety and redaction
+
+- Preview and commit surfaces must not emit plaintext secrets, bearer tokens, or credential-bearing DSNs.
+- Treat any logs or screenshots as potentially shareable artifacts and keep credential material redacted.

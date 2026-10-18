@@ -13,6 +13,38 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from scribe_mcp.shared.logging_utils import ProjectResolutionError
 
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?i)\b(authorization)\b\s*[:=]\s*bearer\s+[^\s,;]+"),
+        r"\1=Bearer [REDACTED]",
+    ),
+    (
+        re.compile(
+            r"(?i)\b(api[_-]?key|token|secret|password|passwd|pwd|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret)\b\s*[:=]\s*([^\s,;]+)"
+        ),
+        r"\1=[REDACTED]",
+    ),
+    (re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9\-._~+/]+=*"), r"\1 [REDACTED]"),
+    (re.compile(r"(?i)://([^/\s:@]+):([^@\s]+)@"), r"://\1:[REDACTED]@"),
+    (re.compile(r"\bsk-[A-Za-z0-9]{8,}\b"), "[REDACTED]"),
+)
+
+
+def sanitize_error_message(message: Any) -> str:
+    """Redact secret-bearing values from error text while preserving context."""
+    text = str(message)
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _safe_sanitize_error_message(message: Any) -> str:
+    """Best-effort sanitizer for error handling paths that must not raise."""
+    try:
+        return sanitize_error_message(message)
+    except Exception:
+        return "[REDACTED]"
+
 
 class ErrorHandler:
     """Centralized error handling utilities for MCP tools.
@@ -43,9 +75,10 @@ class ErrorHandler:
         Returns:
             Standardized error response dictionary
         """
+        sanitized_error = sanitize_error_message(error_message)
         response: Dict[str, Any] = {
             "ok": False,
-            "error": error_message,
+            "error": sanitized_error,
         }
 
         if suggestion:
@@ -80,16 +113,16 @@ class ErrorHandler:
         """
         response: Dict[str, Any] = {
             "ok": False,
-            "error": str(error),
+            "error": sanitize_error_message(str(error)),
             "suggestion": suggestion or f"Invoke set_project before using {tool_name}",
             "recent_projects": list(error.recent_projects),
         }
 
         # Best-effort "last known project" hint (QoL for post-reboot / missing context).
         try:
-            from scribe_mcp.shared.project_registry import ProjectRegistry
+            from scribe_mcp.shared.project_registry import get_runtime_project_registry
 
-            registry = ProjectRegistry()
+            registry = get_runtime_project_registry()
             last_known = registry.get_last_known_project(candidates=list(error.recent_projects))
             if last_known and last_known.last_access_at:
                 minutes_ago = int(
@@ -273,7 +306,7 @@ class ErrorHandler:
         Returns:
             Standardized file operation error response
         """
-        error_message = f"Unable to {operation}: {error}"
+        error_message = sanitize_error_message(f"Unable to {operation}: {error}")
         suggestion = "Verify file permissions and that the path is accessible"
 
         if "not found" in str(error).lower():
@@ -305,7 +338,7 @@ class ErrorHandler:
         Returns:
             Standardized storage error response
         """
-        error_message = f"Failed to {operation}: {error}"
+        error_message = sanitize_error_message(f"Failed to {operation}: {error}")
 
         if suggestion is None:
             suggestion = "Check database connection and try again"
@@ -406,7 +439,7 @@ class ErrorHandler:
             # Log error but don't fail the entire operation
             if error_context:
                 error_context["operation"] = operation_name
-                error_context["error"] = str(error)
+                error_context["error"] = _safe_sanitize_error_message(error)
             return False, fallback_result
 
     @staticmethod
@@ -466,92 +499,6 @@ class HealingErrorHandler:
     correct issues and provide fallback mechanisms to ensure operations
     continue successfully even with invalid parameters.
     """
-
-    @staticmethod
-    def heal_and_execute(
-        operation_name: str,
-        parameters: Dict[str, Any],
-        operation_func,
-        healing_strategies: Optional[Dict[str, Any]] = None
-    ) -> Tuple[bool, Any, Optional[Dict[str, Any]]]:
-        """
-        Execute operation with automatic parameter healing.
-
-        Args:
-            operation_name: Description of the operation
-            parameters: Input parameters that may need healing
-            operation_func: Function to execute with healed parameters
-            healing_strategies: Custom healing strategies per parameter
-
-        Returns:
-            Tuple of (success, result, healing_info)
-        """
-        from .parameter_validator import BulletproofParameterCorrector
-
-        healing_info = {
-            "operation": operation_name,
-            "parameters_healed": [],
-            "original_params": parameters.copy(),
-            "healed_params": {}
-        }
-
-        # Apply healing strategies if provided
-        if healing_strategies:
-            for param_name, strategy in healing_strategies.items():
-                if param_name in parameters:
-                    original_value = parameters[param_name]
-
-                    # Apply specific healing based on strategy type
-                    if strategy.get("type") == "enum":
-                        allowed_values = strategy["allowed_values"]
-                        healed_value = BulletproofParameterCorrector.correct_enum_parameter(
-                            original_value, allowed_values, param_name,
-                            strategy.get("fallback")
-                        )
-                        parameters[param_name] = healed_value
-                        healing_info["parameters_healed"].append(param_name)
-                        healing_info["healed_params"][param_name] = {
-                            "original": original_value,
-                            "healed": healed_value
-                        }
-
-                    elif strategy.get("type") == "numeric":
-                        healed_value = BulletproofParameterCorrector.correct_numeric_parameter(
-                            original_value,
-                            strategy.get("min_value"),
-                            strategy.get("max_value"),
-                            param_name,
-                            strategy.get("fallback", 0)
-                        )
-                        parameters[param_name] = healed_value
-                        healing_info["parameters_healed"].append(param_name)
-                        healing_info["healed_params"][param_name] = {
-                            "original": original_value,
-                            "healed": healed_value
-                        }
-
-        # Execute the operation with healed parameters
-        try:
-            result = operation_func(**parameters)
-            return True, result, healing_info
-        except Exception as error:
-            # Try to execute with original parameters if healing failed
-            try:
-                result = operation_func(**healing_info["original_params"])
-                healing_info["fallback_used"] = True
-                healing_info["healing_failed"] = str(error)
-                return True, result, healing_info
-            except Exception:
-                # Final fallback with minimal parameters
-                minimal_params = {}
-                try:
-                    result = operation_func(**minimal_params)
-                    healing_info["minimal_fallback_used"] = True
-                    healing_info["healing_failed"] = str(error)
-                    return True, result, healing_info
-                except Exception as final_error:
-                    healing_info["final_error"] = str(final_error)
-                    return False, None, healing_info
 
     @staticmethod
     def create_healing_response(
@@ -872,6 +819,7 @@ class ExceptionHealer:
             Dictionary with success status and healing results
         """
         try:
+            safe_exception = _safe_sanitize_error_message(exception)
             # Only apply operation-specific healing for specific, known scenarios
             # For general exceptions or test cases, return failure to allow fallback behavior
             exception_message = str(exception).lower()
@@ -886,7 +834,7 @@ class ExceptionHealer:
                     "success": False,
                     "ok": False,
                     "healing_type": "operation_specific",
-                    "original_exception": str(exception),
+                    "original_exception": safe_exception,
                     "exception_type": type(exception).__name__,
                     "operation_context": operation_context,
                     "fallback_strategy": fallback_strategy,
@@ -901,7 +849,7 @@ class ExceptionHealer:
                 "success": True,
                 "ok": True,
                 "healing_type": "operation_specific",
-                "original_exception": str(exception),
+                "original_exception": safe_exception,
                 "exception_type": type(exception).__name__,
                 "operation_context": operation_context,
                 "fallback_strategy": fallback_strategy,
@@ -910,6 +858,8 @@ class ExceptionHealer:
                 # Backwards-compatible interface: callers may expect `healed_values`.
                 "healed_values": {},
             }
+
+            safe_operation_context = _safe_sanitize_error_message(operation_context)
 
             # Apply operation-specific healing strategies
             if operation_context == "append_entry":
@@ -946,13 +896,14 @@ class ExceptionHealer:
             else:
                 healing_result["result"] = {
                     "fallback_operation": True,
-                    "message": f"Generic fallback applied for {operation_context}"
+                    "message": f"Generic fallback applied for {safe_operation_context}"
                 }
 
             # Add strategy-specific information
+            safe_original_exception = _safe_sanitize_error_message(exception)
             healing_result["healing_messages"] = [
-                f"Healed {operation_context} error using {fallback_strategy} strategy",
-                f"Original exception: {str(exception)}",
+                f"Healed {safe_operation_context} error using {fallback_strategy} strategy",
+                f"Original exception: {safe_original_exception}",
                 "Operation completed with fallback behavior"
             ]
 
@@ -960,98 +911,20 @@ class ExceptionHealer:
 
         except Exception as e:
             # Return failure result if healing itself fails
+            safe_exception = _safe_sanitize_error_message(exception)
+            safe_error = _safe_sanitize_error_message(e)
+            safe_operation_context = _safe_sanitize_error_message(operation_context)
             return {
                 "success": False,
                 "ok": False,
-                "error": str(e),
+                "error": safe_error,
                 "healing_type": "operation_specific",
-                "original_exception": str(exception),
-                "operation_context": operation_context,
+                "original_exception": safe_exception,
+                "operation_context": safe_operation_context,
                 "fallback_strategy": fallback_strategy,
                 "healing_applied": False,
-                "healing_messages": [f"Failed to heal {operation_context} error: {str(e)}"]
+                "healing_messages": [f"Failed to heal {safe_operation_context} error: {safe_error}"]
             }
-
-    @staticmethod
-    def analyze_exception_pattern(exception: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Analyze exception patterns to determine optimal healing strategy.
-
-        Performs deep analysis of exception patterns, historical data,
-        and context to select the most effective healing approach.
-
-        Args:
-            exception: The exception to analyze
-            context: Operation context and parameters
-
-        Returns:
-            Dict containing pattern analysis and healing recommendations
-        """
-        analysis_result = {
-            "pattern_analysis": {
-                "exception_type": type(exception).__name__,
-                "exception_category": ExceptionHealer._categorize_exception(exception),
-                "severity_level": ExceptionHealer._assess_severity(exception),
-                "pattern_frequency": ExceptionHealer._get_pattern_frequency(exception),
-                "healing_success_rate": 0.0
-            },
-            "context_analysis": {
-                "operation_type": context.get("operation_type", "unknown"),
-                "parameter_count": len(context.get("parameters", {})),
-                "risk_factors": ExceptionHealer._identify_risk_factors(exception, context),
-                "environment_factors": ExceptionHealer._analyze_environment(context)
-            },
-            "healing_recommendation": {
-                "primary_strategy": None,
-                "alternative_strategies": [],
-                "success_probability": 0.0,
-                "estimated_recovery_time": "unknown",
-                "resource_requirements": []
-            }
-        }
-
-        # Analyze exception pattern
-        exception_category = analysis_result["pattern_analysis"]["exception_category"]
-        operation_type = analysis_result["context_analysis"]["operation_type"]
-
-        # Recommend healing strategy based on pattern
-        if exception_category == "parameter_validation":
-            analysis_result["healing_recommendation"].update({
-                "primary_strategy": "intelligent_parameter_correction",
-                "alternative_strategies": ["parameter_sanitization", "fallback_values"],
-                "success_probability": 0.90,
-                "estimated_recovery_time": "< 1 second",
-                "resource_requirements": ["parameter_validator", "bulletproof_corrector"]
-            })
-
-        elif exception_category == "resource_access":
-            analysis_result["healing_recommendation"].update({
-                "primary_strategy": "resource_healing",
-                "alternative_strategies": ["alternative_resources", "cache_fallback"],
-                "success_probability": 0.75,
-                "estimated_recovery_time": "1-3 seconds",
-                "resource_requirements": ["file_system", "cache_system"]
-            })
-
-        elif exception_category == "operation_logic":
-            analysis_result["healing_recommendation"].update({
-                "primary_strategy": "operation_transformation",
-                "alternative_strategies": ["simplified_operation", "emergency_fallback"],
-                "success_probability": 0.80,
-                "estimated_recovery_time": "< 2 seconds",
-                "resource_requirements": ["operation_transformer"]
-            })
-
-        else:
-            analysis_result["healing_recommendation"].update({
-                "primary_strategy": "general_healing",
-                "alternative_strategies": ["emergency_fallback"],
-                "success_probability": 0.65,
-                "estimated_recovery_time": "< 1 second",
-                "resource_requirements": ["generic_healer"]
-            })
-
-        return analysis_result
 
     @staticmethod
     def heal_parameter_validation_error(exception: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -1398,61 +1271,6 @@ class ExceptionHealer:
             healed_params["n"] = 50
 
         return healed_params
-
-    @staticmethod
-    def _categorize_exception(exception: Exception) -> str:
-        """Categorize exception type for healing strategy selection."""
-        exception_type = type(exception).__name__
-        exception_message = str(exception).lower()
-
-        if "validation" in exception_message or "invalid" in exception_message:
-            return "parameter_validation"
-        elif "file" in exception_message or "permission" in exception_message:
-            return "resource_access"
-        elif "operation" in exception_message or "logic" in exception_message:
-            return "operation_logic"
-        else:
-            return "unknown"
-
-    @staticmethod
-    def _assess_severity(exception: Exception) -> str:
-        """Assess exception severity level."""
-        exception_type = type(exception).__name__
-
-        if exception_type in ["CriticalError", "SystemError"]:
-            return "critical"
-        elif exception_type in ["ValueError", "TypeError"]:
-            return "medium"
-        else:
-            return "low"
-
-    @staticmethod
-    def _get_pattern_frequency(exception: Exception) -> str:
-        """Get frequency of this exception pattern (mock implementation)."""
-        # In real implementation, this would check historical data
-        return "occasional"
-
-    @staticmethod
-    def _identify_risk_factors(exception: Exception, context: Dict[str, Any]) -> List[str]:
-        """Identify risk factors for this exception."""
-        risk_factors = []
-
-        if len(context.get("parameters", {})) > 10:
-            risk_factors.append("high_parameter_complexity")
-
-        if context.get("operation_type") in ["bulk_processing", "complex_query"]:
-            risk_factors.append("complex_operation")
-
-        return risk_factors
-
-    @staticmethod
-    def _analyze_environment(context: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze environmental factors."""
-        return {
-            "system_load": "normal",  # Mock implementation
-            "resource_availability": "adequate",
-            "concurrent_operations": "low"
-        }
 
     @staticmethod
     def _get_alternative_document_paths(document_path: str) -> List[str]:

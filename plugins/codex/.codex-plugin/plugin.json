@@ -5,9 +5,9 @@
   "author": {
     "name": "Scribe MCP Contributors"
   },
-  "homepage": "https://github.com/corta-labs/scribe_mcp",
-  "repository": "https://github.com/corta-labs/scribe_mcp",
-  "license": "MIT",
+  "homepage": "https://github.com/CortaLabs/scribe_mcp",
+  "repository": "https://github.com/CortaLabs/scribe_mcp",
+  "license": "LicenseRef-Scribe-MCP-Community-1.0",
   "keywords": [
     "scribe",
     "mcp",

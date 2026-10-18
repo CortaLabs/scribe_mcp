@@ -6,19 +6,63 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from scribe_mcp.config.paths import default_db_path, repo_root
+from scribe_mcp.config.paths import config_home_dir, default_db_path, repo_root
 
 try:  # Prefer optional dotenv loading to keep env setup simple outside the repo
     from dotenv import load_dotenv  # type: ignore
-
-    # Load defaults from repo root .env regardless of working directory, but
-    # never override explicitly exported environment variables.
-    _dotenv_path = repo_root() / ".env"
-    load_dotenv(_dotenv_path, override=False)
 except Exception:
-    pass
+    load_dotenv = None  # type: ignore[assignment]
+
+
+def _should_load_repo_dotenv(env: Optional[Dict[str, str]] = None) -> bool:
+    """Allow repo-root dotenv loading only outside public release unless explicitly enabled."""
+    effective_env = env or os.environ
+    explicit_opt_in = str(effective_env.get("SCRIBE_LOAD_REPO_DOTENV", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    release_profile = str(effective_env.get("SCRIBE_RELEASE_PROFILE", "internal")).strip().lower()
+    public_release = release_profile == "public"
+    return explicit_opt_in or not public_release
+
+
+def _load_repo_root_dotenv(load_dotenv_fn: Optional[Any] = None) -> bool:
+    """Best-effort repo-root dotenv load honoring release-safety policy."""
+    if not _should_load_repo_dotenv():
+        return False
+    loader = load_dotenv_fn or load_dotenv
+    if loader is None:
+        return False
+    try:
+        dotenv_path = repo_root() / ".env"
+        loader(dotenv_path, override=False)
+        return True
+    except Exception:
+        return False
+
+
+def _load_global_runtime_dotenv(load_dotenv_fn: Optional[Any] = None) -> bool:
+    """Best-effort user/global runtime dotenv load (below process + repo env)."""
+    loader = load_dotenv_fn or load_dotenv
+    if loader is None:
+        return False
+    try:
+        dotenv_path = config_home_dir() / "runtime.env"
+        loader(dotenv_path, override=False)
+        return True
+    except Exception:
+        return False
+
+
+def _dotenv_loading_disabled(env: Optional[Dict[str, str]] = None) -> bool:
+    """Return True when runtime explicitly disables dotenv file loading."""
+    effective_env = env or os.environ
+    raw = str(effective_env.get("SCRIBE_DISABLE_DOTENV", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _load_env_json(name: str) -> Dict[str, Any]:
@@ -63,7 +107,8 @@ class SettingsContractEntry:
     canonical_name: Optional[str] = None
 
 
-PUBLIC_STORAGE_MODES: tuple[str, ...] = ("sqlite", "postgres", "remote/client")
+PUBLIC_STORAGE_MODES: tuple[str, ...] = ("sqlite", "postgres")
+NON_RELEASE_STORAGE_MODES: tuple[str, ...] = ("remote/client",)
 
 PUBLIC_STORAGE_SETTINGS_CONTRACT: tuple[SettingsContractEntry, ...] = (
     SettingsContractEntry(
@@ -150,13 +195,13 @@ PUBLIC_STORAGE_SETTINGS_CONTRACT: tuple[SettingsContractEntry, ...] = (
         name="SCRIBE_MODE",
         classification="canonical",
         scope="runtime",
-        description="Operating mode selector. Use `client` to explicitly select the public remote/client contract.",
+        description="Operating mode selector. In `SCRIBE_RELEASE_PROFILE=public`, `client` mode is rejected.",
     ),
     SettingsContractEntry(
         name="SCRIBE_REMOTE_URL",
         classification="canonical",
         scope="runtime",
-        description="Remote Scribe server base URL for client mode.",
+        description="Remote Scribe server base URL for client mode. Unsupported in `SCRIBE_RELEASE_PROFILE=public`.",
     ),
     SettingsContractEntry(
         name="SCRIBE_REMOTE_AUTH_TOKEN",
@@ -172,9 +217,15 @@ PUBLIC_STORAGE_SETTINGS_CONTRACT: tuple[SettingsContractEntry, ...] = (
     ),
     SettingsContractEntry(
         name="SCRIBE_REMOTE_FALLBACK",
-        classification="advanced/public",
+        classification="advanced/non-release",
         scope="runtime",
-        description="Advanced remote/client toggle controlling fallback to standalone when the remote is unavailable.",
+        description="Advanced non-release toggle controlling fallback to standalone when the remote is unavailable.",
+    ),
+    SettingsContractEntry(
+        name="SCRIBE_RELEASE_PROFILE",
+        classification="canonical",
+        scope="runtime",
+        description="Release profile selector (`public` or `internal`). `public` fail-closes remote/client mode.",
     ),
     SettingsContractEntry(
         name="SCRIBE_POSTGRES_ADMIN_*",
@@ -206,6 +257,8 @@ class Settings:
     """Resolved configuration for the MCP server."""
 
     project_root: Path
+    default_repo_root: Optional[Path]
+    trusted_repo_roots: Tuple[Path, ...]
     default_state_path: Path
     db_url: Optional[str]
     storage_backend: str
@@ -265,6 +318,12 @@ class Settings:
     remote_auth_token: Optional[str]
     remote_connect_timeout: float
     remote_fallback: bool
+    release_profile: str
+    public_release: bool
+    transport_allowed_origins: Tuple[str, ...] = ()
+    transport_max_request_bytes: int = 4 * 1024 * 1024
+    transport_request_timeout_seconds: float = 30.0
+    transport_legacy_enabled: bool = True
 
     def resolve_outside_repo_read_policy(
         self,
@@ -305,7 +364,27 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
+        # Explicit precedence order:
+        # 1) process env (already present)
+        # 2) repo root .env
+        # 3) user/global runtime.env
+        if not _dotenv_loading_disabled():
+            _load_repo_root_dotenv()
+            _load_global_runtime_dotenv()
+
         project_root = Path(os.environ.get("SCRIBE_ROOT", _default_root())).resolve()
+        default_repo_root_raw = _optional_env("SCRIBE_REPO_ROOT", "REPO_ROOT")
+        default_repo_root = (
+            Path(default_repo_root_raw).expanduser().resolve()
+            if default_repo_root_raw
+            else None
+        )
+        trusted_repo_roots_raw = os.environ.get("SCRIBE_TRUSTED_REPO_ROOTS", "")
+        trusted_repo_roots = tuple(
+            Path(item).expanduser().resolve()
+            for item in trusted_repo_roots_raw.split(os.pathsep)
+            if item.strip()
+        )
         env_state_path = os.environ.get("SCRIBE_STATE_PATH")
         if env_state_path:
             state_path = Path(env_state_path).expanduser()
@@ -315,9 +394,9 @@ class Settings:
         db_url = os.environ.get("SCRIBE_DB_URL")
         storage_backend = os.environ.get("SCRIBE_STORAGE_BACKEND")
         if storage_backend:
-            storage_backend = storage_backend.lower()
+            storage_backend = storage_backend.lower().strip()
         else:
-            storage_backend = "postgres" if db_url else "sqlite"
+            storage_backend = "postgres"
 
         # Backward-compatible SQLite path support:
         # - SCRIBE_DB_PATH is canonical
@@ -362,6 +441,20 @@ class Settings:
         transport_host = os.environ.get("SCRIBE_TRANSPORT_HOST", "127.0.0.1").strip() or "127.0.0.1"
         transport_port = max(1, _int_env("SCRIBE_TRANSPORT_PORT", 8200))
         transport_auth_token = _optional_env("SCRIBE_TRANSPORT_AUTH_TOKEN", "SCRIBE_AUTH_TOKEN")
+        transport_allowed_origins = tuple(
+            origin.strip()
+            for origin in os.environ.get("SCRIBE_TRANSPORT_ALLOWED_ORIGINS", "").split(",")
+            if origin.strip()
+        )
+        transport_max_request_bytes = max(
+            1,
+            _int_env("SCRIBE_TRANSPORT_MAX_REQUEST_BYTES", 4 * 1024 * 1024),
+        )
+        transport_request_timeout_seconds = max(
+            0.1,
+            float(os.environ.get("SCRIBE_TRANSPORT_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+        transport_legacy_enabled = _bool_env("SCRIBE_TRANSPORT_LEGACY_ENABLED", True)
         allow_outside_repo_reads = _bool_env(
             "SCRIBE_ALLOW_OUTSIDE_REPO_READS",
             _bool_env("SCRIBE_ALLOW_CROSS_REPO_READS", False),
@@ -444,22 +537,33 @@ class Settings:
         mode = os.environ.get("SCRIBE_MODE", "auto").lower().strip()
         if mode not in ("auto", "server", "client", "standalone"):
             mode = "auto"
+        release_profile_raw = os.environ.get("SCRIBE_RELEASE_PROFILE", "internal").strip().lower()
+        release_profile = "public" if release_profile_raw == "public" else "internal"
+        public_release = release_profile == "public"
+
         remote_server_url = os.environ.get("SCRIBE_REMOTE_URL")  # standardized name per review
-        remote_auth_token = _optional_env(
-            "SCRIBE_REMOTE_AUTH_TOKEN",
-            "SCRIBE_TRANSPORT_AUTH_TOKEN",
-            "SCRIBE_AUTH_TOKEN",
-        )
+        if public_release:
+            # Public release keeps client and server credential channels split.
+            remote_auth_token = _optional_env("SCRIBE_REMOTE_AUTH_TOKEN")
+        else:
+            remote_auth_token = _optional_env(
+                "SCRIBE_REMOTE_AUTH_TOKEN",
+                "SCRIBE_TRANSPORT_AUTH_TOKEN",
+                "SCRIBE_AUTH_TOKEN",
+            )
         remote_connect_timeout = max(
             0.5,
             float(os.environ.get("SCRIBE_REMOTE_CONNECT_TIMEOUT", "3.0")),
         )
-        remote_fallback = os.environ.get("SCRIBE_REMOTE_FALLBACK", "true").lower() in {
+        remote_fallback_default = "false" if public_release else "true"
+        remote_fallback = os.environ.get("SCRIBE_REMOTE_FALLBACK", remote_fallback_default).lower() in {
             "1", "true", "yes"
         }
 
         return cls(
             project_root=project_root,
+            default_repo_root=default_repo_root,
+            trusted_repo_roots=trusted_repo_roots,
             default_state_path=state_path,
             db_url=db_url,
             storage_backend=storage_backend,
@@ -515,6 +619,12 @@ class Settings:
             remote_auth_token=remote_auth_token,
             remote_connect_timeout=remote_connect_timeout,
             remote_fallback=remote_fallback,
+            release_profile=release_profile,
+            public_release=public_release,
+            transport_allowed_origins=transport_allowed_origins,
+            transport_max_request_bytes=transport_max_request_bytes,
+            transport_request_timeout_seconds=transport_request_timeout_seconds,
+            transport_legacy_enabled=transport_legacy_enabled,
         )
 
 

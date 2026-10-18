@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from scribe_mcp.shared.tool_runtime import _derive_session_identity_preview
 from scribe_mcp.storage.sqlite import SQLiteStorage
 
 
@@ -205,6 +206,65 @@ async def test_parallel_agent_isolation():
         assert parts_a["repo_root"] == parts_b["repo_root"], "Same repo"
         assert parts_a["scope_key"] == parts_b["scope_key"], "Same execution"
         assert parts_a["agent_key"] != parts_b["agent_key"], "Different agents"
+
+
+@pytest.mark.asyncio
+async def test_production_runtime_identity_preview_enforces_project_scoped_isolation(tmp_path):
+    """Use production identity derivation to prove same-repo/project reuse and cross-project isolation."""
+    async with temp_storage() as storage:
+        repo_root = tmp_path / "shared_repo"
+        repo_root.mkdir()
+
+        context_payload = {
+            "repo_root": str(repo_root),
+            "mode": "project",
+            "timestamp_utc": "2026-04-09T09:40:00Z",
+        }
+
+        identity_alpha, parts_alpha = _derive_session_identity_preview(
+            context_payload,
+            {"agent": "CoderAgent", "project": "project-alpha"},
+        )
+        identity_alpha_repeat, parts_alpha_repeat = _derive_session_identity_preview(
+            context_payload,
+            {"agent": "CoderAgent", "project": "project-alpha"},
+        )
+        identity_beta, parts_beta = _derive_session_identity_preview(
+            context_payload,
+            {"agent": "CoderAgent", "project": "project-beta"},
+        )
+
+        session_alpha = await storage.get_or_create_agent_session(
+            identity_key=identity_alpha,
+            agent_name=parts_alpha["agent_key"],
+            agent_key=parts_alpha["agent_key"],
+            repo_root=parts_alpha["repo_root"],
+            mode=parts_alpha["mode"],
+            scope_key=parts_alpha["scope_key"],
+        )
+        session_alpha_repeat = await storage.get_or_create_agent_session(
+            identity_key=identity_alpha_repeat,
+            agent_name=parts_alpha_repeat["agent_key"],
+            agent_key=parts_alpha_repeat["agent_key"],
+            repo_root=parts_alpha_repeat["repo_root"],
+            mode=parts_alpha_repeat["mode"],
+            scope_key=parts_alpha_repeat["scope_key"],
+        )
+        session_beta = await storage.get_or_create_agent_session(
+            identity_key=identity_beta,
+            agent_name=parts_beta["agent_key"],
+            agent_key=parts_beta["agent_key"],
+            repo_root=parts_beta["repo_root"],
+            mode=parts_beta["mode"],
+            scope_key=parts_beta["scope_key"],
+        )
+
+        assert identity_alpha == identity_alpha_repeat
+        assert identity_alpha != identity_beta
+        assert session_alpha == session_alpha_repeat
+        assert session_alpha != session_beta
+        assert parts_alpha["scope_key"] == "project-alpha"
+        assert parts_beta["scope_key"] == "project-beta"
 
 
 # ==============================================================================

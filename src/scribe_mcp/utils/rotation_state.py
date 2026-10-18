@@ -12,7 +12,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 from typing import Dict, Optional, Any, Tuple, List
-from datetime import datetime
+from datetime import datetime, timezone
 import threading
 import time
 
@@ -53,8 +53,8 @@ class RotationStateManager:
         if not self.state_file.exists():
             return {
                 "version": "1.0",
-                "created_timestamp": datetime.utcnow().isoformat() + " UTC",
-                "last_updated": datetime.utcnow().isoformat() + " UTC",
+                "created_timestamp": datetime.now(timezone.utc).isoformat() + " UTC",
+                "last_updated": datetime.now(timezone.utc).isoformat() + " UTC",
                 "projects": {},
                 "global_settings": {
                     "max_rotations_per_project": 100,
@@ -88,8 +88,8 @@ class RotationStateManager:
             # Return fresh state if file is corrupted
             return {
                 "version": "1.0",
-                "created_timestamp": datetime.utcnow().isoformat() + " UTC",
-                "last_updated": datetime.utcnow().isoformat() + " UTC",
+                "created_timestamp": datetime.now(timezone.utc).isoformat() + " UTC",
+                "last_updated": datetime.now(timezone.utc).isoformat() + " UTC",
                 "projects": {},
                 "global_settings": {
                     "max_rotations_per_project": 100,
@@ -97,14 +97,14 @@ class RotationStateManager:
                     "hash_chaining_enabled": True,
                     "integrity_verification_enabled": True
                 },
-                "corruption_note": f"State file corrupted at {datetime.utcnow().isoformat() + ' UTC'}"
+                "corruption_note": f"State file corrupted at {datetime.now(timezone.utc).isoformat() + ' UTC'}"
             }
 
     def _save_state(self) -> bool:
         """Save state to file atomically."""
         try:
             with self._lock:
-                self._state["last_updated"] = datetime.utcnow().isoformat() + " UTC"
+                self._state["last_updated"] = datetime.now(timezone.utc).isoformat() + " UTC"
 
                 # Atomic write
                 temp_file = self.state_file.with_suffix(".tmp")
@@ -145,7 +145,7 @@ class RotationStateManager:
         """
         with self._lock:
             return self._state["projects"].setdefault(project_name, {
-                "created_timestamp": datetime.utcnow().isoformat() + " UTC",
+                "created_timestamp": datetime.now(timezone.utc).isoformat() + " UTC",
                 "current_sequence": 0,
                 "total_rotations": 0,
                 "last_rotation_timestamp": None,
@@ -296,7 +296,7 @@ class RotationStateManager:
             if source:
                 entry["source"] = source
 
-            entry["updated_at"] = datetime.utcnow().isoformat() + " UTC"
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat() + " UTC"
             log_stats[log_type] = entry
             return self._save_state()
 

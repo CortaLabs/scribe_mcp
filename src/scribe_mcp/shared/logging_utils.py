@@ -16,6 +16,7 @@ from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 from collections.abc import Mapping
 
 from scribe_mcp import reminders
+from scribe_mcp.shared.session_utils import get_canonical_session_key
 from scribe_mcp.utils.slug import normalize_project_input
 
 META_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
@@ -45,6 +46,23 @@ def _session_debug_trace(title: str, lines: Sequence[str]) -> None:
         logger.debug("Session debug trace write failed for '%s'", title)
 
 
+def _verified_execution_repo_root(exec_context: Any) -> Optional[str]:
+    """Return the verified repo root from the active execution context, if any."""
+    if exec_context is None:
+        return None
+    resolved_scope = getattr(exec_context, "resolved_scope", None)
+    repo_root = getattr(resolved_scope, "repo_root", None) or getattr(exec_context, "repo_root", None)
+    if not repo_root:
+        return None
+    provenance = getattr(getattr(resolved_scope, "provenance", None), "repo_root", None)
+    if resolved_scope is not None and provenance != "verified":
+        return None
+    try:
+        return str(Path(str(repo_root)).expanduser().resolve())
+    except Exception:
+        return str(repo_root)
+
+
 @dataclass(slots=True)
 class LoggingContext:
     """Resolved context information required by most logging tools."""
@@ -55,6 +73,11 @@ class LoggingContext:
     state_snapshot: Dict[str, Any]
     reminders: List[Dict[str, Any]]
     agent_id: Optional[str] = None
+    resolution_source: str = "unresolved"
+    fallback_used: bool = False
+    fallback_chain: List[str] | None = None
+    denied_fallback_attempts: List[str] | None = None
+    compatibility_usage: Dict[str, Any] | None = None
 
 
 class ProjectResolutionError(RuntimeError):
@@ -63,6 +86,37 @@ class ProjectResolutionError(RuntimeError):
     def __init__(self, message: str, recent_projects: Optional[Sequence[str]] = None) -> None:
         super().__init__(message)
         self.recent_projects = list(recent_projects or [])
+
+
+def build_resolution_metadata(
+    context: LoggingContext,
+    *,
+    include_project: bool = True,
+) -> Dict[str, Any]:
+    """Create a consistent, readable resolution payload for tool responses."""
+    source = context.resolution_source or "unresolved"
+    fallback_used = bool(context.fallback_used)
+    fallback_chain = list(context.fallback_chain or [])
+    summary = (
+        f"Resolved via '{source}'"
+        if not fallback_used
+        else f"Resolved via '{source}' with recovery chain: {', '.join(fallback_chain)}"
+    )
+
+    payload: Dict[str, Any] = {
+        "resolution_source": source,
+        "fallback_used": fallback_used,
+        "fallback_chain": fallback_chain,
+        "resolution_summary": summary,
+    }
+    denied_fallback_attempts = list(context.denied_fallback_attempts or [])
+    if denied_fallback_attempts:
+        payload["denied_fallback_attempts"] = denied_fallback_attempts
+    if isinstance(context.compatibility_usage, dict):
+        payload["compatibility_usage"] = dict(context.compatibility_usage)
+    if include_project:
+        payload["project"] = context.project.get("name") if context.project else None
+    return payload
 
 
 async def resolve_logging_context(
@@ -75,6 +129,7 @@ async def resolve_logging_context(
     state_snapshot: Optional[Dict[str, Any]] = None,
     reminder_variables: Optional[Dict[str, Any]] = None,
     operation_status: Optional[str] = None,
+    recovery_mode: Optional[str] = None,
 ) -> LoggingContext:
     """Resolve the active project and reminders for logging tools.
 
@@ -86,6 +141,8 @@ async def resolve_logging_context(
         require_project: If True, raise ``ProjectResolutionError`` when no project found.
         state_snapshot: Optional state returned from ``state_manager.record_tool`` to avoid
             duplicate recording. When omitted the helper will record the tool automatically.
+        recovery_mode: Optional compatibility recovery selector. Ordinary resolution is
+            fail-closed; compatibility fallback branches only run when explicitly selected.
     """
     if state_snapshot is None:
         state_snapshot = await server_module.state_manager.record_tool(tool_name)
@@ -100,6 +157,27 @@ async def resolve_logging_context(
 
     project: Optional[Dict[str, Any]] = None
     recent_projects: List[str] = []
+    resolution_source = "unresolved"
+    fallback_used = False
+    fallback_chain: List[str] = []
+    denied_fallback_attempts: List[str] = []
+    selected_recovery_mode = str(recovery_mode or "none").strip().lower()
+
+    release_profile = os.environ.get("SCRIBE_RELEASE_PROFILE", "internal").strip().lower()
+    public_release = release_profile == "public"
+    authorized_project_names: set[str] = set()
+
+    def allow_recovery(mode: str) -> bool:
+        if public_release and mode in {
+            "compat_state_current_project",
+            "compat_active_project",
+            "compat_recent_project",
+        }:
+            denied_marker = f"{mode}:public_release_blocked"
+            if denied_marker not in denied_fallback_attempts:
+                denied_fallback_attempts.append(denied_marker)
+            return False
+        return selected_recovery_mode in {mode, "compat_all"}
     explicit_requested = bool(explicit_project and str(explicit_project).strip())
     explicit_not_found = False
     exec_context = None
@@ -108,17 +186,39 @@ async def resolve_logging_context(
             exec_context = server_module.get_execution_context()
         except Exception:
             exec_context = None
+    execution_repo_root = _verified_execution_repo_root(exec_context)
 
     # Primary path: session-scoped project resolution (project mode only).
     if exec_context and getattr(exec_context, "mode", None) == "project":
         try:
             session_project = None
             state = None
+            backend_session_lookup_available = False
+            backend_session_lookup_attempted = False
             backend = getattr(server_module, "storage_backend", None)
             if backend and hasattr(backend, "get_session_project"):
-                # Prefer stable_session_id for deterministic project resolution
-                session_key = getattr(exec_context, "stable_session_id", None) or getattr(exec_context, "session_id", None)
-                if session_key:
+                backend_session_lookup_available = True
+                # Canonical precedence follows the shared session utility unless
+                # the stable id is an old prebinding key. Prebinding allocations
+                # are provisional; once an execution session is present it is the
+                # authoritative binding for project-mode logging.
+                canonical_session_key = get_canonical_session_key(exec_context)
+                execution_session_id = getattr(exec_context, "session_id", None)
+                session_keys: List[str] = []
+                if (
+                    canonical_session_key
+                    and "prebinding" in str(canonical_session_key)
+                    and execution_session_id
+                ):
+                    candidates = (execution_session_id, canonical_session_key)
+                else:
+                    candidates = (canonical_session_key, execution_session_id)
+                for candidate_key in candidates:
+                    if candidate_key and str(candidate_key) not in session_keys:
+                        session_keys.append(str(candidate_key))
+
+                for session_key in session_keys:
+                    backend_session_lookup_attempted = True
                     project_name = await backend.get_session_project(session_key)
                     from datetime import datetime, timezone
 
@@ -130,55 +230,75 @@ async def resolve_logging_context(
                             f"project_name from DB: {project_name}",
                         ],
                     )
-                    if project_name:
-                        # Try database registry first (projects may not have JSON config files)
-                        # CRITICAL FIX (Bug Fix #3): Resolve via StorageBackend APIs (not ad-hoc sqlite connections)
-                        # or direct SQL in tool code) to avoid connection isolation issues in WAL mode.
-                        # Legacy compatibility note: if a backend only exposes low-level access,
-                        # use backend._fetchone(...) on the shared connection instead of opening
-                        # a new sqlite connection.
-                        try:
-                            record = None
-                            if hasattr(backend, "fetch_project"):
-                                record = await backend.fetch_project(project_name)
-                            if record:
-                                session_project = {
-                                    "name": record.name,
-                                    "root": record.repo_root,
-                                    "progress_log": record.progress_log_path,
-                                }
-
-                                if getattr(record, "docs_json", None):
-                                    try:
-                                        session_project["docs"] = json.loads(record.docs_json)
-                                    except (json.JSONDecodeError, TypeError):
-                                        pass
-
-                                _session_debug_trace(
-                                    "get_session_project resolved",
-                                    [f"session_project from storage backend: {session_project.get('name')}"],
+                    if not project_name:
+                        continue
+                    # Try database registry first (projects may not have JSON config files)
+                    # CRITICAL FIX (Bug Fix #3): Resolve via StorageBackend APIs (not ad-hoc sqlite connections)
+                    # or direct SQL in tool code) to avoid connection isolation issues in WAL mode.
+                    # Legacy compatibility note: if a backend only exposes low-level access,
+                    # use backend._fetchone(...) on the shared connection instead of opening
+                    # a new sqlite connection.
+                    try:
+                        record = None
+                        if hasattr(backend, "fetch_project"):
+                            if execution_repo_root:
+                                record = await backend.fetch_project(
+                                    project_name,
+                                    repo_root=execution_repo_root,
                                 )
+                                if not record:
+                                    # The session's bound project may live in a
+                                    # different repo than this request's root
+                                    # (or the stored root is stale). The binding
+                                    # was set explicitly by set_project — resolve
+                                    # it by unique name (fails closed on
+                                    # ambiguity) before the JSON-config fallback.
+                                    record = await backend.fetch_project(project_name)
                             else:
-                                # Fallback to JSON config files for legacy projects
-                                from scribe_mcp.tools.project_utils import load_project_config
+                                record = await backend.fetch_project(project_name)
+                        if record:
+                            session_project = {
+                                "name": record.name,
+                                "root": record.repo_root,
+                                "progress_log": record.progress_log_path,
+                            }
 
-                                session_project = load_project_config(project_name, allow_fallback=False)
-                                _session_debug_trace(
-                                    "get_session_project resolved",
-                                    [f"session_project from config: {session_project.get('name') if session_project else None}"],
-                                )
-                        except Exception as e:
+                            if getattr(record, "docs_json", None):
+                                try:
+                                    session_project["docs"] = json.loads(record.docs_json)
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+
                             _session_debug_trace(
-                                "get_session_project error",
-                                [f"ERROR resolving session project: {e}"],
+                                "get_session_project resolved",
+                                [f"session_project from storage backend: {session_project.get('name')}"],
                             )
-                            # Fallback to JSON config on error
+                        else:
+                            # Fallback to JSON config files for legacy projects
                             from scribe_mcp.tools.project_utils import load_project_config
+
                             session_project = load_project_config(project_name, allow_fallback=False)
-            if not session_project:
+                            _session_debug_trace(
+                                "get_session_project resolved",
+                                [f"session_project from config: {session_project.get('name') if session_project else None}"],
+                            )
+                    except Exception as e:
+                        _session_debug_trace(
+                            "get_session_project error",
+                            [f"ERROR resolving session project: {e}"],
+                        )
+                        # Fallback to JSON config on error
+                        from scribe_mcp.tools.project_utils import load_project_config
+                        session_project = load_project_config(project_name, allow_fallback=False)
+                    if session_project:
+                        break
+            if not session_project and (
+                not backend_session_lookup_available
+                or not backend_session_lookup_attempted
+            ):
                 state = await server_module.state_manager.load()
-                # Prefer stable_session_id for deterministic project resolution
-                session_key_fallback = getattr(exec_context, "stable_session_id", None) or getattr(exec_context, "session_id", None)
+                # Canonical fallback follows write-path authority first.
+                session_key_fallback = get_canonical_session_key(exec_context)
                 session_project = state.get_session_project(session_key_fallback)
                 from datetime import datetime, timezone
                 _session_debug_trace(
@@ -196,20 +316,34 @@ async def resolve_logging_context(
 
             if session_project:
                 project = dict(session_project)
+                resolution_source = "session_binding"
+                project_name = project.get("name")
+                if project_name:
+                    authorized_project_names.add(str(project_name))
+                    alias = normalize_project_input(str(project_name))
+                    if alias:
+                        authorized_project_names.add(alias)
                 recent_projects = [project.get("name")] if project.get("name") else []
                 if state is None:
                     state = await server_module.state_manager.load()
                 for name in state.recent_projects:
                     if name and name not in recent_projects:
                         recent_projects.append(name)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Session-bound logging context resolution failed for tool '%s': %s",
+                tool_name,
+                exc,
+            )
 
     # EXPLICIT PROJECT OVERRIDE: If caller specifies a project, use it (cross-project support).
     # This takes precedence over session project to enable agents targeting other projects.
     if explicit_requested:
         explicit_name = str(explicit_project).strip()
         explicit_alias = normalize_project_input(explicit_name)
+        allow_set_project_rebind = tool_name == "set_project"
+        allow_cross_project_read = tool_name in {"read_recent"}
+        session_project_root = str(project.get("root", "")).strip() if isinstance(project, dict) else ""
         explicit_candidates = [explicit_name]
         if explicit_alias and explicit_alias not in explicit_candidates:
             explicit_candidates.append(explicit_alias)
@@ -219,7 +353,21 @@ async def resolve_logging_context(
         if backend and hasattr(backend, "fetch_project"):
             for candidate in explicit_candidates:
                 try:
-                    record = await backend.fetch_project(candidate)
+                    if execution_repo_root:
+                        record = await backend.fetch_project(
+                            candidate,
+                            repo_root=execution_repo_root,
+                        )
+                        if not record:
+                            # An explicitly named project that exists in another
+                            # repo (or whose row root differs from this request's
+                            # root) must resolve rather than be reported missing.
+                            # The unscoped lookup fails closed on ambiguous names,
+                            # and the authorization checks below still compare the
+                            # record's own root against the session's authority.
+                            record = await backend.fetch_project(candidate)
+                    else:
+                        record = await backend.fetch_project(candidate)
                 except Exception:
                     record = None
                 if record:
@@ -233,13 +381,70 @@ async def resolve_logging_context(
             ):
                 try:
                     records = await backend.list_projects()
+                    alias_matches = []
                     for candidate_record in records:
                         candidate_name = getattr(candidate_record, "name", "")
                         if normalize_project_input(candidate_name) == explicit_alias:
-                            record = candidate_record
-                            break
+                            if execution_repo_root:
+                                candidate_root = str(getattr(candidate_record, "repo_root", "") or "")
+                                try:
+                                    candidate_root = str(Path(candidate_root).expanduser().resolve())
+                                except Exception:
+                                    pass
+                                if candidate_root != execution_repo_root:
+                                    continue
+                            alias_matches.append(candidate_record)
+                    if len(alias_matches) == 1:
+                        record = alias_matches[0]
                 except Exception:
                     record = None
+
+        # Actor-authoritative override: an explicit project that resolves to a
+        # record inside the VERIFIED execution repo root carries the same
+        # authority as a set_project rebind for that repo (set_project's
+        # verified_binding_root / verified_request_root check). Cross-project
+        # writes within the verified repo are therefore honored instead of
+        # rejected against another actor's session binding. Projects outside
+        # the verified root, or requests without a verified root, keep the
+        # session-binding authorization below.
+        verified_root_override = False
+        if record is not None and execution_repo_root:
+            record_root_raw = str(getattr(record, "repo_root", "") or "").strip()
+            if record_root_raw:
+                try:
+                    record_root = str(Path(record_root_raw).expanduser().resolve())
+                except Exception:
+                    record_root = record_root_raw
+                verified_root_override = record_root == execution_repo_root
+
+        if (
+            not allow_set_project_rebind
+            and not allow_cross_project_read
+            and not verified_root_override
+            and exec_context
+            and getattr(exec_context, "mode", None) == "project"
+            and authorized_project_names
+        ):
+            if explicit_name not in authorized_project_names and (
+                not explicit_alias or explicit_alias not in authorized_project_names
+            ):
+                raise ProjectResolutionError(
+                    f"Explicit project override '{explicit_project}' does not match the session-bound active project.",
+                    recent_projects,
+                )
+        elif (
+            public_release
+            and not allow_set_project_rebind
+            and not allow_cross_project_read
+            and not verified_root_override
+        ):
+            if explicit_name not in authorized_project_names and (
+                not explicit_alias or explicit_alias not in authorized_project_names
+            ):
+                raise ProjectResolutionError(
+                    f"Explicit project override '{explicit_project}' is not authorized for this session.",
+                    recent_projects,
+                )
 
         if record:
             project = {
@@ -247,11 +452,31 @@ async def resolve_logging_context(
                 "root": record.repo_root,
                 "progress_log": record.progress_log_path,
             }
+            explicit_project_root = str(record.repo_root or "").strip()
+            if allow_cross_project_read and session_project_root and explicit_project_root:
+                if explicit_project_root != session_project_root:
+                    raise ProjectResolutionError(
+                        f"Explicit project override '{explicit_project}' is not authorized for this session.",
+                        recent_projects,
+                    )
+            resolution_source = "explicit_project"
             if getattr(record, "docs_json", None):
                 try:
                     project["docs"] = json.loads(record.docs_json)
                 except (json.JSONDecodeError, TypeError):
                     pass
+            if record.progress_log_path:
+                try:
+                    project["docs_dir"] = str(Path(record.progress_log_path).expanduser().resolve().parent)
+                except Exception:
+                    project["docs_dir"] = str(Path(record.progress_log_path).expanduser().parent)
+            if not project.get("docs_dir"):
+                progress_doc = None
+                docs_payload = project.get("docs")
+                if isinstance(docs_payload, dict):
+                    progress_doc = docs_payload.get("progress_log")
+                if isinstance(progress_doc, str) and progress_doc.strip():
+                    project["docs_dir"] = str(Path(progress_doc).expanduser().resolve().parent)
             recent_projects = [project["name"]]
         else:
             from scribe_mcp.tools.project_utils import load_project_config  # Lazy import.
@@ -261,6 +486,7 @@ async def resolve_logging_context(
                 explicit_resolved = load_project_config(explicit_alias, allow_fallback=False)
             if explicit_resolved:
                 project = explicit_resolved
+                resolution_source = "explicit_project"
                 recent_projects = [project["name"]]
             else:
                 explicit_not_found = True
@@ -287,6 +513,15 @@ async def resolve_logging_context(
             state_snapshot=state_snapshot,
             reminders=[],
             agent_id=agent_id,
+            resolution_source="explicit_project_missing",
+            fallback_used=False,
+            fallback_chain=[],
+            denied_fallback_attempts=list(denied_fallback_attempts),
+            compatibility_usage={
+                "requested": selected_recovery_mode != "none",
+                "requested_mode": selected_recovery_mode,
+                "applied": False,
+            },
         )
 
     # Primary path: agent-specific context if an agent_id is available.
@@ -294,6 +529,8 @@ async def resolve_logging_context(
         from scribe_mcp.tools.agent_project_utils import get_agent_project_data  # Imported lazily to avoid circular import.
 
         project, recent_projects = await get_agent_project_data(agent_id)
+        if project:
+            resolution_source = "agent_context"
 
     # Sentinel mode: allow explicit project targeting, but never resolve from global state.
     # If explicit project was provided and resolved, allow it (enables cross-project docs).
@@ -318,6 +555,15 @@ async def resolve_logging_context(
                 state_snapshot=state_snapshot,
                 reminders=[],
                 agent_id=agent_id,
+                resolution_source=resolution_source,
+                fallback_used=fallback_used,
+                fallback_chain=list(fallback_chain),
+                denied_fallback_attempts=list(denied_fallback_attempts),
+                compatibility_usage={
+                    "requested": selected_recovery_mode != "none",
+                    "requested_mode": selected_recovery_mode,
+                    "applied": bool(fallback_used),
+                },
             )
 
         # No explicit project - require_project determines behavior
@@ -333,12 +579,26 @@ async def resolve_logging_context(
             state_snapshot=state_snapshot,
             reminders=[],
             agent_id=agent_id,
+            resolution_source="sentinel_mode_no_project",
+            fallback_used=False,
+            fallback_chain=[],
+            denied_fallback_attempts=list(denied_fallback_attempts),
+            compatibility_usage={
+                "requested": selected_recovery_mode != "none",
+                "requested_mode": selected_recovery_mode,
+                "applied": False,
+            },
         )
 
     # Project mode should prefer session bindings, but if an explicit active project
     # is already persisted in StateManager, honor it before failing hard. This keeps
     # direct StateManager-driven flows and tests functional without reopening a session.
-    if exec_context and getattr(exec_context, "mode", None) == "project" and not project:
+    if (
+        exec_context
+        and getattr(exec_context, "mode", None) == "project"
+        and not project
+        and allow_recovery("compat_state_current_project")
+    ):
         recovered_project = None
         try:
             state = await server_module.state_manager.load()
@@ -348,6 +608,9 @@ async def resolve_logging_context(
                     recovered_project = await server_module.state_manager._fetch_project(state.current_project)  # type: ignore[attr-defined]
                 if recovered_project:
                     project = dict(recovered_project)
+                    resolution_source = "compat_state_current_project"
+                    fallback_used = True
+                    fallback_chain.append("compat_state_current_project")
                     recent_projects = [project.get("name")] if project.get("name") else []
                     for name in state.recent_projects:
                         if name and name not in recent_projects:
@@ -368,41 +631,36 @@ async def resolve_logging_context(
                 state_snapshot=state_snapshot,
                 reminders=[],
                 agent_id=agent_id,
+                resolution_source="project_mode_unresolved",
+                fallback_used=fallback_used,
+                fallback_chain=list(fallback_chain),
+                denied_fallback_attempts=list(denied_fallback_attempts),
+                compatibility_usage={
+                    "requested": selected_recovery_mode != "none",
+                    "requested_mode": selected_recovery_mode,
+                    "applied": bool(fallback_used),
+                },
             )
 
-    # Final fallback: use the state's active project snapshot (legacy/no context).
-    # WARNING: This path uses GLOBAL state - only safe when scoped to current repo.
-    if not project and not exec_context:
+    # Compatibility hint path: inspect state snapshots for diagnostics only.
+    # Do not promote global/recent state into operational authority.
+    if not project and not exec_context and allow_recovery("compat_active_project"):
         from scribe_mcp.tools.project_utils import load_active_project, load_project_config  # Lazy import.
 
         active_project, active_name, recent = await load_active_project(server_module.state_manager)
-
-        # REPO SCOPING: Only use global fallback if project belongs to current repo
-        if active_project and active_project.get("root"):
-            try:
-                from scribe_mcp.config.repo_config import get_current_repo_config
-                current_repo_root, _ = get_current_repo_config()
-                project_root = Path(active_project["root"]).resolve()
-                same_repo = project_root == current_repo_root or current_repo_root in project_root.parents
-                if not same_repo:
-                    # Project is from different repo - don't use it
-                    # Log this for debugging
-                    from datetime import datetime, timezone
-                    _session_debug_trace(
-                        "GLOBAL FALLBACK BLOCKED (cross-repo)",
-                        [
-                            f"timestamp: {datetime.now(timezone.utc).isoformat()}",
-                            f"active_project: {active_name}",
-                            f"project_root: {project_root}",
-                            f"current_repo: {current_repo_root}",
-                        ],
-                    )
-                    active_project = None
-                    active_name = None
-            except Exception:
-                pass  # If repo detection fails, allow fallback (backwards compat)
-
-        project = active_project
+        if active_project and selected_recovery_mode == "compat_active_project":
+            project = dict(active_project)
+            resolution_source = "compat_active_project"
+            fallback_used = True
+            fallback_chain.append("compat_active_project")
+        elif active_project:
+            resolution_source = "compat_active_project_hint"
+            fallback_used = True
+            fallback_chain.append("compat_active_project_hint")
+        elif active_name:
+            resolution_source = "compat_active_project_hint"
+            fallback_used = True
+            fallback_chain.append("compat_active_project_hint")
         if recent_projects:
             # Ensure active project recents are appended without duplicates.
             for name in recent:
@@ -410,14 +668,13 @@ async def resolve_logging_context(
                     recent_projects.append(name)
         else:
             recent_projects = list(recent)
-        if not project and active_name:
-            # When an explicit project was requested but not found, attempt config lookup.
-            project = load_project_config(active_name)
+        if not recent_projects and active_name:
+            resolved = load_project_config(active_name)
+            if resolved and resolved.get("name"):
+                recent_projects = [str(resolved["name"])]
 
-    # Legacy resilience: if no active project is set but recents exist, try the
-    # newest recent project from storage. This keeps non-session invocations
-    # functional after restarts where current_project is unset.
-    if not project and recent_projects:
+    # Compatibility hint path for recent names only; do not rebind authority.
+    if not project and recent_projects and allow_recovery("compat_recent_project"):
         backend = getattr(server_module, "storage_backend", None)
         if backend and hasattr(backend, "fetch_project"):
             for candidate in recent_projects[:3]:
@@ -427,16 +684,9 @@ async def resolve_logging_context(
                     record = None
                 if not record:
                     continue
-                project = {
-                    "name": record.name,
-                    "root": record.repo_root,
-                    "progress_log": record.progress_log_path,
-                }
-                if getattr(record, "docs_json", None):
-                    try:
-                        project["docs"] = json.loads(record.docs_json)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                resolution_source = "compat_recent_project_hint"
+                fallback_used = True
+                fallback_chain.append("compat_recent_project_hint")
                 break
 
     if not project and require_project:
@@ -475,6 +725,15 @@ async def resolve_logging_context(
         state_snapshot=state_snapshot,
         reminders=reminders_payload,
         agent_id=agent_id,
+        resolution_source=resolution_source,
+        fallback_used=fallback_used,
+        fallback_chain=list(fallback_chain),
+        denied_fallback_attempts=list(denied_fallback_attempts),
+        compatibility_usage={
+            "requested": selected_recovery_mode != "none",
+            "requested_mode": selected_recovery_mode,
+            "applied": bool(fallback_used),
+        },
     )
 
 
@@ -700,14 +959,16 @@ def resolve_log_definition(
     from scribe_mcp.config import log_config as log_config_module  # Lazy import.
 
     log_key = (log_type or "progress").lower()
-    if cache is not None and log_key in cache:
-        return cache[log_key]
+    project_root = project.get("root")
+    cache_key = f"{project_root or ''}:{log_key}"
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
 
-    definition = log_config_module.get_log_definition(log_key)
+    definition = log_config_module.get_log_definition(log_key, repo_root=project_root)
     path = log_config_module.resolve_log_path(project, definition)
 
     if cache is not None:
-        cache[log_key] = (path, definition)
+        cache[cache_key] = (path, definition)
 
     return path, definition
 

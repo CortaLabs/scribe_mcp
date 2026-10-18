@@ -8,7 +8,11 @@ import uuid
 from pathlib import Path
 
 from scribe_mcp.tools import set_project as set_project_module
-from scribe_mcp.tools.set_project import _count_log_entries, _gather_project_inventory
+from scribe_mcp.tools.set_project import (
+    _build_existing_project_activity,
+    _count_log_entries,
+    _gather_project_inventory,
+)
 from scribe_mcp.shared.project_registry import ProjectRegistry
 
 # Get the actual function (unwrapped from MCP decorator)
@@ -94,6 +98,22 @@ Some text that doesn't start with [
         assert count == 4
 
     @pytest.mark.asyncio
+    async def test_count_log_entries_with_current_entry_format(self, temp_project_dir):
+        """Test counting current emoji-prefixed append_entry lines."""
+        log_file = temp_project_dir / "PROGRESS_LOG.md"
+        log_content = """# Progress Log
+
+[ℹ️] [2026-04-10 04:15:41 UTC] [Agent: TestAgent] [Project: demo] First entry
+[✅] [2026-04-10 04:16:12 UTC] [Agent: TestAgent] [Project: demo] Second entry
+
+Some text that doesn't match an entry
+"""
+        log_file.write_text(log_content)
+
+        count = await _count_log_entries(log_file)
+        assert count == 2
+
+    @pytest.mark.asyncio
     async def test_gather_project_inventory_empty(self, temp_project_dir):
         """Test gathering inventory for project with no files."""
         project = {
@@ -170,6 +190,56 @@ Some text that doesn't start with [
         # Check custom content
         assert inventory["custom"]["research_files"] == 2
         assert "TOOL_LOG.jsonl" in inventory["custom"]["jsonl_files"]
+
+    @pytest.mark.asyncio
+    async def test_build_existing_project_activity_falls_back_when_registry_is_missing(self):
+        """Use inventory truth when registry/backend activity is unavailable."""
+        inventory = {
+            "docs": {
+                "progress": {"exists": True, "entries": 2},
+            },
+            "custom": {},
+        }
+
+        activity = await _build_existing_project_activity(
+            project={"name": "demo"},
+            inventory=inventory,
+            project_state="EXISTING_LEGACY",
+            entry_count=0,
+            backend=None,
+            project_record=None,
+            registry_info=None,
+        )
+
+        assert activity["status"] == "in_progress"
+        assert activity["total_entries"] == 2
+        assert activity["per_log_counts"] == {"progress": 2}
+
+    @pytest.mark.asyncio
+    async def test_build_existing_project_activity_prefers_canonical_status_over_registry(self):
+        """Registry remains derived and cannot override canonical status."""
+        inventory = {"docs": {"progress": {"exists": True, "entries": 3}}, "custom": {}}
+        registry_info = type(
+            "RegistryInfo",
+            (),
+            {
+                "status": "planning",
+                "last_entry_at": "2026-04-10T00:00:00+00:00",
+            },
+        )()
+
+        activity = await _build_existing_project_activity(
+            project={"name": "demo", "status": "in_progress"},
+            inventory=inventory,
+            project_state="EXISTING_LEGACY",
+            entry_count=3,
+            backend=object(),
+            project_record=object(),
+            registry_info=registry_info,
+        )
+
+        assert activity["status"] == "in_progress"
+        assert activity["total_entries"] == 3
 
 
 class TestNewProjectSITREP:

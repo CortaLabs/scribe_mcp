@@ -125,6 +125,71 @@ async def test_agent_project_context_flow(backend, tmp_path):
     assert snapshot["project_name"] == project.name
 
 
+async def test_session_transport_mode_project_and_scoped_reuse_contract(backend, tmp_path):
+    storage, _ = backend
+    transport_session_id = f"transport-{uuid.uuid4().hex[:8]}"
+    stable_session_id = f"stable-{uuid.uuid4().hex[:8]}"
+    project_name = f"project_{uuid.uuid4().hex[:6]}"
+    await storage.upsert_session(
+        session_id=stable_session_id,
+        transport_session_id=transport_session_id,
+        repo_root=str(tmp_path),
+        mode="project",
+    )
+    await storage.upsert_project(
+        name=project_name,
+        repo_root=str(tmp_path),
+        progress_log_path=str(tmp_path / "PROGRESS_LOG.md"),
+    )
+    await storage.upsert_agent_session("session-owner", stable_session_id, {"source": "transport-contract"})
+    await storage.set_session_mode(stable_session_id, "project")
+    await storage.set_session_project(stable_session_id, project_name)
+
+    looked_up = await storage.get_session_by_transport(transport_session_id)
+    assert looked_up is not None
+    assert looked_up["session_id"] == stable_session_id
+    assert looked_up["repo_root"] == str(tmp_path)
+    assert await storage.get_session_mode(stable_session_id) == "project"
+    assert await storage.get_session_project(stable_session_id) == project_name
+
+    identity = f"id-{uuid.uuid4().hex[:8]}"
+    first = await storage.get_or_create_agent_session(
+        identity_key=identity,
+        agent_name="agent",
+        agent_key="agent",
+        repo_root=str(tmp_path),
+        mode="project",
+        scope_key="scope-a",
+    )
+    second = await storage.get_or_create_agent_session(
+        identity_key=identity,
+        agent_name="agent",
+        agent_key="agent",
+        repo_root=str(tmp_path),
+        mode="project",
+        scope_key="scope-a",
+    )
+    assert first == second
+
+    agent_session = f"agent-{uuid.uuid4().hex[:8]}"
+    await storage.upsert_agent_session("agent-lifecycle", agent_session, {"source": "contract"})
+    await storage.heartbeat_session(agent_session)
+    await storage.end_session(agent_session)
+
+    expired = await storage.get_or_create_agent_session(
+        identity_key=f"expired-{uuid.uuid4().hex[:8]}",
+        agent_name="agent",
+        agent_key="agent",
+        repo_root=str(tmp_path),
+        mode="project",
+        scope_key="scope-expired",
+        ttl_hours=-1,
+    )
+    assert expired
+    cleaned = await storage.cleanup_expired_sessions(batch_size=100)
+    assert isinstance(cleaned, int)
+
+
 async def test_postgres_specific_document_and_session_apis(backend, tmp_path):
     storage, backend_name = backend
     if backend_name != "postgres":

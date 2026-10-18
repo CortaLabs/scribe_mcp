@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -10,16 +11,20 @@ from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import read_only_local_tool
 from scribe_mcp.tools.constants import STATUS_EMOJI
 from scribe_mcp.utils.files import read_tail
-from scribe_mcp.utils.response import create_pagination_info, ResponseFormatter
+from scribe_mcp.utils.formatters import create_pagination_info
+from scribe_mcp.utils.response import ResponseFormatter
 from scribe_mcp.utils.tokens import token_estimator
 from scribe_mcp.utils.estimator import ParameterTypeEstimator
 from scribe_mcp.utils.config_manager import TokenBudgetManager
 from scribe_mcp.utils.entry_limit import EntryLimitManager
 from scribe_mcp.utils.error_handler import HealingErrorHandler
+from scribe_mcp.config.settings import settings
 from scribe_mcp.shared.logging_utils import (
     ProjectResolutionError,
+    build_resolution_metadata,
     resolve_logging_context,
 )
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 
 
@@ -150,6 +155,80 @@ class _ReadRecentHelper(LoggingToolMixin):
 
 
 _READ_RECENT_HELPER = _ReadRecentHelper()
+_PROJECT_REGISTRY = get_runtime_project_registry()
+
+
+def _attach_resolution_metadata(response: Dict[str, Any], context: Any) -> None:
+    """Attach readable project-resolution metadata to tool responses."""
+    if not context:
+        return
+    resolution_payload = build_resolution_metadata(context)
+    response["project"] = resolution_payload.get("project")
+    response["project_resolution"] = {
+        key: value for key, value in resolution_payload.items() if key != "project"
+    }
+
+
+def _entry_identity(entry: Dict[str, Any]) -> str:
+    raw_line = str(entry.get("raw_line") or "").strip()
+    if raw_line:
+        return raw_line
+    entry_id = str(entry.get("id") or "").strip()
+    if entry_id:
+        return f"id:{entry_id}"
+    return "|".join(
+        str(entry.get(key) or "").strip()
+        for key in ("ts", "ts_iso", "agent", "message")
+    )
+
+
+async def _supplement_sparse_db_rows_from_progress_log(
+    *,
+    project: Dict[str, Any],
+    rows: List[Dict[str, Any]],
+    page: int,
+    page_size: int,
+    filters: Dict[str, Any],
+    db_authoritative: bool = False,
+) -> List[Dict[str, Any]]:
+    # Skip supplementation when the DB is authoritative and returned rows.
+    # Keep the fallback active when db_authoritative is True but the DB
+    # returned nothing (e.g. mirror-lag window on a brand-new project).
+    if db_authoritative and len(rows) > 0:
+        return rows
+
+    if page != 1 or len(rows) >= page_size:
+        return rows
+
+    progress_log = project.get("progress_log")
+    if not progress_log or not Path(progress_log).exists():
+        return rows
+
+    fetch_limit = max(page_size * 3, page_size + len(rows))
+    file_lines = await read_tail(
+        _progress_log_path(project),
+        fetch_limit,
+        repo_root=Path(project.get("root") or settings.project_root).resolve(),
+        context={"component": "logs", "project_name": project.get("name")},
+    )
+    file_lines = _apply_line_filters(file_lines, filters)
+
+    from scribe_mcp.utils.logs import parse_log_line
+
+    merged_rows = list(rows)
+    seen = {_entry_identity(row) for row in merged_rows}
+    for line in file_lines:
+        parsed = parse_log_line(line)
+        entry = parsed if parsed else {"raw_line": line, "message": line}
+        identity = _entry_identity(entry)
+        if identity in seen:
+            continue
+        merged_rows.append(entry)
+        seen.add(identity)
+        if len(merged_rows) >= page_size:
+            break
+
+    return merged_rows
 
 
 @app.tool(**read_only_local_tool(title="Read Recent Entries", tags=("logs", "inspection", "read-only")))
@@ -191,6 +270,7 @@ async def read_recent(
     Returns:
         Paginated response with recent entries and metadata
     """
+    _tool_started_perf_counter = time.perf_counter()
     state_snapshot = await server_module.state_manager.record_tool("read_recent")
 
     # Apply Phase 1 exception healing to all parameters
@@ -219,6 +299,8 @@ async def read_recent(
         fields = None
         include_metadata = True
 
+    effective_compact = compact and format != "readable"
+
     exec_context = None
     if hasattr(server_module, "get_execution_context"):
         try:
@@ -240,6 +322,7 @@ async def read_recent(
             context=context,
             extra={"warning": "sentinel_mode_no_project"},
         )
+        _attach_resolution_metadata(base_response, context)
         # Add healing information if parameters were healed
         if healing_applied:
             base_response["parameter_healing"] = {
@@ -253,6 +336,15 @@ async def read_recent(
     if isinstance(project, str):
         project = project.strip() or None
 
+    effective_recovery_mode = None
+    if not project and not exec_context:
+        try:
+            state = await server_module.state_manager.load()
+        except Exception:
+            state = None
+        if state and getattr(state, "current_project", None):
+            effective_recovery_mode = "compat_active_project"
+
     try:
         context = await _READ_RECENT_HELPER.prepare_context(
             tool_name="read_recent",
@@ -260,11 +352,13 @@ async def read_recent(
             explicit_project=project,
             require_project=True,
             state_snapshot=state_snapshot,
+            recovery_mode=effective_recovery_mode,
         )
     except ProjectResolutionError as exc:
         base_response = _READ_RECENT_HELPER.translate_project_error(exc)
         base_response["suggestion"] = "Invoke set_project before reading logs"
         base_response.setdefault("reminders", [])
+        _attach_resolution_metadata(base_response, context=None)
 
         # Add healing information if parameters were healed
         if healing_applied:
@@ -278,14 +372,15 @@ async def read_recent(
 
     project = context.project or {}
 
-    # Handle n parameter for backward compatibility (using healed values)
-    if page == 1 and page_size == 50 and n is not None:
-        # Legacy mode - use n as page_size (already healed)
-        limit_int = int(n) if n is not None else 50
-        page_size = max(1, min(limit_int, 200))
-    else:
-        # Pagination mode - ignore n (already healed)
-        page_size = max(1, min(page_size, 200))
+    # Resolve effective page_size.  n/limit is always an upper bound when
+    # provided — the old guard `page_size == 50` only fired when page_size
+    # happened to equal the healer default, silently ignoring `limit=1` when
+    # the tool default was 10.  Correct fix: clamp page_size by n whenever n
+    # is present, regardless of what page_size was set to.
+    page_size = max(1, min(page_size, 200))
+    if n is not None:
+        limit_int = max(1, min(int(n), 200))
+        page_size = min(page_size, limit_int)
 
     filters = filter or {}
 
@@ -301,7 +396,10 @@ async def read_recent(
 
     backend = server_module.storage_backend
     if backend:
-        record = await backend.fetch_project(project["name"])
+        record = await backend.fetch_project(
+            project["name"],
+            repo_root=project.get("root"),
+        )
         if record:
             # Use pagination if available
             if hasattr(backend, 'fetch_recent_entries_paginated'):
@@ -328,19 +426,29 @@ async def read_recent(
                 )
                 pagination_info = create_pagination_info(page, page_size, total_count)
 
+            rows = await _supplement_sparse_db_rows_from_progress_log(
+                project=project,
+                rows=rows,
+                page=page,
+                page_size=page_size,
+                filters=filters,
+                db_authoritative=True,
+            )
+            if len(rows) > total_count:
+                total_count = len(rows)
+                pagination_info = create_pagination_info(page, page_size, total_count)
+
             response = _READ_RECENT_HELPER.success_with_entries(
                 entries=rows,
                 context=context,
-                compact=compact,
+                compact=effective_compact,
                 fields=fields,
                 include_metadata=include_metadata,
                 pagination=pagination_info,
                 extra_data={},
             )
-
-            # Add project name for concurrent session clarity
-            if context and context.project:
-                response["project_name"] = context.project.get("name", "")
+            _attach_planning_advisories(response, project.get("name"), context=context)
+            _attach_resolution_metadata(response, context)
 
             # For readable format, skip token budget truncation (full content needed)
             # Token budget only applies to structured/compact formats
@@ -354,7 +462,10 @@ async def read_recent(
                 if context.reminders:
                     response["reminders"] = list(context.reminders)
                 return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-                    response, format, "read_recent"
+                    response,
+                    format,
+                    "read_recent",
+                    telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
                 )
 
             # Apply EntryLimitManager for structured/compact formats
@@ -398,7 +509,10 @@ async def read_recent(
             if context.reminders:
                 response["reminders"] = list(context.reminders)
             return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-                response, format, "read_recent"
+                response,
+                format,
+                "read_recent",
+                telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
             )
 
     # File-based fallback with pagination
@@ -434,16 +548,14 @@ async def read_recent(
     response = _READ_RECENT_HELPER.success_with_entries(
         entries=entries,
         context=context,
-        compact=compact,
+        compact=effective_compact,
         fields=fields,
         include_metadata=include_metadata,
         pagination=pagination_info,
         extra_data={},
     )
-
-    # Add project name for concurrent session clarity
-    if context and context.project:
-        response["project_name"] = context.project.get("name", "")
+    _attach_planning_advisories(response, project.get("name"), context=context)
+    _attach_resolution_metadata(response, context)
 
     # For readable format, skip token budget truncation (full content needed)
     if format == "readable":
@@ -456,7 +568,10 @@ async def read_recent(
         if context.reminders:
             response["reminders"] = list(context.reminders)
         return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-            response, format, "read_recent"
+            response,
+            format,
+            "read_recent",
+            telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
         )
 
     # Apply EntryLimitManager for file-based fallback (structured/compact formats)
@@ -500,7 +615,10 @@ async def read_recent(
     if context.reminders:
         response["reminders"] = list(context.reminders)
     return await _READ_RECENT_HELPER.formatter.finalize_tool_response(
-        response, format, "read_recent"
+        response,
+        format,
+        "read_recent",
+        telemetry={"started_perf_counter": _tool_started_perf_counter, "measurement_scope": "tool_only"},
     )
 
 
@@ -522,6 +640,54 @@ def _normalise_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
     if "priority_sort" in filters:
         normalised["priority_sort"] = filters["priority_sort"]
     return normalised
+
+
+def _attach_planning_advisories(
+    response: Dict[str, Any],
+    project_name: Optional[str],
+    *,
+    context: Optional[Any] = None,
+) -> None:
+    if not project_name:
+        return
+    if context is not None:
+        resolution_source = str(getattr(context, "resolution_source", "") or "").strip().lower()
+        if not resolution_source or resolution_source == "unresolved":
+            return
+    advisories = _PROJECT_REGISTRY.get_planning_advisories(project_name)
+    if advisories:
+        response["planning_advisories"] = advisories
+        return
+    get_context = getattr(_PROJECT_REGISTRY, "get_registry_advisory_context", None)
+    if not callable(get_context):
+        return
+    try:
+        registry_context = dict(get_context() or {})
+    except Exception:
+        return
+    if registry_context and not registry_context.get("available", False):
+        response["planning_advisories"] = {
+            "available": False,
+            "classification": registry_context.get("classification", "environment_mismatch"),
+            "reason_code": registry_context.get("reason_code", "runtime_registry_unavailable"),
+            "mode": registry_context.get("mode"),
+            "storage_backend": registry_context.get("storage_backend"),
+            "advisories": [
+                {
+                    "code": "planning_registry_unavailable",
+                    "severity": "info",
+                    "classification": registry_context.get("classification", "environment_mismatch"),
+                    "message": registry_context.get(
+                        "message",
+                        "Planning-doc drift advisories are unavailable in this runtime.",
+                    ),
+                    "provenance": {
+                        "source": "runtime.project_registry",
+                        "fields": ["available", "reason_code", "classification", "mode", "storage_backend"],
+                    },
+                }
+            ],
+        }
 
 
 def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:

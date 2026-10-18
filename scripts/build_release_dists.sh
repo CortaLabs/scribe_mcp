@@ -11,6 +11,12 @@ find "$ROOT_DIR/src" -type d -name '__pycache__' -prune -exec rm -rf {} +
 
 mkdir -p "$OUT_DIR"
 
+# Ensure the shipped plugin skill set (and its wheel-vendored mirror) is current
+# before building, so the wheel always carries every Scribe-owned generated
+# skill. --check fails the build if the trees drifted from the generated source;
+# run `python scripts/sync_plugin_skills.py` to repair.
+python "$ROOT_DIR/scripts/sync_plugin_skills.py" --check
+
 python -m build --sdist --wheel --outdir "$OUT_DIR" "$ROOT_DIR"
 python -m twine check "$OUT_DIR"/*
 

@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # Import the new reminder engine
 from scribe_mcp.utils.reminder_validator import validate_and_load_engine
 from scribe_mcp.utils.reminder_engine import ReminderEngine, ReminderContext as NewReminderContext
+from scribe_mcp.utils.reminder_engine import ReminderInstance
+from scribe_mcp.readiness import build_readiness_summary, collect_managed_doc_quality_state
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,17 @@ def _resolve_reminder_storage() -> Optional[Any]:
             return backend
     except Exception:
         pass
+
+    try:
+        from scribe_mcp.config.mode_detection import OperatingMode, resolve_configured_mode
+        from scribe_mcp.config.settings import settings
+
+        mode = resolve_configured_mode(settings)
+        backend_name = str(getattr(settings, "storage_backend", "")).strip().lower()
+        if mode != OperatingMode.STANDALONE or backend_name != "sqlite":
+            return None
+    except Exception:
+        return None
 
     try:
         from scribe_mcp.config.paths import default_db_path
@@ -311,9 +324,134 @@ async def get_reminders(
     # Use the new engine
     engine = _get_engine()
     reminder_instances = await engine.generate_reminders(context)
+    reminder_instances.extend(await _quality_state_reminders(engine, context))
 
     # Convert to the old format
     return engine.to_dict_list(reminder_instances)
+
+
+async def _quality_state_reminders(engine: ReminderEngine, context: NewReminderContext) -> List[ReminderInstance]:
+    readiness = context.variables.get("readiness_summary") if isinstance(context.variables, dict) else None
+    if not isinstance(readiness, dict):
+        return []
+
+    reminders: List[ReminderInstance] = []
+    default_cooldown = int(context.variables.get("quality_reminder_cooldown_minutes", 30) or 30)
+    categories_cfg = context.variables.get("quality_reminder_categories") or {}
+
+    def _cfg(name: str, fallback: str) -> str:
+        if isinstance(categories_cfg, dict) and isinstance(categories_cfg.get(name), str):
+            return str(categories_cfg.get(name))
+        return fallback
+
+    quality = readiness.get("managed_doc_quality") if isinstance(readiness.get("managed_doc_quality"), dict) else {}
+    log_friction = readiness.get("log_friction") if isinstance(readiness.get("log_friction"), dict) else {}
+    current_phase = str(readiness.get("current_phase") or "active phase")
+    residue = int(quality.get("readiness_blocker_count", 0) or 0)
+    mismatch = int(quality.get("frontmatter_mismatch_count", 0) or 0)
+    stale = int(quality.get("stale_research_index_count", 0) or 0)
+    blocker_counts_by_code = quality.get("readiness_blocker_counts_by_code") if isinstance(quality.get("readiness_blocker_counts_by_code"), dict) else {}
+    release_changelog_missing = int(blocker_counts_by_code.get("SCF_CHANGELOG_CURRENT_VERSION_MISSING", 0) or 0)
+    runtime_budget_status = str((log_friction.get("runtime_efficiency") or {}).get("budget_status") or "")
+    if not runtime_budget_status and isinstance(context.variables, dict):
+        runtime_efficiency = context.variables.get("runtime_efficiency")
+        if isinstance(runtime_efficiency, dict):
+            runtime_budget_status = str(runtime_efficiency.get("budget_status") or "")
+
+    suppressed = set(context.variables.get("quality_reminder_suppress_codes") or [])
+
+    if residue > 0 and "SCF_READINESS_BLOCKERS" not in suppressed:
+        reminders.append(
+            ReminderInstance(
+                key="quality.scaffold_residue",
+                level="warning",
+                emoji="⚠️",
+                message=f"{current_phase}: {residue} readiness blocker(s) remain. Clear SCF_* blockers in active docs before claiming done.",
+                category=_cfg("scaffold_residue", "scaffold_residue"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_READINESS_BLOCKERS"]},
+                cooldown_minutes=default_cooldown,
+                recommended_action="Run quality_check on active managed docs and clear SCF_* readiness blockers before claiming done.",
+                available_actions=["manage_docs quality_check", "manage_docs quality_handoff_check"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_READINESS_BLOCKERS"],
+            )
+        )
+    if release_changelog_missing > 0 and "SCF_CHANGELOG_CURRENT_VERSION_MISSING" not in suppressed:
+        reminders.append(
+            ReminderInstance(
+                key="quality.release_changelog_coverage_missing",
+                level="warning",
+                emoji="🧾",
+                message=(
+                    f"{current_phase}: current package version is missing accepted managed CHANGELOG coverage "
+                    f"({release_changelog_missing}). Add accepted CHANGELOG coverage for the active pyproject version, "
+                    "then run preview_reconciliation/apply_global_changelog before release closeout."
+                ),
+                category=_cfg("release_changelog_coverage", "release_changelog_coverage"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_CHANGELOG_CURRENT_VERSION_MISSING"]},
+                cooldown_minutes=default_cooldown,
+                recommended_action="Add accepted CHANGELOG coverage for the active package version, then preview and apply global changelog reconciliation.",
+                available_actions=["manage_docs quality_check", "manage_docs preview_reconciliation", "manage_docs apply_global_changelog"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_CHANGELOG_CURRENT_VERSION_MISSING"],
+            )
+        )
+    if mismatch > 0 and "SCF_FRONTMATTER_MISMATCH" not in suppressed:
+        reminders.append(
+            ReminderInstance(
+                key="quality.frontmatter_mismatch",
+                level="warning",
+                emoji="🧭",
+                message=f"{current_phase}: frontmatter/body readiness mismatch ({mismatch}). Re-run quality_check, then align frontmatter status with body state.",
+                category=_cfg("frontmatter_mismatch", "frontmatter_mismatch"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_FRONTMATTER_MISMATCH"]},
+                cooldown_minutes=default_cooldown,
+                recommended_action="Run quality_check and align managed-doc frontmatter lifecycle status with body readiness.",
+                available_actions=["manage_docs quality_check", "manage_docs frontmatter_update"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_FRONTMATTER_MISMATCH"],
+            )
+        )
+    if stale > 0 and "SCF_INDEX_HYGIENE" not in suppressed:
+        reminders.append(
+            ReminderInstance(
+                key="quality.stale_research_index",
+                level="info",
+                emoji="📚",
+                message=f"{current_phase}: research index hygiene signal ({stale}) in the active lane. Reconcile canonical research paths and refresh index references for this phase.",
+                category=_cfg("stale_research_index", "stale_research_index"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["SCF_INDEX_HYGIENE"]},
+                cooldown_minutes=default_cooldown,
+                recommended_action="Reconcile the research index against canonical research files before handoff.",
+                available_actions=["manage_docs quality_check", "manage_docs validate_crosslinks"],
+                suggested_tool="manage_docs",
+                blocker_codes=["SCF_INDEX_HYGIENE"],
+            )
+        )
+    if runtime_budget_status in {"near_budget", "over_budget"} and "RUNTIME_EFFICIENCY_BUDGET" not in suppressed:
+        reminders.append(
+            ReminderInstance(
+                key="quality.runtime_efficiency_budget",
+                level="warning" if runtime_budget_status == "over_budget" else "info",
+                emoji="⏱️",
+                message=f"Runtime-efficiency budget status is `{runtime_budget_status}` (runtime-efficiency-budget.v1). Use project_health/log_intelligence timing guidance before widening scope.",
+                category=_cfg("runtime_efficiency_budget", "runtime_efficiency_budget"),
+                variables={"project_root": context.project_root or "", "agent_id": context.agent_id or "", "tool_name": context.tool_name, "session_id": context.session_id or "", "blocker_codes": ["RUNTIME_EFFICIENCY_BUDGET"]},
+                cooldown_minutes=default_cooldown,
+                recommended_action="Inspect project health and timing guidance before widening scope.",
+                available_actions=["manage_docs project_health"],
+                suggested_tool="manage_docs",
+                blocker_codes=["RUNTIME_EFFICIENCY_BUDGET"],
+            )
+        )
+
+    emitted: List[ReminderInstance] = []
+    for reminder in reminders:
+        if await engine._should_show_reminder_async(reminder, context):
+            reminder_hash = engine._get_reminder_hash(reminder.key, reminder.variables)
+            engine.history.reminder_hashes[reminder_hash] = datetime.now(timezone.utc)
+            emitted.append(reminder)
+    return emitted
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +514,60 @@ async def _build_legacy_context(
     # Get current phase (cached by file signature).
     current_phase = await _get_current_phase(project.get("docs", {}).get("phase_plan"))
 
+    quality_state = await asyncio.to_thread(collect_managed_doc_quality_state, project)
+    log_signals = list((variables or {}).get("log_signals") or []) if isinstance(variables, dict) else []
+    runtime_efficiency = (variables or {}).get("runtime_efficiency") if isinstance(variables, dict) else None
+    readiness_summary = build_readiness_summary(
+        current_phase=current_phase,
+        managed_doc_quality=quality_state,
+        log_signals=log_signals,
+    ).to_dict()
+    if isinstance(runtime_efficiency, dict):
+        readiness_summary.setdefault("log_friction", {}).setdefault("runtime_efficiency", runtime_efficiency)
+
+    reminder_cfg = ((project.get("defaults") or {}).get("reminder") or {}) if isinstance(project, dict) else {}
+    try:
+        from scribe_mcp.config.settings import settings
+
+        global_reminder_cfg = settings.reminder_defaults if isinstance(settings.reminder_defaults, dict) else {}
+    except Exception:
+        global_reminder_cfg = {}
+
+    combined_cfg = {**global_reminder_cfg, **reminder_cfg}
+
+    # Per-project main-engine reminder knobs (configure_reminders contract).
+    # These are the top-level defaults.reminder keys persisted by
+    # reminder_tools.configure_reminders. Threaded into ReminderContext.variables
+    # so the engine honors enabled / cooldown_minutes / categories / tone.
+    # `enabled` defaults to True when unset (opt-out, not opt-in).
+    main_reminder_enabled = bool(combined_cfg.get("enabled", True))
+
+    raw_main_cooldown = combined_cfg.get("cooldown_minutes")
+    if raw_main_cooldown is None:
+        main_reminder_cooldown_minutes = None
+    else:
+        try:
+            main_reminder_cooldown_minutes = max(0, int(raw_main_cooldown))
+        except (TypeError, ValueError):
+            main_reminder_cooldown_minutes = None
+
+    raw_main_categories = combined_cfg.get("categories")
+    if isinstance(raw_main_categories, (list, tuple)):
+        main_reminder_categories = [
+            str(cat).strip().lower()
+            for cat in raw_main_categories
+            if str(cat).strip()
+        ] or None
+    else:
+        main_reminder_categories = None
+
+    raw_main_tone = combined_cfg.get("tone")
+    main_reminder_tone = (
+        str(raw_main_tone).strip().lower() or None
+        if raw_main_tone is not None
+        else None
+    )
+
     # Get session age information
     session_age_minutes = None
     try:
@@ -409,7 +601,25 @@ async def _build_legacy_context(
         docs_changed=docs_changed,
         current_phase=current_phase,
         session_age_minutes=session_age_minutes,
-        variables=variables or {},
+        variables={
+            **(variables or {}),
+            "managed_doc_quality": quality_state,
+            "readiness_summary": readiness_summary,
+            "quality_reminder_cooldown_minutes": int(combined_cfg.get("quality_cooldown_minutes", 30) or 30),
+            "quality_reminder_categories": {
+                "scaffold_residue": str(combined_cfg.get("scaffold_residue_category", "scaffold_residue")),
+                "frontmatter_mismatch": str(combined_cfg.get("frontmatter_mismatch_category", "frontmatter_mismatch")),
+                "stale_research_index": str(combined_cfg.get("stale_research_index_category", "stale_research_index")),
+                "runtime_efficiency_budget": str(combined_cfg.get("runtime_efficiency_budget_category", "runtime_efficiency_budget")),
+                "release_changelog_coverage": str(combined_cfg.get("release_changelog_coverage_category", "release_changelog_coverage")),
+            },
+            "quality_reminder_suppress_codes": [str(code) for code in (combined_cfg.get("suppress_warning_codes") or []) if str(code).strip()],
+            # Main-engine reminder knobs (configure_reminders).
+            "main_reminder_enabled": main_reminder_enabled,
+            "main_reminder_cooldown_minutes": main_reminder_cooldown_minutes,
+            "main_reminder_categories": main_reminder_categories,
+            "main_reminder_tone": main_reminder_tone,
+        },
         operation_status=operation_status,
     )
 

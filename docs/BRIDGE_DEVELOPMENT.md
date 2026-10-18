@@ -5,8 +5,7 @@ This guide explains how to create bridges that integrate external MCPs with Scri
 ## Release boundary
 
 - `scribe-mcp` owns the generic bridge runtime contract only.
-- `scribe-council` owns any shipped council/federation bridge assets that depend on council semantics.
-- `.scribe/config/bridges/` and `.council/` bridge overlays are local/operator-owned, not public release truth.
+- `.scribe/config/bridges/` overlays are local/operator-owned, not public release truth.
 
 Every manifest that Scribe registers must resolve to a real runtime plugin. Manifest-only inactive placeholders are not supported.
 
@@ -265,14 +264,9 @@ registry.register_custom_tool(
 ## Reference Documentation
 
 For complete API reference, see:
-- [Bridge Manifest Schema](../.codex/skills/scribe-mcp-usage/references/bridges/manifest.md)
-- [BridgePlugin API](../.codex/skills/scribe-mcp-usage/references/bridges/plugin.md)
-- [Hook Lifecycle](../.codex/skills/scribe-mcp-usage/references/bridges/hooks.md)
-- [Permission System](../.codex/skills/scribe-mcp-usage/references/bridges/permissions.md)
-- [Tool Extension](../.codex/skills/scribe-mcp-usage/references/bridges/tools.md)
+- [Scribe Usage](Scribe_Usage.md)
+- [Scribe Integration Skill](../skills/scribe-integration/SKILL.md)
 
 ## Templates
 
-Copy templates from `.codex/skills/scribe-mcp-usage/assets/templates/bridge/`:
-- `bridge_manifest_template.yaml` - Manifest with all options documented
-- `bridge_plugin_template.py` - Complete plugin implementation example
+Use the manifest and plugin examples in this guide as the public starting point.

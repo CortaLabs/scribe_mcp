@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 import scribe_mcp.config.settings as settings_module
 import scribe_mcp.server as server_module
@@ -10,11 +14,21 @@ from scribe_mcp.storage.remote import RemoteStorageBackend
 from scribe_mcp.storage.sqlite import SQLiteStorage
 
 
+@pytest.fixture(autouse=True)
+def _restore_scribe_logger_after_server_import():
+    yield
+    scribe_logger = logging.getLogger("scribe_mcp")
+    scribe_logger.handlers.clear()
+    scribe_logger.propagate = True
+    scribe_logger.setLevel(logging.NOTSET)
+
+
 def _fake_settings(**overrides):
     base = {
         "mode": "auto",
         "storage_backend": "sqlite",
         "db_url": None,
+        "project_root": Path(__file__).parent / "_runtime_mode_fixture_repo",
         "sqlite_path": "test.sqlite3",
         "postgres_schema": "scribe",
         "postgres_pool_min_size": 2,

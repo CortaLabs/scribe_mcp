@@ -76,6 +76,27 @@ def _normalize_range_batches(
     return normalized, warnings
 
 
+def _inherit_doc_name(
+    operations: List[Dict[str, Any]],
+    doc_name: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Merge the batch-level doc_name into ops that do not target a doc themselves.
+
+    An operation's own doc/doc_name always wins; inheritance only fills the gap
+    so ops are not dispatched with doc_name=None (DOC_NOT_FOUND: 'None').
+    """
+    if not doc_name:
+        return operations
+    merged: List[Dict[str, Any]] = []
+    for operation in operations:
+        if isinstance(operation, dict) and not (
+            operation.get("doc_name") or operation.get("doc")
+        ):
+            operation = {**operation, "doc_name": doc_name}
+        merged.append(operation)
+    return merged
+
+
 async def handle_batch_action(
     *,
     action: str,
@@ -84,6 +105,7 @@ async def handle_batch_action(
     dry_run: bool,
     helper: Any,
     context: Any,
+    doc_name: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Execute batch operations sequentially for the batch action."""
     if action != "batch":
@@ -102,6 +124,7 @@ async def handle_batch_action(
             context,
         )
 
+    operations = _inherit_doc_name(operations, doc_name)
     normalized_operations, warnings = _normalize_range_batches(operations)
 
     from scribe_mcp.tools.manage_docs import manage_docs

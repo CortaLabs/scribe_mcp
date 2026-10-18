@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from scribe_mcp.utils.response import default_formatter
-from scribe_mcp.shared.project_registry import ProjectRegistry
+from scribe_mcp.shared.project_registry import get_runtime_project_registry
 
 from .logging_utils import (
     LoggingContext,
@@ -14,6 +14,34 @@ from .logging_utils import (
     ensure_metadata_requirements,
     resolve_logging_context,
 )
+
+
+def _build_reminder_guidance(reminders: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Summarize actionable reminder fields without duplicating reminder text."""
+    guidance: list[Dict[str, Any]] = []
+    for reminder in reminders:
+        if not isinstance(reminder, dict):
+            continue
+        action = reminder.get("recommended_action")
+        actions = reminder.get("available_actions")
+        tool = reminder.get("suggested_tool")
+        blockers = reminder.get("blocker_codes")
+        if not any((action, actions, tool, blockers)):
+            continue
+        item: Dict[str, Any] = {"key": reminder.get("key") or reminder.get("category") or "reminder"}
+        source = reminder.get("source")
+        if source:
+            item["source"] = source
+        if action:
+            item["recommended_action"] = action
+        if isinstance(actions, list) and actions:
+            item["available_actions"] = actions
+        if tool:
+            item["suggested_tool"] = tool
+        if isinstance(blockers, list) and blockers:
+            item["blocker_codes"] = blockers
+        guidance.append(item)
+    return guidance
 
 
 class LoggingToolMixin:
@@ -35,6 +63,7 @@ class LoggingToolMixin:
         require_project: bool = True,
         state_snapshot: Optional[Dict[str, Any]] = None,
         reminder_variables: Optional[Dict[str, Any]] = None,
+        recovery_mode: Optional[str] = None,
     ) -> LoggingContext:
         """Resolve project, reminders, and state snapshot for a logging tool."""
         if not getattr(self, "server_module", None):
@@ -48,6 +77,7 @@ class LoggingToolMixin:
             require_project=require_project,
             state_snapshot=state_snapshot,
             reminder_variables=reminder_variables,
+            recovery_mode=recovery_mode,
         )
 
     @staticmethod
@@ -61,6 +91,9 @@ class LoggingToolMixin:
         reminders = response.pop("reminders", list(context.reminders))
         response["recent_projects"] = recent_projects
         response["reminders"] = reminders
+        reminder_guidance = response.pop("reminder_guidance", _build_reminder_guidance(reminders))
+        if reminder_guidance:
+            response["reminder_guidance"] = reminder_guidance
         return response
 
     @staticmethod
@@ -122,7 +155,7 @@ class LoggingToolMixin:
 
         # Best-effort hint: show last known project + recency without auto-restoring.
         try:
-            registry = ProjectRegistry()
+            registry = get_runtime_project_registry()
             last_known = registry.get_last_known_project(candidates=list(error.recent_projects))
             if last_known and last_known.last_access_at:
                 minutes_ago = int(

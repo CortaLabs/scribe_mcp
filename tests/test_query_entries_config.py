@@ -94,7 +94,9 @@ class TestQueryEntriesConfigBasicFunctionality:
         config = QueryEntriesConfig(page=2, page_size=50)
         assert config.is_pagination_mode()
         assert config.get_effective_limit() == 50
-        assert config.limit is None
+        # P4.2: pagination mode now PRESERVES limit as the total-results cap
+        # (it used to be nulled, which made the limit/max_results knobs dead).
+        assert config.limit == 50
 
         # Different page_size should trigger pagination mode
         config = QueryEntriesConfig(page=1, page_size=25)
@@ -302,15 +304,16 @@ class TestQueryEntriesConfigNormalization:
         assert config.page_size == 100
         assert not config.is_pagination_mode()
 
-        # Pagination mode: page > 1
+        # Pagination mode: page > 1. P4.2 — limit is preserved as the total cap
+        # (default 50), no longer nulled, so the limit/max_results knobs work.
         config = QueryEntriesConfig(page=2, page_size=50)
-        assert config.limit is None
+        assert config.limit == 50
         assert config.page_size == 50
         assert config.is_pagination_mode()
 
-        # Pagination mode: page_size != 50
+        # Pagination mode: page_size != 50 — limit cap preserved (default 50).
         config = QueryEntriesConfig(page=1, page_size=25)
-        assert config.limit is None
+        assert config.limit == 50
         assert config.page_size == 25
         assert config.is_pagination_mode()
 
