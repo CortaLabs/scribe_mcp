@@ -15,7 +15,7 @@ from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, TextIO, Union
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.security.sandbox import safe_file_operation
@@ -66,6 +66,14 @@ class FileLockError(Exception):
 class AtomicFileError(Exception):
     """Raised when atomic file operation fails."""
     pass
+
+
+class WalEntryConflictError(AtomicFileError):
+    """Raised when a stable WAL entry ID is reused for a different payload."""
+
+
+class WalJournalCorruptError(AtomicFileError):
+    """Raised when a WAL journal contains malformed or contradictory rows."""
 
 
 @contextmanager
@@ -201,41 +209,238 @@ class WriteAheadLog:
             repo_root=self.repo_root,
         )
 
-    def write_entry(self, entry: Dict[str, Any]) -> str:
+    _LEGACY_OPERATIONS = frozenset({"append", "rotate"})
+
+    @staticmethod
+    def _canonical_payload(entry: Mapping[str, Any]) -> tuple[Dict[str, Any], str]:
+        """Return a detached canonical payload and its stable digest."""
+        try:
+            detached_entry = dict(entry)
+            payload = json.loads(
+                json.dumps(
+                    detached_entry,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("WAL entry must contain canonical JSON data") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("WAL entry must be a JSON object")
+
+        # These fields describe the journal envelope, not the retained intent.
+        payload.pop("id", None)
+        payload.pop("payload_digest", None)
+        payload.pop("timestamp", None)
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return payload, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _secure_journal(file_handle: TextIO) -> None:
+        """Restrict retained journal intent to the current OS user."""
+        try:
+            os.fchmod(file_handle.fileno(), 0o600)
+        except (AttributeError, OSError):  # pragma: no cover - platform specific
+            os.chmod(file_handle.name, 0o600)
+
+    def _read_journal_locked(
+        self,
+        file_handle: TextIO,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, str], set[str]]:
+        """Parse and validate the journal while its sibling lock is held."""
+        entries: List[Dict[str, Any]] = []
+        digests: Dict[str, str] = {}
+        committed: set[str] = set()
+        file_handle.seek(0)
+
+        for line_number, raw_line in enumerate(file_handle, start=1):
+            text = raw_line.strip()
+            if not text:
+                continue
+            try:
+                row = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise WalJournalCorruptError(
+                    f"Malformed WAL journal row at line {line_number}"
+                ) from exc
+            if not isinstance(row, dict):
+                raise WalJournalCorruptError(
+                    f"WAL journal row at line {line_number} is not an object"
+                )
+
+            operation = row.get("op")
+            if operation == "commit":
+                ref_id = row.get("ref_id")
+                if not isinstance(ref_id, str) or not ref_id.strip():
+                    raise WalJournalCorruptError(
+                        f"WAL commit row at line {line_number} has no stable reference"
+                    )
+                if ref_id not in digests:
+                    raise WalJournalCorruptError(
+                        f"WAL commit row at line {line_number} references an unknown entry"
+                    )
+                if not isinstance(row.get("timestamp"), str) or not row["timestamp"].strip():
+                    raise WalJournalCorruptError(
+                        f"WAL commit row at line {line_number} has no timestamp"
+                    )
+                committed.add(ref_id)
+                continue
+
+            entry_id = row.get("id")
+            if not isinstance(entry_id, str) or not entry_id.strip():
+                raise WalJournalCorruptError(
+                    f"WAL journal row at line {line_number} has no stable ID"
+                )
+            if not isinstance(operation, str) or not operation.strip() or "ref_id" in row:
+                raise WalJournalCorruptError(
+                    f"WAL journal row at line {line_number} has an invalid operation"
+                )
+            if not isinstance(row.get("timestamp"), str) or not row["timestamp"].strip():
+                raise WalJournalCorruptError(
+                    f"WAL journal row at line {line_number} has no timestamp"
+                )
+
+            payload, actual_digest = self._canonical_payload(row)
+            stored_digest = row.get("payload_digest")
+            if stored_digest is None:
+                if operation not in self._LEGACY_OPERATIONS:
+                    raise WalJournalCorruptError(
+                        f"WAL journal row at line {line_number} has no payload digest"
+                    )
+            elif not isinstance(stored_digest, str) or stored_digest != actual_digest:
+                raise WalJournalCorruptError(
+                    f"WAL journal row at line {line_number} has an invalid payload digest"
+                )
+
+            prior_digest = digests.get(entry_id)
+            if prior_digest is not None:
+                if prior_digest != actual_digest or entry_id in committed:
+                    raise WalJournalCorruptError(
+                        f"WAL journal contains contradictory rows for entry {entry_id!r}"
+                    )
+                continue
+
+            normalized_row = dict(payload)
+            normalized_row["id"] = entry_id
+            normalized_row["payload_digest"] = actual_digest
+            timestamp = row.get("timestamp")
+            if timestamp is not None:
+                normalized_row["timestamp"] = timestamp
+            entries.append(normalized_row)
+            digests[entry_id] = actual_digest
+
+        return entries, digests, committed
+
+    def write_entry(
+        self,
+        entry: Mapping[str, Any],
+        *,
+        entry_id: Optional[str] = None,
+    ) -> str:
         """
         Write an entry to the journal.
 
         Args:
-            entry: Dictionary containing operation details
+            entry: Mapping containing operation details
+            entry_id: Optional stable operation ID. When omitted, the legacy
+                generated-ID behavior is retained.
 
         Returns:
             Entry ID (timestamp + hash)
         """
-        entry_id = f"{datetime.now(timezone.utc).isoformat()}_{hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:8]}"
-        entry['id'] = entry_id
-        entry['timestamp'] = datetime.now(timezone.utc).isoformat()
+        payload, payload_digest = self._canonical_payload(entry)
+        operation = payload.get("op")
+        if not isinstance(operation, str) or not operation.strip() or operation == "commit":
+            raise ValueError("WAL entry must have a non-empty non-commit operation")
+        timestamp = datetime.now(timezone.utc).isoformat()
+        if entry_id is None:
+            entry_id = f"{timestamp}_{payload_digest[:8]}"
+        elif not isinstance(entry_id, str) or not entry_id.strip():
+            raise ValueError("WAL entry_id must be a non-empty string")
 
-        journal_line = json.dumps(entry) + '\n'
+        journal_entry = dict(payload)
+        journal_entry.update({
+            "id": entry_id,
+            "payload_digest": payload_digest,
+            "timestamp": timestamp,
+        })
 
-        with file_lock(self.journal_path, 'a', repo_root=self.repo_root) as f:
-            f.write(journal_line)
+        with file_lock(self.journal_path, 'a+', repo_root=self.repo_root) as f:
+            _, digests, _ = self._read_journal_locked(f)
+            prior_digest = digests.get(entry_id)
+            if prior_digest is not None:
+                if prior_digest == payload_digest:
+                    return entry_id
+                raise WalEntryConflictError(
+                    f"WAL entry ID {entry_id!r} is already bound to another payload"
+                )
+
+            self._secure_journal(f)
+            f.seek(0, os.SEEK_END)
+            f.write(json.dumps(journal_entry, sort_keys=True, separators=(",", ":")) + '\n')
             f.flush()
             os.fsync(f.fileno())
 
         return entry_id
 
-    def commit_entry(self, entry_id: str):
+    def commit_entry(self, entry_id: str) -> None:
         """Mark an entry as committed in the journal."""
+        if not isinstance(entry_id, str) or not entry_id.strip():
+            raise ValueError("WAL entry_id must be a non-empty string")
         commit_entry = {
             'op': 'commit',
             'ref_id': entry_id,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }
 
-        with file_lock(self.journal_path, 'a', repo_root=self.repo_root) as f:
-            f.write(json.dumps(commit_entry) + '\n')
+        with file_lock(self.journal_path, 'a+', repo_root=self.repo_root) as f:
+            _, digests, committed = self._read_journal_locked(f)
+            if entry_id not in digests:
+                raise WalJournalCorruptError(
+                    f"Cannot commit unknown WAL entry {entry_id!r}"
+                )
+            if entry_id in committed:
+                return
+
+            self._secure_journal(f)
+            f.seek(0, os.SEEK_END)
+            f.write(json.dumps(commit_entry, sort_keys=True, separators=(",", ":")) + '\n')
             f.flush()
             os.fsync(f.fileno())
+
+    def read_uncommitted(
+        self,
+        *,
+        operation_kind: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], ...]:
+        """Return validated uncommitted entries once each in journal order."""
+        if operation_kind is not None and (
+            not isinstance(operation_kind, str) or not operation_kind.strip()
+        ):
+            raise ValueError("operation_kind must be a non-empty string")
+        if not self.journal_path.exists():
+            return ()
+
+        with file_lock(self.journal_path, 'r', repo_root=self.repo_root) as f:
+            entries, _, committed = self._read_journal_locked(f)
+
+        return tuple(
+            dict(entry)
+            for entry in entries
+            if entry["id"] not in committed
+            and (operation_kind is None or entry.get("op") == operation_kind)
+        )
+
+    def has_commit(self, entry_id: str) -> bool:
+        """Return whether the journal contains a commit marker for an entry."""
+        if not isinstance(entry_id, str) or not entry_id.strip():
+            raise ValueError("WAL entry_id must be a non-empty string")
+        if not self.journal_path.exists():
+            return False
+        with file_lock(self.journal_path, 'r', repo_root=self.repo_root) as f:
+            _, _, committed = self._read_journal_locked(f)
+        return entry_id in committed
 
     def replay_uncommitted(self) -> int:
         """
@@ -244,24 +449,8 @@ class WriteAheadLog:
         Returns:
             Number of entries replayed
         """
-        if not self.journal_path.exists():
-            return 0
-
         replayed = 0
-        uncommitted = []
-
-        with file_lock(self.journal_path, 'r', repo_root=self.repo_root) as f:
-            for line in f:
-                try:
-                    entry = json.loads(line.strip())
-                    if entry.get('op') == 'append' and 'ref_id' not in entry:
-                        uncommitted.append(entry)
-                    elif entry.get('op') == 'commit':
-                        # Remove committed entries from uncommitted list
-                        ref_id = entry.get('ref_id')
-                        uncommitted = [e for e in uncommitted if e.get('id') != ref_id]
-                except json.JSONDecodeError:
-                    continue
+        uncommitted = self.read_uncommitted(operation_kind="append")
 
         # Replay uncommitted entries
         for entry in uncommitted:
