@@ -24,6 +24,10 @@ _SYNC_PREFIXES: tuple[str, ...] = (
 # Suffixes eligible for sync.
 _SYNC_SUFFIXES: tuple[str, ...] = (".md",)
 
+# Backup artifacts use a distinct suffix contract from synced documents.
+_BACKUP_PREFIX = ".scribe/backups/"
+_BACKUP_SUFFIX = ".bak"
+
 # Prefixes that must **never** be synced even if they match above.
 _DENY_PREFIXES: tuple[str, ...] = (
     ".scribe/sentinel/",
@@ -68,6 +72,9 @@ def should_sync(file_path: Path | str, repo_root: Path | str) -> bool:
     for dp in _DENY_PREFIXES:
         if rel.startswith(dp):
             return False
+
+    if rel.startswith(_BACKUP_PREFIX):
+        return rel.endswith(_BACKUP_SUFFIX)
 
     # Must be under a sync prefix *and* have an eligible suffix.
     for sp in _SYNC_PREFIXES:
