@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "scribe": {
+      "command": "scribe-server"
+    }
+  }
+}

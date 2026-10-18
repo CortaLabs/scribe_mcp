@@ -1,33 +1,5 @@
 #!/usr/bin/env python3
-"""Sync Scribe-owned generated skills into the shipped plugin trees.
-
-The Claude/Codex plugins (``plugins/{claude,codex}/skills``) and the
-wheel-vendored mirror (``src/scribe_mcp/plugins_bundle/{claude,codex}/skills``)
-must ship every Scribe-relevant generated skill. Those skills are generated into
-``.claude/skills`` and ``.codex/skills`` by ``council update``; without this
-    script the plugin copies are hand-maintained and drift.
-
-This module is the single, reusable source of truth for *which* skills ship and
-*where* they ship. The shipped set is defined as a rule — glob ``scribe-*`` from
-the canonical generated source minus a documented exclusion list — so a newly
-added ``scribe-*`` skill ships automatically.
-
-Conventions preserved from the existing plugin bundle:
-
-* Plugin skills ship the *entire* generated skill directory. If a shipped skill
-  carries ``assets/``, ``references/`` or ``scripts/`` and links them from
-  ``SKILL.md``, those files ship with it so plugin links stay live. Skills whose
-  generated source is ``SKILL.md``-only (e.g. ``scribe-onboarding``,
-  ``scribe-integration``) naturally ship just that file.
-* ``plugins_bundle/{claude,codex}`` stays byte-identical to ``plugins/{claude,
-  codex}`` — the P6.6 drift guard (``tests/test_plugin_bundles.py``) enforces it.
-  This is a copy into the bundle, not a move.
-
-Usage::
-
-    python scripts/sync_plugin_skills.py            # write/sync (default)
-    python scripts/sync_plugin_skills.py --check     # verify only (CI/tests)
-"""
+"""Copy the two authored public skills into plugin and wheel bundle trees."""
 
 from __future__ import annotations
 
@@ -36,123 +8,78 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+SOURCE_SKILL_DIR = REPO_ROOT / "skills"
+SHIPPED_SKILLS = ("scribe-integration", "scribe-onboarding")
 
-# Canonical generated skill sources (produced by ``council update``).
-GENERATED_SKILL_DIRS: dict[str, Path] = {
-    "claude": REPO_ROOT / ".claude" / "skills",
-    "codex": REPO_ROOT / ".codex" / "skills",
-}
-
-# Shipped plugin destinations.
 PLUGIN_SKILL_DIRS: dict[str, Path] = {
     "claude": REPO_ROOT / "plugins" / "claude" / "skills",
     "codex": REPO_ROOT / "plugins" / "codex" / "skills",
 }
-
-# Wheel-vendored mirror (byte-identical to the plugin trees above).
 BUNDLE_SKILL_DIRS: dict[str, Path] = {
     "claude": REPO_ROOT / "src" / "scribe_mcp" / "plugins_bundle" / "claude" / "skills",
     "codex": REPO_ROOT / "src" / "scribe_mcp" / "plugins_bundle" / "codex" / "skills",
 }
-
-# The shipped skill set is the rule: every generated ``scribe-*`` skill EXCEPT
-# the documented exclusions below ships into the plugins. Adding a new
-# ``scribe-*`` skill to the generated source ships it automatically.
-SHIPPED_SKILL_GLOB = "scribe-*"
-
-# Explicitly not shipped in the standalone Scribe plugin:
-#
-# * scribe-rag-workflow is owned by Knowledge MCP (frontmatter ``owner:
-#   knowledge-mcp``) and exported FROM Knowledge MCP. It is hard-coupled to
-#   ``knowledge_mcp.operator_cli``, ``.knowledge/knowledge.yaml`` datasets, and
-#   ``KNOWLEDGE_*`` environment variables.
-# * scribe-mcp-usage is legacy broad-form usage documentation. The plugin
-#   surface is intentionally kept lean; scribe-integration, scribe-onboarding,
-#   and repository docs cover the supported shipped guidance.
-EXCLUDED_SKILLS: frozenset[str] = frozenset({"scribe-mcp-usage", "scribe-rag-workflow"})
-
-# A shipped skill must have this entry file in its source. The whole skill
-# directory (every file beneath it) is what ships, not just this file.
 SKILL_MANIFEST_FILE = "SKILL.md"
 
 
-def _generated_source_available(channel: str) -> bool:
-    """Return True when generated skills exist in this checkout.
+def _reject_symlinks(root: Path, label: str, *, descendants: bool = True) -> None:
+    """Reject a managed root or any descendant that can escape its boundary."""
+    try:
+        relative = root.relative_to(REPO_ROOT)
+    except ValueError as exc:
+        raise ValueError(f"{label} is outside the repository: {root}") from exc
+    current = REPO_ROOT
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"{label} contains a symlinked path: {current}")
+    if root.exists() and not root.is_dir():
+        raise ValueError(f"{label} must be a directory: {root}")
+    if descendants and root.is_dir():
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                raise ValueError(f"{label} contains a symlink: {path}")
 
-    Clean CI checkouts intentionally do not track ``.claude``/``.codex`` because
-    they are generated surfaces. In that environment the tracked plugin tree is
-    the only available source for bundle parity checks.
-    """
 
-    source_dir = GENERATED_SKILL_DIRS[channel]
-    if not source_dir.exists():
-        return False
-    return any(
-        skill_dir.is_dir()
-        and skill_dir.name not in EXCLUDED_SKILLS
-        and (skill_dir / SKILL_MANIFEST_FILE).is_file()
-        for skill_dir in source_dir.glob(SHIPPED_SKILL_GLOB)
-    )
+def _source_files() -> dict[str, dict[Path, bytes]]:
+    """Validate and read every canonical skill before a destination is planned."""
+    _reject_symlinks(SOURCE_SKILL_DIR, "canonical skill root", descendants=False)
+    if not SOURCE_SKILL_DIR.is_dir():
+        raise ValueError(f"canonical skill root is missing: {SOURCE_SKILL_DIR}")
 
-
-def _skill_names_from_source(source_dir: Path) -> list[str]:
-    names: list[str] = []
-    for skill_dir in sorted(source_dir.glob(SHIPPED_SKILL_GLOB)):
+    sources: dict[str, dict[Path, bytes]] = {}
+    for slug in SHIPPED_SKILLS:
+        skill_dir = SOURCE_SKILL_DIR / slug
+        _reject_symlinks(skill_dir, f"canonical skill {slug}")
         if not skill_dir.is_dir():
-            continue
-        if skill_dir.name in EXCLUDED_SKILLS:
-            continue
-        if not (skill_dir / SKILL_MANIFEST_FILE).is_file():
-            continue
-        names.append(skill_dir.name)
-    return names
+            raise ValueError(f"canonical skill directory is missing: {skill_dir}")
+        manifest = skill_dir / SKILL_MANIFEST_FILE
+        if not manifest.is_file():
+            raise ValueError(f"required skill manifest is missing: {manifest}")
+        files: dict[Path, bytes] = {}
+        for path in sorted(skill_dir.rglob("*")):
+            if path.is_file():
+                files[path.relative_to(skill_dir)] = path.read_bytes()
+        sources[slug] = files
+    return sources
 
 
 def shipped_skill_names(channel: str) -> list[str]:
-    """Return the sorted skill slugs that must ship for ``channel``.
-
-    Normal developer checkouts use every generated ``scribe-*`` skill directory
-    that has a ``SKILL.md`` and is not in :data:`EXCLUDED_SKILLS`.
-
-    Clean CI checkouts do not have generated ``.claude``/``.codex`` surfaces, so
-    they fall back to the tracked plugin tree and validate that the wheel bundle
-    mirrors those committed assets instead of planning an empty shipped set.
-    """
-
-    if _generated_source_available(channel):
-        return _skill_names_from_source(GENERATED_SKILL_DIRS[channel])
-    return _skill_names_from_source(PLUGIN_SKILL_DIRS[channel])
+    """Return the fixed public skill set for a supported destination channel."""
+    if channel not in PLUGIN_SKILL_DIRS:
+        raise ValueError(f"unsupported plugin channel: {channel}")
+    _source_files()
+    return list(SHIPPED_SKILLS)
 
 
-def _planned_files(channel: str) -> dict[Path, bytes]:
-    """Map every shipped destination file to its canonical source bytes.
-
-    The full skill subtree ships: every file under ``<source>/<skill>/`` is
-    mirrored (preserving structure) into both the plugin tree and the
-    wheel-vendored bundle. SKILL.md-only generated skills naturally ship just
-    that file.
-    """
-
-    plugin_dir = PLUGIN_SKILL_DIRS[channel]
-    bundle_dir = BUNDLE_SKILL_DIRS[channel]
-    generated_available = _generated_source_available(channel)
-    source_dir = GENERATED_SKILL_DIRS[channel] if generated_available else plugin_dir
-
+def _planned_files(channel: str, sources: dict[str, dict[Path, bytes]]) -> dict[Path, bytes]:
+    if channel not in PLUGIN_SKILL_DIRS:
+        raise ValueError(f"unsupported plugin channel: {channel}")
     planned: dict[Path, bytes] = {}
-    for name in shipped_skill_names(channel):
-        skill_source = source_dir / name
-        for source_file in sorted(skill_source.rglob("*")):
-            if not source_file.is_file():
-                continue
-            rel = source_file.relative_to(skill_source)
-            source_bytes = source_file.read_bytes()
-            if generated_available:
-                planned[plugin_dir / name / rel] = source_bytes
-            else:
-                # In clean CI the tracked plugin file is the source of truth for
-                # bundle parity. Include it in planned paths so it is not pruned.
-                planned[source_file] = source_bytes
-            planned[bundle_dir / name / rel] = source_bytes
+    for slug in SHIPPED_SKILLS:
+        for relative, content in sources[slug].items():
+            planned[PLUGIN_SKILL_DIRS[channel] / slug / relative] = content
+            planned[BUNDLE_SKILL_DIRS[channel] / slug / relative] = content
     return planned
 
 
@@ -170,83 +97,76 @@ def _display_path(path: Path) -> Path:
 
 
 def sync(*, check: bool) -> int:
-    """Sync (or verify) plugin + bundle skill trees against the generated source.
+    """Plan all four mirrors, then check or apply changes without source fallback."""
+    sources = _source_files()
+    plans: dict[str, dict[Path, bytes]] = {}
+    for channel in PLUGIN_SKILL_DIRS:
+        for managed_dir in (PLUGIN_SKILL_DIRS[channel], BUNDLE_SKILL_DIRS[channel]):
+            _reject_symlinks(managed_dir, "managed plugin skill destination")
+        plans[channel] = _planned_files(channel, sources)
 
-    Returns the number of files that are out of sync. In ``check`` mode nothing
-    is written; in write mode files are created/updated and stale files pruned.
-    """
+    planned_paths = set().union(*(set(plan) for plan in plans.values()))
+    managed_dirs = [*PLUGIN_SKILL_DIRS.values(), *BUNDLE_SKILL_DIRS.values()]
+    stale: set[Path] = set()
+    for managed_dir in managed_dirs:
+        stale.update(_existing_skill_files(managed_dir) - planned_paths)
 
     drift = 0
-    for channel in GENERATED_SKILL_DIRS:
-        planned = _planned_files(channel)
-        planned_paths = set(planned)
-
-        # Detect + apply additions/updates.
-        for target, source_bytes in sorted(planned.items()):
+    for plan in plans.values():
+        for target, source_bytes in sorted(plan.items()):
             current = target.read_bytes() if target.exists() else None
-            if current == source_bytes:
-                continue
-            drift += 1
-            verb = "update" if current is not None else "create"
-            print(f"[{channel}] {verb}: {_display_path(target)}")
-            if not check:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(source_bytes)
-
-        # Detect + prune stale skill files (e.g. a skill that was excluded or
-        # renamed). Only the plugin + bundle skill trees are managed here.
-        for managed_dir in (PLUGIN_SKILL_DIRS[channel], BUNDLE_SKILL_DIRS[channel]):
-            for existing in sorted(_existing_skill_files(managed_dir)):
-                if existing in planned_paths:
-                    continue
+            if current != source_bytes:
                 drift += 1
-                print(f"[{channel}] prune: {_display_path(existing)}")
-                if not check:
-                    existing.unlink()
-                    # Clean up now-empty directories up to (but not including)
-                    # the managed skills dir — full subtrees may leave nested
-                    # empty dirs (e.g. references/bridges/).
-                    parent = existing.parent
-                    while parent != managed_dir and parent.is_dir() and not any(parent.iterdir()):
-                        parent.rmdir()
-                        parent = parent.parent
+                verb = "update" if current is not None else "create"
+                print(f"[{verb}] {_display_path(target)}")
+    for path in sorted(stale):
+        drift += 1
+        print(f"[prune] {_display_path(path)}")
 
-    if check and drift:
-        print(
-            f"\n{drift} plugin skill file(s) out of sync. "
-            "Run: python scripts/sync_plugin_skills.py",
-            file=sys.stderr,
-        )
-    elif not check and drift:
-        print(f"\nSynced {drift} plugin skill file(s).")
-    else:
-        print("Plugin skills already in sync.")
+    if check or drift == 0:
+        if check and drift:
+            print(f"\n{drift} plugin skill file(s) out of sync.", file=sys.stderr)
+        elif not drift:
+            print("Plugin skills already in sync.")
+        return drift
+
+    for plan in plans.values():
+        for target, source_bytes in sorted(plan.items()):
+            if target.exists() and target.read_bytes() == source_bytes:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source_bytes)
+    for path in sorted(stale):
+        path.unlink()
+        parent = path.parent
+        while parent not in managed_dirs and parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+    print(f"\nSynced {drift} plugin skill file(s).")
     return drift
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="sync-plugin-skills",
-        description=(
-            "Sync Scribe-owned generated skills (scribe-* minus documented "
-            "exclusions) into plugins/{claude,codex}/skills and the wheel-"
-            "vendored plugins_bundle mirror. The full skill subtree ships "
-            "(SKILL.md + references/scripts/assets); the bundle stays "
-            "byte-identical to the plugin trees."
-        ),
+        description="Sync authored public Scribe skills into plugin and wheel bundle trees.",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Verify sync without writing; exit non-zero if out of sync (CI/tests).",
+        help="Verify sync without writing; exit non-zero if out of sync.",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    drift = sync(check=args.check)
-    return 1 if (args.check and drift) else 0
+    try:
+        drift = sync(check=args.check)
+    except (OSError, ValueError) as exc:
+        print(f"Cannot sync plugin skills: {exc}", file=sys.stderr)
+        return 2
+    return 1 if args.check and drift else 0
 
 
 if __name__ == "__main__":
