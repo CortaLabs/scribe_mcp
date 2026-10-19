@@ -201,7 +201,7 @@ async def main():
                 )["project"]["name"]
 
             dispatch = AsyncMock()
-            secret = "mcpv2-secret-canary-9f2aa89e"
+            secret = "test-example-mcpv2-canary"
             logger = logging.getLogger("scribe_mcp.server_sse")
             stream = StringIO()
             handler = logging.StreamHandler(stream)
