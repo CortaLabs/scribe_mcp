@@ -1,9 +1,13 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.3 public release line**
+Applies to: **v2.15.4 public release line**
 
 ## Patch release notes
+
+Version 2.15.4 removes the obsolete onboarding-directory packaging rule.
+Canonical onboarding and integration skills remain included from `skills/`
+and the shipped plugin bundles.
 
 Version 2.15.3 replaces a workstation-specific checkout path in the isolated
 validation runbook with a portable placeholder.
