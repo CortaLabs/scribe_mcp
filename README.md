@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Current release: `scribe-mcp 2.15.8` · Released: `2026-10-19`
+Current release: `scribe-mcp 2.15.9` · Released: `2026-10-19`
+
+`2.15.9` verifies project reads against the current caller binding and canonical repository identity, including warm reads and explicit project targets.
 
 `2.15.8` loads tool definitions before validating a first call that precedes tool discovery.
 

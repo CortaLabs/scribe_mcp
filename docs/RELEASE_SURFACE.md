@@ -1,9 +1,13 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.8 public release line**
+Applies to: **v2.15.9 public release line**
 
 ## Patch release notes
+
+Version 2.15.9 verifies project reads against the current caller binding and canonical
+repository identity. Advisory caches and compatibility labels cannot authorize a
+project selection; warm reads recheck the stored binding.
 
 Version 2.15.8 loads tool definitions before validating a first call that precedes
 tool discovery. Unknown tools and invalid arguments remain refused.

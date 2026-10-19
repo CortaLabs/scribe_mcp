@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import inspect
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
 from scribe_mcp.tool_contracts import read_only_local_tool
-from scribe_mcp.tools.project_utils import load_active_project, load_project_config
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import (
     LoggingContext,
@@ -47,7 +47,14 @@ async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str
         Dict containing flags, hashes, counts, doc list with modification indicators
     """
     info = _PROJECT_REGISTRY.get_project(project_name)
-    if not info:
+    if project_data:
+        # Planning registry keys are labels; include its metadata only if the
+        # registry can prove attribution to this canonical target.
+        registry_key = getattr(info, "project_key", None)
+        registry_root = getattr(info, "repo_root", None)
+        if registry_key != project_data.get("project_key") or registry_root != project_data.get("root"):
+            info = None
+    if not info and not project_data:
         registry_context = {}
         get_context = getattr(_PROJECT_REGISTRY, "get_registry_advisory_context", None)
         if callable(get_context):
@@ -68,7 +75,7 @@ async def _compute_doc_status(project_name: str, project_data: Optional[Dict[str
                 "storage_backend": registry_context.get("storage_backend"),
             }
         return {}
-    docs_meta = (info.meta or {}).get("docs") or {}
+    docs_meta = ((info.meta or {}).get("docs") or {}) if info else {}
     flags = docs_meta.get("flags") or {}
     baseline_hashes = docs_meta.get("baseline_hashes") or {}
     current_hashes = docs_meta.get("current_hashes") or {}
@@ -217,7 +224,9 @@ async def _read_recent_progress_entries(progress_log_path: str, limit: int = 5) 
 async def _read_recent_entries_from_db(
     project_name: str,
     limit: int = 5,
-    log_types: Optional[List[str]] = None
+    log_types: Optional[List[str]] = None,
+    *,
+    project_data: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Read last N entries from database (preferred over file-based).
@@ -231,12 +240,13 @@ async def _read_recent_entries_from_db(
         List of entry dicts with timestamp, emoji, agent, message
     """
     try:
-        import server as server_module
         backend = server_module.storage_backend
-        if not backend:
+        if not backend or not project_data or not project_data.get("project_key") or not project_data.get("root"):
             return []
 
-        project_record = await backend.fetch_project(project_name)
+        project_record = await backend.fetch_project(
+            project_name, project_key=project_data["project_key"], repo_root=project_data["root"],
+        )
         if not project_record:
             return []
 
@@ -411,7 +421,7 @@ async def get_project(
         project: Optional project name to retrieve
         format: Output format - "readable" (human-friendly), "structured" (full JSON), "compact" (minimal)
         verbose: If True, include recent log entries in readable format (default: False)
-        recovery_mode: Optional explicit compatibility recovery branch.
+        recovery_mode: Optional compatibility hint mode; grants no authority.
             Supported values: "compat_active_project", "compat_last_known_project".
     """
     state_snapshot = await server_module.state_manager.record_tool("get_project")
@@ -458,13 +468,31 @@ async def get_project(
             exec_context = None
 
     effective_recovery_mode = recovery_mode
-    if not effective_recovery_mode and not project and not exec_context:
-        try:
-            state = await server_module.state_manager.load()
-        except Exception:
-            state = None
-        if state and getattr(state, "current_project", None):
-            effective_recovery_mode = "compat_active_project"
+    try:
+        verified_project = await server_module.state_manager._get_verified_project(request_target=bool(project))
+    except Exception:
+        verified_project = None
+    if not isinstance(verified_project, dict) or not verified_project or (
+        project and normalize_project_input(project) != normalize_project_input(verified_project["name"])
+    ):
+        # Compatibility labels remain hints. They cannot become an operational
+        # selection without current server-established request/binding evidence.
+        return _with_selection_version({
+            "ok": False,
+            "error": "No project configured.",
+            "suggestion": "Invoke set_project before using this tool",
+            "recent_projects": list(getattr(state_snapshot, "recent_projects", []) or []),
+            "resolution_source": "unresolved",
+            "resolution_summary": "Resolved via 'unresolved'",
+            "fallback_used": False,
+            "fallback_chain": [],
+            "compatibility_recovery": {
+                "requested": recovery_mode in {"compat_active_project", "compat_last_known_project"},
+                "mode": recovery_mode,
+                "applied": False,
+                "reason": "current_authority_unavailable",
+            },
+        })
 
     try:
         context: LoggingContext = await _GET_PROJECT_HELPER.prepare_context(
@@ -487,126 +515,30 @@ async def get_project(
     recent_projects = list(context.recent_projects)
     allowed_recovery_modes = {"compat_active_project", "compat_last_known_project"}
     compatibility_mode = effective_recovery_mode in allowed_recovery_modes
-    recovery_applied = False
     recovery_reason: Optional[str] = None
 
     def _resolution_payload() -> Dict[str, Any]:
         payload = build_resolution_metadata(context, include_project=False)
-        fallback_chain = list(payload.get("fallback_chain") or [])
-        if recovery_applied and compatibility_mode and recovery_mode and recovery_mode not in fallback_chain:
-            fallback_chain.append(recovery_mode)
-            payload["fallback_chain"] = fallback_chain
-            payload["fallback_used"] = True
-            payload["resolution_summary"] = (
-                f"Resolved via '{payload.get('resolution_source', 'unresolved')}' "
-                f"with recovery chain: {', '.join(fallback_chain)}"
-            )
         payload["compatibility_recovery"] = {
             "requested": compatibility_mode,
             "mode": recovery_mode if compatibility_mode else None,
-            "applied": recovery_applied,
+            "applied": False,
             "reason": recovery_reason,
         }
         return payload
 
-    target_project = context.project if context.project else None
+    context.project = dict(verified_project)
+    target_project = dict(verified_project)
     current_name = target_project.get("name") if target_project else None
 
-    if project:
-        requested_project = project
-        normalized_project = normalize_project_input(project)
-        candidate_names: List[str] = []
-        for candidate in (
-            requested_project,
-            normalized_project,
-            requested_project.replace("_", "-"),
-            normalized_project.replace("_", "-") if normalized_project else None,
-        ):
-            if candidate and candidate not in candidate_names:
-                candidate_names.append(candidate)
-
-        # Attempt to load explicit project request, preserving both raw and normalized forms.
-        state = await server_module.state_manager.load()
-        project_data = None
-        resolved_name: Optional[str] = None
-        for candidate in candidate_names:
-            project_data = state.get_project(candidate)
-            if not project_data and context.project and context.project.get("name") == candidate:
-                project_data = context.project
-            if not project_data:
-                config_project = load_project_config(candidate, allow_fallback=False)
-                if config_project:
-                    project_data = config_project
-            if project_data:
-                resolved_name = project_data.get("name") or candidate
-                break
-        if not project_data:
-            response = _GET_PROJECT_HELPER.apply_context_payload(
-                _GET_PROJECT_HELPER.error_response(
-                    f"Project '{requested_project}' not found.",
-                    suggestion="Ensure the project is registered via set_project or exists in config/projects/",
-                ),
-                context,
-            )
-            response.update(_resolution_payload())
-            return _with_selection_version(response)
-        target_project = dict(project_data)
-        current_name = target_project.get("name") or resolved_name or requested_project
-    else:
-        if exec_context and getattr(exec_context, "mode", None) in {"project", "sentinel"}:
-            if not target_project:
-                response = _GET_PROJECT_HELPER.apply_context_payload(
-                    _GET_PROJECT_HELPER.error_response(
-                        "No session-scoped project configured.",
-                        suggestion="Invoke set_project before using this tool",
-                    ),
-                    context,
-                )
-                response.update(_resolution_payload())
-                return _with_selection_version(response)
-            if compatibility_mode:
-                recovery_reason = "session_authority_present"
-        if not target_project and not exec_context and compatibility_mode and effective_recovery_mode == "compat_active_project":
-            active_project, current_name, recent = await load_active_project(server_module.state_manager)
-            if active_project:
-                target_project = dict(active_project)
-                recent_projects = list(recent)
-                recovery_applied = True
-                recovery_reason = "compat_active_project"
-            else:
-                recovery_reason = "compat_active_project_not_found"
-        if not target_project:
-            extra: Dict[str, Any] = {}
-            try:
-                last_known = None
-                if compatibility_mode and effective_recovery_mode == "compat_last_known_project":
-                    last_known = _PROJECT_REGISTRY.get_last_known_project_for_recovery(candidates=recent_projects)
-                    recovery_reason = "compat_last_known_project_lookup"
-                if last_known and last_known.last_access_at:
-                    from datetime import datetime, timezone
-
-                    minutes_ago = int(
-                        max(
-                            0.0,
-                            (datetime.now(timezone.utc) - last_known.last_access_at).total_seconds() / 60.0,
-                        )
-                    )
-                    extra["last_known_project"] = last_known.project_name
-                    extra["last_known_project_minutes_ago"] = minutes_ago
-                    extra["last_known_project_last_access_at"] = last_known.last_access_at.isoformat()
-            except Exception:
-                extra = {}
-
-            response = _GET_PROJECT_HELPER.apply_context_payload(
-                _GET_PROJECT_HELPER.error_response(
-                    "No project configured.",
-                    suggestion="Invoke set_project or add a config/projects/<name>.json entry",
-                    extra=extra or None,
-                ),
-                context,
-            )
-            response.update(_resolution_payload())
-            return _with_selection_version(response)
+    context.resolution_source = (
+        exec_context.resolved_request_context.resolved_target.resolution_source
+        if project else "session_binding"
+    )
+    context.fallback_used = False
+    context.fallback_chain = []
+    if compatibility_mode:
+        recovery_reason = "session_authority_present"
 
     response = dict(target_project)
     if selection_version is not None:
@@ -615,8 +547,7 @@ async def get_project(
     if current_name:
         response["meta"]["current_project"] = current_name
     response["meta"].update(_resolution_payload())
-    if current_name:
-        response["meta"]["planning_advisories"] = _PROJECT_REGISTRY.get_planning_advisories(current_name)
+    # The registry is label-indexed and cannot attribute advisory data to this key.
 
     # Enrich with doc status + per-log entry counts for quick situational awareness.
     try:
@@ -642,7 +573,9 @@ async def get_project(
             if backend:
                 fetch_project_fn = getattr(backend, "fetch_project", None)
                 if fetch_project_fn:
-                    fetched = fetch_project_fn(current_name)
+                    fetched = fetch_project_fn(
+                        current_name, project_key=target_project["project_key"], repo_root=target_project["root"],
+                    )
                     project_record = await fetched if inspect.isawaitable(fetched) else fetched
                 else:
                     project_record = response
@@ -661,11 +594,10 @@ async def get_project(
             # Detect project state (Phase 4.1 integration)
             state, sitrep_message = detect_project_state(response, entry_count)
 
-            # Get timestamps from registry
-            registry_info = _PROJECT_REGISTRY.get_project(current_name)
+            # Only the current time is attributable without keyed registry data.
             timestamps = {
-                "created_at": registry_info.created_at.isoformat() if registry_info and registry_info.created_at else None,
-                "last_entry_at": registry_info.last_entry_at.isoformat() if registry_info and registry_info.last_entry_at else None,
+                "created_at": None,
+                "last_entry_at": None,
                 "current_time": datetime.now(timezone.utc).isoformat()
             }
 
@@ -691,6 +623,7 @@ async def get_project(
                 recent_entries = await _read_recent_entries_from_db(
                     current_name,
                     limit=3,  # Use 3 for compact display (~150-200 tokens)
+                    project_data=target_project,
                 )
 
         # Get doc status with counts and list (pass target_project for live docs registry)
@@ -735,7 +668,7 @@ async def get_project(
         if progress_log_path:
             recent_entries = await _read_recent_progress_entries(progress_log_path, limit=5)
         if not recent_entries and current_name:
-            recent_entries = await _read_recent_entries_from_db(current_name, limit=5)
+            recent_entries = await _read_recent_entries_from_db(current_name, limit=5, project_data=target_project)
 
         # Get doc status (pass target_project for live docs registry)
         doc_status = await _compute_doc_status(current_name, target_project) if current_name else {}
