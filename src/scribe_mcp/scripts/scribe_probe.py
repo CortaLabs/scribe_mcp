@@ -866,7 +866,10 @@ def parse_args(argv: list[str]) -> ProbeArgs:
     )
     parser.add_argument(
         "--roots",
-        help="Comma-separated roots for same_server_root_comparison; defaults to scribe_mcp,council_mcp.",
+        help=(
+            "Comma-separated roots for same_server_root_comparison; "
+            "defaults to placeholder Scribe and peer MCP paths."
+        ),
     )
 
     args_ns = parser.parse_args(argv)
