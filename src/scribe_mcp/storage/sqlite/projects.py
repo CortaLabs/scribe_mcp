@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -89,17 +90,6 @@ async def _ensure_project_identity_schema(
     execute_fn: AsyncExecute,
     fetchone_fn: AsyncFetchOne,
 ) -> None:
-    table_sql_row = await fetchone_fn(
-        """
-        SELECT sql
-        FROM sqlite_master
-        WHERE type = 'table' AND name = 'scribe_projects'
-        LIMIT 1;
-        """,
-        (),
-    )
-    table_sql = str(table_sql_row["sql"]) if table_sql_row and table_sql_row["sql"] else ""
-
     def _column_exists(column: str) -> Awaitable[Any]:
         return fetchone_fn(
             """
@@ -119,60 +109,6 @@ async def _ensure_project_identity_schema(
         await execute_fn("ALTER TABLE scribe_projects ADD COLUMN bridge_id TEXT;", ())
     if not await _column_exists("bridge_managed"):
         await execute_fn("ALTER TABLE scribe_projects ADD COLUMN bridge_managed INTEGER NOT NULL DEFAULT 0;", ())
-
-    dependent_fk_row = await fetchone_fn(
-        """
-        SELECT 1 AS present
-        FROM sqlite_master
-        WHERE type = 'table'
-          AND name IN ('session_projects', 'agent_projects', 'agent_recent_projects')
-        LIMIT 1;
-        """,
-        (),
-    )
-    has_dependent_tables = bool(dependent_fk_row)
-
-    if (not has_dependent_tables) and "NAME TEXT NOT NULL UNIQUE" in table_sql.upper().replace("\n", " "):
-        await execute_fn("ALTER TABLE scribe_projects RENAME TO scribe_projects_legacy;", ())
-        await execute_fn(
-            """
-            CREATE TABLE scribe_projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                repo_root TEXT NOT NULL,
-                repo_id TEXT,
-                project_key TEXT,
-                progress_log_path TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                docs_json TEXT,
-                bridge_id TEXT,
-                bridge_managed INTEGER NOT NULL DEFAULT 0
-            );
-            """,
-            (),
-        )
-        await execute_fn(
-            """
-            INSERT INTO scribe_projects
-                (id, name, repo_root, repo_id, project_key, progress_log_path, created_at, updated_at, docs_json, bridge_id, bridge_managed)
-            SELECT
-                id,
-                name,
-                repo_root,
-                repo_id,
-                project_key,
-                progress_log_path,
-                created_at,
-                updated_at,
-                docs_json,
-                bridge_id,
-                COALESCE(bridge_managed, 0)
-            FROM scribe_projects_legacy;
-            """,
-            (),
-        )
-        await execute_fn("DROP TABLE scribe_projects_legacy;", ())
 
     assigned_project_keys: set[str] = set()
     while True:
@@ -607,26 +543,59 @@ async def delete_project(
     name: str,
 ) -> bool:
     await initialise_fn()
-    project = await fetch_project_fn(name)
-    if not project:
-        return False
-
     async with write_lock:
-        await execute_fn(
-            "DELETE FROM agent_projects WHERE project_name = ?;",
-            (name,),
+        return await _atomic_project_mutation(
+            execute_fn,
+            "DELETE FROM scribe_projects WHERE id = ? AND project_key IS ?",
+            (),
+            selection_column='name', selection_value=name,
         )
 
-        await execute_fn(
-            "DELETE FROM scribe_projects WHERE name = ?;",
-            (name,),
-        )
 
-        remaining = await fetchone_fn(
-            "SELECT COUNT(*) as count FROM scribe_projects WHERE name = ?;",
-            (name,),
-        )
-        return remaining["count"] == 0
+async def _atomic_project_mutation(
+    execute_fn: AsyncExecute, statement: str, params: tuple[Any, ...],
+    *, selection_column: str, selection_value: str,
+) -> bool:
+    """Select, mutate and read the affected row on one serialized connection."""
+    owner = getattr(execute_fn, "__self__", None)
+    internals = getattr(owner, "_internals", None)
+    if internals is None:
+        raise RuntimeError("SQLite project mutation requires a connection-affine executor")
+
+    def run() -> bool:
+        def apply(conn: sqlite3.Connection) -> bool:
+            if conn.in_transaction:
+                raise RuntimeError("SQLite project mutation requires no active transaction")
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if selection_column not in {'name', 'project_key'}:
+                    raise ValueError('Unsupported canonical project selector')
+                targets = conn.execute(
+                    f'SELECT id, project_key FROM scribe_projects WHERE {selection_column} = ? LIMIT 2',
+                    (selection_value,),
+                ).fetchall()
+                if len(targets) != 1:
+                    conn.commit()
+                    return False
+                target = targets[0]
+                changed = conn.execute(statement, (*params, target['id'], target['project_key'])).rowcount == 1
+                conn.commit()
+                return changed
+            except BaseException:
+                try:
+                    conn.rollback()
+                except BaseException:
+                    conn.close()
+                    raise
+                raise
+
+        def operation() -> bool:
+            with internals._write_gate:
+                return internals._run_with_connection(apply)
+
+        return internals._with_lock_retry(operation, query=statement, is_write=True)
+
+    return await asyncio.to_thread(run)
 
 
 async def update_project_docs(
@@ -645,16 +614,19 @@ async def update_project_docs(
                 repo_root=normalize_repo_root(repo_root),
                 project_name=name,
             )
-            await execute_fn(
-                "UPDATE scribe_projects SET docs_json = ? WHERE project_key = ?",
-                (docs_json, project_key),
+            return await _atomic_project_mutation(
+                execute_fn,
+                "UPDATE scribe_projects SET docs_json = ? WHERE id = ? AND project_key IS ?",
+                (docs_json,),
+                selection_column='project_key', selection_value=project_key,
             )
         else:
-            await execute_fn(
-                "UPDATE scribe_projects SET docs_json = ? WHERE name = ?",
-                (docs_json, name),
+            return await _atomic_project_mutation(
+                execute_fn,
+                "UPDATE scribe_projects SET docs_json = ? WHERE id = ? AND project_key IS ?",
+                (docs_json,),
+                selection_column='name', selection_value=name,
             )
-    return True
 
 
 async def create_repo_scope_grant(

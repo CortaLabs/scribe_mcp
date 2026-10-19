@@ -1,7 +1,12 @@
 """Schema creation helpers for the SQLite storage backend."""
 from __future__ import annotations
 import asyncio
+import hashlib
+import re
+import sqlite3
+from collections import Counter
 from typing import Any, Awaitable, Callable, List
+from scribe_mcp.storage.models import compute_legacy_project_key, compute_project_key, compute_repo_id, normalize_repo_root
 ExecuteFn = Callable[[str, tuple[Any, ...]], Awaitable[None]]
 ExecuteManyFn = Callable[[List[str]], Awaitable[None]]
 MigrateAgentSessionsFn = Callable[[], Awaitable[None]]
@@ -90,6 +95,345 @@ _UPDATE_BINDING_GENERATION = (
     "ELSE CASE WHEN OLD.binding_generation IS NULL OR OLD.binding_generation < 1 "
     "THEN 1 ELSE OLD.binding_generation END END"
 )
+PROJECT_IDENTITY_TRIGGER_STATEMENTS = (
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_scribe_projects_cleanup_delete
+    AFTER DELETE ON scribe_projects FOR EACH ROW
+    BEGIN
+        UPDATE session_projects
+        SET project_name = CASE WHEN EXISTS (SELECT 1 FROM scribe_projects WHERE name=OLD.name)
+                THEN project_name ELSE NULL END,
+            project_key=NULL, binding_state='unresolved',
+            binding_state_reason=CASE WHEN EXISTS (SELECT 1 FROM scribe_projects WHERE name=OLD.name)
+                THEN 'project_identity_zero_matches' ELSE 'project_name_absent' END
+        WHERE project_name=OLD.name AND (project_key=OLD.project_key OR (
+            project_key IS NULL AND binding_state='unresolved'
+            AND NOT EXISTS (SELECT 1 FROM scribe_projects WHERE name=OLD.name)));
+        UPDATE agent_projects
+        SET project_name=NULL, version=version+1, updated_at=CURRENT_TIMESTAMP
+        WHERE project_name=OLD.name AND (
+            NOT EXISTS (SELECT 1 FROM scribe_projects WHERE name=OLD.name)
+            OR EXISTS (SELECT 1 FROM scribe_sessions AS ss
+                WHERE ss.session_id=agent_projects.session_id AND ss.repo_root=OLD.repo_root));
+        DELETE FROM agent_recent_projects WHERE project_name=OLD.name
+            AND NOT EXISTS (SELECT 1 FROM scribe_projects WHERE name=OLD.name);
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_scribe_projects_name_guard
+    BEFORE UPDATE OF name ON scribe_projects FOR EACH ROW WHEN NEW.name IS NOT OLD.name
+    BEGIN SELECT RAISE(ABORT, 'scribe_projects.name is immutable'); END;
+    """,
+)
+
+
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _table_definition_parts(statement: str) -> tuple[list[str], str]:
+    """Split complete clauses without changing quotes/defaults/generated SQL."""
+    start = statement.index('(')
+    depth, quote, parts, last, index = 1, '', [], start + 1, start + 1
+    while index < len(statement):
+        char = statement[index]
+        if quote:
+            if char == quote:
+                if index + 1 < len(statement) and statement[index + 1] == quote:
+                    index += 1
+                else:
+                    quote = ''
+        elif char in "'\"`[":
+            quote = ']' if char == '[' else char
+        elif char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+            if not depth:
+                parts.append(statement[last:index].strip())
+                break
+        elif char == ',' and depth == 1:
+            parts.append(statement[last:index].strip())
+            last = index + 1
+        index += 1
+    if depth:
+        raise RuntimeError('Unsupported SQLite identity DDL')
+    return parts, statement[index + 1:]
+
+
+def _identity_replacement_sql(statement: str, table: str) -> str:
+    """Retain complete table clauses, editing only inventory-approved identity DDL."""
+    parts, suffix = _table_definition_parts(statement)
+    result = []
+    for part in parts:
+        compact = re.sub(r'["`\[\]]', '', part).strip()
+        if table == 'scribe_projects':
+            unique = re.match(
+                r'''^(?:CONSTRAINT\s+(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|`(?:[^`]|``)*`|\[[^\]]*\]|\w+)\s+)?'''
+                r'(UNIQUE\s*\()', part, re.I)
+            if unique:
+                indexed, conflict = _table_definition_parts(part[unique.start(1):])
+                name_identifier = r'''(?:name|"name"|'name'|`name`|\[name\])'''
+                if len(indexed) == 1 and re.match(name_identifier + r'(?:\s|$)', indexed[0], re.I):
+                    if (re.fullmatch(name_identifier, indexed[0], re.I)
+                        and (not conflict.strip() or re.fullmatch(
+                            r'\s*ON\s+CONFLICT\s+(?:ROLLBACK|ABORT|FAIL|IGNORE|REPLACE)\s*', conflict, re.I))):
+                        continue
+                    raise RuntimeError('Unsupported project-name uniqueness DDL')
+            if re.match(r'^name\s', compact, re.I):
+                part = re.sub(r'\s+UNIQUE\b(?:\s+ON\s+CONFLICT\s+\w+)?', '', part, flags=re.I)
+        elif re.search(r'\bREFERENCES\s+["`\[]?scribe_projects["`\]]?\s*\(\s*["`\[]?name', part, re.I):
+            if re.match(r'^(?:CONSTRAINT\s+\w+\s+)?FOREIGN\s+KEY', compact, re.I):
+                continue
+            part, count = re.subn(
+                r'\s+REFERENCES\s+["`\[]?scribe_projects["`\]]?\s*\(\s*["`\[]?name["`\]]?\s*\)'
+                r'(?:\s+ON\s+DELETE\s+(?:SET\s+NULL|CASCADE))?', '', part, flags=re.I)
+            if count != 1:
+                raise RuntimeError('Unsupported project-name reference DDL')
+        result.append(part)
+    if table == 'session_projects':
+        canonical, _ = _table_definition_parts(SESSION_TABLE_STATEMENTS[4])
+        core = {name: _compact_sql_text(part) for name, part in zip(SESSION_PROJECT_COLUMNS, canonical)}
+        observed = {}
+        extensions = []
+        constraints = {_compact_sql_text(part) for part in canonical[len(SESSION_PROJECT_COLUMNS):]}
+        for part in result:
+            name = part.split()[0].strip('"`[]').lower()
+            compact = _compact_sql_text(part)
+            if name in core:
+                observed[name] = compact.replace('referencesscribe_sessions(session_id)ondeletecascade', '')
+            elif compact not in constraints:
+                extensions.append(part)
+        if extensions and observed != core:
+            raise RuntimeError('Unsupported session core constraints with extension DDL')
+        if observed == core:
+            # Keep the exact canonical core at both ends and copy every additive
+            # column/constraint between them. No fixed-column follow-up rebuild.
+            count = len(SESSION_PROJECT_COLUMNS)
+            result = canonical[:count] + extensions + canonical[count:]
+    return (f'CREATE TABLE {_quote_identifier(table + "_reliability_new")} ('
+            + ',\n'.join(result) + ')' + suffix)
+
+
+def _typed_table_digest(conn: sqlite3.Connection, table: str) -> tuple[int, str]:
+    """Compare complete typed multisets, distinguishing NULL/int/real/text/BLOB."""
+    counts = Counter()
+    for row in conn.execute(f'SELECT * FROM {_quote_identifier(table)}'):
+        digest = hashlib.sha256()
+        for value in row:
+            payload = value if isinstance(value, bytes) else repr(value).encode('utf-8')
+            tag = type(value).__name__.encode('ascii')
+            digest.update(len(tag).to_bytes(8, 'big') + tag)
+            digest.update(len(payload).to_bytes(8, 'big') + payload)
+        counts[digest.digest()] += 1
+    digest = hashlib.sha256()
+    for row_hash, count in sorted(counts.items()):
+        digest.update(row_hash + count.to_bytes(8, 'big'))
+    return sum(counts.values()), digest.hexdigest()
+
+
+def _global_project_name_unique_indexes(conn: sqlite3.Connection) -> set[str]:
+    """Partial indexes are extensions, never global name identity constraints."""
+    names = set()
+    for entry in conn.execute("PRAGMA index_list('scribe_projects')"):
+        if not entry[2] or entry[4]:
+            continue
+        columns = [row[2] for row in conn.execute(f'PRAGMA index_info({_quote_identifier(entry[1])})')]
+        if columns == ['name']:
+            names.add(entry[1])
+    return names
+
+
+def _identity_upgrade_tables(conn: sqlite3.Connection) -> list[str]:
+    tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_schema WHERE type='table'")]
+    if 'scribe_projects' not in tables:
+        return []
+    replacements = []
+    for table in tables:
+        groups = {}
+        for fk in conn.execute(f'PRAGMA foreign_key_list({_quote_identifier(table)})'):
+            groups.setdefault(fk[0], []).append(fk)
+        for group in groups.values():
+            for fk in group:
+                if fk[2] != 'scribe_projects' or fk[4] != 'name':
+                    continue
+                action = 'CASCADE' if table == 'agent_recent_projects' else 'SET NULL'
+                if (table not in {'session_projects', 'agent_projects', 'agent_recent_projects'}
+                    or len(group) != 1 or fk[3] != 'project_name'
+                    or fk[5] != 'NO ACTION' or fk[6] != action or fk[7] != 'NONE'):
+                    raise RuntimeError('Unexpected project-name foreign key')
+                replacements.append(table)
+    if _global_project_name_unique_indexes(conn):
+        replacements.append('scribe_projects')
+    return list(dict.fromkeys(replacements))
+
+
+def _project_identity_backfill_required(conn: sqlite3.Connection) -> bool:
+    """Missing identity columns/keys require upgrade without name constraints."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info('scribe_projects')")}
+    if not columns:
+        return False
+    if not {'repo_id', 'project_key'} <= columns:
+        return True
+    return conn.execute("SELECT 1 FROM scribe_projects WHERE project_key IS NULL "
+                        "OR project_key='' LIMIT 1").fetchone() is not None
+
+
+def _upgrade_project_identity_connection(conn: sqlite3.Connection) -> None:
+    if conn.in_transaction:
+        raise RuntimeError('SQLite identity migration requires no active transaction')
+    replacements = _identity_upgrade_tables(conn)
+    if not replacements and not _project_identity_backfill_required(conn):
+        return
+    for table in replacements:
+        statement = conn.execute("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (table,)).fetchone()[0]
+        _identity_replacement_sql(statement, table)  # Validate supported DDL before effects.
+    try:
+        conn.execute('PRAGMA foreign_keys=OFF')
+        if conn.in_transaction or conn.execute('PRAGMA foreign_keys').fetchone()[0] != 0:
+            raise RuntimeError('SQLite identity migration could not disable foreign keys')
+        conn.execute('BEGIN IMMEDIATE')
+        replacements = _identity_upgrade_tables(conn)
+        if not replacements and not _project_identity_backfill_required(conn):
+            conn.commit()  # A competing owner already completed the migration.
+            return
+        for table in replacements:
+            statement = conn.execute("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (table,)).fetchone()[0]
+            _identity_replacement_sql(statement, table)
+        # No pre-lock schema or row snapshot may drive DDL or identity backfill.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info('session_projects')")}
+        parent_columns = {row[1] for row in conn.execute("PRAGMA table_info('scribe_projects')")}
+        parents = list(conn.execute('SELECT * FROM scribe_projects ORDER BY id'))
+        assigned = {row['project_key'] for row in parents if 'project_key' in parent_columns and row['project_key']}
+        identities = {}
+        for row in parents:
+            key = row['project_key'] if 'project_key' in parent_columns else None
+            root = row['repo_root'] if key else normalize_repo_root(row['repo_root'])
+            if not key:
+                key = compute_project_key(repo_root=root, project_name=row['name'])
+                if key in assigned:
+                    key = compute_legacy_project_key(repo_root=root, project_name=row['name'], row_id=row['id'])
+                assigned.add(key)
+            identities[row['id']] = (root, key)
+        if 'project_key' in columns:
+            for row in conn.execute('SELECT sp.*, ss.repo_root FROM session_projects AS sp '
+                                    'LEFT JOIN scribe_sessions AS ss ON ss.session_id=sp.session_id'):
+                if row['project_key'] is not None and not any(
+                    p['name'] == row['project_name'] and identities[p['id']] == (row['repo_root'], row['project_key'])
+                    for p in parents
+                ):
+                    raise RuntimeError('Inconsistent canonical session project key')
+        if conn.execute('PRAGMA foreign_key_check').fetchall():
+            raise RuntimeError('SQLite identity migration found inconsistent foreign keys')
+        for column in ('repo_id', 'project_key'):
+            if column not in parent_columns:
+                conn.execute(f'ALTER TABLE scribe_projects ADD COLUMN {column} TEXT')
+        for row in parents:
+            if 'project_key' in parent_columns and row['project_key']:
+                continue  # Persisted keyed identities, including NULL repo_id, are immutable.
+            root, key = identities[row['id']]
+            updates = {'project_key': key}
+            if row['repo_root'] != root:
+                updates['repo_root'] = root
+            if 'repo_id' not in parent_columns or row['repo_id'] is None:
+                updates['repo_id'] = compute_repo_id(root)
+            assignments = ', '.join(f'{column}=?' for column in updates)
+            conn.execute(f'UPDATE scribe_projects SET {assignments} WHERE id=?',
+                         (*updates.values(), row['id']))
+        tables = [row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_schema WHERE type='table' AND name != 'sqlite_sequence'")]
+        before = {table: _typed_table_digest(conn, table) for table in tables}
+        sequences = list(conn.execute('SELECT name, seq FROM sqlite_sequence')) if conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'").fetchone() else []
+        objects = list(conn.execute("SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL "
+                                    "AND type IN ('index','trigger','view') ORDER BY type,name"))
+        retired_name_indexes = _global_project_name_unique_indexes(conn)
+        for kind, name, sql in objects:
+            if kind in ('view', 'trigger'):
+                conn.execute(f'DROP {kind.upper()} {_quote_identifier(name)}')
+        for table in replacements:
+            statement = conn.execute("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (table,)).fetchone()[0]
+            conn.execute(_identity_replacement_sql(statement, table))
+            writable = [row[1] for row in conn.execute(f'PRAGMA table_xinfo({_quote_identifier(table)})') if row[6] == 0]
+            columns_sql = ', '.join(map(_quote_identifier, writable))
+            replacement = _quote_identifier(table + '_reliability_new')
+            conn.execute(f'INSERT INTO {replacement} ({columns_sql}) SELECT {columns_sql} FROM {_quote_identifier(table)}')
+            if _typed_table_digest(conn, table) != _typed_table_digest(conn, table + '_reliability_new'):
+                raise RuntimeError(f'SQLite identity copy mismatch: {table}')
+            conn.execute(f'DROP TABLE {_quote_identifier(table)}')
+            conn.execute(f'ALTER TABLE {replacement} RENAME TO {_quote_identifier(table)}')
+        for kind, name, sql in objects:
+            if conn.execute('SELECT 1 FROM sqlite_schema WHERE type=? AND name=?', (kind, name)).fetchone():
+                continue
+            if kind == 'index' and name in retired_name_indexes and re.search(
+                r'CREATE\s+UNIQUE\s+INDEX.*\bON\s+["`\[]?scribe_projects["`\]]?\s*\(\s*["`\[]?name["`\]]?\s*\)', sql, re.I | re.S):
+                continue
+            conn.execute(sql)
+        # Publish the replacement and its raw-SQL controls together, never a
+        # committed interval with label FKs retired but cleanup absent.
+        if {'session_projects', 'agent_projects', 'agent_recent_projects'} <= set(tables):
+            session_columns = {row[1] for row in conn.execute("PRAGMA table_info('session_projects')")}
+            if set(SESSION_PROJECT_COLUMNS) <= session_columns:
+                conn.execute(SESSION_TABLE_STATEMENTS[5])
+                for name in (
+                    'trg_session_projects_requires_session_insert',
+                    'trg_session_projects_requires_session_update',
+                    'trg_session_projects_classify_insert',
+                    'trg_session_projects_classify_update',
+                ):
+                    conn.execute(f'DROP TRIGGER IF EXISTS {name}')
+                for statement in SESSION_TABLE_STATEMENTS[6:10]:
+                    conn.execute(statement)
+                for statement in PROJECT_IDENTITY_TRIGGER_STATEMENTS:
+                    conn.execute(statement)
+                if not conn.execute(f'SELECT ({SESSION_PROJECTS_CANONICAL_PREDICATE})').fetchone()[0]:
+                    raise RuntimeError('SQLite identity migration canonical validation failed')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_projects_project_key_unique ON scribe_projects(project_key)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_scribe_projects_name_repo_id ON scribe_projects(name, repo_id)')
+        for name, sequence in sequences:
+            conn.execute('DELETE FROM sqlite_sequence WHERE name=?', (name,))
+            conn.execute('INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)', (name, sequence))
+        for table, expected in before.items():
+            if _typed_table_digest(conn, table) != expected:
+                raise RuntimeError(f'SQLite identity child payload mismatch: {table}')
+        if conn.execute('PRAGMA foreign_key_check').fetchall():
+            raise RuntimeError('SQLite identity migration foreign key validation failed')
+        if _identity_upgrade_tables(conn):
+            raise RuntimeError('SQLite identity migration retained name uniqueness or references')
+        conn.execute(MIGRATION_TABLE_STATEMENT)
+        conn.execute("INSERT OR IGNORE INTO scribe_migrations(name) VALUES('sqlite_project_identity_canonical')")
+        conn.commit()
+    except BaseException:
+        try:
+            conn.rollback()
+        except BaseException as exc:
+            raise RuntimeError('SQLite identity migration rollback failed') from exc
+        raise
+    finally:
+        if not conn.in_transaction:
+            conn.execute('PRAGMA foreign_keys=ON')
+            if conn.execute('PRAGMA foreign_keys').fetchone()[0] != 1:
+                raise RuntimeError('SQLite identity migration could not restore foreign keys')
+
+
+async def upgrade_project_identity(execute_many_fn: ExecuteManyFn) -> None:
+    owner = getattr(execute_many_fn, '__self__', None)
+    internals = getattr(owner, '_internals', None)
+    if internals is None:
+        raise RuntimeError('SQLite identity migration requires a connection-affine executor')
+
+    def run() -> None:
+        def migrate() -> None:
+            with internals._write_gate:
+                conn = internals.connect()
+                try:
+                    _upgrade_project_identity_connection(conn)
+                finally:
+                    conn.close()  # Dedicated connection never returns to a pool.
+        internals._with_lock_retry(migrate, query='SQLite project identity migration', is_write=True)
+    await asyncio.to_thread(run)
+
+
 MIGRATION_TABLE_STATEMENT = """
 CREATE TABLE IF NOT EXISTS scribe_migrations (
     name TEXT PRIMARY KEY,
@@ -100,8 +444,9 @@ CORE_TABLE_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS scribe_projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         repo_root TEXT NOT NULL,
+        repo_id TEXT,
         project_key TEXT,
         progress_log_path TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -158,8 +503,7 @@ SESSION_TABLE_STATEMENTS = [
         version INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_by TEXT,
-        session_id TEXT,
-        FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE SET NULL
+        session_id TEXT
     );
     """,
     """
@@ -202,7 +546,6 @@ SESSION_TABLE_STATEMENTS = [
         binding_state_reason TEXT DEFAULT 'project_name_absent',
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(session_id) REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
-        FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE SET NULL,
         CHECK (
             (
                 binding_state = 'resolved'
@@ -283,8 +626,7 @@ SESSION_TABLE_STATEMENTS = [
         agent_id TEXT NOT NULL,
         project_name TEXT NOT NULL,
         last_access_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY(agent_id, project_name),
-        FOREIGN KEY(project_name) REFERENCES scribe_projects(name) ON DELETE CASCADE
+        PRIMARY KEY(agent_id, project_name)
     );
     """,
 ]
@@ -830,6 +1172,9 @@ def _sql_literal(value: str) -> str:
 
 
 SESSION_PROJECTS_CREATE_BODY = _create_body_fingerprint(SESSION_TABLE_STATEMENTS[4])
+_SESSION_CORE_BOUNDARY = SESSION_PROJECTS_CREATE_BODY.index(',foreignkey(session_id)')
+_SESSION_CORE_PREFIX = SESSION_PROJECTS_CREATE_BODY[:_SESSION_CORE_BOUNDARY] + ','
+_SESSION_CORE_SUFFIX = SESSION_PROJECTS_CREATE_BODY[_SESSION_CORE_BOUNDARY:]
 SESSION_PROJECTS_INSERT_TRIGGER_BODY = _trigger_body_fingerprint(
     SESSION_TABLE_STATEMENTS[6]
 )
@@ -844,17 +1189,28 @@ SESSION_PROJECTS_CLASSIFY_UPDATE_TRIGGER_BODY = _trigger_body_fingerprint(
 )
 SESSION_PROJECTS_CANONICAL_PREDICATE = " AND ".join(
     (
-        f"{_schema_body_expression('session_projects')} = "
-        f"{_sql_literal(SESSION_PROJECTS_CREATE_BODY)}",
-        f"{_column_signature_expression('session_projects')} = "
-        f"{_sql_literal(SESSION_PROJECTS_COLUMN_SIGNATURE)}",
+        '(' + f"{_schema_body_expression('session_projects')} = "
+        f"{_sql_literal(SESSION_PROJECTS_CREATE_BODY)} OR ("
+        f"substr({_schema_body_expression('session_projects')}, 1, {len(_SESSION_CORE_PREFIX)}) = "
+        f"{_sql_literal(_SESSION_CORE_PREFIX)} AND "
+        f"substr({_schema_body_expression('session_projects')}, -{len(_SESSION_CORE_SUFFIX)}) = "
+        f"{_sql_literal(_SESSION_CORE_SUFFIX)}))",
+        '(' + f"{_column_signature_expression('session_projects')} = "
+        f"{_sql_literal(SESSION_PROJECTS_COLUMN_SIGNATURE)} OR "
+        f"substr({_column_signature_expression('session_projects')}, 1, "
+        f"{len(SESSION_PROJECTS_COLUMN_SIGNATURE) + 1}) = "
+        f"{_sql_literal(SESSION_PROJECTS_COLUMN_SIGNATURE + '|')})",
         "(SELECT COUNT(*) FROM pragma_foreign_key_list('session_projects') "
         "WHERE \"table\" = 'scribe_sessions' AND \"from\" = 'session_id' "
         "AND \"to\" = 'session_id' AND on_delete = 'CASCADE') = 1",
-        "(SELECT COUNT(*) FROM pragma_foreign_key_list('session_projects') "
-        "WHERE \"table\" = 'scribe_projects' AND \"from\" = 'project_name' "
-        "AND \"to\" = 'name' AND on_delete = 'SET NULL') = 1",
-        "(SELECT COUNT(*) FROM pragma_foreign_key_list('session_projects')) = 2",
+        "(SELECT COUNT(*) FROM pragma_foreign_key_list('session_projects')) = 1",
+        *(
+            f"{_trigger_body_expression(name)} = {_sql_literal(_trigger_body_fingerprint(statement))}"
+            for name, statement in zip(
+                ('trg_scribe_projects_cleanup_delete', 'trg_scribe_projects_name_guard'),
+                PROJECT_IDENTITY_TRIGGER_STATEMENTS,
+            )
+        ),
         "(SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
         "AND tbl_name = 'session_projects' AND name IN ("
         "'trg_session_projects_requires_session_insert', "
@@ -927,6 +1283,13 @@ async def _table_requires_rebuild(
 ) -> bool:
     """Return whether SQLite introspection finds a non-canonical table shape."""
     marker = f"scribe_reliability_schema_noncanonical:{table_name}"
+    owner = getattr(execute_many_fn, '__self__', None)
+    internals = getattr(owner, '_internals', None)
+    if internals is not None:
+        return not await asyncio.to_thread(
+            internals._run_with_connection,
+            lambda conn: bool(conn.execute(f'SELECT ({predicate})').fetchone()[0]),
+        )
     try:
         await execute_many_fn(_schema_probe_statements(table_name, predicate))
     except Exception as exc:
@@ -1057,9 +1420,16 @@ def _rebuild_table_statements(
             f"SELECT {column_list} FROM {table_name};"
         ),
         *_copy_validation_statements(table_name, columns),
+        *(
+            [
+                'DROP TRIGGER IF EXISTS trg_scribe_projects_cleanup_delete;',
+                'DROP TRIGGER IF EXISTS trg_scribe_projects_name_guard;',
+            ] if table_name == 'session_projects' else []
+        ),
         f"DROP TABLE {table_name};",
         f"ALTER TABLE {replacement_name} RENAME TO {table_name};",
         *restore_statements,
+        *(PROJECT_IDENTITY_TRIGGER_STATEMENTS if table_name == 'session_projects' else ()),
         *_post_rebuild_validation_statements(table_name, canonical_predicate),
     ]
 
@@ -1127,6 +1497,8 @@ BACKGROUND_RECEIPT_INDEX_STATEMENTS = (
     """,
 )
 INDEX_STATEMENTS = [
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_projects_project_key_unique ON scribe_projects(project_key);",
+    "CREATE INDEX IF NOT EXISTS idx_scribe_projects_name_repo_id ON scribe_projects(name, repo_id);",
     "CREATE INDEX IF NOT EXISTS idx_agent_sessions_identity ON agent_sessions(identity_key);",
     "CREATE INDEX IF NOT EXISTS idx_agent_sessions_last_active ON agent_sessions(last_active_at);",
     "CREATE INDEX IF NOT EXISTS idx_agent_sessions_expires ON agent_sessions(expires_at);",
@@ -1439,10 +1811,12 @@ async def create_schema(
     migrate_agent_sessions_schema_fn: MigrateAgentSessionsFn,
 ) -> None:
     """Create all base SQLite tables/indexes used by SQLiteStorage."""
+    await upgrade_project_identity(execute_many_fn)
     await create_migration_table(execute_fn)
     await migrate_agent_sessions_schema_fn()
     await create_core_tables(execute_many_fn)
     await create_session_tables(execute_many_fn)
+    await execute_many_fn(list(PROJECT_IDENTITY_TRIGGER_STATEMENTS))
     await create_document_tables(execute_many_fn)
     await create_planning_tables(execute_many_fn)
     await create_telemetry_tables(execute_many_fn)

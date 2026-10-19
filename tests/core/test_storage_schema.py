@@ -1773,3 +1773,388 @@ def test_sqlite_identity_real_runtime_targeting_preserves_defaults(
         finally:
             await storage.close()
     asyncio.run(journey())
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+def test_sqlite_identity_additive_child_columns_survive_rebuild(
+    tmp_path: Path, test_agent: str
+) -> None:
+    """Ordinary child extensions retain their schema and typed payload on upgrade."""
+    path = tmp_path / 'child-extensions.db'
+    _sqlite_identity_legacy(path, test_agent, extensions=True)
+    with sqlite3.connect(path) as conn:
+        conn.executescript("""
+            ALTER TABLE session_projects ADD COLUMN extension_text TEXT COLLATE NOCASE
+                NOT NULL DEFAULT 'kept' CHECK(length(extension_text) > 0);
+            ALTER TABLE session_projects ADD COLUMN extension_blob BLOB;
+            ALTER TABLE session_projects ADD COLUMN extension_generated TEXT
+                GENERATED ALWAYS AS (extension_text || ':' || session_id) VIRTUAL;
+            ALTER TABLE agent_projects ADD COLUMN extension_real REAL DEFAULT 1.25;
+            ALTER TABLE agent_recent_projects ADD COLUMN extension_integer INTEGER DEFAULT 9007199254740993;
+            CREATE INDEX extension_session_text ON session_projects(extension_text COLLATE NOCASE);
+            CREATE VIEW extension_session_view AS
+                SELECT session_id, extension_generated, extension_blob FROM session_projects;
+            CREATE TABLE extension_session_audit (session_id TEXT, old_value TEXT, new_value TEXT);
+            CREATE TRIGGER extension_session_update AFTER UPDATE OF extension_text ON session_projects
+            BEGIN
+                INSERT INTO extension_session_audit VALUES(OLD.session_id, OLD.extension_text, NEW.extension_text);
+            END;
+        """)
+        sessions = [row[0] for row in conn.execute('SELECT session_id FROM session_projects ORDER BY session_id')]
+        assert len(sessions) == 3
+        for index, session in enumerate(sessions):
+            conn.execute('UPDATE session_projects SET extension_text=?, extension_blob=? WHERE session_id=?',
+                         (f'Kept-{index}', None if index == 0 else bytes([0, index, 255]), session))
+    before = _sqlite_identity_snapshot(path)
+    storage = SQLiteStorage(path)
+
+    async def journey():
+        try:
+            await storage.setup()
+            after = _sqlite_identity_snapshot(path)
+            _sqlite_identity_assert_preserved(before, after)
+            assert all(obj in after['schema'] for obj in before['schema']
+                       if obj[1].startswith('extension_'))
+            with storage._connect() as conn:
+                assert conn.execute('PRAGMA foreign_keys').fetchone()[0] == 1
+                assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+                assert conn.execute("SELECT seq FROM sqlite_sequence WHERE name='scribe_projects'").fetchone()[0] == 900
+                assert conn.execute("SELECT session_id FROM session_projects WHERE extension_text='KEPT-0'").fetchone()[0] == sessions[0]
+                assert conn.execute('SELECT extension_generated FROM extension_session_view WHERE session_id=?',
+                                    (sessions[0],)).fetchone()[0] == f'Kept-0:{sessions[0]}'
+                for table in ('session_projects', 'agent_projects', 'agent_recent_projects'):
+                    assert not any(row[2] == 'scribe_projects' and row[4] == 'name'
+                                   for row in conn.execute(f'PRAGMA foreign_key_list({table})'))
+                generation = conn.execute('SELECT binding_generation FROM session_projects WHERE session_id=?',
+                                          (sessions[0],)).fetchone()[0]
+                conn.execute('UPDATE session_projects SET extension_text=? WHERE session_id=?',
+                             ('Changed', sessions[0]))
+                assert tuple(conn.execute('SELECT * FROM extension_session_audit ORDER BY rowid DESC LIMIT 1').fetchone()) == (
+                    sessions[0], 'Kept-0', 'Changed')
+                assert conn.execute('SELECT binding_generation FROM session_projects WHERE session_id=?',
+                                    (sessions[0],)).fetchone()[0] == generation
+                with pytest.raises(sqlite3.IntegrityError):
+                    conn.execute('UPDATE session_projects SET extension_text=? WHERE session_id=?', ('', sessions[0]))
+        finally:
+            await storage.close()
+        expected = _sqlite_identity_snapshot(path)
+        for _ in range(2):
+            reopened = SQLiteStorage(path)
+            try:
+                await reopened.setup()
+                assert _sqlite_identity_snapshot(path) == expected
+                with reopened._connect() as conn:
+                    assert conn.execute('PRAGMA foreign_keys').fetchone()[0] == 1
+                    assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+            finally:
+                await reopened.close()
+    asyncio.run(journey())
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.parametrize('unsupported', [False, True], ids=['on-conflict-fail', 'unsupported-sort-order'])
+def test_sqlite_identity_unique_name_on_conflict_upgrade(
+    tmp_path: Path, test_agent: str, monkeypatch: pytest.MonkeyPatch, unsupported: bool
+) -> None:
+    """Retire supported alternate uniqueness; reject unsupported DDL without effects."""
+    constraint = 'UNIQUE(name DESC)' if unsupported else 'UNIQUE(name)'
+    ddl = _SQLITE_IDENTITY_LEGACY_DDL.replace('name TEXT NOT NULL UNIQUE,', 'name TEXT NOT NULL,')
+    ddl = ddl.replace('bridge_managed INTEGER NOT NULL DEFAULT 0\n);',
+                      f'bridge_managed INTEGER NOT NULL DEFAULT 0,\n    {constraint} ON CONFLICT FAIL\n);', 1)
+    assert ddl != _SQLITE_IDENTITY_LEGACY_DDL
+    monkeypatch.setitem(globals(), '_SQLITE_IDENTITY_LEGACY_DDL', ddl)
+    path = tmp_path / 'alternate-unique.db'
+    roots = _sqlite_identity_legacy(path, test_agent)
+    before = _sqlite_identity_snapshot(path)
+    storage = SQLiteStorage(path)
+
+    async def journey():
+        error = None
+        try:
+            try:
+                await storage.setup()
+            except RuntimeError as exc:
+                error = exc
+            if unsupported:
+                assert _sqlite_identity_snapshot(path) == before, 'unsupported DDL changed database/ledger'
+                assert error is not None and 'uniqueness' in str(error), error
+                return
+            assert error is None, str(error)
+            _sqlite_identity_assert_preserved(before, _sqlite_identity_snapshot(path))
+            sibling = await _sqlite_identity_add_sibling(storage, roots)
+            assert sibling.project_key != compute_project_key(repo_root=roots['repo-a'], project_name='shared')
+            with storage._connect() as conn:
+                assert sqlite_schema._identity_upgrade_tables(conn) == []
+                assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+                assert conn.execute("SELECT count(*) FROM scribe_migrations WHERE name='sqlite_project_identity_canonical'").fetchone()[0] == 1
+        finally:
+            await storage.close()
+    asyncio.run(journey())
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+def test_sqlite_identity_concurrent_legacy_missing_columns_upgrade(tmp_path: Path, test_agent: str) -> None:
+    """The waiting independent owner refreshes all inventory under its write lock."""
+    path = tmp_path / 'missing-identity-columns.db'
+    roots = _sqlite_identity_legacy(path, test_agent, extensions=True)
+    with sqlite3.connect(path) as conn:
+        conn.execute('ALTER TABLE scribe_projects DROP COLUMN repo_id')
+        conn.execute('ALTER TABLE scribe_projects DROP COLUMN project_key')
+        assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+    before = _sqlite_identity_snapshot(path)
+    assert not {'repo_id', 'project_key'} & set(before['columns']['scribe_projects'])
+    reached, release = threading.Event(), threading.Event()
+    owners = (SQLiteStorage(path), SQLiteStorage(path))
+    connection_ids = []
+
+    def upgrade(owner: SQLiteStorage, waiting: bool):
+        statements = []
+        timed_out = []
+        with owner._internals._write_gate:
+            conn = owner._internals.connect()
+            connection_ids.append(id(conn))
+
+            def trace(sql):
+                statements.append(sql)
+                if sql.strip().upper() == 'BEGIN IMMEDIATE':
+                    reached.set()
+                    if not release.wait(20):
+                        timed_out.append(True)
+
+            if waiting:
+                conn.set_trace_callback(trace)
+            try:
+                sqlite_schema._upgrade_project_identity_connection(conn)
+                assert conn.execute('PRAGMA foreign_keys').fetchone()[0] == 1
+                assert not timed_out, 'independent-owner barrier timed out'
+                return conn.total_changes, statements
+            finally:
+                conn.close()
+                asyncio.run(owner.close())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        second = executor.submit(upgrade, owners[1], True)
+        try:
+            assert reached.wait(20), 'second owner did not finish preflight'
+            executor.submit(upgrade, owners[0], False).result(timeout=20)
+            after_first = _sqlite_identity_snapshot(path)
+            with sqlite3.connect(path) as conn:
+                schema_version = conn.execute('PRAGMA schema_version').fetchone()[0]
+        finally:
+            release.set()
+        changed, statements = second.result(timeout=20)
+    assert len(set(connection_ids)) == 2
+    assert changed == 0, 'already canonical second owner changed data or ledger'
+    assert not any(re.match(r'\s*(CREATE|DROP|ALTER|INSERT|UPDATE|DELETE|REPLACE)\b', sql, re.I)
+                   for sql in statements), statements
+    assert _sqlite_identity_snapshot(path) == after_first
+    _sqlite_identity_assert_preserved(before, after_first)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute('PRAGMA schema_version').fetchone()[0] == schema_version
+        assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+        assert conn.execute("SELECT repo_id,project_key FROM scribe_projects WHERE name='shared'").fetchone() == (
+            compute_repo_id(roots['repo-a']), compute_project_key(repo_root=roots['repo-a'], project_name='shared'))
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+def test_sqlite_identity_partial_parent_unique_index_survives_upgrade(
+    tmp_path: Path, test_agent: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Partial uniqueness is extension data, not global name identity."""
+    from scribe_mcp.storage.sqlite.internals import SQLiteInternals
+
+    path = tmp_path / 'partial-parent-index.db'
+    roots = _sqlite_identity_legacy(path, test_agent)
+    index_name = 'parent_extension_unique'
+    with sqlite3.connect(path) as conn:
+        conn.execute('CREATE UNIQUE INDEX parent_extension_unique ON scribe_projects(name) WHERE bridge_managed=1')
+        index_sql = conn.execute('SELECT sql FROM sqlite_schema WHERE name=?', (index_name,)).fetchone()[0]
+    before = _sqlite_identity_snapshot(path)
+    statements = []
+    original_connect = SQLiteInternals.connect
+
+    def traced_connect(internals):
+        conn = original_connect(internals)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    def check_index(conn, sibling_id):
+        retained = conn.execute('SELECT sql FROM sqlite_schema WHERE name=?', (index_name,)).fetchone()
+        assert retained is not None, 'migration silently discarded partial parent unique index'
+        assert retained[0] == index_sql
+        entry = next(row for row in conn.execute("PRAGMA index_list('scribe_projects')") if row[1] == index_name)
+        assert entry[2] == 1 and entry[4] == 1, 'unique/partial flags changed'
+        assert conn.execute('SELECT bridge_managed FROM scribe_projects WHERE id=?', (sibling_id,)).fetchone()[0] == 0
+        with pytest.raises(sqlite3.IntegrityError, match='scribe_projects.name'):
+            conn.execute('UPDATE scribe_projects SET bridge_managed=1 WHERE id=?', (sibling_id,))
+        assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+        assert sqlite_schema._identity_upgrade_tables(conn) == []
+        assert conn.execute("SELECT count(*) FROM scribe_migrations WHERE name='sqlite_project_identity_canonical'").fetchone()[0] == 1
+
+    async def journey():
+        storage = SQLiteStorage(path)
+        try:
+            await storage.setup()
+            after = _sqlite_identity_snapshot(path)
+            assert any(obj[1] == index_name and obj[3] == index_sql for obj in after['schema']), (
+                'migration silently discarded partial parent unique index')
+            _sqlite_identity_assert_preserved(before, after)
+            sibling = await _sqlite_identity_add_sibling(storage, roots)
+            with storage._connect() as conn:
+                check_index(conn, sibling.id)
+        finally:
+            await storage.close()
+        expected = _sqlite_identity_snapshot(path)
+        monkeypatch.setattr(SQLiteInternals, 'connect', traced_connect)
+        for _ in range(2):
+            reopened = SQLiteStorage(path)
+            try:
+                await reopened.setup()
+                with reopened._connect() as conn:
+                    check_index(conn, sibling.id)
+                assert _sqlite_identity_snapshot(path) == expected
+            finally:
+                await reopened.close()
+        assert not any(re.match(r'\s*(DROP\s+TABLE|ALTER\s+TABLE)\b', sql, re.I)
+                       for sql in statements), statements
+    asyncio.run(journey())
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.parametrize('partial_unique', [False, True])
+def test_sqlite_identity_unkeyed_nonunique_parent_bootstrap(tmp_path, partial_unique):
+    path = tmp_path / 'unkeyed_parent.db'
+    root = str(tmp_path / 'repo_a')
+    extension_sql = ('CREATE UNIQUE INDEX parent_extension ON scribe_projects(name) WHERE extra_num=1'
+                     if partial_unique else 'CREATE INDEX parent_extension ON scribe_projects(extra_num)')
+    with sqlite3.connect(path) as conn:
+        conn.execute('''CREATE TABLE scribe_projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, repo_root TEXT NOT NULL,
+            progress_log_path TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, docs_json TEXT,
+            extra_blob BLOB, extra_num REAL CHECK(extra_num >= 0),
+            extra_generated TEXT GENERATED ALWAYS AS (hex(extra_blob)) VIRTUAL)''')
+        conn.execute(extension_sql)
+        conn.execute('CREATE VIEW parent_extension_view AS SELECT id, extra_blob FROM scribe_projects')
+        conn.executemany('INSERT INTO scribe_projects(name,repo_root,progress_log_path,extra_blob,extra_num) '
+                         'VALUES(?,?,?,?,?)', [('alias-project', root, '/first', b'\x00\xff', 0.5),
+                                               ('alias_project', root, '/second', None, 2.5)])
+        before = conn.execute('SELECT id,name,repo_root,progress_log_path,created_at,updated_at,docs_json,'
+                              'extra_blob,typeof(extra_blob),extra_num,typeof(extra_num),extra_generated '
+                              'FROM scribe_projects ORDER BY id').fetchall()
+        parent_sql = conn.execute("SELECT sql FROM sqlite_schema WHERE name='scribe_projects'").fetchone()[0]
+
+    async def journey():
+        storage = SQLiteStorage(path)
+        try:
+            await storage.setup()
+            with storage._connect() as conn:
+                after = conn.execute('SELECT id,name,repo_root,progress_log_path,created_at,updated_at,docs_json,'
+                                     'extra_blob,typeof(extra_blob),extra_num,typeof(extra_num),extra_generated '
+                                     'FROM scribe_projects ORDER BY id').fetchall()
+                assert [tuple(row) for row in after] == before
+                assert conn.execute("SELECT sql FROM sqlite_schema WHERE name='parent_extension'").fetchone()[0] == extension_sql
+                upgraded_sql = conn.execute("SELECT sql FROM sqlite_schema WHERE name='scribe_projects'").fetchone()[0]
+                assert parent_sql.removesuffix(')') in upgraded_sql
+                identities = conn.execute('SELECT repo_id,project_key FROM scribe_projects ORDER BY id').fetchall()
+                assert [row[0] for row in identities] == [compute_repo_id(root)] * 2
+                assert identities[0][1] == compute_project_key(repo_root=root, project_name='alias-project')
+                assert identities[1][1].startswith('pk_legacy_')
+                assert len({row[1] for row in identities}) == 2
+                assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+                assert conn.execute("SELECT count(*) FROM scribe_migrations WHERE name='sqlite_project_identity_canonical'").fetchone()[0] == 1
+            sibling = await storage.upsert_project(name='alias-project', repo_root=str(tmp_path / 'repo_b'),
+                                                  progress_log_path='/sibling')
+            assert sibling.project_key != identities[0][1]
+        finally:
+            await storage.close()
+        expected = _sqlite_identity_snapshot(path)
+        for _ in range(2):
+            reopened = SQLiteStorage(path)
+            try:
+                await reopened.setup()
+                assert _sqlite_identity_snapshot(path) == expected
+            finally:
+                await reopened.close()
+    asyncio.run(journey())
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.parametrize('global_unique', [False, True])
+def test_sqlite_identity_mixed_keyed_nullable_identity_survives_backfill(tmp_path, global_unique):
+    from scribe_mcp.storage.models import normalize_repo_root
+
+    path = tmp_path / 'mixed_identity.db'
+    roots = [str(tmp_path / f'repo_{index}') + '/./' for index in range(4)]
+    with sqlite3.connect(path) as conn:
+        conn.execute('''CREATE TABLE scribe_projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL'''
+                     + (' UNIQUE' if global_unique else '') + ''', repo_root TEXT NOT NULL,
+            repo_id TEXT, project_key TEXT, progress_log_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, docs_json TEXT,
+            extension_blob BLOB, extension_num REAL,
+            extension_generated TEXT GENERATED ALWAYS AS (hex(extension_blob)) VIRTUAL)''')
+        conn.execute('CREATE INDEX mixed_extension_blob ON scribe_projects(extension_blob)')
+        conn.execute('CREATE VIEW mixed_extension_view AS SELECT id, extension_generated FROM scribe_projects')
+        conn.execute('CREATE TABLE mixed_extension_updates(parent_id INTEGER)')
+        conn.execute('''CREATE TRIGGER mixed_extension_update AFTER UPDATE ON scribe_projects
+                        BEGIN INSERT INTO mixed_extension_updates VALUES(OLD.id); END''')
+        conn.executemany('INSERT INTO scribe_projects(name,repo_root,repo_id,project_key,progress_log_path,'
+                         'extension_blob,extension_num) VALUES(?,?,?,?,?,?,?)', [
+            ('keyed-null', roots[0], None, 'pk_persisted_null', '/keyed-null', b'\x00\xff', 1.25),
+            ('keyed-value', roots[1], 'persisted-repo', 'pk_persisted_value', '/keyed-value', None, 2.5),
+            ('unkeyed-value', roots[2], 'retain-unkeyed-repo', None, '/unkeyed-value', b'\x01', None),
+            ('unkeyed-null', roots[3], None, None, '/unkeyed-null', b'', 4.75),
+        ])
+        keyed_sql = ('SELECT id,name,repo_root,repo_id,project_key,progress_log_path,created_at,updated_at,'
+                     'docs_json,extension_blob,extension_num,extension_generated '
+                     'FROM scribe_projects WHERE id<=2 ORDER BY id')
+        keyed_before = conn.execute(keyed_sql).fetchall()
+        payload_sql = ('SELECT id,name,progress_log_path,created_at,updated_at,docs_json,extension_blob,'
+                       'typeof(extension_blob),extension_num,typeof(extension_num),extension_generated '
+                       'FROM scribe_projects ORDER BY id')
+        payload_before = conn.execute(payload_sql).fetchall()
+        extensions_before = conn.execute("SELECT type,name,sql FROM sqlite_schema WHERE name LIKE 'mixed_extension_%' ORDER BY name").fetchall()
+
+    async def journey():
+        storage = SQLiteStorage(path)
+        try:
+            await storage.setup()
+            with storage._connect() as conn:
+                keyed_after = [tuple(row) for row in conn.execute(keyed_sql)]
+                assert keyed_after == keyed_before, 'backfill rewrote a persisted keyed identity, including nullable repo_id/root/key'
+                assert [tuple(row) for row in conn.execute(payload_sql)] == payload_before
+                assert [tuple(row) for row in conn.execute("SELECT type,name,sql FROM sqlite_schema WHERE name LIKE 'mixed_extension_%' ORDER BY name")] == extensions_before
+                assert [row[0] for row in conn.execute('SELECT parent_id FROM mixed_extension_updates ORDER BY rowid')] == [3, 4]
+                for index, row in enumerate(conn.execute('SELECT repo_root,repo_id,project_key FROM scribe_projects WHERE id>2 ORDER BY id'), start=2):
+                    root = normalize_repo_root(roots[index])
+                    expected_repo_id = 'retain-unkeyed-repo' if index == 2 else compute_repo_id(root)
+                    assert tuple(row) == (root, expected_repo_id, compute_project_key(repo_root=root, project_name=('unkeyed-value' if index == 2 else 'unkeyed-null')))
+                assert conn.execute('PRAGMA foreign_keys').fetchone()[0] == 1
+                assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+                assert sqlite_schema._identity_upgrade_tables(conn) == []
+                assert conn.execute("SELECT count(*) FROM scribe_migrations WHERE name='sqlite_project_identity_canonical'").fetchone()[0] == 1
+        finally:
+            await storage.close()
+        expected = _sqlite_identity_snapshot(path)
+        for _ in range(2):
+            reopened = SQLiteStorage(path)
+            try:
+                await reopened.setup()
+                assert _sqlite_identity_snapshot(path) == expected
+            finally:
+                await reopened.close()
+    asyncio.run(journey())

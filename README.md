@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Current release: `scribe-mcp 2.15.9` · Released: `2026-10-19`
+Current release: `scribe-mcp 2.15.10` · Released: `2026-10-19`
+
+`2.15.10` preserves SQLite project and session extensions during canonical identity upgrades, including typed values, column definitions, indexes, views, and triggers. Legacy projects receive repository identities before startup indexes are created. Project deletion and document metadata updates also retain sibling project data when labels are ambiguous.
 
 `2.15.9` verifies project reads against the current caller binding and canonical repository identity, including warm reads and explicit project targets.
 

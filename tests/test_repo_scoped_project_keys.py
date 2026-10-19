@@ -85,7 +85,11 @@ def test_same_name_in_two_repos_persists_as_two_records(tmp_path: Path) -> None:
         conn.row_factory = sqlite3.Row
 
         async def _initialise() -> None:
-            return None
+            bootstrap = SQLiteStorage(db_path)
+            try:
+                await bootstrap.setup()
+            finally:
+                await bootstrap.close()
 
         async def _execute(query: str, params: tuple[object, ...]) -> None:
             conn.execute(query, params)
