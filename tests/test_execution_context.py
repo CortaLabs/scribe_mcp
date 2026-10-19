@@ -227,7 +227,7 @@ def test_attribution_and_authorization_reject_invalid_values(factory) -> None:
     [
         ("Bearer live-access-token", ()),
         ("Basic dXNlcjpwYXNzd29yZA==", ()),
-        ("api_key=live-secret", ()),
+        ("api_key=test-example-value", ()),
         ("server", ("scope=live-secret",)),
         ("server", (f"scope:sk-{'a' * 24}",)),
         ("server", (f"scope:AKIA{'A' * 16}",)),
@@ -252,7 +252,7 @@ def test_authorization_evidence_rejects_credential_shaped_material(
 
 @pytest.mark.regression
 def test_authorization_evidence_rejection_does_not_echo_secret() -> None:
-    secret = "Bearer do-not-echo-this-secret"
+    secret = "test-example-secret"
     with pytest.raises(ValueError) as exc_info:
         AuthorizationEvidenceV1(secret, True, ())
 
