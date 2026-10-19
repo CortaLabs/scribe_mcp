@@ -195,17 +195,23 @@ async def test_set_project_ordinary_mode_does_not_request_bootstrap_recovery(mon
         # The hardened repo-authority gate requires the root to be a discoverable
         # local repository root.  Create a minimal .git so the temp dir passes.
         (Path(temp_dir) / ".git").mkdir()
-        project_name = f"set_project_ordinary_mode_proof_{Path(temp_dir).name}"
+        storage = SQLiteStorage(Path(temp_dir) / "ordinary-mode.db")
+        await storage.setup()
+        state_manager = StateManager(Path(temp_dir) / "state.json", storage_backend=storage)
+        monkeypatch.setattr(server_module, "storage_backend", storage)
+        monkeypatch.setattr(server_module, "state_manager", state_manager)
+        monkeypatch.setattr(server_module, "agent_context_manager", AgentContextManager(storage, state_manager), raising=False)
         result = await set_project_tool.set_project(
             agent="BugHunterAgent-set-project-proof",
-            name=project_name,
+            name="set_project_ordinary_mode_proof",
             root=temp_dir,
             skip_validation=True,
             format="structured",
         )
+        await storage.close()
 
     assert result["ok"] is True
-    assert result["project"]["name"] == project_name
+    assert result["project"]["name"] == "set_project_ordinary_mode_proof"
     assert recovery_mode_calls
     assert all(mode in {None, "", "none"} for mode in recovery_mode_calls)
 

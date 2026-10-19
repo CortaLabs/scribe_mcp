@@ -1,11 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.4 public release line**
+Applies to: **v2.15.5 public release line**
 
 ## Patch release notes
 
-Version 2.15.4 removes the obsolete onboarding-directory packaging rule.
+Version 2.15.5 removes the obsolete onboarding-directory packaging rule.
 Canonical onboarding and integration skills remain included from `skills/`
 and the shipped plugin bundles.
 
@@ -83,3 +83,5 @@ Before publishing guidance, confirm all referenced files are:
 1. Tracked in the repo
 2. Part of shipped package/manifests or public docs/examples
 3. Not runtime-generated and not workstation-specific
+
+Reconnect hardening recovers scope from the persisted binding, rejects caller-supplied session identity as authority, and preserves legitimate reconstructed sessions. Public path validation and credential-shaped test fixtures remain intact.
