@@ -699,6 +699,27 @@ async def test_special_case_create_honors_safe_target_dir_and_caller_name(
     assert not (Path(project["root"]) / "docs" / f"{doc_type}s").exists()
 
 
+@pytest.mark.regression
+@pytest.mark.parametrize("doc_type", ["bug", "security"])
+def test_report_template_preserves_long_healed_narrative(
+    tmp_path: Path, doc_type: str
+) -> None:
+    from scribe_mcp.doc_management.healing import normalize_metadata_with_healing
+    from scribe_mcp.template_engine.engine import Jinja2TemplateEngine
+
+    narrative = ("Observed café | value < threshold → 確認\n" * 30
+                 + "```diff\n context line\n+replacement\n```\nEND_OF_REPORT")
+
+    metadata, _, _ = normalize_metadata_with_healing({
+        "summary_long": narrative, "actual_behavior": narrative,
+    })
+    engine = Jinja2TemplateEngine(project_root=tmp_path, project_name="Report tests")
+    rendered = engine.render_template(
+        f"documents/{doc_type.upper()}_REPORT_TEMPLATE.md", metadata=metadata,
+    )
+    assert rendered.count(narrative) == 2
+
+
 @pytest.mark.asyncio
 @pytest.mark.regression
 async def test_special_case_create_rejects_escaping_or_ambiguous_target_before_mutation(

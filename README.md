@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Current release: `scribe-mcp 2.15.10` · Released: `2026-10-19`
+Current release: `scribe-mcp 2.15.11` · Released: `2026-10-19`
+
+`2.15.11` preserves complete bug and security report narratives through metadata healing, including long descriptions, Unicode, line breaks, and code fences. Ordinary metadata limits remain enforced.
 
 `2.15.10` preserves SQLite project and session extensions during canonical identity upgrades, including typed values, column definitions, indexes, views, and triggers. Legacy projects receive repository identities before startup indexes are created. Project deletion and document metadata updates also retain sibling project data when labels are ambiguous.
 

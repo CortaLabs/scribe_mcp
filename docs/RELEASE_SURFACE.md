@@ -1,9 +1,13 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.10 public release line**
+Applies to: **v2.15.11 public release line**
 
 ## Patch release notes
+
+Version 2.15.11 preserves complete bug and security report narratives during
+metadata healing. Long descriptions, Unicode, line breaks, and code fences retain
+their text; ordinary metadata sanitization and length limits remain enforced.
 
 Version 2.15.10 preserves SQLite project and session extensions during canonical
 identity upgrades, including typed values, column definitions, indexes, views,
