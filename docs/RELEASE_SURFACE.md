@@ -1,9 +1,14 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.1 public release line**
+Applies to: **v2.15.2 public release line**
 
 ## Patch release notes
+
+Version 2.15.2 reduces repository dependency-scan work. Excluded build and cache
+directories are pruned before traversal, and import extraction visits AST
+statement containers without walking unrelated expression subtrees. Dependency
+graphs, breadth-first import order, scan limits, and symlink behavior are retained.
 
 Version 2.15.1 replaces the PostgreSQL session-binding classifier trigger in one
 atomic batch. Concurrent binding writers retain canonical project classification
