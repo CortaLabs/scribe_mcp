@@ -201,7 +201,7 @@ async def main():
                 )["project"]["name"]
 
             dispatch = AsyncMock()
-            secret = "mcpv2-secret-canary-9f2aa89e"
+            secret = "test-example-mcpv2-canary"
             logger = logging.getLogger("scribe_mcp.server_sse")
             stream = StringIO()
             handler = logging.StreamHandler(stream)
@@ -370,6 +370,9 @@ anyio.run(main)'''
             process.kill()
             _, server_stderr = process.communicate(timeout=5)
     with socket.socket() as listener_check:
+        # Rebinding must reject a live listener, while allowing the completed
+        # connection's normal TCP TIME_WAIT state after server shutdown.
+        listener_check.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener_check.bind(("127.0.0.1", port))
     assert completed is not None
     assert completed.returncode == 0, f"client:\n{completed.stderr}\nserver:\n{server_stderr}"

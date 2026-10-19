@@ -32,6 +32,9 @@ def _write_yaml(path: Path, payload: dict) -> None:
 
 
 def test_settings_runtime_env_precedence_process_then_repo_then_global(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # This test explicitly exercises dotenv loading even when the surrounding
+    # suite disables ambient dotenv files to isolate storage configuration.
+    monkeypatch.delenv("SCRIBE_DISABLE_DOTENV", raising=False)
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".env").write_text("SCRIBE_DB_URL=postgresql://repo\n", encoding="utf-8")

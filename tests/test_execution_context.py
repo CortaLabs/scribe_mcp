@@ -252,7 +252,7 @@ def test_authorization_evidence_rejects_credential_shaped_material(
 
 @pytest.mark.regression
 def test_authorization_evidence_rejection_does_not_echo_secret() -> None:
-    secret = "test-example-secret"
+    secret = "Bearer test-example-value"
     with pytest.raises(ValueError) as exc_info:
         AuthorizationEvidenceV1(secret, True, ())
 
