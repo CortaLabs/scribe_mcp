@@ -45,13 +45,13 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development target: `scribe-mcp 2.15.0` · Updated: `2026-10-18`
+Current release: `scribe-mcp 2.15.0` · Released: `2026-10-18`
 
 The `2.15.0` development line makes the tracked `skills/` directory the source for the two shipped onboarding and integration guides. Plugin synchronization validates all source and destination paths before writing, copies complete skill assets, and supports a read-only consistency check. Claude and Codex plugin bundles include generic MCP configuration using `scribe-server`. Private host configuration and generated agent content are excluded from these public bundles.
 
-This checkpoint is source integration toward `2.15.0`. Release build, clean installation, binding reliability, and runtime adoption must be verified before the release is declared ready. The latest stable release remains `2.14.0`.
+`2.15.0` is the current stable release. It hardens project-binding recovery across reconnects, improves durable storage and object-store behavior, restores exact managed-document fidelity, and reduces the default test lane from tens of minutes to a bounded parallel run.
 
-`2.14.0` preserves the `2.13.2` fixes for canonical nested-path resolution after same-project rehome and special-review `create` dry-run MCP content shape, plus the `2.13.1` SDK v2 agent-project selection-version contract required for safe optimistic-concurrency recovery. Eligible successful mutation dry-runs now automatically expose a compact `apply` affordance for `apply_preview`; apply uses an opaque, durable, cross-backend receipt lifecycle with exactly-once, fail-closed behavior. Receipt-based rehome executes against immutable composite authority, registry, index, file, mode, and path state and safely recovers recognized partial states. The `2.14.0` commit/push records source-level release truth only; it does not establish runtime adoption or deployment. SDK and wire versions remain different contracts: Scribe supports the installed compatible MCP SDK `2.1.1` within `mcp>=2.0.0,<3.0`, while the modern wire default is protocol revision `2026-07-28`.
+The previous `2.14.0` release preserved the `2.13.2` fixes for canonical nested-path resolution after same-project rehome and special-review `create` dry-run MCP content shape, plus the `2.13.1` SDK v2 agent-project selection-version contract required for safe optimistic-concurrency recovery. Eligible successful mutation dry-runs automatically expose a compact `apply` affordance for `apply_preview`; apply uses an opaque, durable, cross-backend receipt lifecycle with exactly-once, fail-closed behavior. Receipt-based rehome executes against immutable composite authority, registry, index, file, mode, and path state and safely recovers recognized partial states. SDK and wire versions remain different contracts: Scribe supports the installed compatible MCP SDK `2.1.1` within `mcp>=2.0.0,<3.0`, while the modern wire default is protocol revision `2026-07-28`.
 
 ### MCP v2 default and compatibility boundary
 
