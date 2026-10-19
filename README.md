@@ -45,9 +45,11 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Current release: `scribe-mcp 2.15.5` · Released: `2026-10-19`
+Current release: `scribe-mcp 2.15.6` · Released: `2026-10-19`
 
-`2.15.5` removes an obsolete onboarding-directory packaging rule. Canonical skills continue to ship from `skills/` and the plugin bundles.
+`2.15.6` makes PostgreSQL project deletion atomic: ambiguous project names refuse deletion, and concurrent same-name projects retain their data and session context.
+
+`2.15.5` strengthens project-binding recovery across reconnects while preserving verified caller and repository scope. `2.15.4` removes an obsolete onboarding-directory packaging rule. Canonical skills continue to ship from `skills/` and the plugin bundles.
 
 The `2.15.0` development line makes the tracked `skills/` directory the source for the two shipped onboarding and integration guides. Plugin synchronization validates all source and destination paths before writing, copies complete skill assets, and supports a read-only consistency check. Claude and Codex plugin bundles include generic MCP configuration using `scribe-server`. Private host configuration and generated agent content are excluded from these public bundles.
 

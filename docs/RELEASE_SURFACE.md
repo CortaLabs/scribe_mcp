@@ -1,11 +1,17 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.5 public release line**
+Applies to: **v2.15.6 public release line**
 
 ## Patch release notes
 
-Version 2.15.5 removes the obsolete onboarding-directory packaging rule.
+Version 2.15.6 makes PostgreSQL project deletion atomic. Ambiguous names refuse
+deletion, and concurrent same-name projects retain their data and session context.
+
+Version 2.15.5 strengthens binding recovery across reconnects while retaining
+verified caller and repository scope.
+
+Version 2.15.4 removes the obsolete onboarding-directory packaging rule.
 Canonical onboarding and integration skills remain included from `skills/`
 and the shipped plugin bundles.
 
