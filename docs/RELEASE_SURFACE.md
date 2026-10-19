@@ -1,9 +1,12 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.6 public release line**
+Applies to: **v2.15.7 public release line**
 
 ## Patch release notes
+
+Version 2.15.7 preserves literal whitespace inside fenced artifacts across section
+and frontmatter updates while retaining prose whitespace cleanup.
 
 Version 2.15.6 makes PostgreSQL project deletion atomic. Ambiguous names refuse
 deletion, and concurrent same-name projects retain their data and session context.
