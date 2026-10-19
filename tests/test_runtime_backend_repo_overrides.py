@@ -161,8 +161,13 @@ def test_repo_db_path_is_inactive_with_warning_under_postgres(monkeypatch, tmp_p
         types.SimpleNamespace(PostgresStorage=_FakePostgresStorage),
     )
 
-    with caplog.at_level("WARNING"):
-        backend = storage_module.create_storage_backend(mode=OperatingMode.SERVER)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        storage_module.logger,
+        "warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+    backend = storage_module.create_storage_backend(mode=OperatingMode.SERVER)
 
     assert isinstance(backend, _FakePostgresStorage)
-    assert "repo config db_path is ignored" in caplog.text.lower()
+    assert "repo config db_path is ignored" in "\n".join(warnings).lower()

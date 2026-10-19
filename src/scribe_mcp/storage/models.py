@@ -57,6 +57,35 @@ def _require_aware_datetime(name: str, value: datetime) -> None:
 
 
 @dataclass(frozen=True)
+class SessionBindingRecordV2:
+    """Durable, caller-isolated project binding state."""
+
+    caller_session_key_hash: str
+    project_key: str
+    project_name: str
+    canonical_repo_root: str
+    binding_generation: int
+    updated_at: datetime
+
+    def __post_init__(self) -> None:
+        if len(self.caller_session_key_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in self.caller_session_key_hash
+        ):
+            raise ValueError(
+                "caller_session_key_hash must be exactly 64 lowercase hexadecimal characters"
+            )
+        for name in ("project_key", "project_name", "canonical_repo_root"):
+            _require_nonempty_string(name, getattr(self, name))
+        if (
+            not isinstance(self.binding_generation, int)
+            or isinstance(self.binding_generation, bool)
+            or self.binding_generation < 1
+        ):
+            raise ValueError("binding_generation must be a positive integer")
+        _require_aware_datetime("updated_at", self.updated_at)
+
+
+@dataclass(frozen=True)
 class ApplyPreviewReceiptRecord:
     """Durable, secret-free storage representation of an apply-preview receipt."""
 

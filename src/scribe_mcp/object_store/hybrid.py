@@ -28,6 +28,17 @@ class HybridStore(DocumentStore):
     async def setup(self) -> None:
         await self._remote.setup()
 
+    async def probe_remote_health(
+        self,
+        *,
+        timeout_seconds: float = 2.0,
+    ) -> bool | None:
+        """Probe remote availability when the configured provider supports it."""
+        probe = getattr(self._remote, "probe_health", None)
+        if not callable(probe):
+            return None
+        return await probe(timeout_seconds=timeout_seconds)
+
     async def close(self) -> None:
         await self._remote.close()
 

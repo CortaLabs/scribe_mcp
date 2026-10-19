@@ -679,6 +679,7 @@ async def execute_tool_call(
         context_payload = kwargs.get("context")
     if not isinstance(context_payload, dict):
         context_payload = {}
+    context_payload.pop("session_binding", None)
     context_payload["_server_derived_session_id"] = False
     public_release = bool(getattr(settings, "public_release", False))
     context_payload["public_release"] = public_release
@@ -927,12 +928,40 @@ async def execute_tool_call(
     if storage_backend and hasattr(storage_backend, "fetch_project"):
         explicit_project = call_arguments.get("project") or call_arguments.get("name")
         explicit_root = call_arguments.get("root") or call_arguments.get("repo_root")
+        process_fallback_transport = str(context_payload.get("transport_session_id") or "").startswith("process:")
+        # Recover the durable default using the exact key used by set_project.
+        # A reconstructed router has no project cache. Application handles
+        # recover their persisted session row before this binding lookup.
+        canonical_session_key = (
+            context_payload.get("stable_session_id")
+            or context_payload.get("session_id")
+        )
+        if (
+            name != "set_project"
+            and canonical_session_key
+            and (session_id_claimed or has_runtime_transport_identity or process_fallback_transport)
+            and hasattr(storage_backend, "get_session_project")
+        ):
+            binding = await storage_backend.get_session_project(canonical_session_key)
+            if binding:
+                project_record = await storage_backend.fetch_project(
+                    binding.project_name, project_key=binding.project_key,
+                )
+                if project_record:
+                    context_payload["session_binding"] = binding
+                    context_payload["project_name"] = binding.project_name
+                    context_payload["repo_root"] = _normalize_repo_root(
+                        binding.canonical_repo_root, settings.project_root,
+                    )
+                    context_payload["resolution_source"] = "session_binding"
+                    _set_scope_provenance(context_payload, field="project_name", label="verified")
+                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
+
         current_repo_root_provenance = (
             (context_payload.get("scope_provenance") or {}).get("repo_root")
             if isinstance(context_payload.get("scope_provenance"), dict)
             else None
         )
-        process_fallback_transport = str(context_payload.get("transport_session_id") or "").startswith("process:")
         if (
             name != "set_project"
             and explicit_project
@@ -963,48 +992,6 @@ async def execute_tool_call(
                 )
                 _set_scope_provenance(context_payload, field="repo_root", label="verified")
                 _set_scope_provenance(context_payload, field="project_name", label="verified")
-        # Resolve the session->project binding under the SAME canonical key the
-        # write side (set_project -> resolve_context_authoritative_session_key)
-        # bound it with: stable_session_id preferred, session_id fallback (see
-        # session_utils.get_canonical_session_key). Reading with the raw
-        # session_id alone silently misses a binding that was written under a
-        # divergent stable_session_id -- the exact asymmetry that surfaces under
-        # concurrent multi-agent load as "ExecutionContext repo scope
-        # unresolved" for a session that WAS bound. Falling back to session_id
-        # keeps single-key flows byte-identical.
-        canonical_session_key = (
-            context_payload.get("stable_session_id")
-            or context_payload.get("session_id")
-        )
-        if (
-            not context_payload.get("repo_root")
-            and canonical_session_key
-            and (session_id_claimed or has_runtime_transport_identity or process_fallback_transport)
-        ):
-            project_name = None
-            if hasattr(storage_backend, "get_session_project"):
-                project_name = await storage_backend.get_session_project(canonical_session_key)
-            if project_name:
-                context_payload["project_name"] = str(project_name)
-                _set_scope_provenance(context_payload, field="project_name", label="verified")
-                lookup_root = context_payload.get("repo_root")
-                if lookup_root:
-                    project_record = await storage_backend.fetch_project(
-                        str(project_name),
-                        repo_root=str(lookup_root),
-                    )
-                    if not project_record:
-                        # The session binding was set explicitly via
-                        # set_project; a stale context root must not orphan it.
-                        project_record = await storage_backend.fetch_project(str(project_name))
-                else:
-                    project_record = await storage_backend.fetch_project(str(project_name))
-                if project_record:
-                    context_payload["repo_root"] = _normalize_repo_root(
-                        project_record.repo_root,
-                        settings.project_root,
-                    )
-                    _set_scope_provenance(context_payload, field="repo_root", label="verified")
 
     repo_root_provenance = (
         (context_payload.get("scope_provenance") or {}).get("repo_root")
@@ -1196,7 +1183,9 @@ async def execute_tool_call(
     token = router_context_manager.set_current(exec_context)
 
     if "project" not in call_arguments and "project_name" not in call_arguments:
-        cached_project = await router_context_manager.get_cached_project(exec_context.stable_session_id)
+        cached_project = context_payload.get("project_name") if (
+            (context_payload.get("scope_provenance") or {}).get("project_name") == "verified"
+        ) else await router_context_manager.get_cached_project(exec_context.stable_session_id)
         if cached_project:
             if _accepts_keyword_argument(func, "project"):
                 call_arguments["project"] = cached_project

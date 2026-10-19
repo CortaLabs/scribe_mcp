@@ -201,7 +201,7 @@ def isolated_state(tmp_path, monkeypatch):
 
 @pytest.fixture
 def project_root(tmp_path):
-    root = settings.project_root / "tmp_tests" / str(uuid.uuid4())
+    root = tmp_path / "repo"
     root.mkdir(parents=True, exist_ok=True)
     (root / ".git").mkdir(exist_ok=True)
     yield root

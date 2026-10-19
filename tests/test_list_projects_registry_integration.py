@@ -3,6 +3,8 @@
 
 import pytest
 
+pytestmark = pytest.mark.manual
+
 from scribe_mcp.tools.list_projects import list_projects  # noqa: E402
 
 

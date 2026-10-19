@@ -6,12 +6,22 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from scribe_mcp.background.models import (
+    BackgroundAdmissionResultV1,
+    BackgroundOperationIntentV1,
+    BackgroundPartitionV1,
+    BackgroundQueueLimitsV1,
+    BackgroundRecoverySnapshotV1,
+    BackgroundTransitionOutcomeV1,
+    DurableOperationReceiptV1,
+)
 from scribe_mcp.storage.models import (
     ApplyPreviewClaimResult,
     ApplyPreviewReceiptRecord,
     CaseRegistryRecord,
     ProjectRecord,
     RepoScopeGrantRecord,
+    SessionBindingRecordV2,
 )
 
 
@@ -61,6 +71,62 @@ class StorageBackend(ABC):
     async def cleanup_apply_preview_receipts(self) -> int:
         """Delete receipts eligible for cleanup and return the deleted count."""
         raise NotImplementedError("apply-preview receipt storage is not implemented for this backend")
+
+    # background_receipt_contract
+    async def admit_background_receipt(
+        self,
+        intent: BackgroundOperationIntentV1,
+        limits: BackgroundQueueLimitsV1,
+        *,
+        now: datetime,
+    ) -> BackgroundAdmissionResultV1:
+        """Atomically persist or classify admission without hidden fallback storage."""
+        raise NotImplementedError("background receipt storage is not implemented for this backend")
+
+    async def get_background_receipt(
+        self,
+        operation_id: str,
+    ) -> DurableOperationReceiptV1 | None:
+        """Fetch one durable background receipt by operation ID."""
+        raise NotImplementedError("background receipt storage is not implemented for this backend")
+
+    async def claim_background_receipt(
+        self,
+        partition: BackgroundPartitionV1,
+        worker_id: str,
+        lease_ms: int,
+        *,
+        now: datetime,
+    ) -> DurableOperationReceiptV1 | None:
+        """Atomically enter leased state, incrementing attempt, version, and fence once."""
+        raise NotImplementedError("background receipt storage is not implemented for this backend")
+
+    async def transition_background_receipt(
+        self,
+        operation_id: str,
+        expected_state_version: int,
+        fencing_token: int,
+        outcome: BackgroundTransitionOutcomeV1,
+        *,
+        now: datetime,
+    ) -> DurableOperationReceiptV1:
+        """Apply one legal transition with version CAS and current-fence enforcement.
+
+        Implementations must raise only ``BackgroundReceiptNotFoundError``,
+        ``BackgroundStateVersionConflictError``, or ``BackgroundStaleFenceError``
+        for transition lookup/CAS/fence failures. Terminal rows are immutable,
+        claim is the only operation that may enter ``leased``, and a successful
+        transition increments ``state_version`` exactly once without changing the
+        current fence. Leaving ``leased`` clears its owner and expiry.
+        """
+        raise NotImplementedError("background receipt storage is not implemented for this backend")
+
+    async def recover_background_receipts(
+        self,
+        now: datetime,
+    ) -> BackgroundRecoverySnapshotV1:
+        """Read nonterminal receipts, exact capacity, and expired-lease IDs without mutation."""
+        raise NotImplementedError("background receipt storage is not implemented for this backend")
 
     async def setup(self) -> None:
         """Perform any startup work. Optional for some backends."""
@@ -450,12 +516,28 @@ class StorageBackend(ABC):
         """Get the operating mode for a session."""
         raise NotImplementedError
 
-    async def set_session_project(self, session_id: str, project_name: str) -> None:
-        """Associate a session with a project."""
+    async def set_session_project(
+        self,
+        session_id: str,
+        project_key: str,
+        expected_generation: int | None = None,
+    ) -> SessionBindingRecordV2:
+        """Persist or reuse a caller-session default under generation CAS.
+
+        The first binding has generation 1. Changing the target increments the
+        current generation exactly once, while rebinding the current target
+        returns the existing record unchanged and performs no persistent write.
+
+        When ``expected_generation`` is supplied, backends must compare it with
+        current storage truth before any write, including for a same-target
+        request. A stale expectation, unknown session, or unknown project raises
+        :class:`ConflictError`; translation to an MCP error envelope is owned by
+        the request layer. Omitting the expectation uses current storage truth.
+        """
         raise NotImplementedError
 
-    async def get_session_project(self, session_id: str) -> Optional[str]:
-        """Get the project name associated with a session."""
+    async def get_session_project(self, session_id: str) -> SessionBindingRecordV2 | None:
+        """Return the caller-session default binding record, if one exists."""
         raise NotImplementedError
 
     async def get_session_by_transport(self, transport_session_id: str) -> Optional[dict]:

@@ -94,8 +94,13 @@ def test_repo_config_global_structured_fallback_and_overlap(monkeypatch: pytest.
         SimpleNamespace(dev_plans_base=Path(".scribe/docs/dev_plans")),
     )
 
-    with caplog.at_level("WARNING"):
-        config = repo_config_module.RepoDiscovery.load_config(repo, seed_if_missing=False)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        repo_config_module.repo_config_logger,
+        "warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+    config = repo_config_module.RepoDiscovery.load_config(repo, seed_if_missing=False)
 
     assert config.repo_slug == "repo-slug"
     assert config.storage_backend == "sqlite"
@@ -103,7 +108,7 @@ def test_repo_config_global_structured_fallback_and_overlap(monkeypatch: pytest.
     assert config.dev_plans_dir == repo / "repo-docs"
     assert config.reminder_config == {"mode": "repo"}
 
-    warning_text = "\n".join(record.message for record in caplog.records)
+    warning_text = "\n".join(warnings)
     assert "Ignoring env-owned repo config key 'db_url'" in warning_text
     assert "Ignoring env-owned repo config key 'postgres_pool_max_size'" in warning_text
     assert "Ignoring credential-like repo config key 'remote_auth_token'" in warning_text

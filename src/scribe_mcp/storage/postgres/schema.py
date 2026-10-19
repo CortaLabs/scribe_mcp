@@ -35,17 +35,76 @@ def _quote_ident(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
+_CREATE_INDEX_RE = re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", re.IGNORECASE)
+_STATEMENT_BOUNDARY = "-- scribe:statement-boundary"
+
+
+def _leading_sql_command(statement: str) -> str:
+    """Return the first executable text after leading SQL comments."""
+    remaining = statement.lstrip()
+    while remaining:
+        if remaining.startswith("--"):
+            _, newline, remaining = remaining.partition("\n")
+            if not newline:
+                return ""
+            remaining = remaining.lstrip()
+            continue
+        if remaining.startswith("/*"):
+            comment_end = remaining.find("*/", 2)
+            if comment_end < 0:
+                return ""
+            remaining = remaining[comment_end + 2 :].lstrip()
+            continue
+        return remaining
+    return ""
+
+
+def _split_schema_statements(sql_text: str) -> list[str]:
+    """Split the packaged init script only at its authored boundary comments."""
+    statements: list[str] = []
+    current: list[str] = []
+    found_boundary = False
+
+    for line in sql_text.splitlines(keepends=True):
+        if line.rstrip("\r\n") == _STATEMENT_BOUNDARY:
+            found_boundary = True
+            statement = "".join(current).strip()
+            if statement:
+                statements.append(statement)
+            current.clear()
+        else:
+            current.append(line)
+
+    if not found_boundary:
+        intact = sql_text.strip()
+        return [intact] if intact else []
+
+    final_statement = "".join(current).strip()
+    if final_statement:
+        statements.append(final_statement)
+    return statements
+
+
 def _is_duplicate_index_race(statement: str, exc: asyncpg.PostgresError) -> bool:
-    """Allow idempotent index create races during startup schema bootstrap."""
-    if "CREATE INDEX" not in statement.upper():
+    """Allow idempotent index create races during startup schema bootstrap.
+
+    Matches ``CREATE [UNIQUE] INDEX``: the unique spelling used to fall through
+    and exit the server (BUG-2026-09-13-0002).
+    """
+    if not _CREATE_INDEX_RE.match(_leading_sql_command(statement)):
         return False
     return "pg_class_relname_nsp_index" in str(exc)
 
 
+def _bootstrap_lock_key(schema_name: str) -> str:
+    return f"scribe_mcp:schema_bootstrap:{schema_name}"
+
+
 def _is_additive_index_before_migration(statement: str, exc: asyncpg.PostgresError) -> bool:
     """Allow additive indexes to be created by their migration after legacy tables upgrade."""
-    normalized = " ".join(statement.upper().split())
-    if "CREATE INDEX" not in normalized:
+    command = _leading_sql_command(statement)
+    normalized = " ".join(command.upper().split())
+    if not re.match(r"^CREATE\s+INDEX\b", normalized):
         return False
     if "IDX_TOOL_CALLS_CORRELATION" not in normalized:
         return False
@@ -108,6 +167,31 @@ async def ensure_schema_on_connection(
 ) -> None:
     """Apply idempotent schema DDL using an already-open connection."""
     schema_name = _validate_schema_name(schema_name)
+    # Every scribe-server process bootstraps the same schema on start, and Codex
+    # starts one per subagent thread. Concurrent DDL raced and killed the loser
+    # before MCP initialize (BUG-2026-09-13-0002), so bootstrap is serialized
+    # across processes with a session advisory lock keyed on the schema. The
+    # schema_lock in ensure_schema only ever covered one process.
+    lock_key = _bootstrap_lock_key(schema_name)
+    await conn.execute("SELECT pg_advisory_lock(hashtext($1));", lock_key)
+    try:
+        await _ensure_schema_locked(
+            conn=conn,
+            schema_name=schema_name,
+            schema_path=schema_path,
+            migrations_path=migrations_path,
+        )
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock(hashtext($1));", lock_key)
+
+
+async def _ensure_schema_locked(
+    *,
+    conn: asyncpg.Connection,
+    schema_name: str,
+    schema_path: Path,
+    migrations_path: Path,
+) -> None:
     quoted_schema = _quote_ident(schema_name)
 
     await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema};")
@@ -116,7 +200,7 @@ async def ensure_schema_on_connection(
 
     if schema_path.exists():
         sql_text = await asyncio.to_thread(schema_path.read_text, encoding="utf-8")
-        statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
+        statements = _split_schema_statements(sql_text)
         for statement in statements:
             try:
                 await conn.execute(statement)

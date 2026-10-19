@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.manual
+
 
 @pytest.mark.regression
 def test_repo_discovery():

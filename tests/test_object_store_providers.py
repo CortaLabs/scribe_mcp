@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -10,6 +11,7 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -20,6 +22,74 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 # ---------------------------------------------------------------------------
 
 from scribe_mcp.object_store.providers.corta import CortaStoreProvider
+
+
+class TestCortaStoreProviderLifecycle:
+    @pytest.mark.core
+    @pytest.mark.regression
+    @pytest.mark.asyncio
+    async def test_setup_has_zero_health_io_and_close_is_idempotent(self) -> None:
+        provider = CortaStoreProvider(
+            base_url="http://localhost:8201",
+            hmac_key="key",
+            project="proj",
+        )
+        client = MagicMock()
+        client.get = AsyncMock()
+        client.aclose = AsyncMock()
+        provider._client = client
+
+        await provider.setup()
+
+        assert provider._client is client
+        client.get.assert_not_awaited()
+
+        await provider.close()
+        await provider.close()
+        client.aclose.assert_awaited_once_with()
+
+    @pytest.mark.core
+    @pytest.mark.regression
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("status_code", "expected"), [(200, True), (503, False)])
+    async def test_probe_health_makes_one_bounded_request(
+        self,
+        status_code: int,
+        expected: bool,
+    ) -> None:
+        provider = CortaStoreProvider(
+            base_url="http://localhost:8201",
+            hmac_key="key",
+            project="proj",
+        )
+        client = MagicMock()
+        client.get = AsyncMock(return_value=MagicMock(status_code=status_code))
+        provider._client = client
+
+        assert await provider.probe_health(timeout_seconds=0.25) is expected
+        client.get.assert_awaited_once_with("/health", timeout=0.25)
+
+    @pytest.mark.core
+    @pytest.mark.regression
+    @pytest.mark.asyncio
+    async def test_probe_health_maps_transport_failure_but_propagates_cancellation(
+        self,
+    ) -> None:
+        provider = CortaStoreProvider(
+            base_url="http://localhost:8201",
+            hmac_key="key",
+            project="proj",
+        )
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=httpx.ConnectError("unavailable"))
+        provider._client = client
+
+        assert await provider.probe_health() is False
+        client.get.assert_awaited_once_with("/health", timeout=2.0)
+
+        client.get = AsyncMock(side_effect=asyncio.CancelledError())
+        with pytest.raises(asyncio.CancelledError):
+            await provider.probe_health()
 
 
 class TestCortaStoreHMAC:

@@ -22,6 +22,8 @@ by session_id and requires a live scribe_sessions row.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -31,9 +33,13 @@ import pytest
 
 from scribe_mcp.mcp_adapter import ProtocolEra
 from scribe_mcp.shared.execution_context import (
+    AgentAttributionV1,
     ApplicationIdentity,
+    AuthorizationEvidenceV1,
     ExecutionContext,
+    ResolvedProjectTargetV1,
     RouterContextManager,
+    build_resolved_request_context,
     get_current_execution_context,
     resolve_application_identity,
 )
@@ -43,8 +49,53 @@ from scribe_mcp.shared.logging_utils import (
 )
 from scribe_mcp.shared.tool_runtime import execute_tool_call
 from scribe_mcp.state.manager import StateManager
+from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.storage.base import ConflictError
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
+
+
+@pytest.mark.regression
+def test_same_label_attribution_cannot_collapse_distinct_server_caller_keys(
+    repo_root: Path,
+) -> None:
+    target = ResolvedProjectTargetV1(
+        project_key="project-key",
+        project_name="project-name",
+        canonical_repo_root=str(repo_root),
+        repository_id="repository-id",
+        resolution_source="project_key",
+        default_binding_generation=1,
+    )
+    attribution = AgentAttributionV1("forge", "same-display-id")
+    evidence = AuthorizationEvidenceV1("server", True, ("scope:project",))
+
+    first = build_resolved_request_context(
+        caller_session_key="server-caller-one",
+        resolved_target=target,
+        agent_attribution=attribution,
+        correlation_id="correlation-one",
+        operating_mode="project",
+        authorization_evidence=evidence,
+    )
+    second = build_resolved_request_context(
+        caller_session_key="server-caller-two",
+        resolved_target=target,
+        agent_attribution=attribution,
+        correlation_id="correlation-two",
+        operating_mode="project",
+        authorization_evidence=evidence,
+    )
+
+    assert first.caller_session_key_hash == hashlib.sha256(b"server-caller-one").hexdigest()
+    assert second.caller_session_key_hash == hashlib.sha256(b"server-caller-two").hexdigest()
+    assert first.caller_session_key_hash != second.caller_session_key_hash
+    assert first.agent_attribution == second.agent_attribution == attribution
+    assert first.resolved_target is second.resolved_target is target
+    assert first.authorization_evidence == second.authorization_evidence == evidence
+    assert "server-caller-one" not in repr(first)
+    assert "server-caller-two" not in repr(second)
+    assert "scope:project" not in repr(first)
+    assert "scope:project" not in repr(second)
 
 
 class _InMemoryBackend:
@@ -59,7 +110,7 @@ class _InMemoryBackend:
     def __init__(self) -> None:
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.transport_index: Dict[str, str] = {}
-        self.session_projects: Dict[str, Optional[str]] = {}
+        self.session_projects: Dict[str, SessionBindingRecordV2] = {}
         self.projects: Dict[str, SimpleNamespace] = {}
         self.agent_sessions: Dict[str, str] = {}
 
@@ -110,9 +161,21 @@ class _InMemoryBackend:
     async def set_session_project(self, session_id: str, project_name: Optional[str]) -> None:
         if session_id not in self.sessions:
             raise ConflictError(f"Cannot bind project for unknown session_id={session_id!r}")
-        self.session_projects[session_id] = project_name
+        if project_name is None:
+            self.session_projects.pop(session_id, None)
+            return
+        project = self.projects[project_name]
+        previous = self.session_projects.get(session_id)
+        self.session_projects[session_id] = SessionBindingRecordV2(
+            caller_session_key_hash=hashlib.sha256(session_id.encode()).hexdigest(),
+            project_key=project.project_key,
+            project_name=project.name,
+            canonical_repo_root=project.repo_root,
+            binding_generation=(previous.binding_generation + 1) if previous else 1,
+            updated_at=datetime.now(timezone.utc),
+        )
 
-    async def get_session_project(self, session_id: str) -> Optional[str]:
+    async def get_session_project(self, session_id: str) -> Optional[SessionBindingRecordV2]:
         return self.session_projects.get(session_id)
 
     async def get_session_mode(self, session_id: str) -> Optional[str]:
@@ -151,7 +214,7 @@ class _InMemoryBackend:
         project_key: Optional[str] = None,
     ) -> Optional[SimpleNamespace]:
         record = self.projects.get(name)
-        if record is None:
+        if record is None or (project_key is not None and project_key != record.project_key):
             return None
         if repo_root and str(Path(str(record.repo_root)).resolve()) != str(Path(repo_root).resolve()):
             return None
@@ -207,6 +270,7 @@ class _Harness:
         self.captured_contexts: Dict[str, ExecutionContext] = {}
         self.registry = {
             "set_project": self._set_project_stub(),
+            "read_recent": self._probe_stub("read_recent"),
             "append_entry": self._probe_stub("append_entry"),
             "manage_docs": self._probe_stub("manage_docs"),
             "hook_prime": self._probe_stub("hook_prime"),
@@ -276,7 +340,7 @@ class _Harness:
         )
 
     def binding_key(self, context: ExecutionContext) -> str:
-        key = context.stable_session_id or context.session_id
+        key = context.authoritative_session_key or context.stable_session_id or context.session_id
         assert key
         return str(key)
 
@@ -334,7 +398,7 @@ async def test_set_project_by_second_actor_cannot_steal_first_actors_binding(
     bound_project = await harness.backend.get_session_project(
         harness.binding_key(ctx_a_append)
     )
-    assert bound_project == "proj_a", (
+    assert bound_project.project_name == "proj_a", (
         f"Actor A's writes resolved to {bound_project!r} after actor B ran "
         "set_project on the same connection — binding theft."
     )
@@ -344,8 +408,7 @@ async def test_set_project_by_second_actor_cannot_steal_first_actors_binding(
     ctx_b_append = harness.captured_contexts["actor-b:append_entry"]
     assert (
         await harness.backend.get_session_project(harness.binding_key(ctx_b_append))
-        == "proj_b"
-    )
+    ).project_name == "proj_b"
 
 
 @pytest.mark.asyncio
@@ -369,7 +432,7 @@ async def test_interleaved_writes_from_two_actors_stay_isolated(repo_root: Path)
             project = await harness.backend.get_session_project(
                 harness.binding_key(context)
             )
-            resolved[agent].append(str(project))
+            resolved[agent].append(project.project_name)
 
     assert resolved["actor-a"] == ["proj_a"] * 3
     assert resolved["actor-b"] == ["proj_b"] * 3
@@ -397,8 +460,7 @@ async def test_single_actor_flow_keeps_one_stable_session(repo_root: Path) -> No
     )
     assert (
         await harness.backend.get_session_project(harness.binding_key(ctx_bind))
-        == "solo_project"
-    )
+    ).project_name == "solo_project"
 
 
 @pytest.mark.asyncio
@@ -448,6 +510,23 @@ async def test_modern_same_label_seats_keep_preview_apply_target_across_hook_pri
     assert preview["project"] == "project-a"
     assert apply_result["project"] == "project-a"
     assert seat_a.identity_key != seat_b.identity_key
+
+    key_a = harness.binding_key(harness.captured_contexts["forge:set_project:project-a"])
+    key_b = harness.binding_key(harness.captured_contexts["forge:set_project:project-b"])
+    assert key_a != key_b
+    default_a = await harness.backend.get_session_project(key_a)
+    default_b = await harness.backend.get_session_project(key_b)
+    assert default_a.project_name == "project-a"
+    assert default_b.project_name == "project-b"
+    assert default_a.caller_session_key_hash != default_b.caller_session_key_hash
+    override = await harness.call("manage_docs", {"agent": "forge", "project": "project-b"})
+    assert override["project"] == "project-b"
+    override_context = harness.captured_contexts["forge:manage_docs"]
+    assert override_context.session_binding is default_a
+    assert override_context.session_binding.project_name == "project-a"
+    assert override_context.session_binding.binding_generation == default_a.binding_generation
+    assert await harness.backend.get_session_project(key_a) == default_a
+    assert await harness.backend.get_session_project(key_b) == default_b
 
 
 # ---------------------------------------------------------------------------
@@ -607,3 +686,63 @@ async def test_explicit_override_matching_bound_project_still_resolves(
 
     assert context.project is not None
     assert context.project["name"] == "proj_bound"
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_reconstructed_router_recovers_bound_project_without_rebinding(repo_root: Path) -> None:
+    original = _Harness(repo_root, connection_id="original")
+    minted = resolve_application_identity(
+        principal_id="principal", protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http", supplied_handle=None, connection_id="trusted-original",
+    )
+    original.use_application_identity(minted)
+    await original.call("set_project", {"agent": "forge", "name": "durable", "root": str(repo_root)})
+    bound_context = original.captured_contexts["forge:set_project:durable"]
+    key = original.binding_key(bound_context)
+    binding = await original.backend.get_session_project(key)
+    assert isinstance(binding, SessionBindingRecordV2)
+
+    resumed = resolve_application_identity(
+        principal_id="principal", protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http", supplied_handle=minted.application_handle, connection_id=None,
+    )
+    reconstructed = _Harness(repo_root, connection_id="reconnected")
+    reconstructed.backend = original.backend
+    reconstructed.router = RouterContextManager(storage_backend=original.backend)
+    reconstructed.state_manager = StateManager(path=repo_root / "reconnected.db", storage_backend=original.backend)
+    reconstructed.use_application_identity(resumed)
+    # Resolution deliberately omits the raw handle from the identity record;
+    # the reconnecting request still presents its original client-held handle.
+    reconstructed.app.request_context.application_handle = minted.application_handle
+    assert resumed.identity_key == minted.identity_key
+    for tool in ("read_recent", "append_entry", "manage_docs"):
+        result = await reconstructed.call(tool, {"agent": "forge"})
+        context = reconstructed.captured_contexts[f"forge:{tool}"]
+        assert result["project"] == "durable"
+        assert context.resolved_scope.project_name == "durable"
+        assert context.session_binding is binding
+        assert reconstructed.binding_key(context) == key
+        recovered_binding = await reconstructed.backend.get_session_project(key)
+        assert recovered_binding == binding
+        assert recovered_binding.binding_generation == binding.binding_generation
+        assert recovered_binding.caller_session_key_hash == binding.caller_session_key_hash
+
+    sibling = resolve_application_identity(
+        principal_id="principal", protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http", supplied_handle=None, connection_id="trusted-sibling",
+    )
+    reconstructed.use_application_identity(sibling)
+    assert sibling.identity_key != resumed.identity_key
+    assert await reconstructed.backend.get_session_project(sibling.identity_key) is None
+    with pytest.raises(ValueError, match="repo scope unresolved|requires an active Scribe project"):
+        await reconstructed.call("read_recent", {"agent": "forge"})
+    await reconstructed.call("set_project", {"agent": "forge", "name": "sibling", "root": str(repo_root)})
+    sibling_key = reconstructed.binding_key(reconstructed.captured_contexts["forge:set_project:sibling"])
+    assert sibling_key != key
+    sibling_binding = await reconstructed.backend.get_session_project(sibling_key)
+    assert sibling_binding.project_name == "sibling"
+    assert await reconstructed.backend.get_session_project(key) == binding
+    await reconstructed.backend.set_session_project(sibling_key, None)
+    assert await reconstructed.backend.get_session_project(sibling_key) is None
+    assert await reconstructed.backend.get_session_project(key) == binding

@@ -71,7 +71,8 @@ class TestHardcodedModifiedBugFixed:
             phase_file.unlink(missing_ok=True)
             checklist_file.unlink(missing_ok=True)
             progress_file.unlink(missing_ok=True)
-            test_dir.rmdir()
+            import shutil
+        shutil.rmtree(test_dir, ignore_errors=True)
 
 
 class TestStateDetectionIntegration:

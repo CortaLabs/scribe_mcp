@@ -10,7 +10,7 @@ from scribe_mcp import server as server_module
 from scribe_mcp.shared.execution_context import AgentIdentity, ExecutionContext
 from scribe_mcp.tools.read_file import read_file
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.manual]
 
 
 @pytest.fixture

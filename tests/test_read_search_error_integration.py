@@ -17,6 +17,8 @@ def _structured_payload(result):
     if isinstance(result, dict):
         return result
     structured = getattr(result, "structuredContent", None)
+    if not isinstance(structured, dict):
+        structured = getattr(result, "structured_content", None)
     if isinstance(structured, dict):
         return structured
     return {}

@@ -158,7 +158,7 @@ async def migrate_legacy_state_file(
             default_root=default_root,
         )
 
-        await storage_backend.upsert_project(
+        project_record = await storage_backend.upsert_project(
             name=normalised["name"],
             repo_root=normalised["root"],
             progress_log_path=normalised["progress_log"],
@@ -180,8 +180,17 @@ async def migrate_legacy_state_file(
             # Ensure the synthetic migration session row exists in scribe_sessions
             # before binding a project to it — the FK constraint requires this.
             if hasattr(storage_backend, "upsert_session"):
+                current_project_payload = legacy_projects.get(current_name, {})
+                current_root = (
+                    _normalise_project_payload(
+                        project_name=current_name,
+                        payload=current_project_payload if isinstance(current_project_payload, dict) else {},
+                        default_root=default_root,
+                    )["root"]
+                )
                 await storage_backend.upsert_session(
                     session_id=_LEGACY_MIGRATION_SESSION_ID,
+                    repo_root=current_root,
                     mode="project",
                 )
 
@@ -223,7 +232,7 @@ async def migrate_legacy_state_file(
             default_root=default_root,
         )
 
-        await storage_backend.upsert_project(
+        project_record = await storage_backend.upsert_project(
             name=normalised["name"],
             repo_root=normalised["root"],
             progress_log_path=normalised["progress_log"],
@@ -233,9 +242,13 @@ async def migrate_legacy_state_file(
         # Ensure the session row exists in scribe_sessions before binding a project
         # to it — the FK constraint on session_projects requires this ordering.
         if hasattr(storage_backend, "upsert_session"):
-            await storage_backend.upsert_session(session_id=session_id, mode="project")
+            await storage_backend.upsert_session(
+                session_id=session_id,
+                repo_root=normalised["root"],
+                mode="project",
+            )
         if hasattr(storage_backend, "set_session_project"):
-            await storage_backend.set_session_project(session_id, project_name)
+            await storage_backend.set_session_project(session_id, normalised["name"])
 
         session_projects_migrated += 1
 

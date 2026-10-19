@@ -23,6 +23,7 @@ from scribe_mcp.storage.models import (
     APPLY_PREVIEW_RESULT_CODES,
     ApplyPreviewClaimResult,
     ApplyPreviewReceiptRecord,
+    SessionBindingRecordV2,
     BenchmarkRecord,
     CaseRegistryRecord,
     DevPlanRecord,
@@ -1855,12 +1856,27 @@ class PostgresStorage(StorageBackend):
             project_name,
         )
 
-    async def get_session_project(self, session_id: str) -> Optional[str]:
-        value = await self._fetchval(
-            "SELECT project_name FROM session_projects WHERE session_id = $1;",
+    async def get_session_project(self, session_id: str) -> Optional[SessionBindingRecordV2]:
+        row = await self._fetchrow(
+            """
+            SELECT b.project_name, b.project_key, b.binding_generation, b.updated_at,
+                   p.repo_root
+            FROM session_projects AS b
+            JOIN scribe_projects AS p ON p.project_key = b.project_key
+            WHERE b.session_id = $1 AND b.binding_state = 'resolved';
+            """,
             session_id,
         )
-        return str(value) if value else None
+        if not row:
+            return None
+        return SessionBindingRecordV2(
+            caller_session_key_hash=hashlib.sha256(session_id.encode()).hexdigest(),
+            project_key=row["project_key"],
+            project_name=row["project_name"],
+            canonical_repo_root=row["repo_root"],
+            binding_generation=row["binding_generation"],
+            updated_at=row["updated_at"],
+        )
 
     async def get_session_by_transport(self, transport_session_id: str) -> Optional[Dict[str, Any]]:
         row = await self._fetchrow(

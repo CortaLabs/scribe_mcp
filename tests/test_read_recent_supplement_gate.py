@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -178,11 +179,21 @@ async def test_limit_one_returns_exactly_one_row() -> None:
     # Build a minimal mock backend that returns 5 rows regardless
     db_rows = [_make_row(f"row {i}") for i in range(5)]
 
-    mock_backend = AsyncMock()
-    mock_backend.fetch_project = AsyncMock(return_value=MagicMock())
-    mock_backend.fetch_recent_entries_paginated = AsyncMock(
-        return_value=(db_rows, len(db_rows))
-    )
+    class _Backend:
+        async def fetch_project(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
+            return SimpleNamespace(
+                name="test_project",
+                repo_root="/tmp/test_project",
+                progress_log_path="/tmp/test_project/PROGRESS_LOG.md",
+                docs_json=None,
+            )
+
+        async def fetch_recent_entries_paginated(
+            self, *_args: Any, **_kwargs: Any
+        ) -> tuple[List[Dict[str, Any]], int]:
+            return db_rows, len(db_rows)
+
+    mock_backend = _Backend()
 
     import scribe_mcp.tools.read_recent as rr_module
 
@@ -193,6 +204,7 @@ async def test_limit_one_returns_exactly_one_row() -> None:
 
         result = await rr_module.read_recent(
             agent="test-agent",
+            project="test_project",
             limit=1,
             # page_size intentionally left at default (10) to trigger old bug
         )

@@ -37,7 +37,9 @@ async def _setup_storage(tmp_path: Path, session_id: str, project_name: str) -> 
     )
 
     # Create session row (required before set_session_project)
-    await storage.upsert_session(session_id=session_id, agent_id="test-agent", mode="project")
+    await storage.upsert_session(
+        session_id=session_id, agent_id="test-agent", repo_root=str(tmp_path), mode="project"
+    )
 
     # Bind session to project
     await storage.set_session_project(session_id, project_name)
@@ -110,8 +112,12 @@ async def test_different_sessions_each_resolve_once(tmp_path: Path) -> None:
             progress_log_path=str(tmp_path / "log.md"),
         )
 
-    await storage.upsert_session(session_id=session_a, agent_id="test-agent", mode="project")
-    await storage.upsert_session(session_id=session_b, agent_id="test-agent", mode="project")
+    await storage.upsert_session(
+        session_id=session_a, agent_id="test-agent", repo_root=str(tmp_path), mode="project"
+    )
+    await storage.upsert_session(
+        session_id=session_b, agent_id="test-agent", repo_root=str(tmp_path), mode="project"
+    )
     await storage.set_session_project(session_a, project_a)
     await storage.set_session_project(session_b, project_b)
 

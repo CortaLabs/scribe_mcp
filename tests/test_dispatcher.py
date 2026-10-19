@@ -307,7 +307,7 @@ class TestFormatParameters:
         assert len(result.content) == 1
         assert isinstance(result.content[0], TextContent)
         # Should have structuredContent
-        assert result.structuredContent == read_file_data
+        assert result.structured_content == read_file_data
 
     @pytest.mark.asyncio
     async def test_format_default_is_readable(self, formatter, read_file_data):

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from scribe_mcp.storage.base import ConflictError
+from scribe_mcp.storage.models import SessionBindingRecordV2
 
 
 AsyncExecute = Callable[[str, tuple[Any, ...]], Awaitable[Any]]
@@ -153,15 +154,31 @@ async def get_session_project(
     initialise_fn: AsyncInitialise,
     fetchone_fn: AsyncFetchOne,
     session_id: str,
-) -> Optional[str]:
+) -> Optional[SessionBindingRecordV2]:
     await initialise_fn()
     row = await fetchone_fn(
-        "SELECT project_name FROM session_projects WHERE session_id = ?;",
+        """
+        SELECT b.project_name, b.project_key, b.binding_generation, b.updated_at,
+               p.repo_root
+        FROM session_projects AS b
+        JOIN scribe_projects AS p ON p.project_key = b.project_key
+        WHERE b.session_id = ? AND b.binding_state = 'resolved';
+        """,
         (session_id,),
     )
-    if row and row["project_name"]:
-        return row["project_name"]
-    return None
+    if not row:
+        return None
+    updated_at = datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return SessionBindingRecordV2(
+        caller_session_key_hash=hashlib.sha256(session_id.encode()).hexdigest(),
+        project_key=row["project_key"],
+        project_name=row["project_name"],
+        canonical_repo_root=row["repo_root"],
+        binding_generation=row["binding_generation"],
+        updated_at=updated_at,
+    )
 
 
 async def get_session_by_transport(

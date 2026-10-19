@@ -219,7 +219,8 @@ async def resolve_logging_context(
 
                 for session_key in session_keys:
                     backend_session_lookup_attempted = True
-                    project_name = await backend.get_session_project(session_key)
+                    binding = await backend.get_session_project(session_key)
+                    project_name = binding.project_name if binding else None
                     from datetime import datetime, timezone
 
                     _session_debug_trace(
@@ -241,26 +242,17 @@ async def resolve_logging_context(
                     try:
                         record = None
                         if hasattr(backend, "fetch_project"):
-                            if execution_repo_root:
-                                record = await backend.fetch_project(
-                                    project_name,
-                                    repo_root=execution_repo_root,
-                                )
-                                if not record:
-                                    # The session's bound project may live in a
-                                    # different repo than this request's root
-                                    # (or the stored root is stale). The binding
-                                    # was set explicitly by set_project — resolve
-                                    # it by unique name (fails closed on
-                                    # ambiguity) before the JSON-config fallback.
-                                    record = await backend.fetch_project(project_name)
-                            else:
-                                record = await backend.fetch_project(project_name)
+                            record = await backend.fetch_project(
+                                project_name, project_key=binding.project_key,
+                            )
                         if record:
                             session_project = {
                                 "name": record.name,
                                 "root": record.repo_root,
                                 "progress_log": record.progress_log_path,
+                                "project_key": binding.project_key,
+                                "binding_generation": binding.binding_generation,
+                                "caller_session_key_hash": binding.caller_session_key_hash,
                             }
 
                             if getattr(record, "docs_json", None):

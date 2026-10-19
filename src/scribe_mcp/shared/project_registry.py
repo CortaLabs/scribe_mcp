@@ -616,63 +616,21 @@ class ProjectRegistry:
         """
         with self._connect() as conn:
             cursor = conn.cursor()
-            # Create a minimal table if it does not exist. This avoids first-run
-            # failures when running Scribe against a fresh repo before the main
-            # storage backend has created schema.
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS scribe_projects (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE,
-                    repo_root TEXT,
-                    progress_log_path TEXT,
-                    description TEXT,
-                    status TEXT,
-                    progress_log TEXT,
-                    root TEXT,
-                    created_at TEXT,
-                    last_entry_at TEXT,
-                    last_access_at TEXT,
-                    last_status_change TEXT,
-                    tags TEXT,
-                    meta TEXT
-                )
-                """
+            # Reuse the storage schema authority. Registry bootstrap must never
+            # create reduced lookalike tables because SQLite's IF NOT EXISTS
+            # would preserve that incomplete shape and break storage startup.
+            from scribe_mcp.storage.sqlite.schema import (
+                CORE_TABLE_STATEMENTS,
+                PLANNING_TABLE_STATEMENTS,
             )
 
-            # Ensure supporting tables exist so LEFT JOINs don't fail.
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS scribe_metrics (
-                    project_id INTEGER PRIMARY KEY REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                    total_entries INTEGER NOT NULL DEFAULT 0,
-                    success_count INTEGER NOT NULL DEFAULT 0,
-                    warn_count INTEGER NOT NULL DEFAULT 0,
-                    error_count INTEGER NOT NULL DEFAULT 0,
-                    last_update TEXT
-                )
-                """
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS dev_plans (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                    file_path TEXT,
-                    plan_type TEXT,
-                    doc_type TEXT
-                )
-                """
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS phases (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
-                    phase_name TEXT
-                )
-                """
-            )
+            for statement in (
+                CORE_TABLE_STATEMENTS[0],  # scribe_projects
+                CORE_TABLE_STATEMENTS[2],  # scribe_metrics
+                PLANNING_TABLE_STATEMENTS[0],  # dev_plans
+                PLANNING_TABLE_STATEMENTS[1],  # phases
+            ):
+                cursor.execute(statement)
 
             cursor.execute("PRAGMA table_info(scribe_projects)")
             existing = {row[1] for row in cursor.fetchall()}
@@ -684,6 +642,7 @@ class ProjectRegistry:
 
             # New registry-focused fields for v1
             add_column("description", "description TEXT")
+            add_column("status", "status TEXT")
             add_column("last_entry_at", "last_entry_at TEXT")
             add_column("last_access_at", "last_access_at TEXT")
             add_column("last_status_change", "last_status_change TEXT")

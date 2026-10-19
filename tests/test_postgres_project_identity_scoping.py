@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
+
 import pytest
 
 import scribe_mcp.storage.postgres as postgres_module
-from scribe_mcp.storage.models import compute_project_key
+from scribe_mcp.storage.models import SessionBindingRecordV2, compute_project_key
 from scribe_mcp.storage.postgres import PostgresStorage
 
 
@@ -606,3 +609,36 @@ async def test_fetch_project_row_returns_none_for_ambiguous_canonical_project(
 
     assert row is None
     assert fetchrow_calls == [(display_name,)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize("row_present", [True, False])
+async def test_session_binding_reconstructs_structured_postgres_row(monkeypatch, row_present):
+    storage = PostgresStorage("postgresql://example.invalid/scribe")
+    updated = datetime(2026, 9, 28, tzinfo=timezone.utc)
+    row = {"project_key": "durable-key", "project_name": "durable", "repo_root": "/repo/durable",
+           "binding_generation": 7, "updated_at": updated}
+    calls = []
+
+    async def fetchrow(query, *params):
+        calls.append((query, params))
+        assert "project_key" in query and "binding_generation" in query
+        assert "binding_state = 'resolved'" in query
+        return row if row_present else None
+
+    async def fetchval(*args):
+        raise AssertionError("binding reconstruction must fetch the complete structured row")
+
+    monkeypatch.setattr(storage, "_fetchrow", fetchrow)
+    monkeypatch.setattr(storage, "_fetchval", fetchval)
+    binding = await storage.get_session_project("caller-key")
+    assert calls[0][1] == ("caller-key",)
+    if not row_present:
+        assert binding is None
+        return
+    assert binding == SessionBindingRecordV2(
+        caller_session_key_hash=hashlib.sha256(b"caller-key").hexdigest(),
+        project_key="durable-key", project_name="durable", canonical_repo_root="/repo/durable",
+        binding_generation=7, updated_at=updated,
+    )

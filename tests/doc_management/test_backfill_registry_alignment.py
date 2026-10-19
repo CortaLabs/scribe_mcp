@@ -10,8 +10,11 @@ def _seed_project(db_path: Path, name: str) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            INSERT INTO scribe_projects (name, created_at, status, meta)
-            VALUES (?, '2026-04-16T00:00:00+00:00', 'planning', '{}')
+            INSERT INTO scribe_projects (
+                name, repo_root, progress_log_path, created_at, status, meta
+            )
+            VALUES (?, '/tmp/test-repo', '/tmp/test-repo/PROGRESS_LOG.md',
+                    '2026-04-16T00:00:00+00:00', 'planning', '{}')
             """,
             (name,),
         )

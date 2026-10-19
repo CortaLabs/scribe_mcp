@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import types
@@ -24,7 +26,7 @@ from scribe_mcp.shared.logging_utils import (
     resolve_log_definition,
     resolve_logging_context,
 )
-from scribe_mcp.storage.models import ProjectRecord
+from scribe_mcp.storage.models import ProjectRecord, SessionBindingRecordV2
 from scribe_mcp.config import repo_config as repo_config_module
 
 
@@ -290,13 +292,13 @@ async def test_resolve_logging_context_prefers_canonical_stable_session_key() ->
         def __init__(self) -> None:
             self.session_keys: list[str] = []
 
-        async def get_session_project(self, session_key: str) -> Optional[str]:
+        async def get_session_project(self, session_key: str) -> Optional[SessionBindingRecordV2]:
             self.session_keys.append(session_key)
             if session_key == "stable-session-001":
-                return "demo"
+                return SessionBindingRecordV2(hashlib.sha256(session_key.encode()).hexdigest(), "pk-demo", "demo", "/tmp/demo", 2, datetime.now(timezone.utc))
             return None
 
-        async def fetch_project(self, _name: str) -> ProjectRecord:
+        async def fetch_project(self, _name: str, *, project_key=None) -> ProjectRecord:
             return ProjectRecord(
                 id=1,
                 name="demo",
@@ -379,7 +381,7 @@ async def test_resolve_logging_context_explicit_project_uses_storage_backend() -
             return DummyState()
 
     class DummyBackend:
-        async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+        async def fetch_project(self, name: str, *, project_key=None) -> Optional[ProjectRecord]:
             if name != "council_mcp_v2":
                 return None
             return ProjectRecord(
@@ -433,7 +435,7 @@ async def test_resolve_logging_context_explicit_project_missing_fails_hard(monke
             return DummyState()
 
     class DummyBackend:
-        async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+        async def fetch_project(self, name: str, *, project_key=None) -> Optional[ProjectRecord]:
             return None
 
         async def list_projects(self):
@@ -625,7 +627,7 @@ async def test_resolve_logging_context_project_mode_does_not_use_state_session_f
             return DummyState()
 
     class DummyBackend:
-        async def get_session_project(self, _session_id: str) -> Optional[str]:
+        async def get_session_project(self, _session_id: str) -> Optional[SessionBindingRecordV2]:
             return None
 
     class DummyServerModule:
@@ -667,14 +669,14 @@ async def test_resolve_logging_context_project_mode_prefers_authoritative_execut
             return DummyState()
 
     class DummyBackend:
-        async def get_session_project(self, session_id: str) -> Optional[str]:
+        async def get_session_project(self, session_id: str) -> Optional[SessionBindingRecordV2]:
             if session_id == "execution-session-123":
-                return "authoritative_project"
+                return SessionBindingRecordV2(hashlib.sha256(session_id.encode()).hexdigest(), "pk-auth", "authoritative_project", "/tmp/authoritative", 3, datetime.now(timezone.utc))
             if session_id == "stale-prebinding-session-999":
-                return "stale_project"
+                return SessionBindingRecordV2(hashlib.sha256(session_id.encode()).hexdigest(), "pk-stale", "stale_project", "/tmp/stale", 1, datetime.now(timezone.utc))
             return None
 
-        async def fetch_project(self, name: str) -> Optional[ProjectRecord]:
+        async def fetch_project(self, name: str, *, project_key=None) -> Optional[ProjectRecord]:
             if name == "authoritative_project":
                 return ProjectRecord(
                     id=1,
