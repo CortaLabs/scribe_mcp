@@ -1,9 +1,12 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.7 public release line**
+Applies to: **v2.15.8 public release line**
 
 ## Patch release notes
+
+Version 2.15.8 loads tool definitions before validating a first call that precedes
+tool discovery. Unknown tools and invalid arguments remain refused.
 
 Version 2.15.7 preserves literal whitespace inside fenced artifacts across section
 and frontmatter updates while retaining prose whitespace cleanup.

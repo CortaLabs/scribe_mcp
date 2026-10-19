@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Current release: `scribe-mcp 2.15.7` · Released: `2026-10-19`
+Current release: `scribe-mcp 2.15.8` · Released: `2026-10-19`
+
+`2.15.8` loads tool definitions before validating a first call that precedes tool discovery.
 
 `2.15.7` preserves literal whitespace in fenced artifacts through section and frontmatter updates.
 

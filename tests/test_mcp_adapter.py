@@ -13,6 +13,7 @@ from scribe_mcp.mcp_adapter import (
     ProtocolEra,
     build_mcp_server,
     classify_protocol_era,
+    configure_mcp_server,
     load_mcp_runtime,
     normalize_tool_definition,
     normalize_tool_result,
@@ -189,3 +190,59 @@ def test_build_mcp_server_uses_the_public_sdk_v2_surface():
     assert callable(server.list_tools)
     assert callable(server.call_tool)
     assert callable(server.run_stdio_async)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("era", [ProtocolEra.MODERN, ProtocolEra.LEGACY])
+async def test_first_call_loads_lazy_definitions_and_preserves_refusals(era):
+    runtime = load_mcp_runtime()
+    server = build_mcp_server("scribe-lazy-test", MCPCompatibilityPolicy())
+    definitions = {}
+    events = []
+
+    async def list_handler(request_era):
+        assert request_era is era
+        events.append("load")
+        definitions["sample"] = normalize_tool_definition(
+            runtime=runtime,
+            era=ProtocolEra.MODERN,
+            name="sample",
+            description="A lazily registered tool",
+            input_schema={
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        )
+        return list(definitions.values())
+
+    async def call_handler(name, arguments, context, request_era):
+        assert name == "sample"
+        assert request_era is era
+        assert context is None
+        events.append("call")
+        return {"ok": True, "value": arguments["value"]}
+
+    configure_mcp_server(
+        server,
+        runtime=runtime,
+        definition_provider=lambda: definitions,
+        list_handler=list_handler,
+        call_handler=call_handler,
+    )
+
+    for value in ("first", "warm"):
+        result = await server.call_tool("sample", {"value": value}, protocol_era=era)
+        assert result.structured_content == {"ok": True, "value": value}
+        assert result.is_error is False
+    assert events == ["load", "call", "call"]
+
+    for invalid in ({}, {"value": 1}, {"value": "valid", "extra": True}):
+        with pytest.raises(ValueError, match="invalid arguments"):
+            await server.call_tool("sample", invalid, protocol_era=era)
+    assert events == ["load", "call", "call"]
+
+    with pytest.raises(ValueError, match="Unknown tool"):
+        await server.call_tool("missing", {}, protocol_era=era)
+    assert events.count("call") == 2
