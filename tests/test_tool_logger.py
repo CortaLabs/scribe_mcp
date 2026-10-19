@@ -40,7 +40,7 @@ class TestRecursionPrevention:
         from pathlib import Path
 
         # Get path to MCP_SPINE root
-        mcp_spine_root = str(Path(__file__).parent.parent)
+        mcp_spine_root = str(Path(__file__).parent.parent / "src")
 
         # CRITICAL TEST: Verify log_tool_call() can execute without recursion
         # The real test is: can we CALL log_tool_call() without triggering

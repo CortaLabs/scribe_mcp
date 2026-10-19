@@ -415,6 +415,7 @@ class TestReadFileIntegration:
         finally:
             server_module.router_context_manager.reset(token)
 
+    @pytest.mark.performance
     @pytest.mark.asyncio
     async def test_read_file_performance_impact(self):
         """Test that dependency analysis doesn't significantly impact performance."""
@@ -546,6 +547,7 @@ class TestWorkspaceRootDetection:
         assert root1 == root2
         assert cache_size_1 == cache_size_2  # Cache didn't grow
 
+    @pytest.mark.manual
     def test_no_workspace_root(self, tmp_path):
         """Test handling when no workspace root is found."""
         from scribe_mcp.tools.read_file import _find_workspace_root

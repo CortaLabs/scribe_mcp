@@ -50,7 +50,11 @@ _default_state = {
     "recent_projects": [_default_project_name],
 }
 _state_path.write_text(json.dumps(_default_state, indent=2) + "\n", encoding="utf-8")
-os.environ.setdefault("SCRIBE_STATE_PATH", str(_state_path))
+os.environ["SCRIBE_STATE_PATH"] = str(_state_path)
+# Every pytest process, including each xdist worker, gets its own SQLite file.
+# This keeps the suite hermetic and prevents workers from contending with one
+# another or with a developer's live Scribe database.
+os.environ["SCRIBE_DB_PATH"] = str(_state_dir / "scribe_projects.db")
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -75,18 +79,36 @@ def test_agent() -> str:
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_test_artifacts() -> None:
-    """Prevent cross-test pollution from temp artifact directories/db files."""
-    yield
-    for candidate in (
-        REPO_ROOT / "tmp_tests",
-        REPO_ROOT / "tests" / "tmp_tests",
-    ):
-        shutil.rmtree(candidate, ignore_errors=True)
+def _restore_server_globals() -> None:
+    """Prevent direct module-global test doubles from leaking into later tests."""
+    try:
+        from scribe_mcp import server as server_module
+    except Exception:
+        yield
+        return
 
-    sqlite_default = REPO_ROOT / "scribe_projects.db"
-    if sqlite_default.exists():
-        sqlite_default.unlink()
+    names = (
+        "state_manager",
+        "storage_backend",
+        "get_execution_context",
+        "get_agent_identity",
+        "router_context_manager",
+    )
+    originals = {name: getattr(server_module, name, None) for name in names}
+    present = {name: hasattr(server_module, name) for name in names}
+    yield
+    for name, value in originals.items():
+        if present[name]:
+            setattr(server_module, name, value)
+        elif hasattr(server_module, name):
+            delattr(server_module, name)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config) -> int:
+    """Cap automatic parallelism at a portable, SQLite-friendly worker count."""
+    _ = config
+    return max(1, min(os.cpu_count() or 1, 8))
 
 
 def pytest_collection_modifyitems(items) -> None:

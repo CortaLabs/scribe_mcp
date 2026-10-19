@@ -47,6 +47,7 @@ def extract_result(result):
 def temp_project_dir():
     """Create temporary directory for test projects."""
     temp_dir = Path(tempfile.mkdtemp(prefix="test_set_project_"))
+    (temp_dir / ".git").mkdir()
     yield temp_dir
     # Cleanup
     if temp_dir.exists():

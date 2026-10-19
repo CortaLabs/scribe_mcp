@@ -15,6 +15,7 @@ include docs/STARTUP_PROBE_CONTRACT.md
 include docs/next_steps.md
 include deploy/README.md
 include skills/scribe-integration/SKILL.md
+include skills/scribe-onboarding/SKILL.md
 # Wheel-shipped plugin bundles + canonical onboarding skill (P6.6).
 # recursive-include captures dotfiles/dotdirs (.codex-plugin/, .mcp.json, ...).
 recursive-include src/scribe_mcp/plugins_bundle *

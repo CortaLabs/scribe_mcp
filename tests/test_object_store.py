@@ -70,9 +70,13 @@ class TestShouldSync:
         fp = tmp_path / ".scribe" / "docs" / "agent_report_cards" / "CARD.md"
         assert should_sync(fp, tmp_path) is True
 
+    @pytest.mark.regression
     def test_backup_bak(self, tmp_path: Path) -> None:
-        fp = tmp_path / ".scribe" / "backups" / "file.bak"
-        assert should_sync(fp, tmp_path) is True
+        backup = tmp_path / ".scribe" / "backups" / "file.bak"
+        unrelated = tmp_path / ".scribe" / "docs" / "dev_plans" / "proj" / "file.bak"
+
+        assert should_sync(backup, tmp_path) is True
+        assert should_sync(unrelated, tmp_path) is False
 
     def test_bugs_md(self, tmp_path: Path) -> None:
         fp = tmp_path / "docs" / "bugs" / "BUG_001.md"

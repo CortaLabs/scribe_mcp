@@ -33,6 +33,8 @@ D. Explicit project resolution falls back to unique-name lookup when the
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -53,6 +55,7 @@ from scribe_mcp.shared.logging_utils import (
 )
 from scribe_mcp.shared.tool_runtime import execute_tool_call
 from scribe_mcp.state.manager import StateManager
+from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.storage.base import ConflictError
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 
@@ -72,7 +75,7 @@ class _InMemoryBackend:
     def __init__(self) -> None:
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.transport_index: Dict[str, str] = {}
-        self.session_projects: Dict[str, Optional[str]] = {}
+        self.session_projects: Dict[str, SessionBindingRecordV2] = {}
         self.projects: List[SimpleNamespace] = []
         self.agent_sessions: Dict[str, str] = {}
 
@@ -123,9 +126,21 @@ class _InMemoryBackend:
     async def set_session_project(self, session_id: str, project_name: Optional[str]) -> None:
         if session_id not in self.sessions:
             raise ConflictError(f"Cannot bind project for unknown session_id={session_id!r}")
-        self.session_projects[session_id] = project_name
+        if project_name is None:
+            self.session_projects.pop(session_id, None)
+            return
+        record = await self.fetch_project(project_name, repo_root=self.sessions[session_id]["repo_root"])
+        if record is None:
+            record = await self.fetch_project(project_name)
+        assert record is not None
+        previous = self.session_projects.get(session_id)
+        self.session_projects[session_id] = SessionBindingRecordV2(
+            hashlib.sha256(session_id.encode()).hexdigest(), record.project_key,
+            record.name, str(Path(record.repo_root).resolve()),
+            previous.binding_generation + 1 if previous else 1, datetime.now(timezone.utc),
+        )
 
-    async def get_session_project(self, session_id: str) -> Optional[str]:
+    async def get_session_project(self, session_id: str) -> Optional[SessionBindingRecordV2]:
         return self.session_projects.get(session_id)
 
     async def get_session_mode(self, session_id: str) -> Optional[str]:
@@ -169,6 +184,8 @@ class _InMemoryBackend:
         repo_root: Optional[str] = None,
         project_key: Optional[str] = None,
     ) -> Optional[SimpleNamespace]:
+        if project_key is not None:
+            return next((record for record in self.projects if record.project_key == project_key), None)
         if repo_root:
             resolved_root = str(Path(repo_root).resolve())
             for record in self.projects:
@@ -637,3 +654,78 @@ async def test_modern_application_handle_reconnect_reuses_only_its_persisted_ses
     assert reconnected_session == first_session
     assert minted.application_handle not in storage.sessions
     assert set(storage.sessions) == {minted.identity_key}
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize("first_tool", ["read_recent", "append_entry", "manage_docs"])
+async def test_first_explicit_call_after_reconstruction_uses_bound_key_despite_stale_root(
+    server_root: Path, project_repo: Path, tmp_path: Path, first_tool: str,
+) -> None:
+    original = _Harness(server_root, project_repo, connection_id="original-explicit")
+    identity = resolve_application_identity(
+        principal_id="principal", protocol_era=ProtocolEra.MODERN,
+        transport="streamable-http", supplied_handle=None, connection_id="trusted-explicit",
+    )
+
+    def use_identity(harness, identity):
+        context = harness.app.request_context
+        context.protocol_era = identity.protocol_era
+        context.principal_id = identity.principal_id
+        context.transport = identity.transport
+        context.application_handle = identity.application_handle
+
+    use_identity(original, identity)
+    bound = await original.call("set_project", {"agent": "forge", "name": "shared", "root": str(project_repo)})
+    key = bound["session_key"]
+    default = await original.backend.get_session_project(key)
+    foreign_repo = tmp_path / "foreign"
+    foreign_repo.mkdir()
+    foreign = await original.backend.upsert_project(
+        name="shared", repo_root=str(foreign_repo), progress_log_path=str(foreign_repo / "PROGRESS_LOG.md"),
+    )
+    await original.backend.upsert_project(
+        name="foreign_only", repo_root=str(foreign_repo), progress_log_path=str(foreign_repo / "FOREIGN_LOG.md"),
+    )
+    sibling_key = await original.router.get_or_create_session_id("sibling-transport")
+    await original.backend.set_session_project(sibling_key, "foreign_only")
+    sibling_default = await original.backend.get_session_project(sibling_key)
+    # A stale row can even point to the other repo holding the same name.
+    original.backend.sessions[key]["repo_root"] = str(foreign_repo)
+
+    reconstructed = _Harness(server_root, project_repo, connection_id="reconnected-explicit")
+    reconstructed.backend = original.backend
+    reconstructed.router = RouterContextManager(storage_backend=original.backend)
+    reconstructed.state_manager = StateManager(path=server_root / "reconstructed.db", storage_backend=original.backend)
+    use_identity(reconstructed, identity)
+
+    async def probe(agent, project=None, **kwargs):
+        context = get_current_execution_context()
+        resolved = await resolve_logging_context(
+            tool_name=first_tool,
+            server_module=SimpleNamespace(
+                storage_backend=reconstructed.backend, state_manager=reconstructed.state_manager,
+                get_execution_context=lambda: context,
+            ),
+            explicit_project=project, state_snapshot={},
+        )
+        record = await reconstructed.backend.fetch_project(resolved.project["name"], repo_root=resolved.project["root"])
+        return context, record
+
+    reconstructed.registry[first_tool] = probe
+    context, record = await reconstructed.call(first_tool, {"agent": "forge", "project": "shared"})
+    assert context.authoritative_session_key == key
+    assert context.repo_root == str(project_repo)
+    assert record.project_key == default.project_key
+    assert record.project_key != foreign.project_key
+    assert await reconstructed.backend.get_session_project(key) == default
+    assert await reconstructed.backend.get_session_project(sibling_key) == sibling_default
+
+    # Reconstruct again with no stored root: even the first foreign request
+    # must recover the binding before evaluating explicit-target authority.
+    reconstructed.router = RouterContextManager(storage_backend=original.backend)
+    original.backend.sessions[key]["repo_root"] = None
+    with pytest.raises(ProjectResolutionError, match="session-bound|not authorized"):
+        await reconstructed.call(first_tool, {"agent": "forge", "project": "foreign_only"})
+    assert await reconstructed.backend.get_session_project(key) == default
+    assert await reconstructed.backend.get_session_project(sibling_key) == sibling_default

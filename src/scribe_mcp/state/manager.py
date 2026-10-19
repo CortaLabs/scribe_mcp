@@ -477,13 +477,20 @@ class StateManager:
         # subsequent calls within the same process lifetime skip the DB.
         if not current_project and session_id and hasattr(self._storage_backend, "get_session_project"):
             try:
-                project_name = await self._storage_backend.get_session_project(session_id)
+                binding = await self._storage_backend.get_session_project(session_id)
             except Exception:
-                project_name = None
+                binding = None
 
-            if project_name:
+            if binding:
+                project_name = binding.project_name
                 current_project = project_name
-                project_data = projects.get(project_name) or {"name": project_name}
+                project_data = dict(projects.get(project_name) or {"name": project_name})
+                project_data.update(
+                    project_key=binding.project_key,
+                    binding_generation=binding.binding_generation,
+                    caller_session_key_hash=binding.caller_session_key_hash,
+                    root=binding.canonical_repo_root,
+                )
                 session_projects[session_id] = project_data
                 # Populate cache so future loads skip the DB round-trip
                 self._session_projects_cache[session_id] = project_data

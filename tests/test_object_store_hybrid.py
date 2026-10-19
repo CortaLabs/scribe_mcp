@@ -42,6 +42,30 @@ class _MockRemote(RemoteProvider):
         self._data.pop(key, None)
 
 
+class TestHybridLifecycle:
+    @pytest.mark.core
+    @pytest.mark.regression
+    @pytest.mark.asyncio
+    async def test_probe_remote_health_returns_none_when_unsupported(
+        self, tmp_path: Path
+    ) -> None:
+        store = HybridStore(local=FilesystemStore(tmp_path), remote=_MockRemote())
+
+        assert await store.probe_remote_health(timeout_seconds=0.1) is None
+
+    @pytest.mark.core
+    @pytest.mark.regression
+    @pytest.mark.asyncio
+    async def test_probe_remote_health_delegates_once(self, tmp_path: Path) -> None:
+        remote = _MockRemote()
+        probe = AsyncMock(return_value=False)
+        remote.probe_health = probe  # type: ignore[attr-defined]
+        store = HybridStore(local=FilesystemStore(tmp_path), remote=remote)
+
+        assert await store.probe_remote_health(timeout_seconds=0.25) is False
+        probe.assert_awaited_once_with(timeout_seconds=0.25)
+
+
 @pytest.fixture
 def hybrid(tmp_path: Path) -> tuple[HybridStore, FilesystemStore, _MockRemote]:
     local = FilesystemStore(tmp_path)

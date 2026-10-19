@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from scribe_mcp.storage.models import (
+    SessionBindingRecordV2,
     BenchmarkRecord,
     DevPlanRecord,
     PerformanceMetricsRecord,
@@ -205,7 +206,7 @@ class SQLiteDomainFacadeMixin:
             project_name=project_name,
         )
 
-    async def get_session_project(self, session_id: str) -> Optional[str]:
+    async def get_session_project(self, session_id: str) -> Optional[SessionBindingRecordV2]:
         return await session_ops.get_session_project(
             initialise_fn=self._initialise,
             fetchone_fn=self._fetchone,

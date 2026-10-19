@@ -69,6 +69,7 @@ async def reminder_engine(storage):
 
 
 # Test 1: DB Mode Performance Benchmark
+@pytest.mark.performance
 @pytest.mark.asyncio
 async def test_db_mode_performance_benchmark():
     """

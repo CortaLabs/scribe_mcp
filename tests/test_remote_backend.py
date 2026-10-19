@@ -160,11 +160,27 @@ class TestSessionMethods:
         assert await backend.get_session_mode("s1") == "client"
 
     @pytest.mark.asyncio
-    async def test_session_project_get_set(self, backend: RemoteStorageBackend) -> None:
-        """set/get_session_project roundtrips correctly."""
-        assert await backend.get_session_project("s1") is None
-        await backend.set_session_project("s1", "my_project")
-        assert await backend.get_session_project("s1") == "my_project"
+    async def test_session_project_get_set(self, auth_live_backend: RemoteStorageBackend) -> None:
+        """set/get_session_project delegates to authenticated durable transport."""
+        record = {
+            "caller_session_key_hash": "ab" * 32,
+            "project_key": "project-key",
+            "project_name": "my_project",
+            "canonical_repo_root": "/repo",
+            "binding_generation": 1,
+            "updated_at": "2026-10-18T12:00:00+00:00",
+        }
+        auth_live_backend._client.post = AsyncMock(side_effect=[
+            _make_response({"result": None}),
+            _make_response({"result": record}),
+            _make_response({"result": record}),
+        ])
+        assert await auth_live_backend.get_session_project("s1") is None
+        written = await auth_live_backend.set_session_project("s1", "project-key")
+        fetched = await auth_live_backend.get_session_project("s1")
+        assert written.project_name == "my_project"
+        assert fetched == written
+        assert auth_live_backend._client.post.await_count == 3
 
     @pytest.mark.asyncio
     async def test_agent_project_version_control(self, backend: RemoteStorageBackend) -> None:
@@ -370,7 +386,6 @@ class TestSessionMethods:
         # All these should work without HTTP:
         await backend.upsert_session(session_id="s1")
         await backend.set_session_mode("s1", "client")
-        await backend.set_session_project("s1", "proj")
         await backend.upsert_agent_session("a1", "s2", None)
         await backend.heartbeat_session("s2")
         await backend.end_session("s2")

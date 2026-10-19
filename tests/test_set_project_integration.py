@@ -195,16 +195,17 @@ async def test_set_project_ordinary_mode_does_not_request_bootstrap_recovery(mon
         # The hardened repo-authority gate requires the root to be a discoverable
         # local repository root.  Create a minimal .git so the temp dir passes.
         (Path(temp_dir) / ".git").mkdir()
+        project_name = f"set_project_ordinary_mode_proof_{Path(temp_dir).name}"
         result = await set_project_tool.set_project(
             agent="BugHunterAgent-set-project-proof",
-            name="set_project_ordinary_mode_proof",
+            name=project_name,
             root=temp_dir,
             skip_validation=True,
             format="structured",
         )
 
     assert result["ok"] is True
-    assert result["project"]["name"] == "set_project_ordinary_mode_proof"
+    assert result["project"]["name"] == project_name
     assert recovery_mode_calls
     assert all(mode in {None, "", "none"} for mode in recovery_mode_calls)
 
@@ -285,7 +286,16 @@ async def test_set_project_reports_authoritative_session_id(monkeypatch):
     assert result["scope_resolution"]["source"] == result["side_effects"]["scope_resolution_source"]
     assert result["scope_resolution"]["authoritative_session_id"] == authoritative_session_id
     assert result["scope_resolution"]["global_mirror_performed"] is False
-    assert persisted_project == "set_project_authoritative_session_proof"
+    from hashlib import sha256
+    from scribe_mcp.storage.models import SessionBindingRecordV2
+
+    assert isinstance(persisted_project, SessionBindingRecordV2)
+    assert persisted_project.project_name == "set_project_authoritative_session_proof"
+    assert persisted_project.project_key
+    assert persisted_project.canonical_repo_root == str(Path(temp_dir).resolve())
+    assert persisted_project.caller_session_key_hash == sha256(authoritative_session_id.encode()).hexdigest()
+    assert persisted_project.binding_generation == 1
+    assert persisted_project.updated_at.tzinfo is not None
 
 
 @pytest.mark.asyncio
@@ -301,7 +311,17 @@ async def test_state_manager_same_repo_writes_do_not_global_fallback():
             self.session_projects[str(session_id)] = project_name
 
         async def get_session_project(self, session_id):
-            return self.session_projects.get(str(session_id))
+            from datetime import datetime, timezone
+            from hashlib import sha256
+            from scribe_mcp.storage.models import SessionBindingRecordV2
+
+            name = self.session_projects.get(str(session_id))
+            if name is None:
+                return None
+            return SessionBindingRecordV2(
+                sha256(str(session_id).encode()).hexdigest(), name, name,
+                temp_dir, 1, datetime.now(timezone.utc),
+            )
 
         async def upsert_agent_recent_project(self, agent_id, project_name):
             return {"agent_id": agent_id, "project_name": project_name}

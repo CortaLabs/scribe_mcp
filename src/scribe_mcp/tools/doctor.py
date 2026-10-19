@@ -163,6 +163,7 @@ async def _active_project_authority_snapshot(
     repo_root_provenance = getattr(provenance, "repo_root", None) if provenance else None
     project_name_provenance = getattr(provenance, "project_name", None) if provenance else None
 
+    binding = None
     bound_project_name = None
     if (
         authoritative_session_key
@@ -170,7 +171,8 @@ async def _active_project_authority_snapshot(
         and hasattr(storage_backend, "get_session_project")
     ):
         try:
-            bound_project_name = await storage_backend.get_session_project(str(authoritative_session_key))
+            binding = await storage_backend.get_session_project(str(authoritative_session_key))
+            bound_project_name = binding.project_name if binding else None
         except Exception:
             bound_project_name = None
     project_name = bound_project_name or resolved_project_name
@@ -185,6 +187,7 @@ async def _active_project_authority_snapshot(
             project_record = await storage_backend.fetch_project(
                 str(project_name),
                 repo_root=str(resolved_repo_root) if resolved_repo_root else None,
+                project_key=binding.project_key if binding else None,
             )
         except TypeError:
             project_record = await storage_backend.fetch_project(str(project_name))
@@ -208,6 +211,8 @@ async def _active_project_authority_snapshot(
         "authoritative_session_key": authoritative_session_key,
         "repo_root": str(resolved_repo_root) if resolved_repo_root else None,
         "project_name": str(project_name) if project_name else None,
+        "binding_generation": binding.binding_generation if binding else None,
+        "caller_session_key_hash": binding.caller_session_key_hash if binding else None,
         "project_key": getattr(project_record, "project_key", None) if project_record else None,
         "repo_id": getattr(project_record, "repo_id", None) if project_record else None,
         "provenance": {

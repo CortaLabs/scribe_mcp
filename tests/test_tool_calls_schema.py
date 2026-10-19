@@ -13,14 +13,14 @@ from scribe_mcp.storage.sqlite import SQLiteStorage
 pytestmark = pytest.mark.asyncio
 
 
-async def test_schema_creation():
+async def test_schema_creation(tmp_path: Path):
     """Test that tool_calls table and indexes are created."""
     print("=" * 60)
     print("TEST 1: Schema Creation")
     print("=" * 60)
 
     # Create temporary database
-    test_db = Path("/tmp/test_tool_calls.db")
+    test_db = tmp_path / "test_tool_calls.db"
     if test_db.exists():
         test_db.unlink()
 
@@ -85,13 +85,13 @@ async def test_schema_creation():
     return
 
 
-async def test_record_tool_call():
+async def test_record_tool_call(tmp_path: Path):
     """Test record_tool_call method."""
     print("\n" + "=" * 60)
     print("TEST 2: record_tool_call() Method")
     print("=" * 60)
 
-    test_db = Path("/tmp/test_tool_calls.db")
+    test_db = tmp_path / "test_tool_calls.db"
     storage = SQLiteStorage(test_db)
     await storage.setup()
 
@@ -204,13 +204,13 @@ async def test_legacy_tool_calls_schema_is_upgraded(tmp_path: Path):
     assert row["measurement_scope"] == "tool_only"
 
 
-async def test_get_session_tool_calls():
+async def test_get_session_tool_calls(tmp_path: Path):
     """Test get_session_tool_calls method."""
     print("\n" + "=" * 60)
     print("TEST 3: get_session_tool_calls() Method")
     print("=" * 60)
 
-    test_db = Path("/tmp/test_tool_calls.db")
+    test_db = tmp_path / "test_tool_calls.db"
     storage = SQLiteStorage(test_db)
     await storage.setup()
 
@@ -247,13 +247,13 @@ async def test_get_session_tool_calls():
         pytest.fail("tool_calls schema behavior validation failed")
 
 
-async def test_get_tool_metrics():
+async def test_get_tool_metrics(tmp_path: Path):
     """Test get_tool_metrics method."""
     print("\n" + "=" * 60)
     print("TEST 4: get_tool_metrics() Method")
     print("=" * 60)
 
-    test_db = Path("/tmp/test_tool_calls.db")
+    test_db = tmp_path / "test_tool_calls.db"
     storage = SQLiteStorage(test_db)
     await storage.setup()
 
@@ -276,13 +276,13 @@ async def test_get_tool_metrics():
     return
 
 
-async def test_cascade_delete():
+async def test_cascade_delete(tmp_path: Path):
     """Test that tool_calls are deleted when session is deleted."""
     print("\n" + "=" * 60)
     print("TEST 5: Cascade Delete (FK Constraint)")
     print("=" * 60)
 
-    test_db = Path("/tmp/test_tool_calls.db")
+    test_db = tmp_path / "test_tool_calls.db"
     storage = SQLiteStorage(test_db)
     await storage.setup()
 

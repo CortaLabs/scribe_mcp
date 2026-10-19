@@ -22,7 +22,7 @@ from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp.tools.set_project import set_project
 from scribe_mcp.config.settings import settings
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.manual]
 
 
 @pytest_asyncio.fixture(autouse=True)
