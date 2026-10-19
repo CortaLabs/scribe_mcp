@@ -45,11 +45,11 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Current release: `scribe-mcp 2.15.0` · Released: `2026-10-18`
+Current release: `scribe-mcp 2.15.1` · Released: `2026-10-19`
 
 The `2.15.0` development line makes the tracked `skills/` directory the source for the two shipped onboarding and integration guides. Plugin synchronization validates all source and destination paths before writing, copies complete skill assets, and supports a read-only consistency check. Claude and Codex plugin bundles include generic MCP configuration using `scribe-server`. Private host configuration and generated agent content are excluded from these public bundles.
 
-`2.15.0` is the current stable release. It hardens project-binding recovery across reconnects, improves durable storage and object-store behavior, restores exact managed-document fidelity, and reduces the default test lane from tens of minutes to a bounded parallel run.
+`2.15.1` keeps PostgreSQL binding classification available while another server starts, preventing a transient registration failure during trigger replacement. It also stabilizes the release compatibility checks. The `2.15.0` release introduced project-binding recovery across reconnects, durable storage and object-store improvements, managed-document fidelity fixes, and a bounded parallel default test lane.
 
 The previous `2.14.0` release preserved the `2.13.2` fixes for canonical nested-path resolution after same-project rehome and special-review `create` dry-run MCP content shape, plus the `2.13.1` SDK v2 agent-project selection-version contract required for safe optimistic-concurrency recovery. Eligible successful mutation dry-runs automatically expose a compact `apply` affordance for `apply_preview`; apply uses an opaque, durable, cross-backend receipt lifecycle with exactly-once, fail-closed behavior. Receipt-based rehome executes against immutable composite authority, registry, index, file, mode, and path state and safely recovers recognized partial states. SDK and wire versions remain different contracts: Scribe supports the installed compatible MCP SDK `2.1.1` within `mcp>=2.0.0,<3.0`, while the modern wire default is protocol revision `2026-07-28`.
 

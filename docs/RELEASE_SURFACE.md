@@ -1,7 +1,15 @@
 # Release Surface
 
-Baseline date: **2026-06-16**
-Applies to: **v2.7.1 public release line**
+Updated: **2026-10-19**
+Applies to: **v2.15.1 public release line**
+
+## Patch release notes
+
+Version 2.15.1 replaces the PostgreSQL session-binding classifier trigger in one
+atomic batch. Concurrent binding writers retain canonical project classification
+through startup, including databases upgraded from the legacy binding schema.
+Release checks also handle normal TCP cleanup after a legacy SSE server stops
+and use explicit synthetic credential fixtures.
 
 ## Public contract
 
@@ -29,7 +37,7 @@ Public docs must keep these runtime truths aligned with current source:
 - Managed-doc hygiene behavior is public release truth: scaffold-aware `quality_check`, grouped `project_health` signals, project-local managed-doc preflight archives, centralized `edit_file` backups, canonical research artifact naming, and stale index-backup cleanup.
 - Changelog/version memory behavior is public release truth: project `CHANGELOG.md` is curated source, `.scribe/docs/GLOBAL_CHANGELOG.md` is derived by preview/apply reconciliation, version context is advisory observed evidence, and malformed changelog escaped-newline content is a blocking quality failure.
 - Missing current-version changelog coverage is a blocking warning (`SCF_CHANGELOG_CURRENT_VERSION_MISSING`) surfaced by `quality_check`, reminders, and `project_health` quality digests.
-- v2.7.1 keeps the fail-closed provenance guard for changelog/global reconciliation, deterministic document topology, metadata scan/repair, quality handoff gates, agent-ready quality-check summaries/actions, bulk managed-doc checks, sanitized downstream export manifests, and governed case-registry closeout for resolved fixes.
+- The public release line retains the fail-closed provenance guard for changelog/global reconciliation, deterministic document topology, metadata scan/repair, quality handoff gates, agent-ready quality-check summaries/actions, bulk managed-doc checks, sanitized downstream export manifests, and governed case-registry closeout for resolved fixes.
 - Fast same-binding `set_project` reuse, queryable runtime telemetry, append-entry phase timing, physical/logical reconciliation diagnostics, JSON probe output, same-server root comparison, clean success-path timing logs, and background telemetry drain behavior are public runtime truth for this release line.
 - Bug/security case reports are governed repo-root documents; `open_bug`/`open_security` expose follow-up handles and `manage_docs` resolves those reports without dev-plan name guessing.
 - Scribe-owned write barriers, owner-only Postgres backup/restore custody, sparse `read_recent` progress-log supplementation, and remote blocking for local operator-only tools are public runtime safety behavior.
@@ -51,6 +59,8 @@ If a path is workstation-specific or runtime-generated, it is not public guidanc
 Public docs should describe only shipped plugin/bridge surfaces:
 
 - Core runtime/plugin framework in `src/scribe_mcp/bridges/**`
+- Tracked onboarding and integration guides in `skills/**`
+- Generic Claude and Codex plugin bundles in `.claude-plugin/` and `.codex-plugin/`
 
 Do not present local manifests, local bridge config, unpromoted generated outputs, or local operator adapters as shipped public surface.
 
