@@ -1,9 +1,12 @@
 # Release Surface
 
 Updated: **2026-10-19**
-Applies to: **v2.15.2 public release line**
+Applies to: **v2.15.3 public release line**
 
 ## Patch release notes
+
+Version 2.15.3 replaces a workstation-specific checkout path in the isolated
+validation runbook with a portable placeholder.
 
 Version 2.15.2 reduces repository dependency-scan work. Excluded build and cache
 directories are pruned before traversal, and import extraction visits AST
