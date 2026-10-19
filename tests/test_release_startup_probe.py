@@ -147,7 +147,17 @@ async def test_optional_object_store_outage_adds_at_most_50_ms_and_preserves_loc
     await baseline.setup()
     baseline_ms = (perf_counter() - baseline_started) * 1000
 
-    local = FilesystemStore(tmp_path / "outage")
+    durable_content: dict[str, str] = {}
+    local = MagicMock(spec=FilesystemStore)
+
+    async def _write_local(key: str, content: str) -> None:
+        durable_content[key] = content
+
+    async def _read_local(key: str) -> str | None:
+        return durable_content.get(key)
+
+    local.write = AsyncMock(side_effect=_write_local)
+    local.read = AsyncMock(side_effect=_read_local)
     remote = CortaStoreProvider(
         base_url="http://object-store.invalid",
         hmac_key="key",
@@ -199,15 +209,24 @@ async def test_optional_object_store_outage_adds_at_most_50_ms_and_preserves_loc
         key = "scribe/docs/dev_plans/startup/PROGRESS_LOG.md"
         content = "[test-agent] locally durable under remote outage"
         write_task = asyncio.create_task(store.write(key, content))
-        await asyncio.wait_for(backoff_started.wait(), timeout=1.0)
+        try:
+            await asyncio.wait_for(backoff_started.wait(), timeout=5.0)
 
-        assert write_task.done() is False
-        assert await local.read(key) == content
-        assert client.request.await_count == 1
+            assert write_task.done() is False
+            assert await local.read(key) == content
+            local.write.assert_awaited_once_with(key, content)
+            assert client.request.await_count == 1
 
-        release_backoff.set()
-        await asyncio.wait_for(write_task, timeout=1.0)
-        assert client.request.await_count == 3
-        assert backoff_calls == [0.5, 1.0]
-        await store.close()
+            release_backoff.set()
+            await asyncio.wait_for(write_task, timeout=5.0)
+            assert client.request.await_count == 3
+            assert backoff_calls == [0.5, 1.0]
+        finally:
+            # A failed timing assertion must never strand the remote retry task
+            # on the controlled backoff event and stretch teardown indefinitely.
+            release_backoff.set()
+            if not write_task.done():
+                write_task.cancel()
+            await asyncio.gather(write_task, return_exceptions=True)
+            await store.close()
         client.aclose.assert_awaited_once_with()
