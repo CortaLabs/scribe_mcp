@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -17,7 +18,19 @@ from scribe_mcp.shared import logging_utils as logging_utils_module
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext, resolve_logging_context
 from scribe_mcp.state.manager import StateManager
+from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.tools import set_project as set_project_tool
+
+
+def _binding(project_name: str, repo_root: str, project_key: str | None = None) -> SessionBindingRecordV2:
+    return SessionBindingRecordV2(
+        caller_session_key_hash="ab" * 32,
+        project_key=project_key or f"key-{project_name}",
+        project_name=project_name,
+        canonical_repo_root=repo_root,
+        binding_generation=1,
+        updated_at=datetime.now(timezone.utc),
+    )
 
 
 class _ScopedBackend:
@@ -141,9 +154,15 @@ class _BindingBackend:
 
 class _ExplicitOverrideBackend:
     async def get_session_project(self, _session_id: str):
-        return "trusted-project"
+        return _binding("trusted-project", "/tmp/trusted-project")
 
-    async def fetch_project(self, name: str, *, repo_root: str | None = None):
+    async def fetch_project(
+        self,
+        name: str,
+        *,
+        repo_root: str | None = None,
+        project_key: str | None = None,
+    ):
         if name == "trusted-project":
             return SimpleNamespace(
                 name="trusted-project",
@@ -189,20 +208,27 @@ class _DuplicateProjectNameBackend:
         self.fetch_calls: list[tuple[str, str | None]] = []
 
     async def get_session_project(self, _session_id: str):
-        return "shared-project"
+        return _binding("shared-project", self.trusted_root, "key-shared-trusted")
 
-    async def fetch_project(self, name: str, *, repo_root: str | None = None):
-        self.fetch_calls.append((name, repo_root))
+    async def fetch_project(
+        self,
+        name: str,
+        *,
+        repo_root: str | None = None,
+        project_key: str | None = None,
+    ):
+        effective_root = self.trusted_root if project_key == "key-shared-trusted" else repo_root
+        self.fetch_calls.append((name, effective_root))
         if name != "shared-project":
             return None
-        if repo_root == self.trusted_root:
+        if effective_root == self.trusted_root:
             return SimpleNamespace(
                 name="shared-project",
                 repo_root=self.trusted_root,
                 progress_log_path=f"{self.trusted_root}/PROGRESS_LOG.md",
                 docs_json=None,
             )
-        if repo_root == self.other_root:
+        if effective_root == self.other_root:
             return SimpleNamespace(
                 name="shared-project",
                 repo_root=self.other_root,

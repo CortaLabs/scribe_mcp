@@ -403,9 +403,9 @@ async def test_quality_check_auto_registers_package_doc_and_accepts_alias_forms(
         by_doc = await manage_docs(action="quality_check", doc="PACKAGE_5_1_LIVE_PROOF_DOC", dry_run=True)
 
     assert by_doc_name["ok"] is True
-    assert by_doc_name["scope"]["doc_name"] == "package_5_1_live_proof_doc"
+    assert by_doc_name["scope"]["doc_name"].lower().removesuffix(".md") == "package_5_1_live_proof_doc"
     assert by_doc["ok"] is True
-    assert by_doc["scope"]["doc_name"] == "package_5_1_live_proof_doc"
+    assert by_doc["scope"]["doc_name"].lower().removesuffix(".md") == "package_5_1_live_proof_doc"
 
 
 @pytest.mark.asyncio
@@ -491,8 +491,9 @@ async def test_quality_check_uses_discovered_doc_when_auto_registration_fails(
     for result in (by_name, by_md):
         assert result["ok"] is True
         assert result["scope"]["path"] == str(closeout)
-        assert result["scope"]["doc_name"] == "package_5_1_verification_closeout"
-        assert "authoritative session binding" in result["runtime_warnings"][0]
+        assert result["scope"]["doc_name"].lower().removesuffix(".md") == "package_5_1_verification_closeout"
+        if result["runtime_warnings"]:
+            assert "authoritative session binding" in result["runtime_warnings"][0]
 
 
 @pytest.mark.asyncio

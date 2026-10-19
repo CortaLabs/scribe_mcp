@@ -58,9 +58,13 @@ def _resolve_reminder_storage() -> Optional[Any]:
         from scribe_mcp.config.mode_detection import OperatingMode, resolve_configured_mode
         from scribe_mcp.config.settings import settings
 
-        mode = resolve_configured_mode(settings)
         backend_name = str(getattr(settings, "storage_backend", "")).strip().lower()
-        if mode != OperatingMode.STANDALONE or backend_name != "sqlite":
+        configured_mode = str(getattr(settings, "mode", "") or "").strip().lower()
+        if configured_mode:
+            standalone = configured_mode == OperatingMode.STANDALONE.value
+        else:
+            standalone = resolve_configured_mode(settings) == OperatingMode.STANDALONE
+        if not standalone or backend_name != "sqlite":
             return None
     except Exception:
         return None

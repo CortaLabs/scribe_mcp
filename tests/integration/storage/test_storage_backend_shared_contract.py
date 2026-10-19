@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.storage.postgres import PostgresStorage
 from scribe_mcp.storage.sqlite import SQLiteStorage
 
@@ -150,7 +152,17 @@ async def test_session_transport_mode_project_and_scoped_reuse_contract(backend,
     assert looked_up["session_id"] == stable_session_id
     assert looked_up["repo_root"] == str(tmp_path)
     assert await storage.get_session_mode(stable_session_id) == "project"
-    assert await storage.get_session_project(stable_session_id) == project_name
+    binding = await storage.get_session_project(stable_session_id)
+    assert isinstance(binding, SessionBindingRecordV2)
+    assert binding.project_name == project_name
+    assert binding.project_key
+    assert binding.canonical_repo_root == str(tmp_path.resolve())
+    assert binding.caller_session_key_hash == hashlib.sha256(stable_session_id.encode()).hexdigest()
+    assert binding.binding_generation == 1
+    assert binding.updated_at.tzinfo is not None
+    assert await storage.get_session_project(stable_session_id) == binding
+    await storage.set_session_project(stable_session_id, None)
+    assert await storage.get_session_project(stable_session_id) is None
 
     identity = f"id-{uuid.uuid4().hex[:8]}"
     first = await storage.get_or_create_agent_session(

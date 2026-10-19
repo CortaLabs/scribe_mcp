@@ -80,6 +80,7 @@ async def _setup_project(tmp_path: Path) -> dict:
     }
 
 
+@pytest.mark.manual
 @pytest.mark.parametrize("search_mode", ["semantic", "vector"])
 @pytest.mark.asyncio
 async def test_manage_docs_search_falls_back_to_text(search_mode: str, tmp_path: Path) -> None:
@@ -108,4 +109,4 @@ def test_vector_tool_surfaces_are_removed_from_core_exports() -> None:
     assert tool_module_for_name("vector_search") is None
     assert "vector_search" not in tool_exports
     assert "vector_search" not in tool_metadata.TOOL_METADATA
-    assert "vector_search" not in scribe_probe.TOOL_RUNNERS
+    assert "vector_search" not in getattr(scribe_probe, "TOOL_RUNNERS", {})

@@ -35,6 +35,7 @@ async def test_query_entries_performance():
     for i in range(20):
         await append_entry(
             agent="test_agent",
+            project=project_name,
             message=f"Test entry {i}",
             status="info"
         )
@@ -42,6 +43,7 @@ async def test_query_entries_performance():
     # Warm up - first query might be slower due to connection setup
     await query_entries(
         agent="test_agent",
+        project=project_name,
         message="warmup",
         format="structured"
     )
@@ -50,6 +52,7 @@ async def test_query_entries_performance():
     start_time = time.time()
     result = await query_entries(
         agent="test_agent",
+        project=project_name,
         message="Test entry",
         message_mode="substring",
         format="structured"

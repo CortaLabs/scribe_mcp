@@ -2,6 +2,7 @@
 """Integration tests for get_project context hydration."""
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 import tempfile
@@ -10,6 +11,18 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from scribe_mcp.tools.get_project import _read_recent_progress_entries, _gather_doc_info, get_project
 from scribe_mcp.shared.logging_utils import LoggingContext
+from scribe_mcp.storage.models import SessionBindingRecordV2
+
+
+def _binding(project_name: str = "demo") -> SessionBindingRecordV2:
+    return SessionBindingRecordV2(
+        caller_session_key_hash="ab" * 32,
+        project_key=f"{project_name}-key",
+        project_name=project_name,
+        canonical_repo_root=f"/tmp/{project_name}",
+        binding_generation=1,
+        updated_at=datetime.now(timezone.utc),
+    )
 
 
 @pytest.fixture
@@ -379,7 +392,7 @@ class TestGetProjectIntegration:
         monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
         monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
         monkeypatch.setattr(
-            "scribe_mcp.tools.get_project.load_active_project",
+            "scribe_mcp.tools.project_utils.load_active_project",
             AsyncMock(side_effect=AssertionError("hidden fallback should not run")),
         )
 
@@ -407,7 +420,7 @@ class TestGetProjectIntegration:
         monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
         monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
         monkeypatch.setattr(
-            "scribe_mcp.tools.get_project.load_active_project",
+            "scribe_mcp.tools.project_utils.load_active_project",
             AsyncMock(
                 return_value=(
                     {"name": "demo", "root": "/tmp/demo", "progress_log": "/tmp/demo/PROGRESS_LOG.md", "docs": {}},
@@ -426,7 +439,7 @@ class TestGetProjectIntegration:
 
         assert result["ok"] is True
         assert result["project"]["name"] == "demo"
-        assert result["resolution_source"] == "unresolved"
+        assert result["resolution_source"] == "compat_active_project"
         assert result["fallback_used"] is True
         assert "compat_active_project" in result["fallback_chain"]
         assert "recovery chain" in result["resolution_summary"].lower()
@@ -439,7 +452,7 @@ class TestGetProjectIntegration:
         state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project="demo")
 
         storage_backend = Mock()
-        storage_backend.get_session_project = AsyncMock(return_value="demo")
+        storage_backend.get_session_project = AsyncMock(return_value=_binding())
         storage_backend.fetch_project = AsyncMock(
             return_value=SimpleNamespace(
                 name="demo",
@@ -464,7 +477,7 @@ class TestGetProjectIntegration:
         monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
         monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
         monkeypatch.setattr(
-            "scribe_mcp.tools.get_project.load_active_project",
+            "scribe_mcp.tools.project_utils.load_active_project",
             AsyncMock(side_effect=AssertionError("compat fallback must not run in ordinary mode")),
         )
         monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
@@ -493,7 +506,7 @@ class TestGetProjectIntegration:
         state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project="demo")
 
         storage_backend = Mock()
-        storage_backend.get_session_project = AsyncMock(side_effect=[None, "demo"])
+        storage_backend.get_session_project = AsyncMock(side_effect=[None, _binding()])
         storage_backend.fetch_project = AsyncMock(
             return_value=SimpleNamespace(
                 name="demo",
@@ -518,7 +531,7 @@ class TestGetProjectIntegration:
         monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
         monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
         monkeypatch.setattr(
-            "scribe_mcp.tools.get_project.load_active_project",
+            "scribe_mcp.tools.project_utils.load_active_project",
             AsyncMock(side_effect=AssertionError("compat fallback must not run in ordinary mode")),
         )
         monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
@@ -548,7 +561,7 @@ class TestGetProjectIntegration:
         state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project="demo")
 
         storage_backend = Mock()
-        storage_backend.get_session_project = AsyncMock(return_value="demo")
+        storage_backend.get_session_project = AsyncMock(return_value=_binding())
         storage_backend.fetch_project = AsyncMock(
             return_value=SimpleNamespace(
                 name="demo",
@@ -573,7 +586,7 @@ class TestGetProjectIntegration:
         monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
         monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
         monkeypatch.setattr(
-            "scribe_mcp.tools.get_project.load_active_project",
+            "scribe_mcp.tools.project_utils.load_active_project",
             AsyncMock(side_effect=AssertionError("compat fallback must not run when session binding resolves")),
         )
         monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
@@ -609,7 +622,7 @@ class TestGetProjectIntegration:
         monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
         monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
         monkeypatch.setattr(
-            "scribe_mcp.tools.get_project.load_active_project",
+            "scribe_mcp.tools.project_utils.load_active_project",
             AsyncMock(
                 return_value=(
                     {"name": "demo", "root": "/tmp/demo", "progress_log": "/tmp/demo/PROGRESS_LOG.md", "docs": {}},
@@ -633,7 +646,7 @@ class TestGetProjectIntegration:
 
         assert result["ok"] is True
         assert result["project"]["name"] == "demo"
-        assert result["resolution_source"] == "unresolved"
+        assert result["resolution_source"] == "compat_active_project"
         assert result["fallback_used"] is True
         assert "compat_active_project" in result["fallback_chain"]
         assert "recovery chain" in result["resolution_summary"].lower()

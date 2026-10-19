@@ -293,7 +293,9 @@ class BridgeRegistry:
             List of paths to manifest files
         """
         if not self._config_dir.exists():
-            logger.warning(f"Bridge config directory does not exist: {self._config_dir}")
+            # Bridges are optional; a repo without any manifest directory is the
+            # ordinary case, not a fault worth a WARNING on every startup.
+            logger.debug(f"Bridge config directory does not exist: {self._config_dir}")
             return []
 
         manifests = []

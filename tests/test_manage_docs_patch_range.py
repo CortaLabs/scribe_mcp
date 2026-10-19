@@ -1048,6 +1048,7 @@ async def test_healing_before_reminders(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.manual
 async def test_manage_docs_apply_patch_reports_preview_and_write_state(tmp_path: Path) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")

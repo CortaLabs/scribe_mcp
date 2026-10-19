@@ -120,6 +120,11 @@ async def test_auto_registration_visibility_production_flow(tmp_path):
     )
 
     # Store session project mapping
+    await backend.upsert_session(
+        session_id="test_session_123",
+        repo_root=str(repo_root),
+        mode="project",
+    )
     await backend.set_session_project("test_session_123", project_name)
 
     # Mock server module with backend

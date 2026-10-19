@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import scribe_mcp.tools.doctor as doctor_module
+from scribe_mcp.storage.models import SessionBindingRecordV2
 
 
 class _FakeBackend:
     async def get_session_project(self, session_id: str):
         if session_id == "stable-1":
-            return "demo"
+            return SessionBindingRecordV2(hashlib.sha256(session_id.encode()).hexdigest(), "pk-1", "demo", "/repo/demo", 4, datetime.now(timezone.utc))
         return None
 
-    async def fetch_project(self, name: str, repo_root: str | None = None):
+    async def fetch_project(self, name: str, repo_root: str | None = None, project_key: str | None = None):
         if name != "demo":
             return None
         return SimpleNamespace(name="demo", repo_id="repo-1", project_key="pk-1")
@@ -197,3 +200,16 @@ async def test_scribe_doctor_labels_bridge_runtime_plugin_warning_as_deferred_hy
     assert hygiene["status"] == "deferred_hygiene"
     assert hygiene["deferred_non_blocking"][0]["blocking"] is False
     assert hygiene["deferred_non_blocking"][0]["code"] == "BRIDGE_RUNTIME_PLUGIN_DEFERRED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_doctor_reads_structured_binding_without_context_project():
+    backend = _FakeBackend()
+    snapshot = await doctor_module._active_project_authority_snapshot(
+        storage_backend=backend,
+        runtime_exec_context=SimpleNamespace(authoritative_session_key="stable-1"),
+    )
+    assert snapshot["project_name"] == "demo"
+    assert snapshot["project_key"] == "pk-1"
+    assert snapshot["binding_generation"] == 4

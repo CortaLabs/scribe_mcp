@@ -20,6 +20,12 @@ from scribe_mcp.tools.append_entry import (
     _validate_comparison_symbols_in_meta,
     _normalise_meta,
 )
+from scribe_mcp.tools.manage_docs_validation import (
+    ParameterValidationError,
+    _validate_comparison_symbols,
+    _validate_inputs,
+    create_manage_docs_validator,
+)
 from scribe_mcp.utils.parameter_validator import (
     ToolValidator,
     BulletproofParameterCorrector,

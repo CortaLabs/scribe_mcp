@@ -68,7 +68,8 @@ async def test_migrate_legacy_state_file_moves_payload_into_db(tmp_path: Path) -
     assert agent_project["project_name"] == "proj_alpha"
 
     session_project = await backend.get_session_project("session-1")
-    assert session_project == "proj_alpha"
+    assert session_project is not None
+    assert session_project.project_name == "proj_alpha"
 
     session_mode = await backend.get_session_mode("session-1")
     assert session_mode == "project"

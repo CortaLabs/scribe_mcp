@@ -3,11 +3,13 @@
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS scribe_migrations (
     name TEXT PRIMARY KEY,
     completed_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS apply_preview_receipts (
     token_sha256 TEXT PRIMARY KEY
         CHECK (token_sha256 ~ '^[0-9a-f]{64}$'),
@@ -81,12 +83,15 @@ CREATE TABLE IF NOT EXISTS apply_preview_receipts (
     )
 );
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_expires_at
     ON apply_preview_receipts (expires_at);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_apply_preview_receipts_state_lease
     ON apply_preview_receipts (state, apply_lease_expires_at);
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS scribe_projects (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -113,6 +118,7 @@ CREATE TABLE IF NOT EXISTS scribe_projects (
 );
 
 -- Legacy document/log tables retained for SQLite parity and future object-store extension.
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     project_id TEXT,
@@ -126,6 +132,7 @@ CREATE TABLE IF NOT EXISTS documents (
     metadata JSONB
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS document_relationships (
     id TEXT PRIMARY KEY,
     source_doc_id TEXT NOT NULL,
@@ -135,6 +142,7 @@ CREATE TABLE IF NOT EXISTS document_relationships (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS global_log_entries (
     id TEXT PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -146,6 +154,7 @@ CREATE TABLE IF NOT EXISTS global_log_entries (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS scribe_entries (
     id TEXT PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -165,6 +174,7 @@ CREATE TABLE IF NOT EXISTS scribe_entries (
     confidence REAL DEFAULT 1.0
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS scribe_metrics (
     project_id INTEGER PRIMARY KEY REFERENCES scribe_projects(id) ON DELETE CASCADE,
     total_entries INTEGER NOT NULL DEFAULT 0,
@@ -174,6 +184,7 @@ CREATE TABLE IF NOT EXISTS scribe_metrics (
     last_update TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS agent_sessions (
     session_id TEXT PRIMARY KEY,
     identity_key TEXT UNIQUE NOT NULL,
@@ -190,6 +201,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     last_activity_at TIMESTAMPTZ
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS agent_projects (
     agent_id TEXT PRIMARY KEY,
     project_name TEXT,
@@ -199,6 +211,7 @@ CREATE TABLE IF NOT EXISTS agent_projects (
     session_id TEXT
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS agent_project_events (
     id SERIAL PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -216,6 +229,7 @@ CREATE TABLE IF NOT EXISTS agent_project_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS scribe_sessions (
     session_id TEXT PRIMARY KEY,
     transport_session_id TEXT,
@@ -226,12 +240,278 @@ CREATE TABLE IF NOT EXISTS scribe_sessions (
     last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS session_projects (
     session_id TEXT PRIMARY KEY REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
     project_name TEXT,
+    project_key TEXT
+        CHECK (BTRIM(project_key) <> ''),
+    binding_generation BIGINT NOT NULL DEFAULT 1
+        CHECK (binding_generation >= 1),
+    binding_state TEXT NOT NULL DEFAULT 'unresolved',
+    binding_state_reason TEXT,
+    CHECK (
+        (
+            binding_state = 'resolved'
+            AND project_key IS NOT NULL
+            AND binding_state_reason IS NULL
+        )
+        OR (
+            binding_state = 'unresolved'
+            AND project_key IS NULL
+            AND BTRIM(COALESCE(binding_state_reason, '')) <> ''
+        )
+    ),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Keep fresh initialization aligned with migration 007's C-05 authority rule.
+-- scribe:statement-boundary
+CREATE OR REPLACE FUNCTION session_projects_classify_binding()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    session_repo_root TEXT;
+    session_found BOOLEAN;
+    match_count BIGINT;
+    usable_key_count BIGINT;
+    usable_key TEXT;
+    supplied_key TEXT;
+BEGIN
+    supplied_key := NULLIF(BTRIM(NEW.project_key), '');
+
+    IF TG_OP = 'UPDATE' THEN
+        NEW.binding_generation := OLD.binding_generation;
+        IF NEW.binding_generation IS NULL THEN
+            NEW.binding_generation := 1;
+        END IF;
+
+        -- An unchanged key is merely the stored value when a legacy writer
+        -- rebinds by project_name. Derive the new canonical key in that case.
+        IF NEW.project_name IS DISTINCT FROM OLD.project_name
+           AND NEW.project_key IS NOT DISTINCT FROM OLD.project_key THEN
+            supplied_key := NULL;
+        END IF;
+    ELSE
+        NEW.binding_generation := 1;
+    END IF;
+
+    -- Classification always starts unresolved. A caller-supplied key is only
+    -- accepted after it agrees with the canonical project selected by the
+    -- session's repository and project name.
+    NEW.project_key := NULL;
+    NEW.binding_state := 'unresolved';
+
+    SELECT ss.repo_root, TRUE
+    INTO session_repo_root, session_found
+    FROM scribe_sessions AS ss
+    WHERE ss.session_id = NEW.session_id;
+
+    IF NEW.project_name IS NULL THEN
+        NEW.binding_state_reason := 'project_name_absent';
+    ELSIF session_found IS NOT TRUE THEN
+        NEW.binding_state_reason := 'session_missing';
+    ELSE
+        SELECT
+            COUNT(*),
+            COUNT(*) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL),
+            MIN(p.project_key) FILTER (WHERE NULLIF(BTRIM(p.project_key), '') IS NOT NULL)
+        INTO match_count, usable_key_count, usable_key
+        FROM scribe_projects AS p
+        WHERE p.repo_root = session_repo_root
+          AND p.name = NEW.project_name;
+
+        IF match_count = 0 THEN
+            NEW.binding_state_reason := 'project_identity_zero_matches';
+        ELSIF match_count > 1 THEN
+            NEW.binding_state_reason := 'project_identity_ambiguous';
+        ELSIF usable_key_count <> 1 THEN
+            NEW.binding_state_reason := 'project_key_missing';
+        ELSIF supplied_key IS NOT NULL AND supplied_key IS DISTINCT FROM usable_key THEN
+            NEW.binding_state_reason := 'project_key_mismatch';
+        ELSE
+            NEW.project_key := usable_key;
+            NEW.binding_state := 'resolved';
+            NEW.binding_state_reason := NULL;
+        END IF;
+    END IF;
+
+    IF TG_OP = 'UPDATE'
+       AND OLD.binding_state IS NOT NULL
+       AND (
+           NEW.project_name IS DISTINCT FROM OLD.project_name
+           OR NEW.project_key IS DISTINCT FROM OLD.project_key
+           OR NEW.binding_state IS DISTINCT FROM OLD.binding_state
+           OR NEW.binding_state_reason IS DISTINCT FROM OLD.binding_state_reason
+       ) THEN
+        NEW.binding_generation := OLD.binding_generation + 1;
+    END IF;
+
+    RETURN NEW;
+END
+$$;
+
+-- scribe:statement-boundary
+DROP TRIGGER IF EXISTS session_projects_classify_binding ON session_projects;
+-- scribe:statement-boundary
+CREATE TRIGGER session_projects_classify_binding
+    BEFORE INSERT OR UPDATE ON session_projects
+    FOR EACH ROW
+    EXECUTE FUNCTION session_projects_classify_binding();
+
+-- scribe:statement-boundary
+CREATE TABLE IF NOT EXISTS background_receipts (
+    operation_id TEXT PRIMARY KEY
+        CHECK (BTRIM(operation_id) <> ''),
+    canonical_project_key TEXT NOT NULL
+        CHECK (BTRIM(canonical_project_key) <> ''),
+    lane TEXT NOT NULL
+        CHECK (lane IN ('control', 'durable', 'heavy')),
+    idempotency_key TEXT NOT NULL
+        CHECK (BTRIM(idempotency_key) <> ''),
+    payload_digest TEXT NOT NULL
+        CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+    payload_bytes BIGINT NOT NULL
+        CHECK (payload_bytes >= 0),
+    durability_class TEXT NOT NULL
+        CHECK (BTRIM(durability_class) <> ''),
+    state TEXT NOT NULL
+        CHECK (state IN (
+            'accepted',
+            'ready',
+            'leased',
+            'retry_wait',
+            'succeeded',
+            'failed_terminal',
+            'cancelled'
+        )),
+    state_version BIGINT NOT NULL DEFAULT 1
+        CHECK (state_version >= 1),
+    attempt_count BIGINT NOT NULL DEFAULT 0
+        CHECK (attempt_count >= 0),
+    next_attempt_at TIMESTAMPTZ,
+    lease_owner TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    fencing_token BIGINT NOT NULL DEFAULT 0
+        CHECK (fencing_token >= 0),
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    result_ref TEXT,
+    error_code TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (canonical_project_key, idempotency_key),
+    CHECK (updated_at >= created_at),
+    CHECK (attempt_count = fencing_token),
+    CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)),
+    CHECK (lease_owner IS NULL OR BTRIM(lease_owner) <> ''),
+    CHECK (result_ref IS NULL OR BTRIM(result_ref) <> ''),
+    CHECK (error_code IS NULL OR BTRIM(error_code) <> ''),
+    CHECK (
+        (
+            state = 'accepted'
+            AND state_version = 1
+            AND attempt_count = 0
+            AND fencing_token = 0
+            AND cancel_requested = FALSE
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'ready'
+            AND state_version >= 2
+            AND attempt_count = 0
+            AND fencing_token = 0
+            AND cancel_requested = FALSE
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'leased'
+            AND state_version >= 3
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NOT NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'retry_wait'
+            AND state_version >= 4
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NOT NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'succeeded'
+            AND state_version >= 4
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NOT NULL
+            AND error_code IS NULL
+        )
+        OR (
+            state = 'failed_terminal'
+            AND state_version >= 4
+            AND attempt_count >= 1
+            AND fencing_token >= 1
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NOT NULL
+        )
+        OR (
+            state = 'cancelled'
+            AND state_version >= 2
+            AND next_attempt_at IS NULL
+            AND lease_owner IS NULL
+            AND result_ref IS NULL
+            AND error_code IS NULL
+        )
+    )
+);
+
+-- scribe:statement-boundary
+CREATE INDEX IF NOT EXISTS idx_background_receipts_claim
+    ON background_receipts (
+        canonical_project_key,
+        lane,
+        state,
+        next_attempt_at,
+        created_at
+    );
+
+-- scribe:statement-boundary
+CREATE INDEX IF NOT EXISTS idx_background_receipts_state_lease
+    ON background_receipts (state, lease_expires_at);
+
+-- scribe:statement-boundary
+CREATE INDEX IF NOT EXISTS idx_background_receipts_project_state
+    ON background_receipts (canonical_project_key, state)
+    INCLUDE (payload_bytes);
+
+-- scribe:statement-boundary
+CREATE TABLE IF NOT EXISTS scribe_schema_readiness (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE
+        CHECK (singleton),
+    schema_fingerprint TEXT NOT NULL
+        CHECK (schema_fingerprint ~ '^[0-9a-f]{64}$'),
+    migration_version TEXT NOT NULL
+        CHECK (BTRIM(migration_version) <> ''),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS agent_recent_projects (
     agent_id TEXT NOT NULL,
     project_name TEXT NOT NULL,
@@ -239,6 +519,7 @@ CREATE TABLE IF NOT EXISTS agent_recent_projects (
     PRIMARY KEY (agent_id, project_name)
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS doc_changes (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -252,6 +533,7 @@ CREATE TABLE IF NOT EXISTS doc_changes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS document_sections (
     id SERIAL PRIMARY KEY,
     project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -269,6 +551,7 @@ CREATE TABLE IF NOT EXISTS document_sections (
     UNIQUE (project_root, file_path)
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS custom_templates (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -281,6 +564,7 @@ CREATE TABLE IF NOT EXISTS custom_templates (
     UNIQUE (project_id, template_name)
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS document_changes (
     id SERIAL PRIMARY KEY,
     project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -294,6 +578,7 @@ CREATE TABLE IF NOT EXISTS document_changes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS sync_status (
     id SERIAL PRIMARY KEY,
     project_id INTEGER REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -310,6 +595,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
     UNIQUE (project_id, file_path)
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS agent_report_cards (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -324,6 +610,7 @@ CREATE TABLE IF NOT EXISTS agent_report_cards (
     UNIQUE (project_id, file_path)
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS dev_plans (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -337,6 +624,7 @@ CREATE TABLE IF NOT EXISTS dev_plans (
     UNIQUE (project_id, plan_type)
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS phases (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -353,6 +641,7 @@ CREATE TABLE IF NOT EXISTS phases (
     UNIQUE (project_id, phase_number)
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS milestones (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -366,6 +655,7 @@ CREATE TABLE IF NOT EXISTS milestones (
     metadata JSONB
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS benchmarks (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -383,6 +673,7 @@ CREATE TABLE IF NOT EXISTS benchmarks (
     requirement_met BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS checklists (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -399,6 +690,7 @@ CREATE TABLE IF NOT EXISTS checklists (
     metadata JSONB
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS performance_metrics (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES scribe_projects(id) ON DELETE CASCADE,
@@ -412,6 +704,7 @@ CREATE TABLE IF NOT EXISTS performance_metrics (
     metadata JSONB
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS reminder_history (
     id SERIAL PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
@@ -425,6 +718,7 @@ CREATE TABLE IF NOT EXISTS reminder_history (
     context_metadata JSONB
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS tool_calls (
     id SERIAL PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES scribe_sessions(session_id) ON DELETE CASCADE,
@@ -442,6 +736,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     measurement_scope TEXT
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS scribe_bridges (
     bridge_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -454,6 +749,7 @@ CREATE TABLE IF NOT EXISTS scribe_bridges (
     last_error TEXT
 );
 
+-- scribe:statement-boundary
 CREATE TABLE IF NOT EXISTS scribe_entries_archive (
     id TEXT PRIMARY KEY,
     project_id INTEGER,
@@ -472,98 +768,148 @@ CREATE TABLE IF NOT EXISTS scribe_entries_archive (
     archived_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_projects_repo ON scribe_projects(repo_root);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_projects_bridge ON scribe_projects(bridge_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_projects_tags_gin ON scribe_projects USING GIN (tags);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_documents_doc_type ON documents(doc_type);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_documents_metadata_gin ON documents USING GIN (metadata);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_relationships_source ON document_relationships(source_doc_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_relationships_target ON document_relationships(target_doc_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_relationships_metadata_gin ON document_relationships USING GIN (metadata);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_global_log_timestamp ON global_log_entries(timestamp);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_global_log_entry_type ON global_log_entries(entry_type);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_global_log_project_id ON global_log_entries(project_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_global_log_metadata_gin ON global_log_entries USING GIN (metadata);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_projects_meta_gin ON scribe_projects USING GIN (meta);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON scribe_entries(project_id, ts_iso DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_meta_gin ON scribe_entries USING GIN (meta);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_priority_ts ON scribe_entries(priority, ts_iso DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_category_ts ON scribe_entries(category, ts_iso DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_project_priority_category ON scribe_entries(project_id, priority, category, ts_iso DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_log_type ON scribe_entries(project_id, log_type, ts_iso DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_agent_ts ON scribe_entries(agent, ts_iso DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_entries_emoji_ts ON scribe_entries(emoji, ts_iso DESC);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_identity ON agent_sessions(identity_key);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_last_active ON agent_sessions(last_active_at);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_expires ON agent_sessions(expires_at);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_projects_updated_at ON agent_projects(updated_at DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_agent_id ON agent_project_events(agent_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_project_events_created_at ON agent_project_events(created_at);
 
-WITH ranked AS (
-    SELECT
-        ctid,
-        ROW_NUMBER() OVER (
-            PARTITION BY transport_session_id
-            ORDER BY last_active_at DESC NULLS LAST, started_at DESC NULLS LAST, session_id DESC
-        ) AS rn
-    FROM scribe_sessions
-    WHERE transport_session_id IS NOT NULL
-)
-UPDATE scribe_sessions AS s
-SET transport_session_id = NULL
-FROM ranked
-WHERE s.ctid = ranked.ctid
-  AND ranked.rn > 1;
-
-DROP INDEX IF EXISTS idx_scribe_sessions_transport;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_scribe_sessions_transport ON scribe_sessions(transport_session_id) WHERE transport_session_id IS NOT NULL;
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_agent ON scribe_sessions(agent_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_scribe_sessions_last_active ON scribe_sessions(last_active_at DESC);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_doc_changes_project ON doc_changes(project_id, created_at DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_sections_project ON document_sections(project_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_sections_updated ON document_sections(updated_at);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_sections_content_trgm ON document_sections USING GIN (content gin_trgm_ops);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_sections_metadata_gin ON document_sections USING GIN (metadata);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_changes_project ON document_changes(project_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_changes_created ON document_changes(created_at);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_document_changes_metadata_gin ON document_changes USING GIN (metadata);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_sync_status_project ON sync_status(project_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_sync_status_status ON sync_status(sync_status);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_sync_status_conflict_details_gin ON sync_status USING GIN (conflict_details);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_report_cards_project_agent ON agent_report_cards(project_id, agent_name);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_agent_report_cards_stage ON agent_report_cards(stage);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_dev_plans_project_type ON dev_plans(project_id, plan_type);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_phases_project_status ON phases(project_id, status);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_milestones_project_status ON milestones(project_id, status);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_benchmarks_project_type ON benchmarks(project_id, benchmark_type);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_benchmarks_timestamp ON benchmarks(test_timestamp DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_checklists_project_status ON checklists(project_id, status);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_checklists_phase ON checklists(phase_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_metrics_project_category ON performance_metrics(project_id, metric_category);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON performance_metrics(collection_timestamp DESC);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_reminder_history_session_hash ON reminder_history(session_id, reminder_hash);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_reminder_history_shown_at ON reminder_history(shown_at);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_reminder_history_session_tool ON reminder_history(session_id, tool_name);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_reminder_history_context_metadata_gin ON reminder_history USING GIN (context_metadata);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool_name ON tool_calls(tool_name);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_name);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_tool_calls_repo_root ON tool_calls(repo_root);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_bridges_state ON scribe_bridges(state);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_bridges_registered_at ON scribe_bridges(registered_at DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_bridges_manifest_json_gin ON scribe_bridges USING GIN (manifest_json);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_bridges_health_json_gin ON scribe_bridges USING GIN (health_json);
 
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_archive_project_ts ON scribe_entries_archive(project_id, ts_iso DESC);
+-- scribe:statement-boundary
 CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON scribe_entries_archive(archived_at DESC);

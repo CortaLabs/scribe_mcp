@@ -269,10 +269,9 @@ def test_ensure_schema_applies_pg_trgm_without_vector(tmp_path: Path) -> None:
 def test_ensure_schema_defers_additive_tool_call_index_until_migration(tmp_path: Path) -> None:
     schema_path = tmp_path / "init.sql"
     schema_path.write_text(
-        """
-        CREATE TABLE IF NOT EXISTS tool_calls (id SERIAL PRIMARY KEY, repo_root TEXT);
-        CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);
-        """,
+        "CREATE TABLE IF NOT EXISTS tool_calls (id SERIAL PRIMARY KEY, repo_root TEXT);\n"
+        "-- scribe:statement-boundary\n"
+        "CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id);\n",
         encoding="utf-8",
     )
     migrations_path = tmp_path / "postgres_migrations"
