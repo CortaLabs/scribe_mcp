@@ -227,14 +227,7 @@ async def handle_edit_action(
                         raise ValueError(
                             "Cannot establish authoritative session binding for register_existing."
                         )
-                    await server_module.state_manager.set_current_project(
-                        project.get("name"),
-                        project,
-                        agent_id=agent_id,
-                        session_id=authoritative_session_id,
-                        resolved_scope=authoritative_scope.get("resolved_scope"),
-                        mirror_global=False,
-                    )
+                    # Register metadata without changing the caller default.
                     runtime_backend = getattr(server_module, "storage_backend", None)
                     if runtime_backend:
                         await runtime_backend.update_project_docs(
@@ -575,15 +568,7 @@ async def handle_edit_action(
                     context,
                 )
             try:
-                await server_module.state_manager.set_current_project(
-                    project.get("name"),
-                    project,
-                    agent_id=agent_id,
-                    session_id=authoritative_session_id,
-                    resolved_scope=authoritative_scope.get("resolved_scope"),
-                    mirror_global=False,
-                )
-                registration_status["state_project_updated"] = True
+                # The persisted docs mapping owns registration, not selection.
                 runtime_backend = getattr(server_module, "storage_backend", None)
                 if runtime_backend:
                     update_result = await runtime_backend.update_project_docs(

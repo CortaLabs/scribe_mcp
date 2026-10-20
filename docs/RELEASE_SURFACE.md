@@ -1,9 +1,15 @@
 # Release Surface
 
 Updated: **2026-10-20**
-Applies to: **v2.15.12 public release line**
+Applies to: **v2.15.13 development candidate**
 
 ## Patch release notes
+
+Version 2.15.13 removes project-selection writes from document metadata updates.
+Creating, editing, registering, or rehoming a document preserves the caller's
+default project and sibling session bindings. Existing authority checks remain.
+This candidate has not been promoted to the fleet. Internal-profile SDK canaries
+pass; public-profile stdio binding and actual fleet acceptance remain open.
 
 Version 2.15.12 reuses the canonical export-policy digest during document creation.
 Equivalent grant lists receive the same digest in either order, while emitted

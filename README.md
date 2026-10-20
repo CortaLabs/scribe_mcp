@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Current release: `scribe-mcp 2.15.12` · Released: `2026-10-20`
+Development candidate: `scribe-mcp 2.15.13` · Updated: `2026-10-20`
+
+`2.15.13` keeps document metadata updates separate from project selection. Creating or editing a document in another project preserves the caller's default project and sibling session bindings. This candidate has not been promoted to the fleet; public-profile stdio binding remains under investigation.
 
 `2.15.12` makes document creation and export verification use the same canonical policy digest, so equivalent grant lists work in either order. Policy metadata, document text, and authority checks are preserved.
 

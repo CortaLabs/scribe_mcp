@@ -952,7 +952,6 @@ async def handle_special_document_creation(
                             registration_status["case_registry_error"] = (
                                 case_registry_warning
                             )
-                    state_manager = getattr(server_module, "state_manager", None)
                     authoritative_scope = resolve_authoritative_write_scope(
                         context=execution_context,
                         agent_session_id=None,
@@ -960,6 +959,10 @@ async def handle_special_document_creation(
                     authoritative_session_id = authoritative_scope.get(
                         "authoritative_session_id"
                     )
+                    if not authoritative_session_id:
+                        raise ValueError(
+                            "Cannot establish authoritative session binding for document registration."
+                        )
                     if storage_backend:
                         docs_json = json.dumps(current_docs)
                         update_result = await storage_backend.update_project_docs(
@@ -987,26 +990,7 @@ async def handle_special_document_creation(
                         registration_status["available_action"] = (
                             "Configure or restore the Scribe storage backend, then retry manage_docs(action='create', metadata={...})."
                         )
-                    if state_manager and hasattr(state_manager, "set_current_project"):
-                        await state_manager.set_current_project(
-                            project_name,
-                            project,
-                            agent_id=agent_id,
-                            session_id=authoritative_session_id,
-                            resolved_scope=authoritative_scope.get("resolved_scope"),
-                            mirror_global=False,
-                        )
-                        registration_status["state_project_updated"] = True
-                        if not authoritative_session_id:
-                            message = (
-                                "Doc registration could not bind authoritative session; "
-                                "state updated without session binding."
-                            )
-                            registration_warning = (
-                                f"{registration_warning}; {message}"
-                                if registration_warning
-                                else message
-                            )
+                    # Metadata registration must not select this target project.
                     try:
                         project_registry.record_doc_update(
                             project_name=project_name,

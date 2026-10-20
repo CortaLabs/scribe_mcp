@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -28,7 +31,7 @@ class _RegistryStub:
 
 
 @pytest.mark.asyncio
-async def test_register_document_path_uses_authoritative_context_session_id(tmp_path: Path) -> None:
+async def test_register_document_path_requires_authority_without_selecting_default(tmp_path: Path) -> None:
     doc_path = tmp_path / "CHECKLIST.md"
     doc_path.write_text("# Checklist\n", encoding="utf-8")
 
@@ -74,7 +77,7 @@ async def test_register_document_path_uses_authoritative_context_session_id(tmp_
     )
 
     assert warning is None
-    assert captured["session_id"] == "authoritative-session"
+    assert captured == {}, "metadata registration must never call the selecting setter"
     assert backend.update_calls == 1
     assert registry.calls == 1
 
@@ -145,7 +148,7 @@ def test_resolve_authoritative_write_scope_rejects_transport_only_scope() -> Non
 
 
 @pytest.mark.asyncio
-async def test_handle_edit_action_register_doc_uses_authoritative_context_session_id(tmp_path: Path) -> None:
+async def test_handle_edit_action_register_doc_does_not_select_default(tmp_path: Path) -> None:
     created_path = tmp_path / "NOTE.md"
     created_path.write_text("# Note\n", encoding="utf-8")
 
@@ -253,7 +256,7 @@ async def test_handle_edit_action_register_doc_uses_authoritative_context_sessio
     assert result["ok"] is True
     warnings = result.get("warnings") or []
     assert all("Registry update failed" not in warning for warning in warnings)
-    assert captured["session_id"] == "authoritative-session"
+    assert captured == {}, "document registration must never select a caller default"
 
 
 def test_resolve_authoritative_write_scope_prefers_context_session_id_over_stable() -> None:
@@ -285,3 +288,98 @@ def test_resolve_authoritative_write_scope_verified_scope_still_wins() -> None:
     scope = resolve_authoritative_write_scope(context=context, agent_session_id=None)
 
     assert scope["authoritative_session_id"] == "scope-derived-key"
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_real_sdk_document_target_preserves_default(tmp_path: Path, test_agent: str, mode: str) -> None:
+    """Real stdio ingress must keep metadata writes separate from selection."""
+    source = Path(__file__).resolve().parents[1]
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key != "DATABASE_URL"}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(runtime / "scribe.sqlite3"),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"), "SCRIBE_ROOT": str(runtime),
+        "SCRIBE_REPO_ROOT": str(repo), "SCRIBE_TRUSTED_REPO_ROOTS": str(repo),
+        "PYTHONPATH": str(source / "src"),
+        "SBR_TEST_AGENT": test_agent, "SBR_TEST_MODE": mode, "SBR_TEST_SOURCE": str(source),
+    })
+    probe = r'''
+import anyio, json, os, sqlite3, sys
+from pathlib import Path
+from importlib.metadata import version
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
+import scribe_mcp
+
+agent = os.environ["SBR_TEST_AGENT"]
+repo = Path(os.environ["SCRIBE_REPO_ROOT"])
+fields = ("authoritative_session_key", "repo_root", "project_name", "project_key",
+          "binding_generation", "caller_session_key_hash")
+
+def bindings():
+    # Read the disposable store, including timestamps; never manufacture authority.
+    with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+        return connection.execute("SELECT * FROM session_projects ORDER BY session_id").fetchall()
+
+async def call(client, name, arguments):
+    result = await client.call_tool(name, {"agent": agent, **arguments})
+    assert not result.is_error, (name, result)
+    data = json.loads("\n".join(getattr(item, "text", "") for item in result.content))
+    assert data.get("ok", True) is not False, (name, data)
+    return data
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"],
+                                   env=dict(os.environ), cwd=os.environ["SBR_TEST_SOURCE"])
+    with anyio.fail_after(90):
+        async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as client:
+            async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as sibling:
+                await call(sibling, "set_project", {"name": "sibling_default", "root": str(repo), "format": "structured"})
+                await call(client, "set_project", {"name": "target_b", "root": str(repo), "format": "structured"})
+                await call(client, "set_project", {"name": "default_a", "root": str(repo), "format": "structured"})
+                doctor = await call(client, "scribe_doctor", {})
+                before = tuple(doctor["runtime"]["repo_authority"].get(key) for key in fields)
+                assert before[2] == "default_a" and before[4] == 2, before
+                records = bindings()
+                assert len(records) >= 2, records
+                created = await call(client, "manage_docs", {"project": "target_b", "action": "create",
+                    "doc_name": "DEFAULT_GUARD", "metadata": {"doc_type": "custom",
+                    "body": "# Default guard\n\n<!-- ID: proof -->\nInitial text.\n",
+                    "summary": "Isolated default binding regression.", "status": "in_progress"}})
+                path = Path(created["path"]).resolve()
+                assert path.is_relative_to(repo.resolve())
+                await call(client, "manage_docs", {"project": "target_b", "action": "replace_section",
+                    "doc": "DEFAULT_GUARD", "section": "proof", "content": "Verified default guard text.\n"})
+                after_doc = await call(client, "scribe_doctor", {})
+                observed = tuple(after_doc["runtime"]["repo_authority"].get(key) for key in fields)
+                print(json.dumps({"sdk": version("mcp"), "source": scribe_mcp.__file__,
+                    "mode": os.environ["SBR_TEST_MODE"], "before": before, "after": observed}), flush=True)
+                assert observed == before, "explicit B document changed caller default A"
+                assert bindings() == records, "document changed a binding record or timestamp"
+                assert "Verified default guard text.\n" in path.read_text(encoding="utf-8")
+                with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+                    docs = json.loads(connection.execute(
+                        "SELECT docs_json FROM scribe_projects WHERE name = ? AND repo_root = ?",
+                        ("target_b", str(repo))).fetchone()[0])
+                assert docs["DEFAULT_GUARD"] == str(path)
+                for owner, project in ((client, "default_a"), (sibling, "sibling_default")):
+                    marker = "default-guard-" + project
+                    await call(owner, "append_entry", {"message": marker, "format": "structured"})
+                    recent = await call(owner, "read_recent", {"limit": 1, "format": "structured"})
+                    assert marker in json.dumps(recent)
+                assert bindings() == records
+anyio.run(main)
+'''
+    sdk_python = os.environ.get("SBR_SDK_PYTHON", sys.executable)
+    result = subprocess.run([sdk_python, "-c", probe], cwd=source, env=env,
+                            capture_output=True, text=True, timeout=110)
+    assert result.returncode == 0, result.stdout + result.stderr
