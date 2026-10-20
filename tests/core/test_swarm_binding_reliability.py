@@ -475,6 +475,40 @@ async def database_snapshot(storage):
 
 
 class TestSBRSQLiteBinding:
+    @staticmethod
+    def compatibility_contract():
+        """CALL preflight: never turn missing C01 into a fixture/setup error."""
+        storage = sqlite_contract()
+        assert callable(getattr(storage, "clear_session_project", None)), (
+            "Frozen contract absent: SQLiteStorage.clear_session_project")
+        parameters(storage.clear_session_project, "session_id", "expected_generation")
+        return storage
+
+    @staticmethod
+    async def raw_binding(store, session_id="stable-1"):
+        row = await store._fetchone(
+            "SELECT * FROM session_projects WHERE session_id = ?", (session_id,))
+        return dict(row) if row is not None else None
+
+    @staticmethod
+    @asynccontextmanager
+    async def mutation_probe(store, monkeypatch):
+        """Observe real connection changes, including trigger writes; delegate all work."""
+        changes = []
+        original = store._internals._run_with_connection
+        def measured(fn):
+            def execute(conn):
+                before = conn.total_changes
+                try:
+                    return fn(conn)
+                finally:
+                    changes.append(conn.total_changes - before)
+            return original(execute)
+        with monkeypatch.context() as patch:
+            patch.setattr(store._internals, "_run_with_connection", measured)
+            yield changes
+        assert changes, "mutation probe never reached a real SQLite connection"
+
     def test_required_contract_is_present(self):
         sqlite_contract()
 
@@ -547,6 +581,178 @@ class TestSBRSQLiteBinding:
             for i, record in enumerate(records):
                 assert await store.get_session_project(f"session-{i}") == record
 
+    @pytest.mark.asyncio
+    async def test_absent_clear_expected_zero_is_write_free_and_first_bind_is_one(self, tmp_path, test_agent, monkeypatch):
+        self.compatibility_contract()
+        conflict = required("scribe_mcp.storage.base", "ConflictError").ConflictError
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            before = await database_snapshot(store)
+            async with self.mutation_probe(store, monkeypatch) as changes:
+                for expectation in (None, 0):
+                    assert await store.clear_session_project("stable-1", expected_generation=expectation) is None
+                for expectation in (-1, 1):
+                    with pytest.raises(conflict):
+                        await store.clear_session_project("stable-1", expected_generation=expectation)
+                    with pytest.raises(conflict):
+                        await store.set_session_project("stable-1", projects[0].project_key,
+                                                        expected_generation=expectation)
+            assert sum(changes) == 0
+            assert await database_snapshot(store) == before
+            assert await self.raw_binding(store) is None
+            record = await store.set_session_project("stable-1", projects[0].project_key, expected_generation=0)
+            assert record.binding_generation == 1
+            assert record == await store.get_session_project("stable-1")
+            assert (await self.raw_binding(store))["binding_generation"] == 1
+
+    @pytest.mark.asyncio
+    async def test_clear_tombstone_repeat_and_rebind_prevent_aba(self, tmp_path, test_agent, monkeypatch):
+        self.compatibility_contract()
+        conflict = required("scribe_mcp.storage.base", "ConflictError").ConflictError
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            first = await store.set_session_project("stable-1", projects[0].project_key, expected_generation=0)
+            await store.upsert_session(session_id="sibling", agent_id=test_agent,
+                                       repo_root=projects[1].repo_root, mode="project")
+            sibling = await store.set_session_project("sibling", projects[1].project_key)
+            # Establish a distinct historical time without a sleep or clock-resolution race.
+            await store._execute("UPDATE session_projects SET updated_at = ? WHERE session_id = ?",
+                                 ("2000-01-01T00:00:00+00:00", "stable-1"))
+            before = await self.raw_binding(store)
+            async with self.mutation_probe(store, monkeypatch) as changes:
+                assert await store.clear_session_project("stable-1", expected_generation=first.binding_generation) is None
+            assert sum(changes) > 0
+            tombstone = await self.raw_binding(store)
+            assert tombstone["session_id"] == "stable-1"
+            assert tombstone["project_name"] is tombstone["project_key"] is None
+            assert tombstone["binding_state"] == "unresolved"
+            assert tombstone["binding_state_reason"] == "project_name_absent"
+            assert tombstone["binding_generation"] == before["binding_generation"] + 1 == 2
+            assert tombstone["updated_at"] != before["updated_at"]
+            assert await store.get_session_project("stable-1") is None
+            snapshot = await database_snapshot(store)
+            async with self.mutation_probe(store, monkeypatch) as changes:
+                assert await store.clear_session_project("stable-1", expected_generation=2) is None
+                assert await store.clear_session_project("stable-1") is None
+                for expectation in (0, 1, -1):
+                    with pytest.raises(conflict):
+                        await store.clear_session_project("stable-1", expected_generation=expectation)
+                    with pytest.raises(conflict):
+                        await store.set_session_project("stable-1", projects[0].project_key,
+                                                        expected_generation=expectation)
+            assert sum(changes) == 0
+            assert await database_snapshot(store) == snapshot
+            assert await self.raw_binding(store) == tombstone
+            rebound = await store.set_session_project("stable-1", projects[0].project_key, expected_generation=2)
+            assert rebound.binding_generation == 3
+            assert rebound.project_key == first.project_key
+            assert rebound.caller_session_key_hash == first.caller_session_key_hash
+            assert rebound == await store.get_session_project("stable-1")
+            snapshot = await database_snapshot(store)
+            async with self.mutation_probe(store, monkeypatch) as changes:
+                with pytest.raises(conflict):
+                    await store.set_session_project("stable-1", projects[0].project_key, expected_generation=1)
+            assert sum(changes) == 0
+            assert await database_snapshot(store) == snapshot
+            assert await store.get_session_project("sibling") == sibling
+
+    @pytest.mark.parametrize("operation", ["bind", "clear"])
+    @pytest.mark.asyncio
+    async def test_unresolved_raw_generation_is_the_cas_oracle(self, tmp_path, test_agent, monkeypatch, operation):
+        self.compatibility_contract()
+        conflict = required("scribe_mcp.storage.base", "ConflictError").ConflictError
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            await store._execute("INSERT INTO session_projects (session_id, project_name, updated_at) VALUES (?, ?, ?)",
+                                 ("stable-1", "missing-one", "2000-01-01T00:00:00+00:00"))
+            await store._execute("UPDATE session_projects SET project_name = ? WHERE session_id = ?",
+                                 ("missing-two", "stable-1"))
+            raw = await self.raw_binding(store)
+            assert raw["binding_state"] == "unresolved" and raw["binding_generation"] > 1
+            assert await store.get_session_project("stable-1") is None
+            before = await database_snapshot(store)
+            async with self.mutation_probe(store, monkeypatch) as changes:
+                for expectation in (0, raw["binding_generation"] - 1, -1):
+                    with pytest.raises(conflict):
+                        if operation == "bind":
+                            await store.set_session_project("stable-1", projects[0].project_key,
+                                                            expected_generation=expectation)
+                        else:
+                            await store.clear_session_project("stable-1", expected_generation=expectation)
+            assert sum(changes) == 0
+            assert await database_snapshot(store) == before
+            if operation == "bind":
+                result = await store.set_session_project("stable-1", projects[0].project_key,
+                                                         expected_generation=raw["binding_generation"])
+                assert result == await store.get_session_project("stable-1")
+            else:
+                assert await store.clear_session_project("stable-1", expected_generation=raw["binding_generation"]) is None
+                assert await store.get_session_project("stable-1") is None
+                assert (await self.raw_binding(store))["binding_state_reason"] == "project_name_absent"
+            assert (await self.raw_binding(store))["binding_generation"] == raw["binding_generation"] + 1
+
+    @pytest.mark.asyncio
+    async def test_exact_key_cross_root_readback_and_invalid_keys_have_no_effects(self, tmp_path, test_agent, monkeypatch):
+        self.compatibility_contract()
+        conflict = required("scribe_mcp.storage.base", "ConflictError").ConflictError
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            twin = await store.upsert_project(name=projects[0].name, repo_root=projects[1].repo_root,
+                                              progress_log_path=str(tmp_path / "other.log"))
+            session_before = dict(await store._fetchone("SELECT * FROM scribe_sessions WHERE session_id = ?", ("stable-1",)))
+            record = await store.set_session_project("stable-1", twin.project_key, expected_generation=0)
+            assert record.project_key == twin.project_key
+            assert record.project_name == twin.name
+            assert record.canonical_repo_root == str(Path(twin.repo_root).resolve())
+            assert record.binding_generation == 1
+            assert record == await store.get_session_project("stable-1")
+            assert dict(await store._fetchone("SELECT * FROM scribe_sessions WHERE session_id = ?", ("stable-1",))) == session_before
+            before = await database_snapshot(store)
+            async with self.mutation_probe(store, monkeypatch) as changes:
+                for invalid in (None, "", "unknown-key", projects[0].name):
+                    with pytest.raises(conflict):
+                        await store.set_session_project("stable-1", invalid, expected_generation=1)
+                with pytest.raises(conflict):
+                    await store.set_session_project("missing-session", twin.project_key)
+                with pytest.raises(conflict):
+                    await store.clear_session_project("missing-session")
+            assert sum(changes) == 0
+            assert await database_snapshot(store) == before
+
+    @pytest.mark.asyncio
+    async def test_same_session_competing_mutations_consume_generation_once(self, tmp_path, test_agent):
+        self.compatibility_contract()
+        conflict = required("scribe_mcp.storage.base", "ConflictError").ConflictError
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            await store.set_session_project("stable-1", projects[0].project_key, expected_generation=0)
+            gate = CausalGate()
+            async def clear():
+                await gate.hold()
+                return await store.clear_session_project("stable-1", expected_generation=1)
+            task = asyncio.create_task(clear())
+            try:
+                await asyncio.wait_for(gate.entered.wait(), 1)
+                gate.release.set()
+                results = await asyncio.gather(task, store.set_session_project(
+                    "stable-1", projects[1].project_key, expected_generation=1), return_exceptions=True)
+                assert sum(isinstance(result, conflict) for result in results) == 1
+                assert not any(isinstance(result, BaseException) and not isinstance(result, conflict) for result in results)
+                raw = await self.raw_binding(store)
+                assert raw["binding_generation"] == 2
+                assert raw["project_key"] in (None, projects[1].project_key)
+            finally:
+                gate.release.set()
+                await asyncio.gather(task, return_exceptions=True)
+            existing = await self.raw_binding(store)
+            await store.upsert_session(session_id="absent-race", agent_id=test_agent,
+                                       repo_root=projects[0].repo_root, mode="project")
+            assert await self.raw_binding(store, "absent-race") is None
+            first_binds = await asyncio.gather(*(store.set_session_project(
+                "absent-race", project.project_key, expected_generation=0) for project in projects),
+                return_exceptions=True)
+            assert sum(isinstance(result, conflict) for result in first_binds) == 1
+            winners = [result for result in first_binds if not isinstance(result, BaseException)]
+            assert len(winners) == 1 and winners[0].binding_generation == 1
+            assert winners[0] == await store.get_session_project("absent-race")
+            assert (await self.raw_binding(store, "absent-race"))["binding_generation"] == 1
+            assert await self.raw_binding(store) == existing
+
 
 def frozen_context(tmp_path, test_agent):
     c = required("scribe_mcp.shared.execution_context", "ResolvedProjectTargetV1", "build_resolved_request_context")
@@ -614,6 +820,40 @@ class TestSBRTargetResolution:
 
 
 class TestSBRBindingReceipt:
+    @staticmethod
+    def compatibility_contract():
+        TestSBRSQLiteBinding.compatibility_contract()
+        receipt_contract()
+        manager = required("scribe_mcp.state.manager", "StateManager").StateManager
+        assert callable(getattr(manager, "accept_session_binding", None)), (
+            "Frozen contract absent: StateManager.accept_session_binding")
+
+    @staticmethod
+    def observe_selections(store, monkeypatch):
+        """Record arguments/results while executing the actual C01 implementation."""
+        calls = []
+        original = store.set_session_project
+        signature = inspect.signature(original)
+        async def observed(*args, **kwargs):
+            arguments = signature.bind(*args, **kwargs).arguments
+            result = await original(*args, **kwargs)
+            calls.append((dict(arguments), result))
+            return result
+        observed.__signature__ = signature
+        monkeypatch.setattr(store, "set_session_project", observed)
+        return calls
+
+    @staticmethod
+    def local_registry(w, monkeypatch):
+        registry_type = required("scribe_mcp.shared.project_registry", "ProjectRegistry").ProjectRegistry
+        # Registry metadata belongs beside the actual ephemeral project rows.
+        registry = registry_type(db_path=w.storage._path)
+        for name in ("set_project", "append_entry", "manage_docs", "get_project"):
+            module = importlib.import_module(f"scribe_mcp.tools.{name}")
+            if hasattr(module, "_PROJECT_REGISTRY"):
+                monkeypatch.setattr(module, "_PROJECT_REGISTRY", registry)
+        return registry
+
     def test_required_contract_is_present(self):
         receipt_contract()
 
@@ -671,6 +911,244 @@ class TestSBRBindingReceipt:
             assert changed["binding_generation"] == 2
             assert changed["project_key"] == w.project(caller.same_repo).project_key
             assert changed["persistent_write_performed"] is True
+
+    @pytest.mark.asyncio
+    async def test_selection_calls_c01_once_and_receipt_uses_persisted_record(self, tmp_path, monkeypatch, test_agent):
+        self.compatibility_contract()
+        async with world(tmp_path, monkeypatch, test_agent) as w:
+            caller, sibling = w.topology.callers[:2]
+            await w.bind(sibling)
+            sibling_before = await w.binding(sibling)
+            calls = self.observe_selections(w.storage, monkeypatch)
+            receipt = receipt_from_response(await w.bind(caller))
+            assert len(calls) == 1, "selection/projection must not replay C01"
+            arguments, persisted = calls[0]
+            assert arguments["session_id"] == w.sessions[caller.caller_id]
+            assert arguments["project_key"] == w.project(caller.default).project_key
+            assert persisted == await w.binding(caller)
+            for name in ("project_key", "binding_generation", "caller_session_key_hash"):
+                assert receipt[name] == getattr(persisted, name)
+            assert await w.binding(sibling) == sibling_before
+            before = await w.snapshot()
+            assert_error(await w.bind(caller, expected_generation=0), "SCRIBE_BINDING_GENERATION_STALE")
+            assert await w.snapshot() == before
+            assert await w.binding(sibling) == sibling_before
+
+    @pytest.mark.asyncio
+    async def test_metadata_persist_cannot_replay_cache_or_revive_clear(self, tmp_path, monkeypatch, test_agent):
+        self.compatibility_contract()
+        module = required("scribe_mcp.state.manager", "StateManager", "State")
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            first = await store.set_session_project("stable-1", projects[0].project_key)
+            await store.upsert_session(session_id="sibling", agent_id=test_agent,
+                                       repo_root=projects[1].repo_root, mode="project")
+            sibling = await store.set_session_project("sibling", projects[1].project_key)
+            manager = module.StateManager(path=tmp_path / "state.json", storage_backend=store)
+            await manager.load()
+            await store.clear_session_project("stable-1", expected_generation=first.binding_generation)
+            tombstone = await TestSBRSQLiteBinding.raw_binding(store)
+            stale_payload = {"name": projects[0].name, "root": projects[0].repo_root,
+                             "project_key": projects[0].project_key}
+            manager._session_projects_cache["stable-1"] = dict(stale_payload)
+            state = module.State(current_project=None, projects={}, recent_projects=[projects[0].name],
+                session_projects={"stable-1": stale_payload}, session_modes={"stable-1": "sentinel"},
+                agent_state={"last_agent_id": test_agent})
+            calls = self.observe_selections(store, monkeypatch)
+            await manager.persist(state)
+            assert calls == [], "metadata save may not select any cached project"
+            assert await store.get_session_project("stable-1") is None
+            assert await TestSBRSQLiteBinding.raw_binding(store) == tombstone
+            assert await store.get_session_project("sibling") == sibling
+            assert await store.get_session_mode("stable-1") == "sentinel"
+            assert manager._agent_state_cache["last_agent_id"] == test_agent
+            assert manager._recent_projects_cache == [projects[0].name]
+
+    @pytest.mark.asyncio
+    async def test_raw_state_selection_resolves_exact_persisted_key_once(self, tmp_path, monkeypatch, test_agent):
+        self.compatibility_contract()
+        manager_type = required("scribe_mcp.state.manager", "StateManager").StateManager
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            target = await store.upsert_project(name=projects[0].name, repo_root=projects[1].repo_root,
+                                               progress_log_path=str(tmp_path / "twin.log"))
+            manager = manager_type(path=tmp_path / "state.json", storage_backend=store)
+            calls = self.observe_selections(store, monkeypatch)
+            await manager.set_current_project(target.name, {"name": target.name,
+                "root": target.repo_root, "project_key": target.project_key,
+                "progress_log": target.progress_log_path}, agent_id=test_agent,
+                session_id="stable-1", mirror_global=False)
+            assert len(calls) == 1
+            assert calls[0][0]["project_key"] == target.project_key
+            record = await store.get_session_project("stable-1")
+            assert record == calls[0][1]
+            assert record.project_key == target.project_key
+            assert record.canonical_repo_root == target.repo_root
+            assert record.binding_generation == 1
+
+    @pytest.mark.asyncio
+    async def test_legacy_migration_uses_resolved_keys_for_both_call_sites(self, tmp_path, monkeypatch, test_agent):
+        self.compatibility_contract()
+        migration = required("scribe_mcp.state.migration", "migrate_legacy_state_file")
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            caller_before = await store.set_session_project("stable-1", projects[0].project_key)
+            source = tmp_path / "import.json"
+            source.write_text(json.dumps({"projects": {projects[0].name: {
+                "name": projects[0].name, "root": projects[0].repo_root}},
+                "current_project": projects[0].name, "session_projects": {"imported-session": {
+                    "name": projects[1].name, "root": projects[1].repo_root}},
+                "session_modes": {"imported-session": "project"}}))
+            calls = self.observe_selections(store, monkeypatch)
+            result = await migration.migrate_legacy_state_file(storage_backend=store, state_path=source,
+                                                               rename_source=False)
+            assert result.migrated and result.session_projects_migrated == 1
+            assert len(calls) == 2
+            by_session = {arguments["session_id"]: (arguments, record) for arguments, record in calls}
+            for session, target in ((migration._LEGACY_MIGRATION_SESSION_ID, projects[0]),
+                                    ("imported-session", projects[1])):
+                arguments, record = by_session[session]
+                assert arguments["project_key"] == target.project_key
+                assert record == await store.get_session_project(session)
+                assert record.project_name == target.name and record.canonical_repo_root == target.repo_root
+            assert await store.get_session_project("stable-1") == caller_before
+
+    @pytest.mark.parametrize("legacy_name", ["missing-import", "shared-import"])
+    @pytest.mark.asyncio
+    async def test_legacy_missing_or_ambiguous_global_identity_cannot_grant_default(self, tmp_path, monkeypatch, test_agent, legacy_name):
+        self.compatibility_contract()
+        migration = required("scribe_mcp.state.migration", "migrate_legacy_state_file")
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            caller_before = await store.set_session_project("stable-1", projects[0].project_key)
+            source = tmp_path / "inert-import.json"
+            source.write_text(json.dumps({"current_project": legacy_name, "projects": {
+                "left": {"name": "shared-import", "root": projects[0].repo_root},
+                "right": {"name": "shared-import", "root": projects[1].repo_root}}}))
+            result = await migration.migrate_legacy_state_file(storage_backend=store, state_path=source,
+                                                               rename_source=False)
+            assert result.migrated
+            assert await store.get_session_project(migration._LEGACY_MIGRATION_SESSION_ID) is None
+            assert await store.get_session_project("stable-1") == caller_before
+
+    @pytest.mark.asyncio
+    async def test_teardown_clear_failure_is_visible_and_retry_preserves_sibling(self, tmp_path, monkeypatch, test_agent):
+        self.compatibility_contract()
+        manager_type = required("scribe_mcp.state.manager", "StateManager").StateManager
+        agent_type = required("scribe_mcp.state.agent_manager", "AgentContextManager").AgentContextManager
+        conflict = required("scribe_mcp.storage.base", "ConflictError").ConflictError
+        async with binding_store(tmp_path, test_agent) as (store, projects):
+            first = await store.set_session_project("stable-1", projects[0].project_key)
+            await store.upsert_agent_session(test_agent, "stable-1", {})
+            await store.upsert_session(session_id="sibling", agent_id=test_agent,
+                                       repo_root=projects[1].repo_root, mode="project")
+            await store.upsert_agent_session(test_agent, "sibling", {})
+            sibling = await store.set_session_project("sibling", projects[1].project_key)
+            await store.set_agent_project(test_agent, projects[1].name, None, test_agent, "sibling")
+            agent_before = await store.get_agent_project(test_agent)
+            agent_manager = agent_type(store, manager_type(path=tmp_path / "state.json", storage_backend=store))
+            original = store.clear_session_project
+            attempts = []
+            async def failing_once(session_id, expected_generation=None):
+                attempts.append((session_id, expected_generation))
+                if len(attempts) == 1:
+                    raise conflict("injected teardown storage failure")
+                return await original(session_id, expected_generation=expected_generation)
+            monkeypatch.setattr(store, "clear_session_project", failing_once)
+            with pytest.raises((conflict, ValueError, RuntimeError), match="(?i)(clear|teardown|injected)"):
+                await agent_manager.end_session(test_agent, "stable-1")
+            assert await store.get_session_project("stable-1") == first
+            assert await store.get_session_project("sibling") == sibling
+            assert await store.get_agent_project(test_agent) == agent_before
+            await agent_manager.end_session(test_agent, "stable-1")
+            tombstone = await TestSBRSQLiteBinding.raw_binding(store)
+            assert tombstone["binding_generation"] == first.binding_generation + 1
+            assert await store.get_session_project("stable-1") is None
+            await agent_manager.end_session(test_agent, "stable-1")
+            assert await TestSBRSQLiteBinding.raw_binding(store) == tombstone
+            assert all(session == "stable-1" for session, _ in attempts)
+            assert await store.get_session_project("sibling") == sibling
+            assert await store.get_agent_project(test_agent) == agent_before
+
+    @pytest.mark.parametrize("explicit_other", [False, True])
+    @pytest.mark.asyncio
+    async def test_document_create_append_registration_never_reselects_default(self, tmp_path, monkeypatch, test_agent, explicit_other):
+        self.compatibility_contract()
+        async with world(tmp_path, monkeypatch, test_agent) as w:
+            registry = self.local_registry(w, monkeypatch)
+            caller, sibling = w.topology.callers[:2]
+            await w.bind(caller)
+            await w.bind(sibling)
+            before = await w.binding(caller)
+            sibling_before = await w.binding(sibling)
+            target = caller.same_repo if explicit_other else caller.default
+            target_record = w.project(target)
+            calls = self.observe_selections(w.storage, monkeypatch)
+            result = payload(await w.call(caller, "manage_docs", action="create", doc_name="d7_registration",
+                project=target.name, target_dir=str(target.progress_log.parent),
+                content="## D7 registration\n<!-- ID: d7_registration -->\nDurable initial body.\n",
+                metadata={"doc_type": "custom", "summary": "D7 persisted registration regression"}))
+            assert result["ok"] is True
+            files = list(target.root.rglob("d7_registration.md"))
+            assert len(files) == 1
+            path = files[0]
+            created = path.read_bytes()
+            assert created
+            appended = payload(await w.call(caller, "manage_docs", action="append", doc="d7_registration",
+                                            project=target.name, content="D7 durable content"))
+            assert appended["ok"] is True
+            assert b"D7 durable content" in path.read_bytes()
+            stored = await w.storage.fetch_project(target_record.name, project_key=target_record.project_key)
+            assert str(path) in json.loads(stored.docs_json).values()
+            info = registry.get_project(target_record.name)
+            assert hashlib.sha256(path.read_bytes()).hexdigest() in info.meta["docs"]["current_hashes"].values()
+            assert calls == [], "metadata registration must not invoke the default writer"
+            assert await w.binding(caller) == before
+            assert await w.binding(sibling) == sibling_before
+            # A fresh manager must consume persisted identity, not a warm label cache.
+            manager_type = required("scribe_mcp.state.manager", "StateManager").StateManager
+            fresh = manager_type(path=tmp_path / "fresh-state.json", storage_backend=w.storage)
+            await fresh.load()
+            assert calls == []
+            assert await w.binding(caller) == before
+            assert await w.binding(sibling) == sibling_before
+
+    @pytest.mark.asyncio
+    async def test_registration_failure_reports_written_file_and_reconciliation_does_not_rebind(self, tmp_path, monkeypatch, test_agent):
+        self.compatibility_contract()
+        async with world(tmp_path, monkeypatch, test_agent) as w:
+            self.local_registry(w, monkeypatch)
+            caller, sibling = w.topology.callers[:2]
+            await w.bind(caller)
+            await w.bind(sibling)
+            before, sibling_before = await w.binding(caller), await w.binding(sibling)
+            target = caller.same_repo
+            calls = self.observe_selections(w.storage, monkeypatch)
+            original = w.storage.update_project_docs
+            async def unavailable(*args, **kwargs):
+                raise OSError("injected metadata registration storage failure")
+            with monkeypatch.context() as fault:
+                fault.setattr(w.storage, "update_project_docs", unavailable)
+                result = payload(await w.call(caller, "manage_docs", action="create", doc_name="d7_partial",
+                    project=target.name, target_dir=str(target.progress_log.parent), content="Durable partial body.\n",
+                    metadata={"doc_type": "custom", "summary": "Registration fault proof"}))
+            registration = result.get("registration_status", result)
+            assert registration["file_written"] is True
+            assert registration["docs_json_registered"] is False
+            assert "registration" in json.dumps(result).lower() and "injected" in json.dumps(result)
+            files = list(target.root.rglob("d7_partial.md"))
+            assert len(files) == 1
+            path, written = files[0], files[0].read_bytes()
+            assert b"Durable partial body." in written
+            assert calls == []
+            assert await w.binding(caller) == before and await w.binding(sibling) == sibling_before
+            assert w.storage.update_project_docs == original
+            # Existing register_existing reconciliation must not recreate/overwrite the document.
+            retry = payload(await w.call(caller, "manage_docs", action="create", doc_name="d7_partial",
+                project=target.name, target_dir=str(target.progress_log.parent),
+                metadata={"doc_type": "custom", "register_existing": True}))
+            assert retry["ok"] is True
+            assert path.read_bytes() == written
+            stored = await w.storage.fetch_project(w.project(target).name, project_key=w.project(target).project_key)
+            assert str(path) in json.loads(stored.docs_json).values()
+            assert calls == []
+            assert await w.binding(caller) == before and await w.binding(sibling) == sibling_before
 
 
 class TestSBRTiming:
