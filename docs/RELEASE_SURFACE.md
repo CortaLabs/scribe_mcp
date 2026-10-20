@@ -1,7 +1,7 @@
 # Release Surface
 
 Updated: **2026-10-20**
-Applies to: **2.15.14 maintenance candidate; publication and fleet validation pending**
+Applies to: **2.15.15 maintenance candidate; publication and fleet validation pending**
 
 ## Maintenance scope
 

@@ -25,7 +25,7 @@ Run from the validation worktree with no other repository-saturating lane active
 
 ```bash
 ./.venv/bin/python scripts/mcp_v2_isolated_spike.py \
-  --repo-root /home/austin/projects/MCP_SPINE/worktrees/scribe-mcp-v2 \
+  --repo-root /path/to/scribe-mcp-v2 \
   --candidate 2.0.0 \
   --legacy 1.26.0 \
   --protocol 2026-07-28 \
