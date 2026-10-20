@@ -1,9 +1,16 @@
 # Release Surface
 
 Updated: **2026-10-20**
-Applies to: **v2.15.17 development candidate; integration and fleet acceptance pending**
+Applies to: **v2.15.18 development candidate; integration and fleet acceptance pending**
 
 ## Patch release notes
+
+Version 2.15.18 repairs the existing document-test setup through real SDK ingress,
+persisted caller bindings, and canonical metadata readback. All 53 original cases
+pass with their assertions retained. Invalid actions retain both consumer and RPC
+rejection checks; dependency faults still exercise partial-registration outcomes.
+This is correctness evidence, not a performance or fleet certification. Broader
+integration, public stdio, and actual peer acceptance remain open.
 
 Version 2.15.17 carries the reviewed nonselecting metadata correction into this
 larger development branch. Document registration refreshes existing stored

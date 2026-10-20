@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 2.15.17` · Updated: `2026-10-20`
+Development candidate: `scribe-mcp 2.15.18` · Updated: `2026-10-20`
+
+`2.15.18` replaces obsolete document-test resolver stubs with real SDK requests and persisted caller bindings. All 53 existing document cases pass with their original assertions retained, including invalid-input and partial-registration controls. Broader integration, public stdio, and actual peer acceptance remain open; this candidate has not been promoted to the fleet.
 
 `2.15.17` restores document registration metadata and cache updates through the existing nonselecting metadata method. Review and spec followups retain their document identity while the caller and sibling project bindings remain unchanged. This larger development branch still has unresolved integration failures and is not a fleet-ready release.
 
