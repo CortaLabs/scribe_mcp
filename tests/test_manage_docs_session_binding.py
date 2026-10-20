@@ -319,6 +319,7 @@ from mcp import StdioServerParameters
 from mcp.client.client import Client
 from mcp.client.stdio import stdio_client
 import scribe_mcp
+from scribe_mcp.utils.frontmatter import parse_frontmatter
 
 agent = os.environ["SBR_TEST_AGENT"]
 repo = Path(os.environ["SCRIBE_REPO_ROOT"])
@@ -371,6 +372,32 @@ async def main():
                         "SELECT docs_json FROM scribe_projects WHERE name = ? AND repo_root = ?",
                         ("target_b", str(repo))).fetchone()[0])
                 assert docs["DEFAULT_GUARD"] == str(path)
+                review = await call(client, "manage_docs", {"project": "target_b", "action": "create",
+                    "doc_name": "REVIEW_DEFAULT_GUARD", "metadata": {"doc_type": "review",
+                    "stage": "phase_4_2", "summary": "Review metadata persistence guard."}})
+                await call(client, "manage_docs", {"project": "target_b", "action": "replace_section",
+                    "doc": review["doc_name"], "section": "executive_summary",
+                    "content": "Review metadata followup.\n"})
+                review_path = Path(review["path"]).resolve()
+                assert review_path.is_relative_to(repo.resolve())
+                assert "Review metadata followup." in review_path.read_text(encoding="utf-8")
+                spec = await call(client, "manage_docs", {"project": "target_b", "action": "create",
+                    "doc": "spec_guard", "metadata": {"doc_type": "spec", "doc_name": "SPEC_DEFAULT_GUARD",
+                    "body": "# Spec\n\nMetadata persistence guard.\n"}})
+                await call(client, "manage_docs", {"project": "target_b", "action": "frontmatter_update",
+                    "doc": "SPEC_DEFAULT_GUARD", "metadata": {"frontmatter": {"status": "ready"}}})
+                spec_path = Path(spec["path"]).resolve()
+                assert spec_path.is_relative_to(repo.resolve())
+                spec_metadata = parse_frontmatter(spec_path.read_text(encoding="utf-8")).frontmatter_data
+                assert spec_metadata["doc_type"] == "spec"
+                assert spec_metadata["status"] == "ready"
+                with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+                    docs = json.loads(connection.execute(
+                        "SELECT docs_json FROM scribe_projects WHERE name = ? AND repo_root = ?",
+                        ("target_b", str(repo))).fetchone()[0])
+                assert docs[review["doc_name"]] == str(review_path)
+                assert docs["SPEC_DEFAULT_GUARD"] == str(spec_path)
+                assert bindings() == records, "metadata persistence changed a caller or sibling binding"
                 for owner, project in ((client, "default_a"), (sibling, "sibling_default")):
                     marker = "default-guard-" + project
                     await call(owner, "append_entry", {"message": marker, "format": "structured"})

@@ -1,9 +1,16 @@
 # Release Surface
 
 Updated: **2026-10-20**
-Applies to: **v2.15.13 development candidate**
+Applies to: **v2.15.17 development candidate; integration and fleet acceptance pending**
 
 ## Patch release notes
+
+Version 2.15.17 carries the reviewed nonselecting metadata correction into this
+larger development branch. Document registration refreshes existing stored
+metadata and cache without changing caller or sibling project selection.
+Remaining integration failures, the planned binding/schema work, public stdio
+and actual peer acceptance remain release blockers. No publication or live
+checkout update is implied.
 
 Version 2.15.13 removes project-selection writes from document metadata updates.
 Creating, editing, registering, or rehoming a document preserves the caller's

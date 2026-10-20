@@ -2863,7 +2863,9 @@ async def auto_register_document(
         project["docs"] = current_docs
         docs_json = json.dumps(current_docs)
         await backend.update_project_docs(project_name, docs_json, repo_root=project.get("root"))
-        # Persist target metadata without selecting it as the caller default.
+        state_manager = getattr(server_module, "state_manager", None)
+        if state_manager and hasattr(state_manager, "update_project_metadata"):
+            await state_manager.update_project_metadata(project_name, project)
         logger.info("Auto-registered document '%s' for project '%s'", doc_name, project_name)
     except Exception as exc:
         raise ValueError(f"Failed to update database for auto-registration: {exc}") from exc
@@ -2946,7 +2948,9 @@ async def register_document_path(
     current_docs[doc_name] = str(doc_path)
     project["docs"] = current_docs
     docs_json = json.dumps(current_docs)
-    # Registration updates target metadata, never the caller's selected project.
+    state_manager = getattr(server_module, "state_manager", None)
+    if state_manager and hasattr(state_manager, "update_project_metadata"):
+        await state_manager.update_project_metadata(project_name, project)
     await backend.update_project_docs(project_name, docs_json, repo_root=project.get("root"))
 
     try:

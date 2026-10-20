@@ -334,10 +334,10 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
     await state_manager.set_current_project(project["name"], project)
     await _seed_runtime_session(state_manager, project["root"])
 
-    async def _fail_set_current(*args, **kwargs):
+    async def _fail_update_metadata(*args, **kwargs):
         raise RuntimeError("boom")
 
-    state_manager.set_current_project = _fail_set_current  # type: ignore[assignment]
+    state_manager.update_project_metadata = _fail_update_metadata  # type: ignore[assignment]
 
     with _isolated_server(state_manager, project_root=project["root"]):
         result = await manage_docs(
@@ -354,6 +354,9 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
         assert result["ok"] is True, result
         assert "warnings" in result
         assert "Registry update failed" in result["warnings"][0]
+        assert result["registration_status"]["error"] == "boom"
+        assert result["registration_status"]["state_project_updated"] is False
+        assert "Details." in Path(result["path"]).read_text(encoding="utf-8")
         assert "replace_section" in result.get("next_step_guidance", "")
 
 

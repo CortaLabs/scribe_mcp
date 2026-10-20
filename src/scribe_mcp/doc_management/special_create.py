@@ -990,7 +990,10 @@ async def handle_special_document_creation(
                         registration_status["available_action"] = (
                             "Configure or restore the Scribe storage backend, then retry manage_docs(action='create', metadata={...})."
                         )
-                    # Metadata registration must not select this target project.
+                    state_manager = getattr(server_module, "state_manager", None)
+                    if state_manager and hasattr(state_manager, "update_project_metadata"):
+                        await state_manager.update_project_metadata(project_name, project)
+                        registration_status["state_project_updated"] = True
                     try:
                         project_registry.record_doc_update(
                             project_name=project_name,
