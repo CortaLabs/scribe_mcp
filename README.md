@@ -45,7 +45,7 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Development candidate: `scribe-mcp 2.15.15` · Updated: `2026-10-20`
+Development candidate: `scribe-mcp 2.15.16` · Updated: `2026-10-20`
 
 This maintenance candidate restores repository scope from an existing verified session binding after runtime reconstruction, loads tool definitions before first-call validation, and keeps document metadata updates from changing the caller's selected project. PostgreSQL bootstrap replaces the existing binding classifier trigger atomically, so concurrent writers cannot observe a missing classifier. Export-policy creation uses the verifier's existing canonical digest.
 
