@@ -1204,7 +1204,7 @@ class _ProjectBoundReuseStorageBackend:
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_call_project_binding_change_reallocates_with_same_transport_session():
+async def test_execute_tool_call_project_binding_change_reallocates_with_same_transport_session(test_agent: str):
     backend = _ProjectBoundReuseStorageBackend()
     router = RouterContextManager(storage_backend=backend)
     observed: dict[str, list[tuple[str | None, str | None, str | None]]] = {"calls": []}
@@ -1224,7 +1224,9 @@ async def test_execute_tool_call_project_binding_change_reallocates_with_same_tr
     common = {
         "name": "capture_scope",
         "registry": {"capture_scope": capture_scope_stub},
-        "app": SimpleNamespace(request_context=None),
+        "app": SimpleNamespace(request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"mcp-session-id": "transport-stable"}), meta=None,
+        )),
         "storage_backend": backend,
         "settings": SimpleNamespace(project_root=Path("/tmp")),
         "state_manager": _DummyStateManager(),
@@ -1234,19 +1236,20 @@ async def test_execute_tool_call_project_binding_change_reallocates_with_same_tr
         "log_scope_violation_cb": lambda *_args, **_kwargs: None,
     }
 
+    common["settings"].default_repo_root = "/tmp"
     result_one = await execute_tool_call(
         **common,
-        arguments={"agent": "codex", "project": "project-a"},
+        arguments={"agent": test_agent, "project": "project-a"},
         kwargs={"context": {"mode": "project", "transport_session_id": "transport-stable"}},
     )
     result_two = await execute_tool_call(
         **common,
-        arguments={"agent": "codex", "project": "project-b"},
+        arguments={"agent": test_agent, "project": "project-b"},
         kwargs={"context": {"mode": "project", "transport_session_id": "transport-stable"}},
     )
 
-    assert result_one == "codex"
-    assert result_two == "codex"
+    assert result_one == test_agent
+    assert result_two == test_agent
     assert observed["calls"] == [
         ("agent-session-1", "allocated", "/tmp:project-a"),
         ("agent-session-2", "allocated", "/tmp:project-b"),
@@ -1254,7 +1257,7 @@ async def test_execute_tool_call_project_binding_change_reallocates_with_same_tr
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_call_project_binding_same_scope_reuses_session() -> None:
+async def test_execute_tool_call_project_binding_same_scope_reuses_session(test_agent: str) -> None:
     backend = _ProjectBoundReuseStorageBackend()
     router = RouterContextManager(storage_backend=backend)
     observed: list[tuple[str | None, str | None, str | None]] = []
@@ -1274,7 +1277,9 @@ async def test_execute_tool_call_project_binding_same_scope_reuses_session() -> 
     common = {
         "name": "capture_scope",
         "registry": {"capture_scope": capture_scope_stub},
-        "app": SimpleNamespace(request_context=None),
+        "app": SimpleNamespace(request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"mcp-session-id": "transport-stable"}), meta=None,
+        )),
         "storage_backend": backend,
         "settings": SimpleNamespace(project_root=Path("/tmp")),
         "state_manager": _DummyStateManager(),
@@ -1284,25 +1289,26 @@ async def test_execute_tool_call_project_binding_same_scope_reuses_session() -> 
         "log_scope_violation_cb": lambda *_args, **_kwargs: None,
     }
 
+    common["settings"].default_repo_root = "/tmp"
     first = await execute_tool_call(
         **common,
-        arguments={"agent": "codex", "project": "project-a"},
+        arguments={"agent": test_agent, "project": "project-a"},
         kwargs={"context": {"mode": "project", "transport_session_id": "transport-stable"}},
     )
     second = await execute_tool_call(
         **common,
-        arguments={"agent": "codex", "project": "project-a"},
+        arguments={"agent": test_agent, "project": "project-a"},
         kwargs={"context": {"mode": "project", "transport_session_id": "transport-stable"}},
     )
     third = await execute_tool_call(
         **common,
-        arguments={"agent": "codex", "project": "project-b"},
+        arguments={"agent": test_agent, "project": "project-b"},
         kwargs={"context": {"mode": "project", "transport_session_id": "transport-stable"}},
     )
 
-    assert first == "codex"
-    assert second == "codex"
-    assert third == "codex"
+    assert first == test_agent
+    assert second == test_agent
+    assert third == test_agent
     assert observed[0] == ("agent-session-1", "allocated", "/tmp:project-a")
     assert observed[1][0] == "agent-session-1"
     assert observed[1][1] in {"allocated", "reused"}
@@ -1335,7 +1341,7 @@ async def test_execute_tool_call_accepts_dict_request_context_meta_transport_ses
             request_context=SimpleNamespace(meta={"transport_session_id": "dict-meta-transport"})
         ),
         storage_backend=backend,
-        settings=SimpleNamespace(project_root=Path("/tmp")),
+        settings=SimpleNamespace(project_root=Path("/tmp"), default_repo_root="/tmp"),
         state_manager=_DummyStateManager(),
         router_context_manager=router,
         sentinel_only=set(),

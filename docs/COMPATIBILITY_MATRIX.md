@@ -1,7 +1,11 @@
 # Compatibility Matrix
 
-Baseline date: **2026-08-26**
-Release framing: **v2.13.x MCP SDK v2 migration baseline (current: 2.13.0)**
+Updated: **2026-10-20**
+Release framing: **2.15.14 maintenance candidate, retaining the MCP SDK v2 baseline**
+
+## Maintenance candidate status
+
+`2.15.14` preserves public MCP arguments and the released storage APIs. Its bounded fixes cover verified session-binding reconstruction, first-call tool loading, document metadata that preserves the caller default, atomic PostgreSQL classifier bootstrap and canonical export digests. Publication, public stdio first-bind compatibility and actual fleet acceptance remain pending. The internal profile is not a substitute for public or deployment verification. The historical SDK baseline below remains applicable; its exact migration environment is historical evidence, not a claim that every installed SDK has been certified.
 
 ## Baseline contract
 
@@ -20,7 +24,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.13.0` (MCP SDK v2 migration baseline)
+- **Core package version:** `scribe-mcp==2.15.14` (maintenance candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -36,7 +40,8 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.13.0` | Supported (current) | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
+| `2.15.14` | Candidate | Maintenance fixes above; public stdio and fleet acceptance pending. |
+| `2.13.0` | Supported SDK baseline | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
 | `2.11.1` | Supported (previous) | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
 | `2.10.1` | Supported (previous) | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |
 | `2.9.0` | Supported (previous) | Adds MCP/CLI read-only affected-row referential inventory preflight for governed repair planning, with public-safe labels/aggregates only and fail-closed guards for target binding, selected-context, reference inventory, low-cardinality/private-output, missing backend, and mutation-shaped invocation. |

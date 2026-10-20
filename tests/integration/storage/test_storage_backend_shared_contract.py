@@ -9,6 +9,8 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+import sqlite3
 
 import pytest
 
@@ -16,7 +18,188 @@ from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.storage.postgres import PostgresStorage
 from scribe_mcp.storage.sqlite import SQLiteStorage
 
+
+@pytest.mark.regression
+async def test_reconstructed_binding_real_append_and_foreign_file_isolation(backend, tmp_path, monkeypatch, test_agent: str):
+    """Exercise real tools/files; SQLite's retained name UNIQUE is explicit evidence."""
+    from scribe_mcp import server
+    from scribe_mcp.shared.execution_context import RouterContextManager, get_current_execution_context
+    from scribe_mcp.shared.logging_utils import ProjectResolutionError, resolve_logging_context
+    from scribe_mcp.shared.tool_runtime import execute_tool_call
+    from scribe_mcp.state.manager import StateManager
+    from scribe_mcp.tools.append_entry import append_entry
+    from scribe_mcp.tools.read_recent import read_recent
+
+    storage, kind = backend
+    if kind == "postgres":
+        assert storage._conformance_isolated_db, "This regression requires a disposable database"
+    own_root, foreign_root = tmp_path / "own", tmp_path / "foreign"
+    for root in (own_root, foreign_root):
+        root.mkdir()
+        (root / ".git").mkdir()
+    own_log, foreign_log = own_root / "PROGRESS_LOG.md", foreign_root / "PROGRESS_LOG.md"
+    own_log.write_text("# Own log\n", encoding="utf-8")
+    foreign_log.write_bytes(b"# Foreign log\nKEEP EXACT BYTES\n")
+    foreign_before = foreign_log.read_bytes()
+    name = f"reconnect_{uuid.uuid4().hex[:8]}"
+    own = await storage.upsert_project(name=name, repo_root=str(own_root), progress_log_path=str(own_log))
+    if kind == "sqlite":
+        # The supported schema still has name UNIQUE while dependent tables
+        # exist. Do not unhook them or fake duplicate-name support here.
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE.*name"):
+            await storage.upsert_project(name=name, repo_root=str(foreign_root), progress_log_path=str(foreign_log))
+        assert (await storage.fetch_project(name)).project_key == own.project_key
+    else:
+        foreign = await storage.upsert_project(name=name, repo_root=str(foreign_root), progress_log_path=str(foreign_log))
+        assert foreign.project_key != own.project_key
+    foreign_name = f"foreign_only_{uuid.uuid4().hex[:8]}"
+    await storage.upsert_project(name=foreign_name, repo_root=str(foreign_root), progress_log_path=str(foreign_log))
+    own_key, sibling_key = str(uuid.uuid4()), str(uuid.uuid4())
+    await storage.upsert_session(session_id=own_key, transport_session_id=f"own-connection::actor={test_agent}", repo_root=str(own_root), mode="project")
+    await storage.upsert_agent_session(test_agent, own_key, {"source": "reconnect-regression"})
+    await storage.set_session_project(own_key, name)
+    await storage.upsert_session(session_id=sibling_key, transport_session_id=f"sibling-connection::actor={test_agent}", repo_root=str(foreign_root), mode="project")
+    await storage.upsert_agent_session(test_agent, sibling_key, {"source": "reconnect-regression"})
+    await storage.set_session_project(sibling_key, foreign_name)
+    own_binding = await storage.get_session_project(own_key)
+    sibling_binding = await storage.get_session_project(sibling_key)
+    # Actual upsert_session is a writer of sessions.repo_root. No rebind follows.
+    await storage.upsert_session(session_id=own_key, repo_root=str(foreign_root), mode="project")
+    router = RouterContextManager(storage_backend=storage)
+    state = StateManager(tmp_path / "state.json", storage_backend=storage)
+    monkeypatch.setattr(server, "storage_backend", storage)
+    monkeypatch.setattr(server, "state_manager", state)
+    monkeypatch.setattr(server, "get_agent_identity", lambda: None)
+
+    def context_getter(*_args, **kwargs):
+        context = get_current_execution_context()
+        return (context, {}) if kwargs.get("include_metadata") else context
+
+    monkeypatch.setattr(server, "get_execution_context", context_getter)
+    app = SimpleNamespace(request_context=SimpleNamespace(
+        request=SimpleNamespace(headers={"mcp-session-id": "own-connection"}), meta=None,
+    ))
+    registry = {"append_entry": append_entry, "read_recent": read_recent}
+    seen = []
+
+    async def call(tool, project, **kwargs):
+        async def observed_tool(**arguments):
+            context = get_current_execution_context()
+            seen.append(context)
+            assert context.authoritative_session_key == own_key
+            assert context.session_binding == own_binding
+            return await registry[tool](**arguments)
+
+        return await execute_tool_call(
+            name=tool, arguments={"agent": test_agent, "project": project, "format": "structured", **kwargs},
+            kwargs={}, registry={tool: observed_tool}, app=app, storage_backend=storage,
+            settings=SimpleNamespace(project_root=tmp_path / "install"), state_manager=state,
+            router_context_manager=router, sentinel_only=set(), sentinel_allowed=set(),
+            log_scope_violation_cb=lambda *_args, **_kwargs: None,
+        )
+
+    marker = f"own-append-{uuid.uuid4().hex}"
+    result = await call("append_entry", name, message=marker, status="info")
+    assert result["ok"] is True, result
+    assert marker in own_log.read_text(encoding="utf-8")
+    assert foreign_log.read_bytes() == foreign_before
+    result = await call("read_recent", name)
+    assert result["ok"] is True, result
+    assert marker in str(result)
+    assert seen[-1].repo_root == own_binding.canonical_repo_root
+    assert (await storage.fetch_project(name, repo_root=seen[-1].repo_root)).project_key == own.project_key
+    for stored_root in (str(foreign_root), None):
+        # upsert's COALESCE cannot clear a root; clear only this ephemeral row
+        # to cover a missing stored root without changing the binding.
+        if stored_root is not None:
+            await storage.upsert_session(session_id=own_key, repo_root=stored_root, mode="project")
+        else:
+            if kind == "sqlite":
+                await storage._execute("UPDATE scribe_sessions SET repo_root = NULL WHERE session_id = ?", (own_key,))
+            else:
+                await storage._execute("UPDATE scribe_sessions SET repo_root = NULL WHERE session_id = $1", own_key)
+        router = RouterContextManager(storage_backend=storage)
+        for tool in ("append_entry", "read_recent"):
+            # Verify the resolver's actual denial before any file operation.
+            async def deny_probe(**_arguments):
+                return await resolve_logging_context(tool_name=tool, server_module=server, explicit_project=foreign_name, state_snapshot={})
+            with pytest.raises(ProjectResolutionError, match="session-bound|not authorized"):
+                await execute_tool_call(
+                    name=tool, arguments={"agent": test_agent, "project": foreign_name}, kwargs={},
+                    registry={tool: deny_probe}, app=app, storage_backend=storage,
+                    settings=SimpleNamespace(project_root=tmp_path / "install"), state_manager=state,
+                    router_context_manager=router, sentinel_only=set(), sentinel_allowed=set(),
+                    log_scope_violation_cb=lambda *_args, **_kwargs: None,
+                )
+        assert foreign_log.read_bytes() == foreign_before
+        assert await storage.get_session_project(own_key) == own_binding
+        assert await storage.get_session_project(sibling_key) == sibling_binding
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("invalid_state", ["missing", "unresolved", "deleted"])
+async def test_invalid_persisted_binding_cannot_authorize_stale_root(backend, tmp_path, invalid_state, test_agent: str):
+    from scribe_mcp.shared.execution_context import RouterContextManager
+    from scribe_mcp.shared.tool_runtime import execute_tool_call
+    from scribe_mcp.state.manager import StateManager
+
+    storage, kind = backend
+    if kind == "postgres":
+        assert storage._conformance_isolated_db
+    own_root, foreign_root = tmp_path / "own", tmp_path / "foreign"
+    own_root.mkdir()
+    foreign_root.mkdir()
+    foreign_log = foreign_root / "PROGRESS_LOG.md"
+    foreign_log.write_bytes(b"FOREIGN UNCHANGED\n")
+    before = foreign_log.read_bytes()
+    own_name = f"invalid_own_{uuid.uuid4().hex[:8]}"
+    foreign_name = f"invalid_foreign_{uuid.uuid4().hex[:8]}"
+    await storage.upsert_project(name=own_name, repo_root=str(own_root), progress_log_path=str(own_root / "PROGRESS_LOG.md"))
+    await storage.upsert_project(name=foreign_name, repo_root=str(foreign_root), progress_log_path=str(foreign_log))
+    key = str(uuid.uuid4())
+    await storage.upsert_session(session_id=key, transport_session_id=f"invalid-transport::actor={test_agent}", repo_root=str(own_root), mode="project")
+    await storage.upsert_agent_session(test_agent, key, {"source": "reconnect-regression"})
+    if invalid_state != "missing":
+        await storage.set_session_project(key, own_name)
+        if invalid_state == "unresolved":
+            if kind == "sqlite":
+                await storage._execute("UPDATE session_projects SET project_name = NULL, binding_state = 'unresolved', project_key = NULL, binding_state_reason = 'regression-unresolved' WHERE session_id = ?", (key,))
+            else:
+                await storage._execute("UPDATE session_projects SET project_name = NULL, binding_state = 'unresolved', project_key = NULL, binding_state_reason = 'regression-unresolved' WHERE session_id = $1", key)
+            if kind == "sqlite":
+                row = await storage._fetchone("SELECT binding_state, project_key, binding_state_reason FROM session_projects WHERE session_id = ?", (key,))
+            else:
+                row = await storage._fetchrow("SELECT binding_state, project_key, binding_state_reason FROM session_projects WHERE session_id = $1", key)
+            assert row["binding_state"] == "unresolved"
+            assert row["project_key"] is None
+            assert row["binding_state_reason"]
+        else:
+            await storage.delete_project(own_name)
+    assert await storage.get_session_project(key) is None
+    await storage.upsert_session(session_id=key, repo_root=str(foreign_root), mode="project")
+    seen = []
+
+    def forbidden_tool(agent, project):
+        seen.append(project)
+        foreign_log.write_bytes(b"UNAUTHORIZED WRITE\n")
+
+    with pytest.raises(ValueError, match="repo scope unresolved"):
+        await execute_tool_call(
+            name="append_entry", arguments={"agent": test_agent, "project": foreign_name}, kwargs={},
+            registry={"append_entry": forbidden_tool},
+            app=SimpleNamespace(request_context=SimpleNamespace(
+                request=SimpleNamespace(headers={"mcp-session-id": "invalid-transport"}), meta=None,
+            )),
+            storage_backend=storage, settings=SimpleNamespace(project_root=tmp_path / "install"),
+            state_manager=StateManager(tmp_path / "state.json", storage_backend=storage),
+            router_context_manager=RouterContextManager(storage), sentinel_only=set(), sentinel_allowed=set(),
+            log_scope_violation_cb=lambda *_args, **_kwargs: None,
+        )
+    assert seen == []
+    assert foreign_log.read_bytes() == before
+    assert await storage.get_session_project(key) is None
 
 
 async def _seed_project(storage, root: Path):

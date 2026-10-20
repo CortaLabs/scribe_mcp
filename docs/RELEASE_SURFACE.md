@@ -1,7 +1,13 @@
 # Release Surface
 
-Baseline date: **2026-06-16**
-Applies to: **v2.7.1 public release line**
+Updated: **2026-10-20**
+Applies to: **2.15.14 maintenance candidate; publication and fleet validation pending**
+
+## Maintenance scope
+
+This candidate carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
+
+Source and isolated checks do not establish deployment acceptance. Public stdio first binding and the failing client path must pass before fleet rollout. No private orchestration configuration, generated agents, templates or runtime state belongs in the public package.
 
 ## Public contract
 
