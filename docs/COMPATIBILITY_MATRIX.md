@@ -1,11 +1,11 @@
 # Compatibility Matrix
 
 Baseline date: **2026-08-26**
-Release framing: **2.15.18 development candidate; SDK v2 baseline below**
+Release framing: **2.15.19 development candidate; SDK v2 baseline below**
 
 ## Development status
 
-The current working package is `scribe-mcp==2.15.18`. It retains the document metadata correction and repairs the existing test setup: the 53-case document suite passes, with SDK ingress in its operational fixtures and original assertions and negative controls preserved. Broader binding/schema integration and public/peer runtime acceptance remain unresolved; this is not a certified release. The `2.13.0` migration baseline below is historical SDK evidence, not certification of every change on this branch.
+The current working package is `scribe-mcp==2.15.19`. It corrects doctor module-origin reporting and retains the document metadata correction and repairs the existing test setup: the 53-case document suite passes, with SDK ingress in its operational fixtures and original assertions and negative controls preserved. Broader binding/schema integration and public/peer runtime acceptance remain unresolved; this is not a certified release. The `2.13.0` migration baseline below is historical SDK evidence, not certification of every change on this branch.
 
 ## Baseline contract
 
@@ -24,7 +24,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.18` (development candidate; publication pending)
+- **Core package version:** `scribe-mcp==2.15.19` (development candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -40,7 +40,7 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.15.18` | Development candidate | Document fixture repair; broader integration, public stdio and peer acceptance pending. |
+| `2.15.19` | Development candidate | Doctor module-origin and document fixture repairs; broader integration, public stdio and peer acceptance pending. |
 | `2.13.0` | Supported SDK baseline | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
 | `2.11.1` | Supported (previous) | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
 | `2.10.1` | Supported (previous) | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |
