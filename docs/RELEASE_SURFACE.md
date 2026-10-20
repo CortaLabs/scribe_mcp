@@ -1,9 +1,14 @@
 # Release Surface
 
-Updated: **2026-10-19**
-Applies to: **v2.15.11 public release line**
+Updated: **2026-10-20**
+Applies to: **v2.15.12 public release line**
 
 ## Patch release notes
+
+Version 2.15.12 reuses the canonical export-policy digest during document creation.
+Equivalent grant lists receive the same digest in either order, while emitted
+metadata order, document text, default-private behavior, and authority checks
+remain unchanged.
 
 Version 2.15.11 preserves complete bug and security report narratives during
 metadata healing. Long descriptions, Unicode, line breaks, and code fences retain

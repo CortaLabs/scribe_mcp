@@ -19,6 +19,7 @@ from scribe_mcp.doc_management import utils as utils_shared
 from scribe_mcp.doc_management.boundary_guidance import (
     build_manage_docs_boundary_guidance,
 )
+from scribe_mcp.doc_management.intelligence_exports import _policy_digest
 from scribe_mcp.doc_management.naming import normalize_research_doc_name
 from scribe_mcp.doc_management.manager import (
     DocumentOperationError,
@@ -44,8 +45,7 @@ def _export_policy_metadata(
         "required_grants": metadata.get("required_grants", []),
         "revoked_at": metadata.get("revoked_at"),
     }
-    canonical = json.dumps(policy, sort_keys=True, separators=(",", ":"), default=str)
-    policy["policy_digest"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    policy["policy_digest"] = _policy_digest(policy)
     return policy
 
 
