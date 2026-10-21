@@ -43,15 +43,17 @@ Scribe turns that into a tighter loop:
 - CLI helpers for bootstrap, MCP server startup, migrations, backups, metrics, and Codex projection
 - host-facing tool discoverability and onboarding skills (`/scribe-integration`, `/scribe-onboarding`) so agents can learn the tool surface in place
 
-## Current release highlights
+## Maintenance candidate
 
-Current release: `scribe-mcp 2.15.0` · Released: `2026-10-18`
+Development candidate: `scribe-mcp 2.15.20` · Updated: `2026-10-20`
 
-The `2.15.0` development line makes the tracked `skills/` directory the source for the two shipped onboarding and integration guides. Plugin synchronization validates all source and destination paths before writing, copies complete skill assets, and supports a read-only consistency check. Claude and Codex plugin bundles include generic MCP configuration using `scribe-server`. Private host configuration and generated agent content are excluded from these public bundles.
+This maintenance candidate restores repository scope from an existing verified session binding after runtime reconstruction, loads tool definitions before first-call validation, and keeps document metadata updates from changing the caller's selected project. PostgreSQL bootstrap replaces the existing binding classifier trigger atomically, so concurrent writers cannot observe a missing classifier. Export-policy creation uses the verifier's existing canonical digest.
 
-`2.15.0` is the current stable release. It hardens project-binding recovery across reconnects, improves durable storage and object-store behavior, restores exact managed-document fidelity, and reduces the default test lane from tens of minutes to a bounded parallel run.
+Version `2.15.20` also reports the loaded package directory separately from the configured project root in doctor diagnostics and removes an obsolete onboarding-directory packaging rule. Canonical skills still ship from `skills/` and the plugin bundles.
 
-The previous `2.14.0` release preserved the `2.13.2` fixes for canonical nested-path resolution after same-project rehome and special-review `create` dry-run MCP content shape, plus the `2.13.1` SDK v2 agent-project selection-version contract required for safe optimistic-concurrency recovery. Eligible successful mutation dry-runs automatically expose a compact `apply` affordance for `apply_preview`; apply uses an opaque, durable, cross-backend receipt lifecycle with exactly-once, fail-closed behavior. Receipt-based rehome executes against immutable composite authority, registry, index, file, mode, and path state and safely recovers recognized partial states. SDK and wire versions remain different contracts: Scribe supports the installed compatible MCP SDK `2.1.1` within `mcp>=2.0.0,<3.0`, while the modern wire default is protocol revision `2026-07-28`.
+Public MCP arguments and storage APIs remain unchanged. This cut does not include the planned binding API/schema redesign or the broader artifact and receipt refactor. It is not yet a published release or a verified fleet rollout. The actual failing client path must pass against this candidate before rollout, including public stdio first binding if that is its effective path; successful probes under another profile do not certify it. Public stdio compatibility remains an open release boundary.
+
+The existing SDK support range remains `mcp>=2.0.0,<3.0`; the modern wire default is protocol revision `2026-07-28`. SDK package versions and wire protocol revisions are separate contracts.
 
 ### MCP v2 default and compatibility boundary
 

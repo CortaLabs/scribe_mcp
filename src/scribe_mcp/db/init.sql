@@ -353,8 +353,9 @@ END
 $$;
 
 -- scribe:statement-boundary
+-- Replace atomically in one batch: ordinary binding writers do not hold the
+-- bootstrap advisory lock and must never observe a committed trigger gap.
 DROP TRIGGER IF EXISTS session_projects_classify_binding ON session_projects;
--- scribe:statement-boundary
 CREATE TRIGGER session_projects_classify_binding
     BEFORE INSERT OR UPDATE ON session_projects
     FOR EACH ROW

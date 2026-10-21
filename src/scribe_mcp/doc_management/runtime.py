@@ -2140,15 +2140,7 @@ async def _apply_rehome_mutation_steps(
         agent_session_id=None,
     )
     authoritative_session_id = authoritative_scope.get("authoritative_session_id")
-    if state_manager and hasattr(state_manager, "set_current_project") and authoritative_session_id:
-        await state_manager.set_current_project(
-            active_project.get("name"),
-            active_project,
-            agent_id=agent_id,
-            session_id=authoritative_session_id,
-            resolved_scope=authoritative_scope.get("resolved_scope"),
-            mirror_global=False,
-        )
+    # Rehome refreshes metadata above; it must not select a caller default.
 
     case_registry_warning = await _rehome_case_registry_binding(
         storage_backend=backend,
@@ -2872,20 +2864,8 @@ async def auto_register_document(
         docs_json = json.dumps(current_docs)
         await backend.update_project_docs(project_name, docs_json, repo_root=project.get("root"))
         state_manager = getattr(server_module, "state_manager", None)
-        if state_manager and hasattr(state_manager, "set_current_project"):
-            try:
-                await state_manager.set_current_project(
-                    project_name,
-                    project,
-                    agent_id="manage_docs",
-                    session_id=authoritative_session_id,
-                    resolved_scope=authoritative_scope.get("resolved_scope"),
-                    mirror_global=False,
-                )
-            except Exception as exc:
-                raise ValueError(
-                    f"Authoritative session binding failed during auto-registration: {exc}"
-                ) from exc
+        if state_manager and hasattr(state_manager, "update_project_metadata"):
+            await state_manager.update_project_metadata(project_name, project)
         logger.info("Auto-registered document '%s' for project '%s'", doc_name, project_name)
     except Exception as exc:
         raise ValueError(f"Failed to update database for auto-registration: {exc}") from exc
@@ -2969,21 +2949,8 @@ async def register_document_path(
     project["docs"] = current_docs
     docs_json = json.dumps(current_docs)
     state_manager = getattr(server_module, "state_manager", None)
-    if state_manager and hasattr(state_manager, "set_current_project"):
-        try:
-            await state_manager.set_current_project(
-                project_name,
-                project,
-                agent_id=agent_id,
-                session_id=authoritative_session_id,
-                resolved_scope=authoritative_scope.get("resolved_scope"),
-                mirror_global=False,
-            )
-        except Exception as exc:
-            raise ValueError(
-                f"Cannot bind project for authoritative session during registration: {exc}"
-            ) from exc
-
+    if state_manager and hasattr(state_manager, "update_project_metadata"):
+        await state_manager.update_project_metadata(project_name, project)
     await backend.update_project_docs(project_name, docs_json, repo_root=project.get("root"))
 
     try:

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from scribe_mcp.doc_management.manager import apply_doc_change
+from scribe_mcp.doc_management.intelligence_exports import _export_policy_rejection
 from scribe_mcp.doc_management.special_create import _ensure_export_policy_frontmatter
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 
@@ -51,6 +52,82 @@ def test_special_create_persists_complete_non_exportable_policy_by_default(
     assert frontmatter["required_grants"] == []
     assert frontmatter["revoked_at"] is None
     assert len(frontmatter["policy_digest"]) == 64
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("with_frontmatter", [False, True])
+def test_special_create_grant_order_round_trips_through_export_verifier(
+    tmp_path: Path, test_agent: str, with_frontmatter: bool
+) -> None:
+    project = {"name": "test_project", "root": str(tmp_path)}
+    body = "# Narrative\n\nEvidence with trailing spaces.  \n"
+    content = ("---\ntitle: Narrative\n---\n" if with_frontmatter else "") + body
+    metadata = {
+        "visibility": "knowledge",
+        "owner_principal_id": test_agent,
+        "council_id": "test-council",
+        "project_id": "test-project",
+        "required_grants": ["read", "write"],
+        "revoked_at": None,
+    }
+    canonical = parse_frontmatter(
+        _ensure_export_policy_frontmatter(content, project, metadata, test_agent)
+    ).frontmatter_data
+    authority = {"doc.md": {"policy_digest": canonical["policy_digest"]}}
+    assert canonical["policy_digest"] == (
+        "5fadc07b72def62a8350e11f6cc051a54d9c49eb48d24597282520e9b54642ac"
+    )
+    assert _export_policy_rejection(canonical, body, authority, "doc.md") is None
+
+    metadata["required_grants"] = ["write", "read"]
+    rendered = _ensure_export_policy_frontmatter(content, project, metadata, test_agent)
+    parsed = parse_frontmatter(rendered)
+    policy = parsed.frontmatter_data
+    assert rendered.endswith(body)
+    assert policy["required_grants"] == metadata["required_grants"] == ["write", "read"]
+    assert {key: policy[key] for key in metadata} == metadata
+    assert list(policy) == list(canonical)
+    assert policy["policy_digest"] == canonical["policy_digest"]
+    assert _export_policy_rejection(policy, parsed.body, authority, "doc.md") is None
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "control",
+    ["default", "tamper", "missing_authority", "changed_authority", "revoked"],
+)
+def test_special_create_export_negative_controls_remain_denied(
+    tmp_path: Path, test_agent: str, control: str
+) -> None:
+    project = {"name": "test_project", "root": str(tmp_path)}
+    metadata = {
+        "visibility": "knowledge",
+        "owner_principal_id": test_agent,
+        "council_id": "test-council",
+        "project_id": "test-project",
+        "required_grants": ["read", "write"],
+    }
+    if control == "default":
+        metadata = {}
+    elif control == "revoked":
+        metadata["revoked_at"] = "2026-10-20T00:00:00Z"
+    parsed = parse_frontmatter(
+        _ensure_export_policy_frontmatter("# Narrative\n", project, metadata, test_agent)
+    )
+    policy = parsed.frontmatter_data
+    authority = {"doc.md": {"policy_digest": policy["policy_digest"]}}
+    if control == "tamper":
+        policy["required_grants"].append("admin")
+    elif control == "missing_authority":
+        authority = {}
+    elif control == "changed_authority":
+        authority["doc.md"]["policy_digest"] = "0" * 64
+    expected = (
+        "REJECTED_POLICY_AUTHORITY_MISMATCH"
+        if control in {"missing_authority", "changed_authority"}
+        else "REJECTED_MISSING_EXPORT_POLICY"
+    )
+    assert _export_policy_rejection(policy, parsed.body, authority, "doc.md") == expected
 
 
 @pytest.mark.asyncio
