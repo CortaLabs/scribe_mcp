@@ -29,6 +29,10 @@ include docs/guides/scribe_onboarding_prompt.md
 include docs/whitepapers/scribe_mcp_whitepaper.md
 exclude docs/guides/CODEX_APPROVAL_ALIGNMENT_HANDOFF_2026-03-30.md
 
+# Include nested test modules and their tracked data fixtures in source releases.
+recursive-include tests *.py
+recursive-include tests/fixtures *.md
+
 prune build
 prune dist
 prune .council

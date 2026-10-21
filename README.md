@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.0.1` · Updated: `2026-10-21`
+Development candidate: `scribe-mcp 3.0.2` · Updated: `2026-10-21`
+
+`3.0.2` release builds preserve existing artifacts and source files, refuse same-version output collisions, and include nested tests in the source archive. Metadata and README validation run before the new archives reach the requested output directory.
 
 `3.0.1` keeps a configured SQLite connection open throughout schema bootstrap, reducing repeated last-connection teardown. It also closes a connection when configuration fails while preserving the original error. Schema checks, commits and durability settings are retained.
 

@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-21**
-Applies to: **v3.0.1 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.0.2 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.0.2 builds from disposable tracked source, preserving existing artifacts and source files. It refuses same-version output collisions and includes nested tests in source archives. Plugin synchronization, metadata/README validation and archive privacy checks run before copying the new artifacts to the requested output directory.
 
 Version 3.0.1 holds a configured SQLite connection for schema bootstrap to reduce repeated last-connection teardown, and closes newly created connections when configuration fails. Existing schema checks, commits, durability settings and initialization ordering are retained.
 
