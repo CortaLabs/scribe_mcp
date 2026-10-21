@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.0.4` · Updated: `2026-10-21`
+Development candidate: `scribe-mcp 3.0.5` · Updated: `2026-10-21`
+
+`3.0.5` preserves literal section markers inside fenced JSON and Markdown during section edits. Editing, CAS checks, section discovery and error suggestions use the existing Markdown scope parser; neighboring headings and separators remain intact.
 
 `3.0.4` keeps probe imports from changing the caller's repository or state-path environment. Explicit probe execution still sets missing defaults and preserves caller-supplied values.
 

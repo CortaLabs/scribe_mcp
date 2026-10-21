@@ -1,11 +1,11 @@
 # Compatibility Matrix
 
 Baseline date: **2026-08-26**
-Release framing: **3.0.4 development candidate; SDK v2 baseline below**
+Release framing: **3.0.5 development candidate; SDK v2 baseline below**
 
 ## Development status
 
-The current working package is `scribe-mcp==3.0.4`, a development checkpoint with probe import isolation, preserved release artifacts and complete nested-test source packaging, SQLite bootstrap lifetime and configuration-error cleanup, plus the breaking Doctor default described below. Ordinary Doctor calls defer physical/logical inventory collection; explicit full mode preserves the existing v1 report. Earlier module-origin, document metadata and fixture repairs are retained. Broader binding/schema integration and release validation remain unresolved; this is not a certified or published release. The `2.13.0` migration baseline below is historical MCP SDK evidence, not certification of every change on this branch.
+The current working package is `scribe-mcp==3.0.5`, a development checkpoint with fenced-artifact preservation, probe import isolation, preserved release artifacts and complete nested-test source packaging, SQLite bootstrap lifetime and configuration-error cleanup, plus the breaking Doctor default described below. Ordinary Doctor calls defer physical/logical inventory collection; explicit full mode preserves the existing v1 report. Earlier module-origin, document metadata and fixture repairs are retained. Broader binding/schema integration and release validation remain unresolved; this is not a certified or published release. The `2.13.0` migration baseline below is historical MCP SDK evidence, not certification of every change on this branch.
 
 ## Baseline contract
 
@@ -24,7 +24,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==3.0.4` (development candidate; publication pending)
+- **Core package version:** `scribe-mcp==3.0.5` (development candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -40,7 +40,7 @@ MCP SDK v3 is outside the historical SDK baseline; the Scribe package major vers
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `3.0.4` | Development candidate | Probe imports preserve caller environment. Preserved release artifacts and complete nested-test source packaging; SQLite bootstrap lifetime and configuration-error cleanup. Breaking Doctor default: deferred inventory, explicit full-report migration. Broader integration and release acceptance pending. |
+| `3.0.5` | Development candidate | Section targeting ignores fenced literal markers and preserves artifact bytes. Probe imports preserve caller environment. Preserved release artifacts and complete nested-test source packaging; SQLite bootstrap lifetime and configuration-error cleanup. Breaking Doctor default: deferred inventory, explicit full-report migration. Broader integration and release acceptance pending. |
 | `2.13.0` | Supported SDK baseline | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
 | `2.11.1` | Supported (previous) | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
 | `2.10.1` | Supported (previous) | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |

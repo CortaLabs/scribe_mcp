@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-21**
-Applies to: **v3.0.4 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.0.5 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.0.5 excludes fenced literal markers from section targeting, boundary detection, CAS duplicate checks, section inspection and error suggestions. Anchored append and replacement preserve fenced JSON/Markdown and neighboring headings and separators. The repair reuses existing Markdown scopes, including fallback handling for fence type, delimiter length and unclosed fences. Original CAS positive and stale-write denial behavior is retained.
 
 Version 3.0.4 leaves the caller's repository and state-path environment unchanged when the probe module is imported. Explicit probe execution applies missing defaults before binding and preserves caller-supplied values. This prevents probe collection from changing unrelated callers' repository identity.
 
