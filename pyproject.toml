@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.15.19"
+version = "3.0.0"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -132,6 +132,7 @@ include = ["scribe_mcp*"]
 ]
 
 [tool.setuptools.exclude-package-data]
+"*" = ["**/__pycache__/*", "**/*.pyc", "**/*.pyo"]
 "scribe_mcp" = [
   "council_templates/*",
   "council_templates/**/*",

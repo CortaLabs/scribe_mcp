@@ -1,9 +1,15 @@
 # Release Surface
 
-Updated: **2026-10-20**
-Applies to: **v2.15.19 development candidate; integration and fleet acceptance pending**
+Updated: **2026-10-21**
+Applies to: **v3.0.0 development candidate; integration and fleet acceptance pending**
 
-## Patch release notes
+## Development candidate
+
+Version 3.0.0 changes the Doctor default: ordinary calls retain diagnostics and skip physical/logical inventory collection. Callers requiring the existing full v1 report must pass `reconciliation="full"`. Deferred results expose a null report and explicit `not_collected` metadata; full results preserve existing availability limits. The compatibility matrix and usage guide document migration.
+
+This checkpoint is not a completed release or fleet rollout. Broader binding/schema work, integrated validation and actual failing-peer acceptance remain open. Public stdio validation is required if it is the affected peer's effective path. The 2.15.x maintenance candidate remains separate.
+
+## Earlier checkpoint repairs
 
 Version 2.15.19 corrects doctor module-origin reporting and repairs the existing document-test setup through real SDK ingress,
 persisted caller bindings, and canonical metadata readback. All 53 original cases

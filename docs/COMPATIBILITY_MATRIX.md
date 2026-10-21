@@ -1,11 +1,11 @@
 # Compatibility Matrix
 
 Baseline date: **2026-08-26**
-Release framing: **2.15.19 development candidate; SDK v2 baseline below**
+Release framing: **3.0.0 development candidate; SDK v2 baseline below**
 
 ## Development status
 
-The current working package is `scribe-mcp==2.15.19`. It corrects doctor module-origin reporting and retains the document metadata correction and repairs the existing test setup: the 53-case document suite passes, with SDK ingress in its operational fixtures and original assertions and negative controls preserved. Broader binding/schema integration and public/peer runtime acceptance remain unresolved; this is not a certified release. The `2.13.0` migration baseline below is historical SDK evidence, not certification of every change on this branch.
+The current working package is `scribe-mcp==3.0.0`, a development checkpoint with the breaking Doctor default described below. Ordinary Doctor calls defer physical/logical inventory collection; explicit full mode preserves the existing v1 report. Earlier module-origin, document metadata and fixture repairs are retained. Broader binding/schema integration and release validation remain unresolved; this is not a certified or published release. The `2.13.0` migration baseline below is historical MCP SDK evidence, not certification of every change on this branch.
 
 ## Baseline contract
 
@@ -24,7 +24,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.19` (development candidate; publication pending)
+- **Core package version:** `scribe-mcp==3.0.0` (development candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -34,13 +34,13 @@ It adds one new governed repair-planning capability and continues to carry the p
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
 - **Governed-memory posture:** project `CHANGELOG.md` is curated source; `.scribe/docs/GLOBAL_CHANGELOG.md` is derived output
 
-`v3` is out of scope for this baseline.
+MCP SDK v3 is outside the historical SDK baseline; the Scribe package major version is a separate contract.
 
 ## Supported combinations
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.15.19` | Development candidate | Doctor module-origin and document fixture repairs; broader integration, public stdio and peer acceptance pending. |
+| `3.0.0` | Development candidate | Breaking Doctor default: deferred inventory, explicit full-report migration. Broader integration and release acceptance pending. |
 | `2.13.0` | Supported SDK baseline | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
 | `2.11.1` | Supported (previous) | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
 | `2.10.1` | Supported (previous) | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |
@@ -55,6 +55,14 @@ It adds one new governed repair-planning capability and continues to carry the p
 One behavior change is worth naming explicitly because it changes a return value rather than only adding capability:
 
 - **`query_entries` with a non-project `search_scope` now returns an honest `ok: false` teaching error** instead of a silent no-op. That cross-project search engine path was dead/broken, so prior "success" responses could be empty or misleading. This is a correctness fix (honest envelope), not a removal of a working contract: project-scoped `query_entries` behavior is unchanged, and emergency/degraded paths likewise return honest `ok: false` envelopes rather than fabricated rows. No public API/CLI/schema contract is broken.
+
+## Doctor reconciliation default in the 3.0.0 candidate
+
+The 3.0.0 development candidate changes the Doctor default. The 2.15.x maintenance line keeps its existing Doctor behavior.
+
+On the major line, `scribe_doctor(agent=...)` and explicit `reconciliation="deferred"` retain ordinary diagnostics while returning a null reconciliation report and `not_collected` metadata. Callers that need the full v1 report must pass `reconciliation="full"`. This is a breaking default change for callers that previously expected a report from the argument-only call. Callers that support both release eras should branch on their pinned package/tool schema; they should not retry arbitrary errors to guess which default is active.
+
+Full mode delegates to the existing builder and preserves its report shape and availability fallbacks. Collection state `returned` means the builder returned a report; it does not certify that every source was available. The 2.15.x maintenance line does not acquire this default change.
 
 ## Not supported by this baseline
 
@@ -104,4 +112,4 @@ One behavior change is worth naming explicitly because it changes a return value
 
 - Public install/setup guidance must map to shipped package files and tracked docs.
 - Local/operator overlays are never release truth.
-- This baseline is intentionally conservative: compatibility first, breaking changes deferred.
+- The historical SDK baseline remains conservative; the package-major Doctor migration is documented above.

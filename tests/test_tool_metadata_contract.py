@@ -254,3 +254,30 @@ def test_direct_tool_schemas_require_operational_inputs():
     assert "target_status" in reopen_schema["properties"]
     assert "target_status" not in set(reopen_schema["required"])
     assert reopen_schema["properties"]["target_status"]["default"] == "investigating"
+
+
+def test_scribe_doctor_schema_and_read_only_metadata_are_explicit():
+    doctor = server.describe_registered_tools()["scribe_doctor"]
+
+    assert doctor["input_schema"] == {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "reconciliation": {
+                "type": "string",
+                "enum": ["deferred", "full"],
+                "default": "deferred",
+                "description": "deferred skips inventory collection; full returns the complete existing physical/logical reconciliation report.",
+            },
+        },
+        "required": ["agent"],
+        "additionalProperties": True,
+    }
+    assert doctor["annotations"]["readOnlyHint"] is True
+    assert doctor["annotations"]["destructiveHint"] is False
+    assert doctor["annotations"]["idempotentHint"] is True
+    assert doctor["annotations"]["openWorldHint"] is False
+    assert doctor["meta"]["scribe"]["trustTier"] == 0
+    assert doctor["meta"]["scribe"]["riskClass"] == "local_read_only"
+    assert doctor["meta"]["scribe"]["surface"] == "operator"
+    assert doctor["meta"]["scribe"]["locality"] == "local"

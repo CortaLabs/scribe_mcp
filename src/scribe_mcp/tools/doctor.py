@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 from urllib.parse import urlsplit, urlunsplit
 import yaml
 
@@ -316,9 +316,32 @@ def _storage_diagnostics() -> dict[str, Any]:
     }
 
 
-@app.tool(**read_only_local_tool(title="Scribe Doctor", tags=("diagnostics", "runtime", "read-only")))
-async def scribe_doctor(agent: str) -> Dict[str, Any]:
+@app.tool(
+    input_schema={
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "reconciliation": {
+                "type": "string",
+                "enum": ["deferred", "full"],
+                "default": "deferred",
+                "description": "deferred skips inventory collection; full returns the complete existing physical/logical reconciliation report.",
+            },
+        },
+        "required": ["agent"],
+        "additionalProperties": True,
+    },
+    **read_only_local_tool(title="Scribe Doctor", tags=("diagnostics", "runtime", "read-only")),
+)
+async def scribe_doctor(
+    agent: str,
+    *,
+    reconciliation: Literal["deferred", "full"] = "deferred",
+) -> Dict[str, Any]:
     """Return runtime diagnostics for the current MCP server instance."""
+    if not isinstance(reconciliation, str) or reconciliation not in {"deferred", "full"}:
+        raise ValueError("reconciliation must be 'deferred' or 'full'")
+
     repo_root = settings.project_root
     repo_root_str = str(repo_root) if repo_root else None
     module_root = Path(__file__).resolve().parents[1]
@@ -359,10 +382,24 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
         storage_backend=runtime_storage_backend,
         runtime_exec_context=runtime_exec_context,
     )
-    physical_logical_reconciliation = await build_physical_logical_reconciliation(
-        repo_root=Path(repo_root) if repo_root else Path.cwd(),
-        storage_backend=runtime_storage_backend,
-    )
+    physical_logical_reconciliation = None
+    reconciliation_collection = {
+        "schema_version": "doctor-reconciliation-collection.v1",
+        "mode": "deferred",
+        "state": "not_collected",
+        "reason": "not_requested",
+    }
+    if reconciliation == "full":
+        physical_logical_reconciliation = await build_physical_logical_reconciliation(
+            repo_root=Path(repo_root) if repo_root else Path.cwd(),
+            storage_backend=runtime_storage_backend,
+        )
+        reconciliation_collection = {
+            "schema_version": "doctor-reconciliation-collection.v1",
+            "mode": "full",
+            "state": "returned",
+            "reason": None,
+        }
     planning_registry = get_runtime_project_registry()
     planning_registry_context: Dict[str, Any] = {}
     try:
@@ -445,6 +482,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
             },
             "case_telemetry": case_snapshot,
             "physical_logical_reconciliation": physical_logical_reconciliation,
+            "physical_logical_reconciliation_collection": reconciliation_collection,
             "storage_diagnostics": storage_diagnostics,
             "timing_envelope": build_timing_envelope(
                 dispatch_path=runtime_timing.get("dispatch_path"),
