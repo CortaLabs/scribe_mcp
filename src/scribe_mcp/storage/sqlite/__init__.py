@@ -534,26 +534,27 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
                 return
             await asyncio.to_thread(self._path.parent.mkdir, parents=True, exist_ok=True)
 
-            # Base schema creation delegated to storage/sqlite/schema.py
-            await create_schema(
-                self._execute,
-                self._execute_many,
-                self._migrate_agent_sessions_schema,
-            )
+            async with self._internals.bootstrap_connection():
+                # Base schema creation delegated to storage/sqlite/schema.py
+                await create_schema(
+                    self._execute,
+                    self._execute_many,
+                    self._migrate_agent_sessions_schema,
+                )
 
-            # Tracked migrations are delegated to storage/sqlite/migrations.py
-            await run_all_migrations(
-                ensure_column_fn=self._ensure_column,
-                ensure_index_fn=self._ensure_index,
-                execute_fn=self._execute,
-                fetchone_fn=self._fetchone,
-                migrate_document_sections_fn=self._migrate_document_sections,
-                migrate_add_docs_json_column_fn=self.migrate_add_docs_json_column,
-                backfill_docs_json_from_state_fn=self.backfill_docs_json_from_state,
-                db_path=self._path,
-                logger=logger,
-            )
-            await case_ops.ensure_case_registry_schema(execute_fn=self._execute, fetchone_fn=self._fetchone)
+                # Tracked migrations are delegated to storage/sqlite/migrations.py
+                await run_all_migrations(
+                    ensure_column_fn=self._ensure_column,
+                    ensure_index_fn=self._ensure_index,
+                    execute_fn=self._execute,
+                    fetchone_fn=self._fetchone,
+                    migrate_document_sections_fn=self._migrate_document_sections,
+                    migrate_add_docs_json_column_fn=self.migrate_add_docs_json_column,
+                    backfill_docs_json_from_state_fn=self.backfill_docs_json_from_state,
+                    db_path=self._path,
+                    logger=logger,
+                )
+                await case_ops.ensure_case_registry_schema(execute_fn=self._execute, fetchone_fn=self._fetchone)
 
             self._initialised = True
 

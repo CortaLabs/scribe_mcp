@@ -1,11 +1,13 @@
 # Release Surface
 
 Updated: **2026-10-21**
-Applies to: **v3.0.0 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.0.1 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
 
-Version 3.0.0 changes the Doctor default: ordinary calls retain diagnostics and skip physical/logical inventory collection. Callers requiring the existing full v1 report must pass `reconciliation="full"`. Deferred results expose a null report and explicit `not_collected` metadata; full results preserve existing availability limits. The compatibility matrix and usage guide document migration.
+Version 3.0.1 holds a configured SQLite connection for schema bootstrap to reduce repeated last-connection teardown, and closes newly created connections when configuration fails. Existing schema checks, commits, durability settings and initialization ordering are retained.
+
+Version 3.0.0 introduced the Doctor default change: ordinary calls retain diagnostics and skip physical/logical inventory collection. Callers requiring the existing full v1 report must pass `reconciliation="full"`. Deferred results expose a null report and explicit `not_collected` metadata; full results preserve existing availability limits. The compatibility matrix and usage guide document migration.
 
 This checkpoint is not a completed release or fleet rollout. Broader binding/schema work, integrated validation and actual failing-peer acceptance remain open. Public stdio validation is required if it is the affected peer's effective path. The 2.15.x maintenance candidate remains separate.
 

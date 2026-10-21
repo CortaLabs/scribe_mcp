@@ -9,9 +9,10 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable, List, Optional, TypeVar
+from typing import Any, AsyncIterator, Awaitable, Callable, List, Optional, TypeVar
 
 from scribe_mcp.storage.pool import SQLiteConnectionPool
 
@@ -91,6 +92,47 @@ class SQLiteInternals:
         self.pool: Optional[SQLiteConnectionPool] = None
         # Serialize writers across all async threads to avoid SQLite write lock fights.
         self._write_gate = threading.Lock()
+
+    @staticmethod
+    async def _drain_bootstrap_io(task: asyncio.Task[T]) -> T:
+        """Finish resource ownership transfer even after repeated cancellation."""
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        return task.result()
+
+    @asynccontextmanager
+    async def bootstrap_connection(self) -> AsyncIterator[None]:
+        """Keep WAL open across bootstrap's otherwise independent connections.
+
+        Helpers retain their own transactions and commits. Keeping one idle
+        connection alive avoids last-connection teardown after every helper.
+        It owns no transaction and is closed before initialization is ready.
+        """
+        opening = asyncio.create_task(asyncio.to_thread(self.connect))
+        try:
+            conn = await asyncio.shield(opening)
+        except asyncio.CancelledError:
+            try:
+                conn = await self._drain_bootstrap_io(opening)
+            except Exception:
+                pass  # Preserve cancellation if the interrupted open also failed.
+            else:
+                await self._drain_bootstrap_io(
+                    asyncio.create_task(asyncio.to_thread(conn.close))
+                )
+            raise
+        try:
+            yield
+        finally:
+            closing = asyncio.create_task(asyncio.to_thread(conn.close))
+            try:
+                await asyncio.shield(closing)
+            except asyncio.CancelledError:
+                await self._drain_bootstrap_io(closing)
+                raise
 
     async def setup(self, initialise_fn: Callable[[], Awaitable[None]]) -> None:
         await initialise_fn()
@@ -295,11 +337,21 @@ class SQLiteInternals:
             timeout=SQLITE_TIMEOUT_SECONDS,
             check_same_thread=False,
         )
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
-        # Enable WAL and moderate sync level for better concurrent read/write behavior.
-        conn.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE};")
-        conn.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS};")
-        conn.execute(f"PRAGMA temp_store = {SQLITE_TEMP_STORE};")
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
+            # Enable WAL and moderate sync level for better concurrent read/write behavior.
+            conn.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE};")
+            conn.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS};")
+            conn.execute(f"PRAGMA temp_store = {SQLITE_TEMP_STORE};")
+        except BaseException:
+            try:
+                conn.close()
+            except BaseException:
+                logger.warning(
+                    "Failed to close SQLite connection after configuration failure",
+                    exc_info=True,
+                )
+            raise
         return conn

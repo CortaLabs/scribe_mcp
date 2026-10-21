@@ -45,9 +45,11 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.0.0` · Updated: `2026-10-21`
+Development candidate: `scribe-mcp 3.0.1` · Updated: `2026-10-21`
 
-`3.0.0` is a development checkpoint with a breaking Doctor default: ordinary diagnostics skip physical/logical inventory collection. Callers that need the existing full report must pass `reconciliation="full"`. Runtime, authority, case, timing and plugin diagnostics remain available. This candidate retains the earlier module-origin and document registration repairs. Broader binding/schema integration and release validation remain open; this candidate has not been published or promoted to the fleet. See the [compatibility matrix](docs/COMPATIBILITY_MATRIX.md) for migration details.
+`3.0.1` keeps a configured SQLite connection open throughout schema bootstrap, reducing repeated last-connection teardown. It also closes a connection when configuration fails while preserving the original error. Schema checks, commits and durability settings are retained.
+
+The 3.0 line has a breaking Doctor default: ordinary diagnostics skip physical/logical inventory collection. Callers that need the existing full report must pass `reconciliation="full"`. Runtime, authority, case, timing and plugin diagnostics remain available. This candidate retains the earlier module-origin and document registration repairs. Broader binding/schema integration and release validation remain open; this candidate has not been published or promoted to the fleet. See the [compatibility matrix](docs/COMPATIBILITY_MATRIX.md) for migration details.
 
 `2.15.17` restores document registration metadata and cache updates through the existing nonselecting metadata method. Review and spec followups retain their document identity while the caller and sibling project bindings remain unchanged. This larger development branch still has unresolved integration failures and is not a fleet-ready release.
 

@@ -1727,6 +1727,9 @@ def test_sqlite_identity_real_runtime_targeting_preserves_defaults(
             transport = f'identity-runtime::actor={test_agent}'
             await storage.upsert_session(session_id='runtime-a', transport_session_id=transport,
                                           repo_root=str(root_a), agent_id=test_agent, mode='project')
+            await storage.upsert_agent_session(
+                agent_id=test_agent, session_id='runtime-a', metadata={},
+            )
             await storage.set_session_project('runtime-a', 'shared')
             await storage.set_agent_project(test_agent, 'shared', expected_version=None,
                                             updated_by=test_agent, session_id='runtime-a')
@@ -1771,7 +1774,10 @@ def test_sqlite_identity_real_runtime_targeting_preserves_defaults(
             assert {str(file): file.read_bytes() for root in (root_a, root_b)
                     for file in root.rglob('*') if file.is_file()} == files
         finally:
-            await storage.close()
+            try:
+                await storage.end_session('runtime-a')
+            finally:
+                await storage.close()
     asyncio.run(journey())
 
 
