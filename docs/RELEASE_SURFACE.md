@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-21**
-Applies to: **v3.0.2 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.0.4 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.0.4 leaves the caller's repository and state-path environment unchanged when the probe module is imported. Explicit probe execution applies missing defaults before binding and preserves caller-supplied values. This prevents probe collection from changing unrelated callers' repository identity.
 
 Version 3.0.2 builds from disposable tracked source, preserving existing artifacts and source files. It refuses same-version output collisions and includes nested tests in source archives. Plugin synchronization, metadata/README validation and archive privacy checks run before copying the new artifacts to the requested output directory.
 

@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.0.2` · Updated: `2026-10-21`
+Development candidate: `scribe-mcp 3.0.4` · Updated: `2026-10-21`
+
+`3.0.4` keeps probe imports from changing the caller's repository or state-path environment. Explicit probe execution still sets missing defaults and preserves caller-supplied values.
 
 `3.0.2` release builds preserve existing artifacts and source files, refuse same-version output collisions, and include nested tests in the source archive. Metadata and README validation run before the new archives reach the requested output directory.
 
