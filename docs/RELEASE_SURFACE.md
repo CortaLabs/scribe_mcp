@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-22**
-Applies to: **v3.0.6 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.1.0 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.1.0 adds the pure call-timing recorder and envelope model. It validates finite phase durations and same-stage aggregates before recorder mutation, preserves fixed phase ordering and reports honest unaccounted time with strict latency thresholds. Consumer instrumentation and integrated latency validation remain pending.
 
 Version 3.0.6 reuses canonical anchor offsets within each section helper operation. Extraction, snapshots, append and replacement collect Markdown scopes once per unchanged input. The reuse is local to the operation; changed text receives fresh offsets. Existing fenced-artifact and stale-write protections are retained.
 

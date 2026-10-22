@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.0.6` · Updated: `2026-10-22`
+Development candidate: `scribe-mcp 3.1.0` · Updated: `2026-10-22`
+
+`3.1.0` adds a pure call-timing recorder with ordered phase totals, honest unaccounted time and strict latency thresholds. Invalid or overflowing phase updates are rejected before recorder state changes. Tool instrumentation and live latency acceptance remain pending.
 
 `3.0.6` reuses canonical Markdown scope results within each section operation, avoiding repeated full-document scans while preserving fenced artifacts and CAS checks. Changed input receives a fresh scan.
 
