@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-22**
-Applies to: **v3.2.0 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.3.0 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.0 adds SQLite persistence for bounded background-operation receipts. Admission checks global and project capacity atomically; duplicate requests share a project-scoped idempotency key. Claims and transitions check versions and fencing tokens, and reopening storage reconstructs nonterminal receipts and capacity. Scheduling, PostgreSQL parity and live acceptance remain pending.
 
 Version 3.2.0 adds the abstract `StorageBackend.clear_session_project` API. The storage contract preserves persisted generations across clear and rebind, checks stale expectations before effects, and keeps caller authorization in the request layer. Concrete backend execution and live binding acceptance remain pending.
 
