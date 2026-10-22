@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.1.1` · Updated: `2026-10-22`
+Development candidate: `scribe-mcp 3.2.0` · Updated: `2026-10-22`
+
+`3.2.0` adds the abstract storage binding-clear API and documents generation checks and tombstones. Concrete backend implementation and reconnect acceptance remain pending.
 
 `3.1.1` clarifies the patch hash contract in tool help and stale-source errors: patches check the document body without YAML frontmatter. A fresh dry run returns the hash to reuse. Validation and stale-write protections are unchanged.
 

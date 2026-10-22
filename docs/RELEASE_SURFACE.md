@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-22**
-Applies to: **v3.1.1 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.2.0 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.2.0 adds the abstract `StorageBackend.clear_session_project` API. The storage contract preserves persisted generations across clear and rebind, checks stale expectations before effects, and keeps caller authorization in the request layer. Concrete backend execution and live binding acceptance remain pending.
 
 Version 3.1.1 clarifies that apply_patch checks a SHA-256 of the document body without YAML frontmatter. The tool schema, help and stale-source error now explain how to reuse extra.patch_source_hash from a fresh dry run. Validation predicates, reason codes and stale-write protections are unchanged.
 

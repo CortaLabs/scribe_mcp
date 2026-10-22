@@ -524,20 +524,59 @@ class StorageBackend(ABC):
     ) -> SessionBindingRecordV2:
         """Persist or reuse a caller-session default under generation CAS.
 
-        The first binding has generation 1. Changing the target increments the
-        current generation exactly once, while rebinding the current target
-        returns the existing record unchanged and performs no persistent write.
+        ``project_key`` is the canonical persisted project key; the setter has
+        no project-name or ``None`` clearing alias. The key identifies the
+        stored target and does not establish caller/session authority.
+
+        The raw persisted binding row, including an unresolved tombstone, is
+        authoritative for the current generation; the filtered getter is not a
+        compare-and-swap oracle. An absent row compares as generation 0. The
+        first binding persists generation 1 when the expectation is omitted or
+        0. Changing the target increments the current generation exactly once.
+        Rebinding the resolved target preserves the record, timestamp and
+        generation and performs no persistent write.
 
         When ``expected_generation`` is supplied, backends must compare it with
         current storage truth before any write, including for a same-target
-        request. A stale expectation, unknown session, or unknown project raises
-        :class:`ConflictError`; translation to an MCP error envelope is owned by
-        the request layer. Omitting the expectation uses current storage truth.
+        request. A stale or negative expectation, unknown session, or unknown
+        project raises :class:`ConflictError`; translation to an MCP error
+        envelope is owned by the request layer. Omitting the expectation uses
+        current storage truth.
         """
         raise NotImplementedError
 
     async def get_session_project(self, session_id: str) -> SessionBindingRecordV2 | None:
         """Return the caller-session default binding record, if one exists."""
+        raise NotImplementedError
+
+    async def clear_session_project(
+        self,
+        session_id: str,
+        expected_generation: int | None = None,
+    ) -> None:
+        """Clear a caller-session project binding under generation CAS.
+
+        Backends compare ``expected_generation`` with the raw persisted binding
+        generation before any write, including when the binding is already
+        clear. An absent binding row has comparison generation 0. Clearing an
+        absent row with an omitted or zero expectation succeeds without a
+        persistent write. Clearing an unknown session raises
+        :class:`ConflictError`.
+
+        Clearing a noncanonical binding persists a tombstone with null project
+        name and key, ``binding_state="unresolved"``, and
+        ``binding_state_reason="project_name_absent"``. Its generation advances
+        once and its update timestamp changes once. Repeating clear on that
+        canonical tombstone performs no write and preserves both values. Any
+        supplied stale or negative expectation raises :class:`ConflictError`
+        before effects, even for an already-clear binding.
+
+        The getter returns ``None`` for the tombstone. A later bind advances
+        from its generation, so an expectation from before clear cannot succeed
+        after clear and rebind (no ABA). Clear returns ``None``; it does not
+        fabricate a binding record for absence. Request-layer session authority
+        and authorization remain outside this storage API.
+        """
         raise NotImplementedError
 
     async def get_session_by_transport(self, transport_session_id: str) -> Optional[dict]:
