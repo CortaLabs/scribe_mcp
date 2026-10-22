@@ -719,7 +719,8 @@ async def _apply_doc_change_unlocked(
 
                 if patch_source_hash and current_hash != patch_source_hash:
                     raise DocumentOperationError(
-                        "PATCH_STALE_SOURCE: patch_source_hash does not match current file content",
+                        "PATCH_STALE_SOURCE: patch_source_hash does not match the current document body "
+                        "(excluding YAML frontmatter); use extra.patch_source_hash from a fresh apply_patch dry run",
                         extra={"precondition_failed": "SOURCE_HASH_MISMATCH"},
                     )
 

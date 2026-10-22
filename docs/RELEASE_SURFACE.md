@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-22**
-Applies to: **v3.1.0 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.1.1 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.1.1 clarifies that apply_patch checks a SHA-256 of the document body without YAML frontmatter. The tool schema, help and stale-source error now explain how to reuse extra.patch_source_hash from a fresh dry run. Validation predicates, reason codes and stale-write protections are unchanged.
 
 Version 3.1.0 adds the pure call-timing recorder and envelope model. It validates finite phase durations and same-stage aggregates before recorder mutation, preserves fixed phase ordering and reports honest unaccounted time with strict latency thresholds. Consumer instrumentation and integrated latency validation remain pending.
 
