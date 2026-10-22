@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.0.5` · Updated: `2026-10-21`
+Development candidate: `scribe-mcp 3.0.6` · Updated: `2026-10-22`
+
+`3.0.6` reuses canonical Markdown scope results within each section operation, avoiding repeated full-document scans while preserving fenced artifacts and CAS checks. Changed input receives a fresh scan.
 
 `3.0.5` preserves literal section markers inside fenced JSON and Markdown during section edits. Editing, CAS checks, section discovery and error suggestions use the existing Markdown scope parser; neighboring headings and separators remain intact.
 

@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-21**
-Applies to: **v3.0.5 development candidate; integration and fleet acceptance pending**
+Updated: **2026-10-22**
+Applies to: **v3.0.6 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.0.6 reuses canonical anchor offsets within each section helper operation. Extraction, snapshots, append and replacement collect Markdown scopes once per unchanged input. The reuse is local to the operation; changed text receives fresh offsets. Existing fenced-artifact and stale-write protections are retained.
 
 Version 3.0.5 excludes fenced literal markers from section targeting, boundary detection, CAS duplicate checks, section inspection and error suggestions. Anchored append and replacement preserve fenced JSON/Markdown and neighboring headings and separators. The repair reuses existing Markdown scopes, including fallback handling for fence type, delimiter length and unclosed fences. Original CAS positive and stale-write denial behavior is retained.
 

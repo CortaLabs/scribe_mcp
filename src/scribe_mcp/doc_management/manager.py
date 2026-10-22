@@ -1803,10 +1803,12 @@ def _associated_heading_start(text: str, marker_index: int) -> Optional[int]:
     return None
 
 
-def _next_section_boundary(text: str, start: int) -> tuple[int, bool]:
+def _next_section_boundary(
+    text: str, start: int, anchor_matches: Sequence[re.Match[str]],
+) -> tuple[int, bool]:
     """Find the next real anchor's heading, preserving structural separators."""
     section_end = len(text)
-    for match in doc_errors.document_anchor_matches(text):
+    for match in anchor_matches:
         if match.start() >= start:
             heading_start = _associated_heading_start(text, match.start())
             section_end = heading_start if heading_start is not None else match.start()
@@ -1814,7 +1816,10 @@ def _next_section_boundary(text: str, start: int) -> tuple[int, bool]:
     return _pull_back_trailing_separator(text, start, section_end)
 
 
-def _section_body_span(text: str, section: Optional[str]) -> Optional[tuple[int, int]]:
+def _section_body_span(
+    text: str, section: Optional[str], *,
+    anchor_matches: Optional[Sequence[re.Match[str]]] = None,
+) -> Optional[tuple[int, int]]:
     """Return the ``(start, end)`` offsets of a section's editable body.
 
     The span matches exactly the region ``_replace_section`` overwrites: from
@@ -1823,9 +1828,12 @@ def _section_body_span(text: str, section: Optional[str]) -> Optional[tuple[int,
     back so it is not consumed. Returns ``None`` when the anchor is missing or
     appears more than once (no single unambiguous body).
     """
+    # Matches belong only to this unchanged input, shared within one operation.
+    if anchor_matches is None:
+        anchor_matches = list(doc_errors.document_anchor_matches(text))
     marker = SECTION_MARKER.format(section=section)
     matches = [
-        match for match in doc_errors.document_anchor_matches(text)
+        match for match in anchor_matches
         if match.group() == marker
     ]
     if len(matches) != 1:
@@ -1836,7 +1844,7 @@ def _section_body_span(text: str, section: Optional[str]) -> Optional[tuple[int,
         start += 1
     if start < len(text) and text[start] == "\n":
         start += 1
-    section_end, _ = _next_section_boundary(text, start)
+    section_end, _ = _next_section_boundary(text, start, anchor_matches)
     return start, section_end
 
 
@@ -1877,8 +1885,9 @@ def _managed_anchor_snapshot(
             extra={"precondition_failed": "ANCHOR_MISSING"},
         )
     marker = SECTION_MARKER.format(section=anchor_id)
+    anchor_matches = list(doc_errors.document_anchor_matches(text))
     matches = [
-        match for match in doc_errors.document_anchor_matches(text)
+        match for match in anchor_matches
         if match.group() == marker
     ]
     if not matches:
@@ -1924,7 +1933,7 @@ def _managed_anchor_snapshot(
         1
         for match in re.finditer(r"(?m)^[ \t]*#{1,6}[ \t]+\S.*$", text[:heading_start])
     ) + 1
-    body_span = _section_body_span(text, anchor_id)
+    body_span = _section_body_span(text, anchor_id, anchor_matches=anchor_matches)
     if body_span is None:
         raise AnchorCASDenied(
             f"ANCHOR_MALFORMED: unable to resolve block for '{anchor_id}'",
@@ -1980,6 +1989,7 @@ def _replace_section(
     info: Optional[Dict[str, Any]] = None,
 ) -> str:
     marker = SECTION_MARKER.format(section=section)
+    anchor_matches = list(doc_errors.document_anchor_matches(text))
 
     # Additive mode: when the caller opts in via ``preserve_authored`` and the
     # target section already holds authored content, append the new block to
@@ -1987,7 +1997,8 @@ def _replace_section(
     # (structure only) still replaces as normal. This is what makes fix-linking
     # non-destructive to a report's authored prose/evidence.
     if preserve_authored and content.strip():
-        existing_body = _extract_section_body(text, section)
+        body_span = _section_body_span(text, section, anchor_matches=anchor_matches)
+        existing_body = text[body_span[0] : body_span[1]] if body_span is not None else None
         if existing_body is not None and _section_body_has_authored_content(
             existing_body
         ):
@@ -2020,7 +2031,7 @@ def _replace_section(
             content = after_marker.lstrip('\n\r')
 
     matches = [
-        match for match in doc_errors.document_anchor_matches(text)
+        match for match in anchor_matches
         if match.group() == marker
     ]
     if not matches:
@@ -2092,7 +2103,7 @@ def _replace_section(
         start += 1
     if start < len(text) and text[start] == "\n":
         start += 1
-    section_end, preserved_separator = _next_section_boundary(text, start)
+    section_end, preserved_separator = _next_section_boundary(text, start, anchor_matches)
     if preserved_separator and info is not None:
         info["preserved_separator"] = True
 
@@ -2200,8 +2211,9 @@ def _replace_text_with_scope(
             if not section_id:
                 raise DocumentOperationError("REPLACE_TEXT_SCOPE_INVALID: section id missing")
             marker = SECTION_MARKER.format(section=section_id)
+            anchor_matches = list(doc_errors.document_anchor_matches(text))
             matches = [
-                match for match in doc_errors.document_anchor_matches(text)
+                match for match in anchor_matches
                 if match.group() == marker
             ]
             if not matches:
@@ -2226,7 +2238,7 @@ def _replace_text_with_scope(
                     start += 1
                 if start < len(text) and text[start] == "\n":
                     start += 1
-                next_marker, _ = _next_section_boundary(text, start)
+                next_marker, _ = _next_section_boundary(text, start, anchor_matches)
                 prefix = text[:start]
                 target_text = text[start:next_marker]
                 suffix = text[next_marker:]
@@ -2340,8 +2352,9 @@ def _append_block(text: str, content: str, section: Optional[str] = None, positi
         return text
 
     marker = SECTION_MARKER.format(section=section)
+    anchor_matches = list(doc_errors.document_anchor_matches(text))
     matches = [
-        match for match in doc_errors.document_anchor_matches(text)
+        match for match in anchor_matches
         if match.group() == marker
     ]
     if not matches:
@@ -2359,7 +2372,7 @@ def _append_block(text: str, content: str, section: Optional[str] = None, positi
     after_marker = idx + len(marker)
     while after_marker < len(text) and text[after_marker] in "\r\n":
         after_marker += 1
-    section_end, _ = _next_section_boundary(text, after_marker)
+    section_end, _ = _next_section_boundary(text, after_marker, anchor_matches)
 
     position = position.lower()
     if position == "before":

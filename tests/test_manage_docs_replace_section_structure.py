@@ -25,6 +25,55 @@ def _count_marker(text: str, section_id: str) -> int:
     return text.count(f"<!-- ID: {section_id} -->")
 
 
+@pytest.mark.regression
+@pytest.mark.parametrize("fallback", [False, True], ids=["canonical", "heuristic"])
+@pytest.mark.parametrize("operation", ["extract", "snapshot", "append", "replace", "preserve", "scoped"])
+def test_section_helpers_collect_real_scopes_once_per_input(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fallback: bool, operation: str,
+) -> None:
+    from scribe_mcp.doc_management import errors
+    from scribe_mcp.doc_management.quality.scopes import HeuristicFenceScopeProvider
+
+    provider = HeuristicFenceScopeProvider() if fallback else errors.create_scope_provider()
+    collected: list[str] = []
+
+    class CountingProvider:
+        def collect_scopes(self, text: str):
+            collected.append(text)
+            return provider.collect_scopes(text)
+
+    monkeypatch.setattr(errors, "create_scope_provider", CountingProvider)
+    original, _, neighbor = _fenced_document("````", duplicate_target=True)
+    path = tmp_path / "DOC.md"
+
+    # Each call owns its offsets. A later changed input must collect fresh scopes;
+    # another call on the original must also avoid a persistent/global cache.
+    for doc in (original, original.replace("keep exactly", "changed bytes"), original):
+        collected.clear()
+        if operation == "extract":
+            result = _extract_section_body(doc, "verification")
+            assert result == doc.split("<!-- ID: verification -->\n", 1)[1][:-len(neighbor)]
+        elif operation == "snapshot":
+            result = _managed_anchor_snapshot(doc, "verification", path)
+            assert result["anchor_id"] == "verification"
+            assert len(result["anchor_sha256"]) == 64
+        elif operation == "append":
+            result = _append_block(doc, "new evidence", "verification")
+            assert result == doc[:-len(neighbor)].rstrip() + "\nnew evidence\n" + neighbor
+        elif operation in {"replace", "preserve"}:
+            result = _replace_section(doc, "verification", "new evidence", preserve_authored=operation == "preserve")
+            body = doc.split("<!-- ID: verification -->\n", 1)[1][:-len(neighbor)]
+            expected_body = body.rstrip() + "\n\nnew evidence" if operation == "preserve" else "new evidence"
+            assert result == "## Verification\n<!-- ID: verification -->\n" + expected_body + "\n" + neighbor
+        else:
+            result, hits = _replace_text_with_scope(
+                doc, find_text='"text"', replace_text='"renamed"',
+                match_mode="literal", replace_all=True, scope="section:verification", allow_no_match=True,
+            )
+            assert hits == 1 and result == doc.replace('"text"', '"renamed"')
+        assert collected == [doc], f"{operation}: full scope collections={len(collected)}"
+
+
 def test_replace_section_preserves_adjacent_heading_and_anchor_on_repeated_updates() -> None:
     doc = (
         "# Phase Plan\n\n"
