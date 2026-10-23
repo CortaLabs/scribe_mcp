@@ -8,6 +8,7 @@ from typing import Any, Dict, Literal
 from urllib.parse import urlsplit, urlunsplit
 import yaml
 
+from scribe_mcp.bridges.registry import BridgeRegistry
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
 from scribe_mcp.config.settings import settings
@@ -125,27 +126,28 @@ def _backend_name(value: Any) -> str | None:
 def _bridge_hygiene_advisory(repo_root: Path | None) -> Dict[str, Any]:
     if repo_root is None:
         return {"status": "unknown", "deferred_non_blocking": []}
-    manifest_path = repo_root / ".scribe" / "config" / "bridges" / "council_mcp.yaml"
-    if not manifest_path.exists():
+    registry = BridgeRegistry(None, config_dir=repo_root / ".scribe" / "config" / "bridges")
+    manifest_paths = sorted(registry.discover_manifests())
+    if not manifest_paths:
         return {"status": "not_present", "deferred_non_blocking": []}
-    try:
-        payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        payload = {}
-    runtime_plugin = payload.get("runtime_plugin") if isinstance(payload, dict) else None
-    if runtime_plugin:
-        return {"status": "configured", "deferred_non_blocking": []}
-    return {
-        "status": "deferred_hygiene",
-        "deferred_non_blocking": [
-            {
+    warnings = []
+    for manifest_path in manifest_paths:
+        try:
+            payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            payload = {}
+        runtime_plugin = payload.get("runtime_plugin") if isinstance(payload, dict) else None
+        if not runtime_plugin:
+            warnings.append({
                 "code": "BRIDGE_RUNTIME_PLUGIN_DEFERRED",
                 "severity": "low",
                 "blocking": False,
                 "path": str(manifest_path),
                 "message": "Bridge manifest runtime_plugin warning is deferred hygiene unless a bridge tool path is invoked.",
-            }
-        ],
+            })
+    return {
+        "status": "deferred_hygiene" if warnings else "configured",
+        "deferred_non_blocking": warnings,
     }
 
 

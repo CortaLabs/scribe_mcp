@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.1` · Updated: `2026-10-23`
+Development candidate: `scribe-mcp 3.3.2` · Updated: `2026-10-23`
+
+`3.3.2` restores consumer-agnostic Doctor bridge hygiene for discovered YAML manifests and removes private-consumer assumptions from deployment guidance. Warnings remain low severity and nonblocking; source validation does not establish publication or live acceptance.
 
 `3.3.1` restores existing-project classification for verified projects with an empty or rotated progress log and no baseline hashes. Source validation does not establish publication or live acceptance.
 

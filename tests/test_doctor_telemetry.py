@@ -178,7 +178,7 @@ async def test_scribe_doctor_labels_bridge_runtime_plugin_warning_as_deferred_hy
     repo_root = tmp_path / "repo"
     bridge_dir = repo_root / ".scribe" / "config" / "bridges"
     bridge_dir.mkdir(parents=True)
-    (bridge_dir / "council_mcp.yaml").write_text("bridge_id: council_mcp\n", encoding="utf-8")
+    (bridge_dir / "consumer.yaml").write_text("bridge_id: consumer\n", encoding="utf-8")
 
     fake_settings = SimpleNamespace(
         project_root=repo_root,
@@ -212,6 +212,90 @@ async def test_scribe_doctor_labels_bridge_runtime_plugin_warning_as_deferred_hy
     assert hygiene["status"] == "deferred_hygiene"
     assert hygiene["deferred_non_blocking"][0]["blocking"] is False
     assert hygiene["deferred_non_blocking"][0]["code"] == "BRIDGE_RUNTIME_PLUGIN_DEFERRED"
+
+
+@pytest.mark.regression
+@pytest.mark.core
+@pytest.mark.bridges
+@pytest.mark.parametrize("suffix", ["yaml", "yml"])
+def test_bridge_hygiene_generic_manifest(tmp_path: Path, suffix: str, test_agent: str) -> None:
+    bridge_dir = tmp_path / ".scribe" / "config" / "bridges"
+    bridge_dir.mkdir(parents=True)
+    manifest = bridge_dir / f"consumer.{suffix}"
+    manifest.write_text("bridge_id: consumer\n", encoding="utf-8")
+
+    assert doctor_module._bridge_hygiene_advisory(tmp_path) == {
+        "status": "deferred_hygiene",
+        "deferred_non_blocking": [{
+            "code": "BRIDGE_RUNTIME_PLUGIN_DEFERRED",
+            "severity": "low",
+            "blocking": False,
+            "path": str(manifest),
+            "message": "Bridge manifest runtime_plugin warning is deferred hygiene unless a bridge tool path is invoked.",
+        }],
+    }
+
+
+@pytest.mark.regression
+@pytest.mark.core
+@pytest.mark.bridges
+def test_bridge_hygiene_absent_and_templates(tmp_path: Path, test_agent: str) -> None:
+    assert doctor_module._bridge_hygiene_advisory(None) == {
+        "status": "unknown", "deferred_non_blocking": [],
+    }
+    absent = {"status": "not_present", "deferred_non_blocking": []}
+    assert doctor_module._bridge_hygiene_advisory(tmp_path) == absent
+    bridge_dir = tmp_path / ".scribe" / "config" / "bridges"
+    bridge_dir.mkdir(parents=True)
+    assert doctor_module._bridge_hygiene_advisory(tmp_path) == absent
+    for name in ("_template.yaml", "_template.yml", "ignored.txt"):
+        (bridge_dir / name).write_text("bridge_id: ignored\n", encoding="utf-8")
+    assert doctor_module._bridge_hygiene_advisory(tmp_path) == absent
+
+
+@pytest.mark.regression
+@pytest.mark.core
+@pytest.mark.bridges
+@pytest.mark.parametrize("plugin", ["consumer.plugin", "true", "{module: consumer}"])
+def test_bridge_hygiene_configured_preserves_presence_semantics(tmp_path: Path, plugin: str, test_agent: str) -> None:
+    bridge_dir = tmp_path / ".scribe" / "config" / "bridges"
+    bridge_dir.mkdir(parents=True)
+    for name in ("alpha.yaml", "beta.yml"):
+        (bridge_dir / name).write_text(f"runtime_plugin: {plugin}\n", encoding="utf-8")
+    assert doctor_module._bridge_hygiene_advisory(tmp_path) == {
+        "status": "configured", "deferred_non_blocking": [],
+    }
+
+
+@pytest.mark.regression
+@pytest.mark.core
+@pytest.mark.bridges
+def test_bridge_hygiene_mixed_manifests_are_sorted_and_redacted(tmp_path: Path, test_agent: str) -> None:
+    bridge_dir = tmp_path / ".scribe" / "config" / "bridges"
+    bridge_dir.mkdir(parents=True)
+    # Reverse creation order and mixed suffixes expose nondeterministic discovery order.
+    payloads = {
+        "zeta.yml": "runtime_plugin: false\n",
+        "epsilon.yaml": "runtime_plugin: {}\n",
+        "delta.yml": "runtime_plugin: null\n",
+        "charlie.yaml": "- sensitive-value\n",
+        "bravo.yml": "runtime_plugin: [\nsensitive-value\n",
+        "alpha.yaml": "bridge_id: consumer\nsecret: sensitive-value\n",
+        "configured.yaml": "runtime_plugin: consumer.plugin\n",
+        "_template.yml": "bridge_id: ignored\n",
+    }
+    for name, payload in payloads.items():
+        (bridge_dir / name).write_text(payload, encoding="utf-8")
+    result = doctor_module._bridge_hygiene_advisory(tmp_path)
+    assert result["status"] == "deferred_hygiene"
+    warnings = result["deferred_non_blocking"]
+    assert [warning["path"] for warning in warnings] == [
+        str(bridge_dir / name) for name in sorted(payloads)
+        if name not in {"configured.yaml", "_template.yml"}
+    ]
+    assert all(warning["code"] == "BRIDGE_RUNTIME_PLUGIN_DEFERRED" for warning in warnings)
+    assert all(warning["severity"] == "low" and warning["blocking"] is False for warning in warnings)
+    assert "sensitive-value" not in json.dumps(result)
 
 
 @pytest.mark.asyncio

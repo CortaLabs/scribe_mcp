@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-23**
-Applies to: **v3.3.1 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.3.2 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.2 restores consumer-agnostic Doctor bridge hygiene through existing YAML manifest discovery, retaining low severity, nonblocking warnings and runtime-plugin presence semantics. Deployment guidance no longer assumes a private consumer. This is a source repair; integration, publication and live acceptance remain pending.
 
 Version 3.3.1 restores existing-project classification when a verified project's progress log is empty or rotated and baseline hashes are absent. The reader passes its already-resolved progress path to the existing classifier. This is a source repair; publication and live acceptance remain pending.
 
