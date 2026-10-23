@@ -467,7 +467,7 @@ class TestGetProjectIntegration:
         assert result["fallback_used"] is False
         assert result["fallback_chain"] == []
         assert "resolved via 'session_binding'" in result["resolution_summary"].lower()
-        assert result["state"] == "NEW"
+        assert result["state"] == "EXISTING_LEGACY"
         lookup.assert_any_await(env.session_id)
         assert all(call.args == (env.session_id,) for call in lookup.await_args_list)
         assert await env.snapshot() == before
@@ -505,7 +505,7 @@ class TestGetProjectIntegration:
         assert result["resolution_source"] == "session_binding"
         assert result["fallback_used"] is False
         assert result["fallback_chain"] == []
-        assert result["state"] == "NEW"
+        assert result["state"] == "EXISTING_LEGACY"
         assert await env.snapshot() == before
 
     @pytest.mark.asyncio

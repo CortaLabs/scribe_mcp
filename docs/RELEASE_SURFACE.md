@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-22**
-Applies to: **v3.3.0 development candidate; integration and fleet acceptance pending**
+Updated: **2026-10-23**
+Applies to: **v3.3.1 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.1 restores existing-project classification when a verified project's progress log is empty or rotated and baseline hashes are absent. The reader passes its already-resolved progress path to the existing classifier. This is a source repair; publication and live acceptance remain pending.
 
 Version 3.3.0 adds SQLite persistence for bounded background-operation receipts. Admission checks global and project capacity atomically; duplicate requests share a project-scoped idempotency key. Claims and transitions check versions and fencing tokens, and reopening storage reconstructs nonterminal receipts and capacity. Scheduling, PostgreSQL parity and live acceptance remain pending.
 

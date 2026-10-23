@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.0` · Updated: `2026-10-22`
+Development candidate: `scribe-mcp 3.3.1` · Updated: `2026-10-23`
+
+`3.3.1` restores existing-project classification for verified projects with an empty or rotated progress log and no baseline hashes. Source validation does not establish publication or live acceptance.
 
 `3.3.0` adds SQLite persistence for bounded background-operation receipts: atomic global and project capacity checks, project-scoped idempotency, version and fence checks, and recovery after reopening storage. Scheduling, PostgreSQL parity and live acceptance remain pending.
 

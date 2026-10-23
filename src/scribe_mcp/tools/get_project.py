@@ -592,7 +592,9 @@ async def get_project(
                     entry_count = await counted if inspect.isawaitable(counted) else counted
 
             # Detect project state (Phase 4.1 integration)
-            state, sitrep_message = detect_project_state(response, entry_count)
+            state, sitrep_message = detect_project_state(
+                response, entry_count, progress_log_path=target_project.get("progress_log")
+            )
 
             # Only the current time is attributable without keyed registry data.
             timestamps = {

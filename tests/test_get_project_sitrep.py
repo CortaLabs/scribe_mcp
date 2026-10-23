@@ -47,6 +47,44 @@ class TestGetProjectStateDetection:
 
     @pytest.mark.asyncio
     @pytest.mark.regression
+    async def test_existing_rotated_project_without_hashes_is_not_new(self, reader_environment):
+        """An empty canonical log after rotation retains existing-project state."""
+        env = reader_environment
+        log = Path(env.record.progress_log_path)
+        log.write_text("# Progress Log\n[info] Archived project activity\n")
+        archive = log.with_suffix(".archive.md")
+        log.rename(archive)
+        log.write_text("# Progress Log\n")
+        sibling_log = env.root / "SIBLING_LOG.md"
+        sibling_log.write_text("# Sibling Progress Log\n")
+        sibling = await env.storage.upsert_project(
+            name="sibling", repo_root=str(env.root), progress_log_path=str(sibling_log),
+        )
+
+        async def snapshot():
+            return (
+                await env.snapshot(),
+                await env.storage.fetch_project("sibling", repo_root=str(env.root), project_key=sibling.project_key),
+                await env.storage.count_entries(sibling),
+                sibling_log.read_bytes(), archive.read_bytes(),
+            )
+
+        before = await snapshot()
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
+        assert result["ok"] is True
+        assert result["project"]["project_key"] == env.record.project_key
+        assert result["project"]["progress_log"] == str(log)
+        assert not result["project"].get("meta", {}).get("docs", {}).get("baseline_hashes")
+        assert result["entry_count"] == 0
+        assert await snapshot() == before
+        assert result["state"] == "EXISTING_LEGACY"
+
+    @pytest.mark.asyncio
+    @pytest.mark.regression
     async def test_get_project_includes_state_detection(self, reader_environment, monkeypatch):
         """SITREP detection receives the verified target and its actual entry count."""
         env = reader_environment
