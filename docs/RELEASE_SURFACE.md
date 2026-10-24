@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-24**
-Applies to: **v3.3.4 development test checkpoint; implementation, integration and fleet acceptance pending**
+Applies to: **v3.3.5 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.5 measures complete response envelopes as compact JSON UTF-8 bytes, including SDK aliases, text, structured content, nested keys and metadata. The existing budget helper reports its whole returned response, including accounting and warning fields; token estimates remain heuristic. The formatter delegates to the same measurement owner. This is an accounting repair, not final default-response size enforcement or runtime certification.
 
 Version 3.3.4 adds 78 regression cases for complete default-response size, honest envelope accounting, explicit full detail, preserved control facts and same-page continuation. This is a test-first checkpoint with expected contract failures. It does not implement or certify the bounded response contract; implementation, source integration and affected-client verification remain pending.
 
