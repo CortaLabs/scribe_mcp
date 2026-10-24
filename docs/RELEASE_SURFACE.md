@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-24**
-Applies to: **v3.3.7 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.8 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.8 stops treating valid JSON metadata strings as expression syntax. Comparisons such as `payload <=2048 bytes` and `1 > 2` retain their original operators without invented backslashes or quotes. Request healing no longer reports these unchanged values as corrections. Log-delimiter handling, existing size bounds and non-JSON fallback rules are retained.
 
 Version 3.3.7 adds an inactive pure projector in the existing formatter dispatcher. Supported previews retain required identifiers, truthful counts, bounded UTF-8 excerpts with hashes, explicit omissions and same-page full-detail continuation. The existing budget manager checks complete modern and legacy MCP envelopes against 2 KiB. No production caller is activated; schema, producer and transport integration remain pending.
 

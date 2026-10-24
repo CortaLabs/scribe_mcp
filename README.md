@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.7` · Updated: `2026-10-24`
+Development candidate: `scribe-mcp 3.3.8` · Updated: `2026-10-24`
+
+`3.3.8` keeps comparison operators literal in valid JSON metadata instead of inserting backslashes or quotes. Existing log-delimiter normalization and metadata bounds remain.
 
 `3.3.7` adds an inactive pure response projector for bounded `read_recent` and `list_projects` previews, truthful counts, content hashes and explicit full-detail continuation. It preserves the selected full content and checks the complete MCP envelope against 2 KiB. Tool and transport wiring remain pending; this checkpoint does not bound live default responses.
 
