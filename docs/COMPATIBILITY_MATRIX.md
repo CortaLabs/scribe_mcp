@@ -1,11 +1,11 @@
 # Compatibility Matrix
 
 Updated: **2026-10-24**
-Release framing: **2.15.26 maintenance candidate, retaining the MCP SDK v2 baseline**
+Release framing: **2.15.27 maintenance candidate, retaining the MCP SDK v2 baseline**
 
 ## Maintenance candidate status
 
-`2.15.26` honors the read_recent priority-sort flag, retains an idle SQLite connection during initialization without changing transaction or durability settings, preserves literal comparison operators in JSON metadata and requires setuptools 77.0.3 or newer to build its SPDX license metadata. It preserves public MCP arguments and the released storage APIs. Its bounded fixes cover verified session-binding reconstruction, first-call tool loading, document metadata that preserves the caller default, atomic PostgreSQL classifier bootstrap and canonical export digests. Release builds preserve existing artifacts and source files, reject output collisions, and retain nested tests in source distributions. Publication, public stdio first-bind compatibility and actual fleet acceptance remain pending. The internal profile is not a substitute for public or deployment verification. The historical SDK baseline below remains applicable; its exact migration environment is historical evidence, not a claim that every installed SDK has been certified.
+`2.15.27` honors the read_recent priority-sort flag, retains an idle SQLite connection during initialization without changing transaction or durability settings, preserves literal comparison operators in JSON metadata and requires setuptools 77.0.3 or newer to build its SPDX license metadata. It preserves public MCP arguments and the released storage APIs. Its bounded fixes cover verified session-binding reconstruction, first-call tool loading, document metadata that preserves the caller default, atomic PostgreSQL classifier bootstrap and canonical export digests. Release builds preserve existing artifacts and source files, reject output collisions, and retain nested tests in source distributions. Publication, public stdio first-bind compatibility and actual fleet acceptance remain pending. The internal profile is not a substitute for public or deployment verification. The historical SDK baseline below remains applicable; its exact migration environment is historical evidence, not a claim that every installed SDK has been certified.
 
 ## Baseline contract
 
@@ -24,7 +24,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.26` (maintenance candidate; publication pending)
+- **Core package version:** `scribe-mcp==2.15.27` (maintenance candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -40,6 +40,7 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
+| `2.15.27` | Candidate | Restores genuine binding prerequisites in regression fixtures; product authority unchanged, native and fleet acceptance pending. |
 | `2.15.26` | Candidate | Honors read_recent priority_sort=False/default while retaining explicit priority sorting; native and fleet acceptance pending. |
 | `2.15.25` | Candidate | Retains SQLite bootstrap connection lifetime and closes failed handles; native and fleet acceptance pending. |
 | `2.15.24` | Candidate | Preserves comparison operators in JSON metadata; public stdio and fleet acceptance pending. |
