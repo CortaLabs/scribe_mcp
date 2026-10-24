@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import pytest
 
@@ -29,6 +30,84 @@ async def _setup_project(tmp_path: Path) -> dict:
             "checklist": str(docs_dir / "CHECKLIST.md"),
             "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
         },
+    }
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fence", ["```", "~~~", "````", "~~~~"])
+async def test_fenced_patch_bytes_survive_section_and_frontmatter_writes(
+    tmp_path: Path, test_agent: str, fence: str,
+) -> None:
+    """Literal patch context, blank lines and Unicode survive both write paths."""
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text(
+        "---\ntags: [initial]\n---\n"
+        "# Title\n\n<!-- ID: artifact -->\nold\n\n"
+        "<!-- ID: after -->\nKeep this section\n", encoding="utf-8",
+    )
+    payload = (
+        "diff --git a/example.txt b/example.txt\n"
+        "--- a/example.txt\n+++ b/example.txt\n@@ -1,4 +1,4 @@\n"
+        " context café  \t\n \n\t \t\n-old\n+new  \t\n"
+    )
+    if len(fence) > 3:
+        # A shorter same-marker fence is literal content inside the outer one.
+        payload += fence[:3] + "\n still inside  \t\n"
+    expected = payload.encode("utf-8")
+    expected_sha = hashlib.sha256(expected).hexdigest()
+    content = "Prose before  \t\n" + fence + "diff\n" + payload + fence + "\nProse after  \t\n"
+    observed = {}
+
+    for action in ("replace_section", "frontmatter_update"):
+        before_bytes = path.read_bytes()
+        before = parse_frontmatter(before_bytes.decode("utf-8"))
+        before_trace = before.frontmatter_data.get("edit_trace", {})
+        assert before.frontmatter_data["tags"] != [action]
+        assert before_trace.get("last_action") != action
+        change = await apply_doc_change(
+            project, doc="architecture", action=action,
+            section="artifact" if action == "replace_section" else None,
+            content=content if action == "replace_section" else None,
+            patch=None, patch_source_hash=None, start_line=None, end_line=None,
+            template=None, metadata={"agent_id": test_agent, "tags": [action]},
+            dry_run=False,
+        )
+        assert change.success
+        # Reopen the persisted UTF-8 file after each operation, not its preview.
+        written = path.read_bytes()
+        parsed = parse_frontmatter(written.decode("utf-8"))
+        frontmatter = parsed.frontmatter_data
+        assert written != before_bytes
+        assert frontmatter["tags"] == [action]
+        assert frontmatter["created_by"] == test_agent
+        assert frontmatter["maintained_by"] == test_agent
+        trace = frontmatter["edit_trace"]
+        assert trace["tool"] == "manage_docs"
+        assert trace["created_via"] == "replace_section"
+        assert trace["last_action"] == action
+        assert trace["last_edited_by"] == test_agent
+        assert trace["last_edited_at"] == frontmatter["last_updated"]
+        assert trace["created_at"]
+        if before_trace:
+            assert trace["created_at"] == before_trace["created_at"]
+            assert trace["created_via"] == before_trace["created_via"]
+            assert frontmatter["created_by"] == before.frontmatter_data["created_by"]
+            assert parsed.body == before.body
+        else:
+            assert trace["created_at"] == trace["last_edited_at"]
+        actual = written.split((fence + "diff\n").encode("utf-8"), 1)[1].split(
+            ("\n" + fence + "\n").encode("utf-8"), 1,
+        )[0] + b"\n"
+        observed[action] = (len(actual), hashlib.sha256(actual).hexdigest(), actual)
+        assert b"Prose before\n" in written
+        assert b"Prose after\n" in written
+        assert b"Keep this section\n" in written
+
+    assert observed == {
+        action: (len(expected), expected_sha, expected)
+        for action in ("replace_section", "frontmatter_update")
     }
 
 

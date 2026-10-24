@@ -1,7 +1,7 @@
 # Release Surface
 
 Updated: **2026-10-24**
-Applies to: **2.15.22 maintenance candidate; publication and fleet validation pending**
+Applies to: **2.15.23 maintenance candidate; publication and fleet validation pending**
 
 ## Maintenance scope
 
@@ -9,7 +9,9 @@ This candidate carries verified-binding recovery after runtime reconstruction, f
 
 Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
 
-Version 2.15.22 corrects the build-backend minimum to setuptools 77.0.3 for its SPDX license metadata. It retains the runtime behavior and fixes below.
+Version 2.15.23 preserves literal trailing spaces and tabs inside fenced code across section replacements and frontmatter updates. Prose cleanup and final-newline behavior are retained. Persisted regression checks cover backtick and tilde fences, shorter inner fences, Unicode and actual metadata writes.
+
+Version 2.15.22 corrects the build-backend minimum to setuptools 77.0.3 for its SPDX license metadata.
 
 Version 2.15.21 replaces destructive build-directory cleanup with an isolated tracked-source snapshot. Existing outputs, metadata and source bytes are preserved; same-version output collisions are rejected before effects. Both distributions must pass Twine and the existing private-artifact checks before exclusive publication. The source distribution includes nested Python regression tests and tracked Markdown fixtures, retaining the existing manifest exclusions.
 
