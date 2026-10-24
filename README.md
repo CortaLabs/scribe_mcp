@@ -45,9 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.5` · Updated: `2026-10-24`
+Development candidate: `scribe-mcp 3.3.6` · Updated: `2026-10-24`
 
-`3.3.5` corrects whole-response accounting and centralizes exact UTF-8 envelope measurement. Seven independent cases cover nested metadata, large keys, Unicode, SDK models and invalid JSON. Default-size projection, schema and runtime integration remain pending.
+`3.3.6` corrects the build-backend minimum to setuptools 77.0.3 for its SPDX license metadata. It retains whole-response accounting and centralizes exact UTF-8 envelope measurement. Seven independent cases cover nested metadata, large keys, Unicode, SDK models and invalid JSON. Default-size projection, schema and runtime integration remain pending.
 
 `3.3.4` adds 78 regression cases for bounded default responses, explicit full detail, accurate envelope accounting and content preservation. This is a test-first checkpoint: implementation and integration remain pending; the new contract tests currently include expected failures.
 
