@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import get_type_hints
 
 import pytest
+import pytest_asyncio
 
 from scribe_mcp.bridges.manifest import BridgeManifest
 from scribe_mcp.cli.main import (
@@ -1161,16 +1162,19 @@ async def test_execute_tool_call_runtime_transport_overrides_compatibility_input
 
 
 class _ProjectBoundReuseStorageBackend:
-    def __init__(self) -> None:
+    """Observe allocation while real storage retains binding authority."""
+
+    def __init__(self, storage) -> None:
+        self._storage = storage
         self._sessions_by_reuse_scope: dict[str, str] = {}
         self._last_allocation: dict[str, dict[str, str]] = {}
         self._counter = 0
 
-    async def get_session_by_transport(self, _transport_session_id: str) -> dict[str, str]:
-        return {"session_id": "stable-transport-session", "repo_root": "/tmp"}
+    async def get_session_by_transport(self, transport_session_id: str):
+        return await self._storage.get_session_by_transport(transport_session_id)
 
-    async def upsert_session(self, **_kwargs) -> None:
-        return None
+    async def upsert_session(self, **kwargs) -> None:
+        await self._storage.upsert_session(**kwargs)
 
     async def get_or_create_agent_session(self, *, identity_key: str, repo_root: str, scope_key: str, **_kwargs) -> str:
         scoped_reuse_key = f"{repo_root}:{scope_key or '__prebinding__'}"
@@ -1193,20 +1197,80 @@ class _ProjectBoundReuseStorageBackend:
     async def get_last_agent_session_allocation(self, identity_key: str) -> dict[str, str] | None:
         return self._last_allocation.get(identity_key)
 
-    async def get_session_mode(self, _session_id: str) -> str:
-        return "project"
+    async def get_session_mode(self, session_id: str):
+        return await self._storage.get_session_mode(session_id)
 
-    async def fetch_project(self, _project_name: str):
-        return SimpleNamespace(repo_root="/tmp")
+    async def fetch_project(self, project_name: str, **kwargs):
+        return await self._storage.fetch_project(project_name, **kwargs)
 
-    async def get_session_project(self, _session_id: str):
-        return None
+    async def get_session_project(self, session_id: str):
+        return await self._storage.get_session_project(session_id)
+
+
+@pytest_asyncio.fixture
+async def verified_project_runtime(tmp_path, monkeypatch, sqlite_db_path):
+    """Use public set_project to establish an isolated, persisted binding."""
+    from scribe_mcp import server
+    from scribe_mcp.shared.execution_context import get_current_execution_context
+    from scribe_mcp.state.agent_manager import AgentContextManager
+    from scribe_mcp.state.manager import StateManager
+    from scribe_mcp.storage.sqlite import SQLiteStorage
+    from scribe_mcp.tools.set_project import set_project
+
+    sqlite_storage = SQLiteStorage(sqlite_db_path)
+    await sqlite_storage.setup()
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    state = StateManager(tmp_path / "state.json", storage_backend=sqlite_storage)
+    router = RouterContextManager(storage_backend=sqlite_storage)
+    monkeypatch.setattr(server, "storage_backend", sqlite_storage)
+    monkeypatch.setattr(server, "state_manager", state)
+    monkeypatch.setattr(server, "agent_context_manager", AgentContextManager(sqlite_storage, state))
+    monkeypatch.setattr(server, "get_agent_identity", lambda: None)
+
+    def context_getter(*_args, **kwargs):
+        context = get_current_execution_context()
+        return (context, {}) if kwargs.get("include_metadata") else context
+
+    monkeypatch.setattr(server, "get_execution_context", context_getter)
+    settings = SimpleNamespace(project_root=root, default_repo_root=str(root))
+
+    async def bind(agent, project, app):
+        result = await execute_tool_call(
+            name="set_project",
+            arguments={"agent": agent, "name": project, "root": str(root), "format": "structured"},
+            kwargs={}, registry={"set_project": set_project}, app=app,
+            storage_backend=sqlite_storage, settings=settings, state_manager=state,
+            router_context_manager=router, sentinel_only=set(), sentinel_allowed={"set_project"},
+            log_scope_violation_cb=lambda *_args, **_kwargs: None,
+        )
+        assert result["ok"] is True, result
+        session_key = result["side_effects"]["authoritative_session_id"]
+        binding = await sqlite_storage.get_session_project(session_key)
+        assert isinstance(binding, SessionBindingRecordV2)
+        assert binding.project_name == project
+        assert binding.canonical_repo_root == str(root.resolve())
+        assert binding.caller_session_key_hash == hashlib.sha256(session_key.encode()).hexdigest()
+        return binding
+
+    # A fresh request router recovers the durable binding without the bootstrap
+    # allocator cache, so the original allocation observer remains meaningful.
+    backend = _ProjectBoundReuseStorageBackend(sqlite_storage)
+    yield SimpleNamespace(
+        backend=backend, router=RouterContextManager(storage_backend=backend),
+        root=root, settings=settings, state=state, bind=bind,
+    )
+    await server.drain_background_tasks()
+    await sqlite_storage.close()
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_call_project_binding_change_reallocates_with_same_transport_session(test_agent: str):
-    backend = _ProjectBoundReuseStorageBackend()
-    router = RouterContextManager(storage_backend=backend)
+@pytest.mark.regression
+async def test_execute_tool_call_project_binding_change_reallocates_with_same_transport_session(test_agent: str, verified_project_runtime):
+    runtime = verified_project_runtime
+    backend = runtime.backend
+    router = runtime.router
     observed: dict[str, list[tuple[str | None, str | None, str | None]]] = {"calls": []}
 
     def capture_scope_stub(agent: str, project: str) -> str:
@@ -1236,12 +1300,15 @@ async def test_execute_tool_call_project_binding_change_reallocates_with_same_tr
         "log_scope_violation_cb": lambda *_args, **_kwargs: None,
     }
 
-    common["settings"].default_repo_root = "/tmp"
+    common["settings"] = runtime.settings
+    common["state_manager"] = runtime.state
+    await runtime.bind(test_agent, "project-a", common["app"])
     result_one = await execute_tool_call(
         **common,
         arguments={"agent": test_agent, "project": "project-a"},
         kwargs={"context": {"mode": "project", "transport_session_id": "transport-stable"}},
     )
+    await runtime.bind(test_agent, "project-b", common["app"])
     result_two = await execute_tool_call(
         **common,
         arguments={"agent": test_agent, "project": "project-b"},
@@ -1251,15 +1318,17 @@ async def test_execute_tool_call_project_binding_change_reallocates_with_same_tr
     assert result_one == test_agent
     assert result_two == test_agent
     assert observed["calls"] == [
-        ("agent-session-1", "allocated", "/tmp:project-a"),
-        ("agent-session-2", "allocated", "/tmp:project-b"),
+        ("agent-session-1", "allocated", f"{runtime.root}:project-a"),
+        ("agent-session-2", "allocated", f"{runtime.root}:project-b"),
     ]
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_call_project_binding_same_scope_reuses_session(test_agent: str) -> None:
-    backend = _ProjectBoundReuseStorageBackend()
-    router = RouterContextManager(storage_backend=backend)
+@pytest.mark.regression
+async def test_execute_tool_call_project_binding_same_scope_reuses_session(test_agent: str, verified_project_runtime) -> None:
+    runtime = verified_project_runtime
+    backend = runtime.backend
+    router = runtime.router
     observed: list[tuple[str | None, str | None, str | None]] = []
 
     def capture_scope_stub(agent: str, project: str) -> str:
@@ -1289,7 +1358,9 @@ async def test_execute_tool_call_project_binding_same_scope_reuses_session(test_
         "log_scope_violation_cb": lambda *_args, **_kwargs: None,
     }
 
-    common["settings"].default_repo_root = "/tmp"
+    common["settings"] = runtime.settings
+    common["state_manager"] = runtime.state
+    await runtime.bind(test_agent, "project-a", common["app"])
     first = await execute_tool_call(
         **common,
         arguments={"agent": test_agent, "project": "project-a"},
@@ -1300,6 +1371,7 @@ async def test_execute_tool_call_project_binding_same_scope_reuses_session(test_
         arguments={"agent": test_agent, "project": "project-a"},
         kwargs={"context": {"mode": "project", "transport_session_id": "transport-stable"}},
     )
+    await runtime.bind(test_agent, "project-b", common["app"])
     third = await execute_tool_call(
         **common,
         arguments={"agent": test_agent, "project": "project-b"},
@@ -1309,21 +1381,25 @@ async def test_execute_tool_call_project_binding_same_scope_reuses_session(test_
     assert first == test_agent
     assert second == test_agent
     assert third == test_agent
-    assert observed[0] == ("agent-session-1", "allocated", "/tmp:project-a")
+    assert observed[0] == ("agent-session-1", "allocated", f"{runtime.root}:project-a")
     assert observed[1][0] == "agent-session-1"
     assert observed[1][1] in {"allocated", "reused"}
-    assert observed[1][2] == "/tmp:project-a"
-    assert observed[2] == ("agent-session-2", "allocated", "/tmp:project-b")
+    assert observed[1][2] == f"{runtime.root}:project-a"
+    assert observed[2] == ("agent-session-2", "allocated", f"{runtime.root}:project-b")
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_call_accepts_dict_request_context_meta_transport_session_id() -> None:
+@pytest.mark.regression
+async def test_execute_tool_call_accepts_dict_request_context_meta_transport_session_id(verified_project_runtime) -> None:
     class _VerifiedProjectStorage(_ProjectBoundReuseStorageBackend):
-        async def fetch_project(self, _project_name: str):
-            return SimpleNamespace(repo_root="/tmp")
+        async def fetch_project(self, project_name: str, **kwargs):
+            return await super().fetch_project(project_name, **kwargs)
 
-    backend = _VerifiedProjectStorage()
-    router = RouterContextManager(storage_backend=backend)
+    runtime = verified_project_runtime
+    backend = _VerifiedProjectStorage(runtime.backend._storage)
+    router = runtime.router
+    app = SimpleNamespace(request_context=SimpleNamespace(meta={"transport_session_id": "dict-meta-transport"}))
+    await runtime.bind("codex", "project-a", app)
     observed: dict[str, str | None] = {}
 
     def capture_scope_stub(agent: str, project: str) -> str:
@@ -1337,12 +1413,10 @@ async def test_execute_tool_call_accepts_dict_request_context_meta_transport_ses
         arguments={"agent": "codex", "project": "project-a"},
         kwargs={"context": {"mode": "project"}},
         registry={"capture_scope": capture_scope_stub},
-        app=SimpleNamespace(
-            request_context=SimpleNamespace(meta={"transport_session_id": "dict-meta-transport"})
-        ),
+        app=app,
         storage_backend=backend,
-        settings=SimpleNamespace(project_root=Path("/tmp"), default_repo_root="/tmp"),
-        state_manager=_DummyStateManager(),
+        settings=runtime.settings,
+        state_manager=runtime.state,
         router_context_manager=router,
         sentinel_only=set(),
         sentinel_allowed={"capture_scope"},
