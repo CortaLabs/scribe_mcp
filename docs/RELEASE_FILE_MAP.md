@@ -1,7 +1,7 @@
 # Release File Map
 
 Baseline date: **2026-08-26**
-Coverage: **3.3.2 development candidate; integration and publication pending**
+Coverage: **3.3.3 development candidate; integration and publication pending**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **3.3.2 development candidate; integration and publication pending**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines development candidate `scribe-mcp==3.3.2`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines development candidate `scribe-mcp==3.3.3`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -62,7 +62,7 @@ Coverage: **3.3.2 development candidate; integration and publication pending**
 | Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
 | Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
 
-The four package/version surfaces are `pyproject.toml`, `src/scribe_mcp/__main__.py`, `docs/COMPATIBILITY_MATRIX.md`, and this file. They identify development candidate `3.3.2`, restoring consumer-agnostic Doctor bridge hygiene and generic deployment guidance. They retain the 3.3.1 repair restoring existing-project classification for verified empty or rotated progress logs without baseline hashes. They retain SQLite background-receipt persistence with atomic capacity, idempotency, fenced transitions and reopen recovery (scheduling and PostgreSQL parity pending), the abstract storage binding-clear API (concrete execution pending), clarified patch body-hash guidance and the additive pure call-timing recorder, operation-local canonical scope reuse, fenced-artifact preservation and shared section discovery, probe import isolation, preserved release artifacts, complete nested-test source packaging, SQLite bootstrap lifetime and configuration cleanup, the breaking Doctor default and explicit full-report migration; the SDK migration baseline remains historical evidence. README and RELEASE_SURFACE retain the broader refinement scope and explicit unresolved integration and fleet acceptance. No publication or live promotion is implied.
+The five package/version surfaces are `pyproject.toml`, `src/scribe_mcp/__init__.py`, `src/scribe_mcp/__main__.py`, `docs/COMPATIBILITY_MATRIX.md`, and this file. They identify development candidate `3.3.3`, adding observed loaded-package version, module origins and process ID to Doctor. They retain consumer-agnostic bridge hygiene and generic deployment guidance. They retain the 3.3.1 repair restoring existing-project classification for verified empty or rotated progress logs without baseline hashes. They retain SQLite background-receipt persistence with atomic capacity, idempotency, fenced transitions and reopen recovery (scheduling and PostgreSQL parity pending), the abstract storage binding-clear API (concrete execution pending), clarified patch body-hash guidance and the additive pure call-timing recorder, operation-local canonical scope reuse, fenced-artifact preservation and shared section discovery, probe import isolation, preserved release artifacts, complete nested-test source packaging, SQLite bootstrap lifetime and configuration cleanup, the breaking Doctor default and explicit full-report migration; the SDK migration baseline remains historical evidence. README and RELEASE_SURFACE retain the broader refinement scope and explicit unresolved integration and fleet acceptance. No publication or live promotion is implied.
 
 ## Public support material
 

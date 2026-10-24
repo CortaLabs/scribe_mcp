@@ -8,6 +8,7 @@ from typing import Any, Dict, Literal
 from urllib.parse import urlsplit, urlunsplit
 import yaml
 
+import scribe_mcp
 from scribe_mcp.bridges.registry import BridgeRegistry
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
@@ -121,6 +122,15 @@ def _backend_name(value: Any) -> str | None:
     if value is None:
         return None
     return type(value).__name__
+
+
+def _canonical_origin(value: Any) -> str | None:
+    if not isinstance(value, (str, os.PathLike)) or not value:
+        return None
+    try:
+        return str(Path(value).resolve())
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
 
 
 def _bridge_hygiene_advisory(repo_root: Path | None) -> Dict[str, Any]:
@@ -411,6 +421,13 @@ async def scribe_doctor(
 
     config_view = None
     runtime_timing = dict(getattr(server_module, "_last_runtime_timing", {}) or {})
+    runtime_identity = {
+        "schema_version": "scribe-runtime-identity.v1",
+        "package_version": scribe_mcp.__version__,
+        "package_origin": _canonical_origin(getattr(scribe_mcp, "__file__", None)),
+        "doctor_origin": _canonical_origin(__file__),
+        "process_id": os.getpid(),
+    }
     if config is not None:
         plugin_info.update(_build_plugin_diagnostics(config, loaded_plugins))
         config_view = {
@@ -503,6 +520,7 @@ async def scribe_doctor(
                 "storage_backend": planning_registry_context.get("storage_backend"),
             },
         },
+        "runtime_identity": runtime_identity,
         "config": config_view,
         "config_path": str(config_path) if config_path else None,
         "config_error": config_error,

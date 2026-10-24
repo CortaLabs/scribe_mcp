@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-23**
-Applies to: **v3.3.2 development candidate; integration and fleet acceptance pending**
+Applies to: **v3.3.3 development candidate; integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.3 adds `runtime_identity` to Doctor, reporting the loaded package version, package and Doctor module origins, and process ID. It reads the running package, not the configured repository version, and preserves deferred inventory collection. These observed diagnostics help identify a candidate; they do not attest source integrity or complete affected-client acceptance.
 
 Version 3.3.2 restores consumer-agnostic Doctor bridge hygiene through existing YAML manifest discovery, retaining low severity, nonblocking warnings and runtime-plugin presence semantics. Deployment guidance no longer assumes a private consumer. This is a source repair; integration, publication and live acceptance remain pending.
 

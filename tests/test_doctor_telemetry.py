@@ -6,6 +6,7 @@ import copy
 import hashlib
 import inspect
 import json
+import os
 from pathlib import Path
 import socket
 from types import SimpleNamespace
@@ -868,3 +869,50 @@ async def test_doctor_full_reports_unavailable_backend_truthfully(
         "state": "returned",
         "reason": None,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.core
+async def test_doctor_runtime_identity_uses_loaded_package_not_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, test_agent: str
+) -> None:
+    fake_checkout = tmp_path / "unrelated-checkout"
+    fake_checkout.mkdir()
+    (fake_checkout / "pyproject.toml").write_text(
+        '[project]\nname = "scribe-mcp"\nversion = "99.99.99"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(fake_checkout)
+    _configure_doctor_fixture(monkeypatch, fake_checkout, _FakeBackend())
+
+    async def forbidden_reconciliation(**kwargs):
+        pytest.fail("deferred Doctor collected full reconciliation")
+
+    monkeypatch.setattr(doctor_module, "build_physical_logical_reconciliation", forbidden_reconciliation)
+
+    first = await doctor_module.scribe_doctor(agent=test_agent)
+    second = await doctor_module.scribe_doctor(agent=test_agent)
+
+    expected_identity = {
+        "schema_version": "scribe-runtime-identity.v1",
+        "package_version": "3.3.3",
+        "package_origin": str(Path(scribe_mcp.__file__).resolve()),
+        "doctor_origin": str(Path(doctor_module.__file__).resolve()),
+        "process_id": os.getpid(),
+    }
+    assert first["runtime_identity"] == expected_identity
+    assert second["runtime_identity"] == expected_identity
+    assert first["runtime"]["physical_logical_reconciliation"] is None
+    assert first["runtime"]["physical_logical_reconciliation_collection"] == {
+        "schema_version": "doctor-reconciliation-collection.v1",
+        "mode": "deferred",
+        "state": "not_collected",
+        "reason": "not_requested",
+    }
+
+    monkeypatch.setattr(scribe_mcp, "__file__", None)
+    absent_origins = await doctor_module.scribe_doctor(agent=test_agent)
+    assert absent_origins["runtime_identity"]["package_origin"] is None
+    assert absent_origins["runtime_identity"]["doctor_origin"] == str(Path(doctor_module.__file__).resolve())
+    assert doctor_module._canonical_origin(None) is None
