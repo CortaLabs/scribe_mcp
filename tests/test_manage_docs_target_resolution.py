@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
-from scribe_mcp import server as server_module
-from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
-from scribe_mcp.tools.manage_docs import manage_docs
+from test_manage_docs_create_doc import _isolated_server, _call_manage_docs
 
 
 class _CaseRegistryBackend:
@@ -22,13 +18,18 @@ class _CaseRegistryBackend:
         project_name: str,
         repo_root: Path,
         case_type: str = "bug",
+        delegate,
     ) -> None:
+        self._delegate = delegate
         self.case_id = case_id
         self.doc_path = doc_path
         self.project_name = project_name
         self.repo_root = repo_root
         self.case_type = case_type
         self.docs_json: str | None = None
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
 
     async def fetch_case_registry_record(self, case_id: str, **_kwargs):
         if case_id != self.case_id:
@@ -46,65 +47,6 @@ class _CaseRegistryBackend:
 
     async def update_project_docs(self, _project_name: str, docs_json: str, **_kwargs):
         self.docs_json = docs_json
-
-
-@contextmanager
-def _isolated_server(state_manager: StateManager, *, project_root: Path, storage_backend=None):
-    originals = {
-        "state_manager": server_module.state_manager,
-        "storage_backend": server_module.storage_backend,
-    }
-    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
-    orig_agent_id = getattr(server_module, "get_agent_identity", None)
-    from scribe_mcp.tools import manage_docs as manage_docs_module
-
-    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
-
-    server_module.state_manager = state_manager
-    server_module.storage_backend = storage_backend
-    server_module.get_execution_context = lambda: SimpleNamespace(
-        mode="project",
-        session_id="target-resolution-test",
-        stable_session_id="target-resolution-test",
-    )
-    server_module.get_agent_identity = lambda: None
-
-    from scribe_mcp.config.repo_config import RepoConfig
-
-    fake_config = RepoConfig(repo_slug="test", repo_root=project_root)
-
-    try:
-        async def _prepare_context_stub(**kwargs):
-            state = await state_manager.load()
-            current_name = state.current_project
-            if not current_name and getattr(state, "recent_projects", None):
-                current_name = state.recent_projects[0]
-            if not current_name and getattr(state, "projects", None):
-                current_name = next(iter(state.projects.keys()))
-            current_project = state.get_project(current_name) if current_name else None
-            state_snapshot = kwargs.get("state_snapshot")
-            return LoggingContext(
-                tool_name="manage_docs",
-                project=current_project,
-                recent_projects=list(getattr(state, "recent_projects", []) or []),
-                state_snapshot=state_snapshot if isinstance(state_snapshot, dict) else {},
-                reminders=[],
-            )
-
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-        with patch(
-            "scribe_mcp.config.repo_config.get_current_repo_config",
-            return_value=(project_root, fake_config),
-        ):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        if orig_exec_ctx is not None:
-            server_module.get_execution_context = orig_exec_ctx
-        if orig_agent_id is not None:
-            server_module.get_agent_identity = orig_agent_id
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
 
 
 async def _setup_project(tmp_path: Path) -> dict:
@@ -136,27 +78,11 @@ async def _setup_project(tmp_path: Path) -> dict:
     }
 
 
-async def _seed_runtime_session(
-    state_manager: StateManager,
-    *,
-    project_root: Path,
-    session_id: str = "target-resolution-test",
-) -> None:
-    backend = getattr(state_manager, "_storage_backend", None)
-    if backend and hasattr(backend, "upsert_session"):
-        await backend.upsert_session(
-            session_id=session_id,
-            repo_root=str(project_root),
-            mode="project",
-        )
-
-
 @pytest.mark.asyncio
-async def test_target_resolution_unifies_md_alias_and_path_variants(tmp_path: Path) -> None:
+async def test_target_resolution_unifies_md_alias_and_path_variants(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     checklist_path = Path(project["docs"]["checklist"])
     state_manager = StateManager(path=tmp_path / "state.json")
-    await _seed_runtime_session(state_manager, project_root=Path(project["root"]))
     await state_manager.set_current_project(project["name"], project)
 
     variants = [
@@ -167,10 +93,11 @@ async def test_target_resolution_unifies_md_alias_and_path_variants(tmp_path: Pa
         str(checklist_path.relative_to(Path(project["root"]))),
     ]
 
-    with _isolated_server(state_manager, project_root=Path(project["root"])):
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
         all_section_ids = []
         for variant in variants:
-            result = await manage_docs(
+            result = await _call_manage_docs(client, test_agent,
                 action="list_sections",
                 doc=variant,
                 dry_run=True,
@@ -184,18 +111,18 @@ async def test_target_resolution_unifies_md_alias_and_path_variants(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_first_write_guidance_for_registered_existing_doc_uses_apply_patch(tmp_path: Path) -> None:
+async def test_first_write_guidance_for_registered_existing_doc_uses_apply_patch(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     docs_dir = Path(project["docs_dir"])
     existing_path = docs_dir / "existing_first_write.md"
     existing_path.write_text("# Existing\n\nLine A\n", encoding="utf-8")
 
     state_manager = StateManager(path=tmp_path / "state.json")
-    await _seed_runtime_session(state_manager, project_root=Path(project["root"]))
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=Path(project["root"])):
-        create_result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
+        create_result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="existing_first_write",
             metadata={
@@ -212,7 +139,7 @@ async def test_first_write_guidance_for_registered_existing_doc_uses_apply_patch
         assert create_result.get("first_write_action") == "apply_patch"
         assert "apply_patch" in (create_result.get("next_step_guidance") or "")
 
-        patch_result = await manage_docs(
+        patch_result = await _call_manage_docs(client, test_agent,
             action="apply_patch",
             doc="existing_first_write.md",
             patch=(
@@ -233,7 +160,7 @@ async def test_first_write_guidance_for_registered_existing_doc_uses_apply_patch
 
 
 @pytest.mark.asyncio
-async def test_bug_report_resolution_accepts_case_id_governed_path_and_canonical_alias(tmp_path: Path) -> None:
+async def test_bug_report_resolution_accepts_case_id_governed_path_and_canonical_alias(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     project_root = Path(project["root"])
     case_id = "BUG-2026-06-04-0001"
@@ -245,17 +172,18 @@ async def test_bug_report_resolution_accepts_case_id_governed_path_and_canonical
     )
 
     state_manager = StateManager(path=tmp_path / "state.json")
-    await _seed_runtime_session(state_manager, project_root=project_root)
     await state_manager.set_current_project(project["name"], project)
     backend = _CaseRegistryBackend(
+        delegate=state_manager._storage_backend,
         case_id=case_id,
         doc_path=report_path,
         project_name=project["name"],
         repo_root=project_root,
     )
 
-    with _isolated_server(state_manager, project_root=project_root, storage_backend=backend):
-        case_result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root, storage_backend=backend,
+                                project_name=project["name"], agent=test_agent) as client:
+        case_result = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc_name=case_id,
             doc_category="bugs",
@@ -269,7 +197,7 @@ async def test_bug_report_resolution_accepts_case_id_governed_path_and_canonical
         assert case_id in backend.docs_json
         assert str(report_path) in backend.docs_json
 
-        path_result = await manage_docs(
+        path_result = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc_name=str(report_path),
             section="investigation",
@@ -282,7 +210,7 @@ async def test_bug_report_resolution_accepts_case_id_governed_path_and_canonical
 
 
 @pytest.mark.asyncio
-async def test_bug_report_path_resolution_does_not_collapse_to_first_report(tmp_path: Path) -> None:
+async def test_bug_report_path_resolution_does_not_collapse_to_first_report(tmp_path: Path, test_agent: str) -> None:
     """Explicit report paths must not match an unrelated registered report.md basename."""
     project = await _setup_project(tmp_path)
     project_root = Path(project["root"])
@@ -303,17 +231,18 @@ async def test_bug_report_path_resolution_does_not_collapse_to_first_report(tmp_
     project.setdefault("docs", {})[first_case_id] = str(first_report)
 
     state_manager = StateManager(path=tmp_path / "state.json")
-    await _seed_runtime_session(state_manager, project_root=project_root)
     await state_manager.set_current_project(project["name"], project)
     backend = _CaseRegistryBackend(
+        delegate=state_manager._storage_backend,
         case_id=second_case_id,
         doc_path=second_report,
         project_name=project["name"],
         repo_root=project_root,
     )
 
-    with _isolated_server(state_manager, project_root=project_root, storage_backend=backend):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root, storage_backend=backend,
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc_name=str(second_report),
             doc_category="bugs",
@@ -328,7 +257,7 @@ async def test_bug_report_path_resolution_does_not_collapse_to_first_report(tmp_
 
 
 @pytest.mark.asyncio
-async def test_security_report_resolution_accepts_case_id_governed_path_and_canonical_alias(tmp_path: Path) -> None:
+async def test_security_report_resolution_accepts_case_id_governed_path_and_canonical_alias(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     project_root = Path(project["root"])
     case_id = "SEC-2026-06-04-0001"
@@ -340,9 +269,9 @@ async def test_security_report_resolution_accepts_case_id_governed_path_and_cano
     )
 
     state_manager = StateManager(path=tmp_path / "state.json")
-    await _seed_runtime_session(state_manager, project_root=project_root)
     await state_manager.set_current_project(project["name"], project)
     backend = _CaseRegistryBackend(
+        delegate=state_manager._storage_backend,
         case_id=case_id,
         doc_path=report_path,
         project_name=project["name"],
@@ -350,8 +279,9 @@ async def test_security_report_resolution_accepts_case_id_governed_path_and_cano
         case_type="security",
     )
 
-    with _isolated_server(state_manager, project_root=project_root, storage_backend=backend):
-        case_result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root, storage_backend=backend,
+                                project_name=project["name"], agent=test_agent) as client:
+        case_result = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc_name=case_id,
             doc_category="security",
@@ -365,7 +295,7 @@ async def test_security_report_resolution_accepts_case_id_governed_path_and_cano
         assert case_id in backend.docs_json
         assert str(report_path) in backend.docs_json
 
-        path_result = await manage_docs(
+        path_result = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc_name=str(report_path),
             section="fix",

@@ -12,7 +12,32 @@ import pytest
 from datetime import datetime, timezone
 from typing import Dict, Any
 
-from scribe_mcp.utils.parameter_validator import ToolValidator
+from scribe_mcp.utils.parameter_validator import BulletproofParameterCorrector, ToolValidator
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+@pytest.mark.parametrize("field", [
+    "summary_long", "symptoms", "actual_behavior", "expected_behavior",
+    "root_cause", "immediate_actions", "customer_impact",
+])
+def test_report_narratives_survive_metadata_healing(field, as_json):
+    narrative = ("Details: café → 確認 | before < after\n" * 30
+                 + "```diff\n context line\n+replacement\n```\nEND_OF_REPORT")
+    metadata = {field: narrative}
+    supplied = json.dumps(metadata) if as_json else metadata
+    corrected = BulletproofParameterCorrector.correct_metadata_parameter(supplied)
+    assert corrected[field].encode("utf-8") == narrative.encode("utf-8")
+    assert metadata[field] == narrative
+
+
+@pytest.mark.parametrize("field", ["doc_name", "category", "unrecognized_metadata"])
+def test_non_narrative_metadata_retains_sanitization_and_limit(field):
+    corrected = BulletproofParameterCorrector.correct_metadata_parameter(
+        {field: "heading\nwith|separator " + "x" * 600}
+    )[field]
+    assert corrected.startswith("heading with;separator ")
+    assert len(corrected) == 500
+    assert corrected.endswith("...")
 
 
 class TestToolValidator:

@@ -15,6 +15,7 @@ from scribe_mcp.doc_management.changelog import (
     reconcile_global_changelog,
     render_global_changelog,
 )
+from scribe_mcp.doc_management.errors import iter_unfenced_lines
 from scribe_mcp.utils.estimator import PaginationCalculator
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.utils.slug import slugify_project_name
@@ -31,7 +32,7 @@ _CHECKLIST_ITEM_WITH_ID_PATTERN = re.compile(
 )
 _CHECKLIST_ID_PHASE_PATTERN = re.compile(r"^p(?P<phase>\d+)-(?P<slug>[a-z0-9-]+)$")
 # Anchor at line start, with or without trailing text on the same line.
-# The edit path resolves anchors by substring (manager.SECTION_MARKER find),
+# The edit path resolves anchors outside fenced artifacts,
 # so inline anchors like "<!-- ID: findings -->Detail..." are valid edit
 # targets and MUST be reported by inspection (P1.3 contract parity).
 _SECTION_ANCHOR_PATTERN = re.compile(r"^<!--\s*ID:\s*(?P<id>[^>]+?)\s*-->")
@@ -90,20 +91,14 @@ async def inspect_document_sections(path: Path) -> Dict[str, Any]:
 def inspect_document_sections_from_text(text: str) -> Dict[str, Any]:
     """Inspect markdown content and return stable section targeting metadata."""
     parsed = parse_frontmatter(text)
-    body_lines = parsed.body.splitlines()
     body_line_offset = len(parsed.frontmatter_raw.splitlines()) if parsed.has_frontmatter else 0
     sections: List[Dict[str, Any]] = []
     anchor_duplicates: Dict[str, List[int]] = {}
     heading_sections: List[Dict[str, Any]] = []
     heading_duplicates: Dict[str, List[int]] = {}
-    in_code_fence = False
 
-    for line_no, line in enumerate(body_lines, start=1):
+    for line_no, _, line in iter_unfenced_lines(parsed.body):
         stripped = line.strip()
-
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_code_fence = not in_code_fence
-            continue
 
         anchor_id = _match_section_anchor(stripped)
         if anchor_id is not None:
@@ -116,9 +111,6 @@ def inspect_document_sections_from_text(text: str) -> Dict[str, Any]:
                     "source": "anchor",
                 }
             )
-            continue
-
-        if in_code_fence:
             continue
 
         heading_match = _HEADING_PATTERN.match(stripped)

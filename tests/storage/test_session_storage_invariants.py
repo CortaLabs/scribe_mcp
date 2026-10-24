@@ -87,7 +87,7 @@ async def sqlite_storage(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_sqlite_session_linkage_invariants(sqlite_storage: SQLiteStorage) -> None:
+async def test_sqlite_session_linkage_invariants(sqlite_storage: SQLiteStorage, test_agent) -> None:
     session_primary = _sid("sqlite_p31_primary")
     session_collision = _sid("sqlite_p31_collision")
     transport = _sid("sqlite_transport")
@@ -95,26 +95,33 @@ async def test_sqlite_session_linkage_invariants(sqlite_storage: SQLiteStorage) 
     await sqlite_storage.upsert_session(
         session_id=session_primary,
         transport_session_id=transport,
-        agent_id="sia",
+        agent_id=test_agent,
         repo_root="/tmp/sqlite",
         mode="project",
     )
 
+    target = await sqlite_storage.upsert_project(
+        name=_sid("sqlite_target"), repo_root="/tmp/sqlite",
+        progress_log_path="/tmp/sqlite/PROGRESS_LOG.md")
     with pytest.raises(ConflictError, match="unknown session_id"):
-        await sqlite_storage.set_session_project(_sid("sqlite_missing"), None)
+        await sqlite_storage.set_session_project(_sid("sqlite_missing"), target.project_key)
+    assert callable(getattr(sqlite_storage, "clear_session_project", None)), (
+        "Frozen contract absent: SQLiteStorage.clear_session_project")
+    with pytest.raises(ConflictError, match="unknown session_id"):
+        await sqlite_storage.clear_session_project(_sid("sqlite_missing"))
 
     with pytest.raises(ConflictError, match="transport_session_id collision"):
         await sqlite_storage.upsert_session(
             session_id=session_collision,
             transport_session_id=transport,
-            agent_id="sia",
+            agent_id=test_agent,
             repo_root="/tmp/sqlite",
             mode="project",
         )
 
     # get_session_by_transport only resolves sessions with a live
     # agent_sessions linkage (hardened contract), so create it first.
-    await sqlite_storage.upsert_agent_session("sia", session_primary, None)
+    await sqlite_storage.upsert_agent_session(test_agent, session_primary, None)
 
     resolved = await sqlite_storage.get_session_by_transport(transport)
     assert resolved is not None
@@ -134,8 +141,9 @@ async def postgres_storage():
         await storage.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
-async def test_postgres_session_linkage_invariants(postgres_storage: PostgresStorage) -> None:
+async def test_postgres_session_linkage_invariants(postgres_storage: PostgresStorage, test_agent) -> None:
     session_primary = _sid("postgres_p31_primary")
     session_collision = _sid("postgres_p31_collision")
     transport = _sid("postgres_transport")
@@ -143,7 +151,7 @@ async def test_postgres_session_linkage_invariants(postgres_storage: PostgresSto
     await postgres_storage.upsert_session(
         session_id=session_primary,
         transport_session_id=transport,
-        agent_id="sia",
+        agent_id=test_agent,
         repo_root="/tmp/postgres",
         mode="project",
     )
@@ -153,14 +161,21 @@ async def test_postgres_session_linkage_invariants(postgres_storage: PostgresSto
     )
     assert await postgres_storage.fetch_agent_session(session_primary) is None
 
+    target = await postgres_storage.upsert_project(
+        name=_sid("postgres_target"), repo_root="/tmp/postgres",
+        progress_log_path="/tmp/postgres/PROGRESS_LOG.md")
     with pytest.raises(ConflictError, match="unknown session_id"):
-        await postgres_storage.set_session_project(_sid("postgres_missing"), None)
+        await postgres_storage.set_session_project(_sid("postgres_missing"), target.project_key)
+    assert callable(getattr(postgres_storage, "clear_session_project", None)), (
+        "Frozen contract absent: PostgresStorage.clear_session_project")
+    with pytest.raises(ConflictError, match="unknown session_id"):
+        await postgres_storage.clear_session_project(_sid("postgres_missing"))
 
     with pytest.raises(ConflictError, match="transport_session_id collision"):
         await postgres_storage.upsert_session(
             session_id=session_collision,
             transport_session_id=transport,
-            agent_id="sia",
+            agent_id=test_agent,
             repo_root="/tmp/postgres",
             mode="project",
         )

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import inspect
+import pytest
+
 from scribe_mcp import server
 
 
@@ -254,3 +257,84 @@ def test_direct_tool_schemas_require_operational_inputs():
     assert "target_status" in reopen_schema["properties"]
     assert "target_status" not in set(reopen_schema["required"])
     assert reopen_schema["properties"]["target_status"]["default"] == "investigating"
+
+
+def test_scribe_doctor_schema_and_read_only_metadata_are_explicit():
+    doctor = server.describe_registered_tools()["scribe_doctor"]
+
+    # The accepted major-line B4 extension adds one optional presentation selector.
+    # Preserve the exact original schema pin after removing ONLY that extension.
+    schema = dict(doctor["input_schema"])
+    schema["properties"] = dict(schema["properties"])
+    selector = schema["properties"].pop("response_detail", None)
+    assert isinstance(selector, dict), "accepted B4 response_detail selector is missing"
+    assert selector.get("type") == "string"
+    assert selector.get("enum") == ["default", "full"]
+    assert selector.get("default") == "default"
+    assert "response_detail" not in schema.get("required", [])
+    assert schema == {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "reconciliation": {
+                "type": "string",
+                "enum": ["deferred", "full"],
+                "default": "deferred",
+                "description": "deferred skips inventory collection; full returns the complete existing physical/logical reconciliation report.",
+            },
+        },
+        "required": ["agent"],
+        "additionalProperties": True,
+    }
+    assert doctor["annotations"]["readOnlyHint"] is True
+    assert doctor["annotations"]["destructiveHint"] is False
+    assert doctor["annotations"]["idempotentHint"] is True
+    assert doctor["annotations"]["openWorldHint"] is False
+    assert doctor["meta"]["scribe"]["trustTier"] == 0
+    assert doctor["meta"]["scribe"]["riskClass"] == "local_read_only"
+    assert doctor["meta"]["scribe"]["surface"] == "operator"
+    assert doctor["meta"]["scribe"]["locality"] == "local"
+
+
+@pytest.mark.core
+@pytest.mark.regression
+class TestSBRDefaultOutput:
+    def test_all_35_registered_schemas_offer_strict_default_full_selector(self, test_agent):
+        details = server.describe_registered_tools()
+        assert set(details) == EXPECTED_REGISTERED_TOOLS
+        assert len(details) == 35
+        missing = []
+        for name, detail in details.items():
+            schema = detail["input_schema"]
+            selector = schema["properties"].get("response_detail", {})
+            if (selector.get("type") != "string" or selector.get("enum") != ["default", "full"]
+                    or selector.get("default") != "default" or "response_detail" in schema.get("required", [])):
+                missing.append(name)
+        assert not missing, f"missing/incorrect presentation selectors: {missing}"
+
+    def test_dynamic_registration_schema_is_covered_without_executing_callable(self, test_agent):
+        baseline = set(server.list_registered_tools())
+        assert baseline == EXPECTED_REGISTERED_TOOLS
+        calls = []
+
+        async def dynamic_output_contract(agent: str):
+            """Test-only unclassified bridge-like producer; never execute it."""
+            calls.append(agent)
+            raise AssertionError("registry inspection must not execute a dynamic producer")
+
+        name = "test_output_contract_dynamic"
+        try:
+            server.app.tool(name=name)(dynamic_output_contract)
+            details = server.describe_registered_tools()
+            assert set(details) == baseline | {name}
+            assert set(server.list_registered_tools()) == baseline | {name}
+            schema = details[name]["input_schema"]
+            selector = schema["properties"].get("response_detail", {})
+            assert selector.get("enum") == ["default", "full"]
+            assert selector.get("default") == "default"
+            assert "response_detail" not in inspect.signature(dynamic_output_contract).parameters
+            assert calls == []
+        finally:
+            server._SCRIBE_TOOL_REGISTRY.pop(name, None)
+            server._SCRIBE_TOOL_DEFS.pop(name, None)
+        assert set(server.list_registered_tools()) == baseline
