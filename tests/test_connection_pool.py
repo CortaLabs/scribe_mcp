@@ -5,12 +5,161 @@ Tests the thread-safe connection pool implementation in storage/pool.py.
 Verifies connection lifecycle, thread safety, and proper resource cleanup.
 """
 
+import asyncio
 import sqlite3
 import threading
 import time
 import pytest
 
 from scribe_mcp.storage.pool import SQLiteConnectionPool, SQLITE_BUSY_TIMEOUT_MS
+from scribe_mcp.storage.sqlite import SQLiteStorage
+from scribe_mcp.storage.sqlite.internals import SQLiteInternals
+
+
+@pytest.mark.storage
+@pytest.mark.regression
+def test_bootstrap_keeps_connection_alive_until_schema_ready(tmp_path, monkeypatch):
+    """Only the bootstrap boundary may close the last configured connection."""
+    live = set()
+    last_closes = []
+    connect = sqlite3.connect
+
+    class ObservedConnection(sqlite3.Connection):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            live.add(self)
+
+        def close(self):
+            if self in live:
+                live.remove(self)
+                if not live:
+                    last_closes.append(self)
+            return super().close()
+
+    def observed_connect(*args, **kwargs):
+        kwargs.setdefault("factory", ObservedConnection)
+        return connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", observed_connect)
+    storage = SQLiteStorage(tmp_path / "bootstrap.db")
+    asyncio.run(storage._initialise())
+
+    assert storage._initialised
+    assert storage._pool is None  # Lazy initialization retains no permanent pool.
+    assert not live
+    assert len(last_closes) == 1
+    with connect(storage._path) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("SELECT count(*) FROM scribe_migrations").fetchone()[0] > 0
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_sessions'"
+        ).fetchone()
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_projects_bridge'"
+        ).fetchone()
+    conn.close()
+
+
+@pytest.mark.storage
+@pytest.mark.regression
+@pytest.mark.parametrize("boundary", ["opening", "closing"])
+def test_bootstrap_cancellation_drains_connection_io(tmp_path, monkeypatch, boundary):
+    """Cancellation cannot strand a connection inside an unfinished worker."""
+    entered = threading.Event()
+    release = threading.Event()
+    connections = []
+    internals = SQLiteInternals(tmp_path / "cancel.db")
+    connect = sqlite3.connect
+    body_entered = False
+
+    class ObservedConnection(sqlite3.Connection):
+        def close(self):
+            if boundary == "closing":
+                entered.set()
+                assert release.wait(5), "test did not release closing worker"
+            super().close()
+
+    def blocked_connect():
+        conn = connect(internals.db_path, factory=ObservedConnection, check_same_thread=False)
+        connections.append(conn)
+        if boundary == "opening":
+            entered.set()
+            assert release.wait(5), "test did not release opening worker"
+        return conn
+
+    monkeypatch.setattr(internals, "connect", blocked_connect)
+
+    async def scenario():
+        async def bootstrap():
+            nonlocal body_entered
+            async with internals.bootstrap_connection():
+                body_entered = True
+
+        task = asyncio.create_task(bootstrap())
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert body_entered == (boundary == "closing")
+    assert len(connections) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
+    assert internals.pool is None
+
+
+@pytest.mark.storage
+@pytest.mark.regression
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_sqlite_configuration_failure_closes_handle_and_preserves_error(
+    tmp_path, monkeypatch, close_fails,
+):
+    """A failed PRAGMA cannot leak a real handle or replace the primary error."""
+    connect = sqlite3.connect
+    connections = []
+    closed = []
+    config_error = sqlite3.OperationalError("injected configuration failure")
+
+    class FailingConnection(sqlite3.Connection):
+        def execute(self, query, *args, **kwargs):
+            if query.startswith("PRAGMA journal_mode"):
+                raise config_error
+            return super().execute(query, *args, **kwargs)
+
+        def close(self):
+            closed.append(self)
+            super().close()
+            if close_fails:
+                raise RuntimeError("injected close failure")
+
+    def observed_connect(*args, **kwargs):
+        kwargs["factory"] = FailingConnection
+        conn = connect(*args, **kwargs)
+        connections.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", observed_connect)
+    internals = SQLiteInternals(tmp_path / "configuration.db")
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        internals.connect()
+    try:
+        assert caught.value is config_error
+        assert closed == connections
+        assert len(closed) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connections[0].execute("SELECT 1")
+    finally:
+        # This also prevents the intentional pre-fix RED run leaking its handle.
+        for conn in connections:
+            sqlite3.Connection.close(conn)
 
 
 class TestConnectionPoolBasic:
