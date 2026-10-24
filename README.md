@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.8` · Updated: `2026-10-24`
+Development candidate: `scribe-mcp 3.3.9` · Updated: `2026-10-24`
+
+`3.3.9` honors the existing read_recent priority-sort flag: false/default preserves database recency and file source order; true retains priority ordering.
 
 `3.3.8` keeps comparison operators literal in valid JSON metadata instead of inserting backslashes or quotes. Existing log-delimiter normalization and metadata bounds remain.
 
