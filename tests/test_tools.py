@@ -1066,3 +1066,103 @@ def test_rotation_performance_monitoring(isolated_state, project_root):
         assert "rotation_duration_seconds" in rotation_result
         assert rotation_result["rotation_duration_seconds"] >= 0
         assert rotation_result["integrity_verified"] is True
+
+
+@pytest.mark.storage
+@pytest.mark.regression
+@pytest.mark.parametrize("failure", ["error", "cancellation"])
+def test_sqlite_bootstrap_failure_closes_connections_and_retries(tmp_path, monkeypatch, failure):
+    """A partially built real schema stays unready and can initialize again."""
+    import scribe_mcp.storage.sqlite as sqlite_module
+
+    storage = SQLiteStorage(tmp_path / "retry.db")
+    create_schema = sqlite_module.create_schema
+    connect = storage._internals.connect
+    connections = []
+
+    def observed_connect():
+        conn = connect()
+        connections.append(conn)
+        return conn
+
+    async def interrupted_schema(*args):
+        await create_schema(*args)
+        if failure == "cancellation":
+            raise asyncio.CancelledError()
+        raise RuntimeError("injected bootstrap failure")
+
+    monkeypatch.setattr(storage._internals, "connect", observed_connect)
+    monkeypatch.setattr(sqlite_module, "create_schema", interrupted_schema)
+
+    async def scenario():
+        expected = asyncio.CancelledError if failure == "cancellation" else RuntimeError
+        with pytest.raises(expected):
+            await storage.setup()
+        assert not storage._initialised
+        assert storage._pool is None
+        assert connections
+        for conn in connections:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                conn.execute("SELECT 1")
+
+        monkeypatch.setattr(sqlite_module, "create_schema", create_schema)
+        await storage.setup()
+        try:
+            assert storage._initialised
+            row = await storage._fetchone(
+                "SELECT count(*) AS count FROM scribe_migrations", ()
+            )
+            assert row["count"] > 0
+        finally:
+            await storage.close()
+        assert storage._pool is None
+
+    run(scenario())
+
+
+@pytest.mark.storage
+@pytest.mark.regression
+def test_concurrent_sqlite_initialization_publishes_one_ready_schema(tmp_path, monkeypatch, test_agent):
+    """Concurrent callers share readiness, then retain normal session isolation."""
+    import scribe_mcp.storage.sqlite as sqlite_module
+
+    storage = SQLiteStorage(tmp_path / "concurrent.db")
+    create_schema = sqlite_module.create_schema
+    calls = 0
+
+    async def observed_schema(*args):
+        nonlocal calls
+        calls += 1
+        await create_schema(*args)
+
+    monkeypatch.setattr(sqlite_module, "create_schema", observed_schema)
+
+    async def scenario():
+        await asyncio.gather(*(storage._initialise() for _ in range(4)))
+        assert calls == 1
+        assert storage._initialised
+        assert storage._pool is None
+        row = await storage._fetchone(
+            "SELECT count(*) AS count FROM scribe_migrations", ()
+        )
+        assert row["count"] > 0
+        await asyncio.gather(*(
+            storage.upsert_session(
+                session_id=f"{test_agent}-{suffix}",
+                transport_session_id=f"transport-{suffix}",
+                agent_id=test_agent,
+                repo_root=str(tmp_path),
+                mode="project",
+            )
+            for suffix in ("one", "two")
+        ))
+        rows = await storage._fetchall(
+            "SELECT session_id, agent_id FROM scribe_sessions ORDER BY session_id", ()
+        )
+        assert [(row["session_id"], row["agent_id"]) for row in rows] == [
+            (f"{test_agent}-one", test_agent), (f"{test_agent}-two", test_agent)
+        ]
+        assert calls == 1
+        await storage.close()
+
+    run(scenario())

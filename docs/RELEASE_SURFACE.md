@@ -1,13 +1,15 @@
 # Release Surface
 
 Updated: **2026-10-24**
-Applies to: **2.15.24 maintenance candidate; publication and fleet validation pending**
+Applies to: **2.15.25 maintenance candidate; publication and fleet validation pending**
 
 ## Maintenance scope
 
 This candidate carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
 
 Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
+
+Version 2.15.25 keeps one idle, nontransactional SQLite connection open until the existing initialization sequence finishes. Helpers retain their own transactions and commits; WAL, synchronous mode, migration ordering and schema are unchanged. Repeated cancellation drains pending open/close ownership, and configuration failures close returned handles while preserving the primary exception. Lazy initialization retains no pool. Local cold-node timings improve in the retained samples; full-suite, warm and fleet performance remain unproved.
 
 Version 2.15.24 stops treating valid JSON metadata strings as expression syntax. Comparisons such as `payload <=2048 bytes` and `1 > 2` retain their operators without invented backslashes or quotes. Request healing no longer labels these unchanged values as corrections. Log-delimiter handling, existing size bounds and non-JSON fallback rules remain.
 
