@@ -45,11 +45,13 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Development candidate: `scribe-mcp 2.15.23` · Updated: `2026-10-24`
+Development candidate: `scribe-mcp 2.15.24` · Updated: `2026-10-24`
 
 This maintenance candidate restores repository scope from an existing verified session binding after runtime reconstruction, loads tool definitions before first-call validation, and keeps document metadata updates from changing the caller's selected project. PostgreSQL bootstrap replaces the existing binding classifier trigger atomically, so concurrent writers cannot observe a missing classifier. Export-policy creation uses the verifier's existing canonical digest.
 
 Version `2.15.20` also reports the loaded package directory separately from the configured project root in doctor diagnostics and removes an obsolete onboarding-directory packaging rule. Canonical skills still ship from `skills/` and the plugin bundles.
+
+Version `2.15.24` keeps comparison operators literal in valid JSON metadata instead of inserting backslashes or quotes. Existing log-delimiter normalization and metadata bounds remain.
 
 Version `2.15.23` preserves literal trailing spaces and tabs inside fenced code during section and frontmatter edits, while retaining prose cleanup. Builds require setuptools 77.0.3 or newer for SPDX license metadata.
 
