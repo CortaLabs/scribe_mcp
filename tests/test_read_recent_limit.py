@@ -2,11 +2,21 @@
 """Tests for read_recent EntryLimitManager integration."""
 
 from types import SimpleNamespace
+from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
 
 import pytest
+import pytest_asyncio
+from fixtures.storage import sqlite_storage as _sqlite_storage_fixture
 import scribe_mcp.tools.read_recent as read_recent_module
 from scribe_mcp.shared.logging_utils import LoggingContext
+from scribe_mcp.state.manager import StateManager
 from scribe_mcp.tools.read_recent import read_recent
+
+
+# Reuse the canonical temporary storage fixture with the strict asyncio runner.
+sqlite_storage = pytest_asyncio.fixture(_sqlite_storage_fixture.__wrapped__)
 
 
 def _readable_text(result):
@@ -231,7 +241,7 @@ async def test_compact_format_still_returns_compact_entry_keys(monkeypatch, tmp_
 @pytest.mark.asyncio
 async def test_priority_sorting_enabled():
     """Verify EntryLimitManager uses priority sorting."""
-    result = await read_recent(agent="test_agent", n=20, format="structured")
+    result = await read_recent(agent="test_agent", n=20, format="structured", priority_sort=True)
 
     if isinstance(result, dict) and "entries" in result and len(result["entries"]) > 1:
         # Should have limit_metadata confirming sort was applied
@@ -242,3 +252,96 @@ async def test_priority_sorting_enabled():
             assert isinstance(entry, dict)
             # Should have basic structure
             assert "message" in entry or "raw_line" in entry
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["database", "file"])
+@pytest.mark.parametrize("output_format", ["structured", "compact"])
+@pytest.mark.parametrize("compact", [False, True])
+@pytest.mark.parametrize("include_metadata", [False, True])
+@pytest.mark.parametrize("priority_sort", [False, True, None], ids=["false", "true", "default"])
+async def test_public_reader_preserves_requested_order(
+    monkeypatch, tmp_path, sqlite_storage, project_payload, test_agent,
+    source, output_format, compact, include_metadata, priority_sort,
+):
+    """Real storage/state/file paths must keep source order unless opted in."""
+    assert read_recent_module.server_module.get_execution_context() is None
+    manager = StateManager(tmp_path / "state.json", storage_backend=sqlite_storage)
+    await manager.set_current_project(
+        project_payload["name"], project_payload, agent_id=test_agent,
+    )
+    record = await sqlite_storage.fetch_project(
+        project_payload["name"], repo_root=project_payload["root"],
+    )
+    assert record is not None
+    priorities = ["critical", "high", "medium", "low"]
+    messages = [f"ordering record {i}" for i in range(4)]
+    lines = [
+        f"[ℹ️] [2026-01-03 14:0{i}:00 UTC] [Agent: {test_agent}] "
+        f"[Project: {record.name}] {messages[i]} | priority={priorities[i]}; detail=kept-{i}"
+        for i in range(4)
+    ]
+    for i in range(4):
+        await sqlite_storage.insert_entry(
+            entry_id=f"order-{i}", project=record,
+            ts=datetime(2026, 1, 3, 14, i, tzinfo=timezone.utc),
+            emoji="ℹ️", agent=test_agent, message=messages[i],
+            meta={"priority": priorities[i], "detail": f"kept-{i}"},
+            raw_line=lines[i], sha256=sha256(lines[i].encode()).hexdigest(),
+        )
+    # The file order deliberately differs from both timestamp and priority order.
+    file_order = [2, 0, 3, 1]
+    log_path = Path(project_payload["progress_log"])
+    log_path.write_text("\n".join(lines[i] for i in file_order) + "\n", encoding="utf-8")
+    original_log = log_path.read_bytes()
+    monkeypatch.setattr(read_recent_module.server_module, "state_manager", manager)
+    monkeypatch.setattr(
+        read_recent_module.server_module, "storage_backend",
+        sqlite_storage if source == "database" else None,
+    )
+    expected = [0, 1, 2, 3] if priority_sort else (
+        [3, 2, 1, 0] if source == "database" else file_order
+    )
+    options = {} if priority_sort is None else {"priority_sort": priority_sort}
+    id_key, message_key = ("i", "m") if compact else ("id", "message")
+    # Test the exact four-entry request and two actual pages independently.
+    for page_size in (4, 2):
+        for page in range(1, 4 // page_size + 1):
+            result = await read_recent(
+                agent=test_agent, limit=4, page_size=page_size, page=page,
+                format=output_format, compact=compact,
+                include_metadata=include_metadata, **options,
+            )
+            assert isinstance(result, dict)
+            assert result["ok"] is True, result
+            entries = result["entries"]
+            wanted = expected[(page - 1) * page_size:page * page_size]
+            assert len(entries) == page_size
+            assert [entry[message_key] for entry in entries] == [messages[i] for i in wanted]
+            if source == "database":
+                assert [entry[id_key] for entry in entries] == [f"order-{i}" for i in wanted]
+            else:
+                # The real file parser has no entry IDs; do not invent them.
+                assert all(id_key not in entry for entry in entries)
+            assert result["pagination"]["page"] == page
+            assert result["pagination"]["page_size"] == page_size
+            assert result["pagination"]["total_count"] == 4
+            assert result["pagination"]["has_prev"] == (page > 1)
+            assert result["pagination"]["has_next"] == (page * page_size < 4)
+            assert result["limit_metadata"] == {
+                "total_available": page_size, "filtered_count": page_size,
+                "returned_count": page_size, "entries_omitted": 0,
+                "mode": output_format,
+                "limit_applied": 100 if output_format == "structured" else 200,
+            }
+            for entry, i in zip(entries, wanted):
+                if include_metadata:
+                    assert entry["meta"] == {"priority": priorities[i], "detail": f"kept-{i}"}
+                else:
+                    assert "meta" not in entry
+                if not compact:
+                    assert entry["raw_line"] == lines[i]
+                    assert entry["ts"] == f"2026-01-03 14:0{i}:00 UTC"
+    assert log_path.read_bytes() == original_log
+    assert await sqlite_storage.count_entries(project=record) == 4

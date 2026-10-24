@@ -45,11 +45,13 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Development candidate: `scribe-mcp 2.15.25` · Updated: `2026-10-24`
+Development candidate: `scribe-mcp 2.15.26` · Updated: `2026-10-24`
 
 This maintenance candidate restores repository scope from an existing verified session binding after runtime reconstruction, loads tool definitions before first-call validation, and keeps document metadata updates from changing the caller's selected project. PostgreSQL bootstrap replaces the existing binding classifier trigger atomically, so concurrent writers cannot observe a missing classifier. Export-policy creation uses the verifier's existing canonical digest.
 
 Version `2.15.20` also reports the loaded package directory separately from the configured project root in doctor diagnostics and removes an obsolete onboarding-directory packaging rule. Canonical skills still ship from `skills/` and the plugin bundles.
+
+Version `2.15.26` honors `read_recent(priority_sort=False)` and its default, preserving database recency and file source order. Explicit priority sorting remains available.
 
 Version `2.15.25` keeps one idle SQLite connection open during initialization, reducing repeated final-connection teardown without changing helper transactions, commits or durability settings. Cancellation drains pending connection ownership, and failed configuration closes its handle while preserving the original error.
 

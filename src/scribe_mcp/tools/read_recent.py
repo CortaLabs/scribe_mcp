@@ -474,7 +474,7 @@ async def read_recent(
             limited_entries, limit_meta = entry_limiter.limit_entries(
                 entries=response.get("entries", []),
                 mode=format,
-                sort_by_priority=True,  # Enable priority sorting
+                sort_by_priority=priority_sort,
             )
             response["entries"] = limited_entries
             response["limit_metadata"] = limit_meta
@@ -580,7 +580,7 @@ async def read_recent(
     limited_entries, limit_meta = entry_limiter.limit_entries(
         entries=response.get("entries", []),
         mode=format,
-        sort_by_priority=True,  # Enable priority sorting
+        sort_by_priority=priority_sort,
     )
     response["entries"] = limited_entries
     response["limit_metadata"] = limit_meta
