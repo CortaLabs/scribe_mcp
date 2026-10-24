@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.6` · Updated: `2026-10-24`
+Development candidate: `scribe-mcp 3.3.7` · Updated: `2026-10-24`
+
+`3.3.7` adds an inactive pure response projector for bounded `read_recent` and `list_projects` previews, truthful counts, content hashes and explicit full-detail continuation. It preserves the selected full content and checks the complete MCP envelope against 2 KiB. Tool and transport wiring remain pending; this checkpoint does not bound live default responses.
 
 `3.3.6` corrects the build-backend minimum to setuptools 77.0.3 for its SPDX license metadata. It retains whole-response accounting and centralizes exact UTF-8 envelope measurement. Seven independent cases cover nested metadata, large keys, Unicode, SDK models and invalid JSON. Default-size projection, schema and runtime integration remain pending.
 

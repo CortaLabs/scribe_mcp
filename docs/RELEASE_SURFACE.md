@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-24**
-Applies to: **v3.3.6 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.7 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.7 adds an inactive pure projector in the existing formatter dispatcher. Supported previews retain required identifiers, truthful counts, bounded UTF-8 excerpts with hashes, explicit omissions and same-page full-detail continuation. The existing budget manager checks complete modern and legacy MCP envelopes against 2 KiB. No production caller is activated; schema, producer and transport integration remain pending.
 
 Version 3.3.6 requires setuptools 77.0.3 or newer to build its SPDX license metadata. It retains the accounting repair from 3.3.5, which measures complete response envelopes as compact JSON UTF-8 bytes, including SDK aliases, text, structured content, nested keys and metadata. The existing budget helper reports its whole returned response, including accounting and warning fields; token estimates remain heuristic. The formatter delegates to the same measurement owner. This is an accounting repair, not final default-response size enforcement or runtime certification.
 
