@@ -52,24 +52,24 @@ def _write_init(tmp_path: Path, *statements: str) -> Path:
 @pytest.mark.core
 @pytest.mark.regression
 @pytest.mark.storage
-def test_fresh_init_uses_migration_007_binding_classifier() -> None:
+def test_fresh_init_uses_migration_007_binding_classifier(test_agent: str) -> None:
     init_sql = postgres_schema.SCHEMA_PATH.read_text(encoding="utf-8")
-    init_sql = init_sql.replace(f"{_BOUNDARY}\n", "")
     migration_sql = (
         postgres_schema.MIGRATIONS_PATH / "007_reliability_receipts.sql"
     ).read_text(encoding="utf-8")
     classifier = "CREATE OR REPLACE FUNCTION session_projects_classify_binding()"
-    migration_control = migration_sql.split(classifier, 1)[1].split(
-        "-- Backfill:", 1
-    )[0]
+    init_start = init_sql.index(classifier)
+    init_end = init_sql.index("$$;", init_start) + len("$$;")
+    migration_start = migration_sql.index(classifier)
+    migration_end = migration_sql.index("$$;", migration_start) + len("$$;")
 
-    assert classifier + migration_control in init_sql
+    assert init_sql[init_start:init_end] == migration_sql[migration_start:migration_end]
 
 
 @pytest.mark.core
 @pytest.mark.regression
 @pytest.mark.storage
-def test_postgres_bootstrap_preserves_complete_function_units(tmp_path: Path) -> None:
+def test_postgres_bootstrap_preserves_complete_function_units(tmp_path: Path, test_agent: str) -> None:
     """The real packaged init passes complete function and trigger units to asyncpg."""
     conn = _SchemaRecorder()
     migrations = _write_migrations(tmp_path)
@@ -104,9 +104,10 @@ def test_postgres_bootstrap_preserves_complete_function_units(tmp_path: Path) ->
         i for i, query in enumerate(init_queries)
         if "CREATE TRIGGER session_projects_classify_binding" in query
     )
-    assert create_index == drop_index + 1
-    assert "DROP TRIGGER" not in init_queries[create_index]
-    assert "CREATE TRIGGER" not in init_queries[drop_index]
+    assert create_index == drop_index
+    trigger_batch = init_queries[drop_index]
+    assert trigger_batch.index("DROP TRIGGER") < trigger_batch.index("CREATE TRIGGER")
+    assert init_queries.index(classifier) < drop_index
 
     migration_index = next(i for i, (query, _) in enumerate(conn.calls) if "SELECT 'migration';" in query)
     assert migration_index > max(i for i, (query, _) in enumerate(conn.calls) if "CREATE INDEX" in query)

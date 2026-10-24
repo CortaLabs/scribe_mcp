@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import pytest
 
 from scribe_mcp.doc_management.manager import apply_doc_change
+from scribe_mcp.doc_management.intelligence_exports import _export_policy_rejection
 from scribe_mcp.doc_management.special_create import _ensure_export_policy_frontmatter
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 
@@ -31,6 +33,84 @@ async def _setup_project(tmp_path: Path) -> dict:
     }
 
 
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fence", ["```", "~~~", "````", "~~~~"])
+async def test_fenced_patch_bytes_survive_section_and_frontmatter_writes(
+    tmp_path: Path, test_agent: str, fence: str,
+) -> None:
+    """Literal patch context, blank lines and Unicode survive both write paths."""
+    project = await _setup_project(tmp_path)
+    path = Path(project["docs"]["architecture"])
+    path.write_text(
+        "---\ntags: [initial]\n---\n"
+        "# Title\n\n<!-- ID: artifact -->\nold\n\n"
+        "<!-- ID: after -->\nKeep this section\n", encoding="utf-8",
+    )
+    payload = (
+        "diff --git a/example.txt b/example.txt\n"
+        "--- a/example.txt\n+++ b/example.txt\n@@ -1,4 +1,4 @@\n"
+        " context café  \t\n \n\t \t\n-old\n+new  \t\n"
+    )
+    if len(fence) > 3:
+        # A shorter same-marker fence is literal content inside the outer one.
+        payload += fence[:3] + "\n still inside  \t\n"
+    expected = payload.encode("utf-8")
+    expected_sha = hashlib.sha256(expected).hexdigest()
+    content = "Prose before  \t\n" + fence + "diff\n" + payload + fence + "\nProse after  \t\n"
+    observed = {}
+
+    for action in ("replace_section", "frontmatter_update"):
+        before_bytes = path.read_bytes()
+        before = parse_frontmatter(before_bytes.decode("utf-8"))
+        before_trace = before.frontmatter_data.get("edit_trace", {})
+        assert before.frontmatter_data["tags"] != [action]
+        assert before_trace.get("last_action") != action
+        change = await apply_doc_change(
+            project, doc="architecture", action=action,
+            section="artifact" if action == "replace_section" else None,
+            content=content if action == "replace_section" else None,
+            patch=None, patch_source_hash=None, start_line=None, end_line=None,
+            template=None, metadata={"agent_id": test_agent, "tags": [action]},
+            dry_run=False,
+        )
+        assert change.success
+        # Reopen the persisted UTF-8 file after each operation, not its preview.
+        written = path.read_bytes()
+        parsed = parse_frontmatter(written.decode("utf-8"))
+        frontmatter = parsed.frontmatter_data
+        assert written != before_bytes
+        assert frontmatter["tags"] == [action]
+        assert frontmatter["created_by"] == test_agent
+        assert frontmatter["maintained_by"] == test_agent
+        trace = frontmatter["edit_trace"]
+        assert trace["tool"] == "manage_docs"
+        assert trace["created_via"] == "replace_section"
+        assert trace["last_action"] == action
+        assert trace["last_edited_by"] == test_agent
+        assert trace["last_edited_at"] == frontmatter["last_updated"]
+        assert trace["created_at"]
+        if before_trace:
+            assert trace["created_at"] == before_trace["created_at"]
+            assert trace["created_via"] == before_trace["created_via"]
+            assert frontmatter["created_by"] == before.frontmatter_data["created_by"]
+            assert parsed.body == before.body
+        else:
+            assert trace["created_at"] == trace["last_edited_at"]
+        actual = written.split((fence + "diff\n").encode("utf-8"), 1)[1].split(
+            ("\n" + fence + "\n").encode("utf-8"), 1,
+        )[0] + b"\n"
+        observed[action] = (len(actual), hashlib.sha256(actual).hexdigest(), actual)
+        assert b"Prose before\n" in written
+        assert b"Prose after\n" in written
+        assert b"Keep this section\n" in written
+
+    assert observed == {
+        action: (len(expected), expected_sha, expected)
+        for action in ("replace_section", "frontmatter_update")
+    }
+
+
 def test_special_create_persists_complete_non_exportable_policy_by_default(
     tmp_path: Path,
 ) -> None:
@@ -51,6 +131,82 @@ def test_special_create_persists_complete_non_exportable_policy_by_default(
     assert frontmatter["required_grants"] == []
     assert frontmatter["revoked_at"] is None
     assert len(frontmatter["policy_digest"]) == 64
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("with_frontmatter", [False, True])
+def test_special_create_grant_order_round_trips_through_export_verifier(
+    tmp_path: Path, test_agent: str, with_frontmatter: bool
+) -> None:
+    project = {"name": "test_project", "root": str(tmp_path)}
+    body = "# Narrative\n\nEvidence with trailing spaces.  \n"
+    content = ("---\ntitle: Narrative\n---\n" if with_frontmatter else "") + body
+    metadata = {
+        "visibility": "knowledge",
+        "owner_principal_id": test_agent,
+        "council_id": "test-council",
+        "project_id": "test-project",
+        "required_grants": ["read", "write"],
+        "revoked_at": None,
+    }
+    canonical = parse_frontmatter(
+        _ensure_export_policy_frontmatter(content, project, metadata, test_agent)
+    ).frontmatter_data
+    authority = {"doc.md": {"policy_digest": canonical["policy_digest"]}}
+    assert canonical["policy_digest"] == (
+        "5fadc07b72def62a8350e11f6cc051a54d9c49eb48d24597282520e9b54642ac"
+    )
+    assert _export_policy_rejection(canonical, body, authority, "doc.md") is None
+
+    metadata["required_grants"] = ["write", "read"]
+    rendered = _ensure_export_policy_frontmatter(content, project, metadata, test_agent)
+    parsed = parse_frontmatter(rendered)
+    policy = parsed.frontmatter_data
+    assert rendered.endswith(body)
+    assert policy["required_grants"] == metadata["required_grants"] == ["write", "read"]
+    assert {key: policy[key] for key in metadata} == metadata
+    assert list(policy) == list(canonical)
+    assert policy["policy_digest"] == canonical["policy_digest"]
+    assert _export_policy_rejection(policy, parsed.body, authority, "doc.md") is None
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "control",
+    ["default", "tamper", "missing_authority", "changed_authority", "revoked"],
+)
+def test_special_create_export_negative_controls_remain_denied(
+    tmp_path: Path, test_agent: str, control: str
+) -> None:
+    project = {"name": "test_project", "root": str(tmp_path)}
+    metadata = {
+        "visibility": "knowledge",
+        "owner_principal_id": test_agent,
+        "council_id": "test-council",
+        "project_id": "test-project",
+        "required_grants": ["read", "write"],
+    }
+    if control == "default":
+        metadata = {}
+    elif control == "revoked":
+        metadata["revoked_at"] = "2026-10-20T00:00:00Z"
+    parsed = parse_frontmatter(
+        _ensure_export_policy_frontmatter("# Narrative\n", project, metadata, test_agent)
+    )
+    policy = parsed.frontmatter_data
+    authority = {"doc.md": {"policy_digest": policy["policy_digest"]}}
+    if control == "tamper":
+        policy["required_grants"].append("admin")
+    elif control == "missing_authority":
+        authority = {}
+    elif control == "changed_authority":
+        authority["doc.md"]["policy_digest"] = "0" * 64
+    expected = (
+        "REJECTED_POLICY_AUTHORITY_MISMATCH"
+        if control in {"missing_authority", "changed_authority"}
+        else "REJECTED_MISSING_EXPORT_POLICY"
+    )
+    assert _export_policy_rejection(policy, parsed.body, authority, "doc.md") == expected
 
 
 @pytest.mark.asyncio

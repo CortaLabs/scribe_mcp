@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "2.15.0"
+version = "2.15.27"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"

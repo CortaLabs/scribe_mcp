@@ -1,7 +1,29 @@
 # Release Surface
 
-Baseline date: **2026-06-16**
-Applies to: **v2.7.1 public release line**
+Updated: **2026-10-24**
+Applies to: **2.15.27 maintenance candidate; publication and fleet validation pending**
+
+## Maintenance scope
+
+This candidate carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
+
+Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
+
+Version 2.15.27 restores regression fixtures using real persisted project bindings before their original session observations. It changes no runtime authority policy.
+
+Version 2.15.26 forwards the existing read_recent priority_sort flag to both result-limiting paths. False and default preserve database recency or existing file source order, while True retains priority ordering; record membership, pagination, metadata and supplementation gates remain unchanged.
+
+Version 2.15.25 keeps one idle, nontransactional SQLite connection open until the existing initialization sequence finishes. Helpers retain their own transactions and commits; WAL, synchronous mode, migration ordering and schema are unchanged. Repeated cancellation drains pending open/close ownership, and configuration failures close returned handles while preserving the primary exception. Lazy initialization retains no pool. Local cold-node timings improve in the retained samples; full-suite, warm and fleet performance remain unproved.
+
+Version 2.15.24 stops treating valid JSON metadata strings as expression syntax. Comparisons such as `payload <=2048 bytes` and `1 > 2` retain their operators without invented backslashes or quotes. Request healing no longer labels these unchanged values as corrections. Log-delimiter handling, existing size bounds and non-JSON fallback rules remain.
+
+Version 2.15.23 preserves literal trailing spaces and tabs inside fenced code across section replacements and frontmatter updates. Prose cleanup and final-newline behavior are retained. Persisted regression checks cover backtick and tilde fences, shorter inner fences, Unicode and actual metadata writes.
+
+Version 2.15.22 corrects the build-backend minimum to setuptools 77.0.3 for its SPDX license metadata.
+
+Version 2.15.21 replaces destructive build-directory cleanup with an isolated tracked-source snapshot. Existing outputs, metadata and source bytes are preserved; same-version output collisions are rejected before effects. Both distributions must pass Twine and the existing private-artifact checks before exclusive publication. The source distribution includes nested Python regression tests and tracked Markdown fixtures, retaining the existing manifest exclusions.
+
+Source and isolated checks do not establish deployment acceptance. The actual failing client path must pass against the pinned candidate before fleet rollout, including public stdio first binding if it uses that path. A successful probe under another profile is insufficient; public stdio compatibility remains an open release boundary. No private orchestration configuration, generated agents, templates or runtime state belongs in the public package.
 
 ## Public contract
 

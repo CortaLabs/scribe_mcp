@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from scribe_mcp.config.repo_config import RepoDiscovery, resolve_create_doc_type_config
+from scribe_mcp.doc_management.quality.scopes import HeuristicFenceScopeProvider
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.utils.time import format_utc
 
@@ -121,10 +122,19 @@ def hash_text(content: str) -> str:
 
 
 def strip_trailing_whitespace_lines(content: str) -> str:
-    """Remove trailing spaces/tabs from each line while preserving final newline shape."""
+    """Trim prose line endings while preserving literal fenced-code whitespace."""
     if not content:
         return content
-    normalized = "\n".join(line.rstrip(" \t") for line in content.splitlines())
+    fenced_lines = {
+        line_no
+        for scope in HeuristicFenceScopeProvider().collect_scopes(content)
+        if scope.kind == "fenced_code"
+        for line_no in range(scope.start_line, scope.end_line + 1)
+    }
+    normalized = "\n".join(
+        line if line_no in fenced_lines else line.rstrip(" \t")
+        for line_no, line in enumerate(content.splitlines(), start=1)
+    )
     if content.endswith(("\n", "\r")):
         normalized += "\n"
     return normalized

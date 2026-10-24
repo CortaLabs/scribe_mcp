@@ -94,7 +94,8 @@ async def test_state_manager_fails_closed_without_scoped_binding(tmp_path) -> No
 
     assert state.current_project is None
     assert state.projects == {}
-    assert backend.list_projects_by_repo_calls == 1
+    # An unbound caller may be refused before even scoped enumeration.
+    assert state.session_projects == {}
     assert backend.list_projects_calls == 0
 
 
@@ -702,7 +703,7 @@ async def test_set_project_ignores_untrusted_scribe_user_workspace_remap(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_register_document_path_uses_canonical_stable_session_binding(tmp_path: Path) -> None:
+async def test_register_document_path_preserves_canonical_stable_session_binding(tmp_path: Path) -> None:
     doc_path = tmp_path / "CHECKLIST.md"
     doc_path.write_text("# Checklist\n", encoding="utf-8")
 
@@ -754,13 +755,11 @@ async def test_register_document_path_uses_canonical_stable_session_binding(tmp_
     )
 
     assert warning is None
-    kwargs = captured["kwargs"]
-    assert kwargs["session_id"] == "stable-session-canonical"
-    assert kwargs["resolved_scope"] is execution_context.resolved_scope
+    assert captured == {}, "metadata registration must preserve the existing binding"
 
 
 @pytest.mark.asyncio
-async def test_auto_register_document_uses_canonical_stable_session_binding(tmp_path: Path) -> None:
+async def test_auto_register_document_preserves_canonical_stable_session_binding(tmp_path: Path) -> None:
     doc_path = tmp_path / "CHECKLIST.md"
     doc_path.write_text("# Checklist\n", encoding="utf-8")
 
@@ -810,6 +809,4 @@ async def test_auto_register_document_uses_canonical_stable_session_binding(tmp_
     )
 
     assert result is True
-    kwargs = captured["kwargs"]
-    assert kwargs["session_id"] == "stable-session-canonical"
-    assert kwargs["resolved_scope"] is execution_context.resolved_scope
+    assert captured == {}, "auto-registration must preserve the existing binding"
