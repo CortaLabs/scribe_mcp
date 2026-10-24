@@ -1,13 +1,15 @@
 # Release Surface
 
-Updated: **2026-10-20**
-Applies to: **2.15.20 maintenance candidate; publication and fleet validation pending**
+Updated: **2026-10-23**
+Applies to: **2.15.21 maintenance candidate; publication and fleet validation pending**
 
 ## Maintenance scope
 
 This candidate carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
 
 Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
+
+Version 2.15.21 replaces destructive build-directory cleanup with an isolated tracked-source snapshot. Existing outputs, metadata and source bytes are preserved; same-version output collisions are rejected before effects. Both distributions must pass Twine and the existing private-artifact checks before exclusive publication. The source distribution includes nested Python regression tests and tracked Markdown fixtures, retaining the existing manifest exclusions.
 
 Source and isolated checks do not establish deployment acceptance. The actual failing client path must pass against the pinned candidate before fleet rollout, including public stdio first binding if it uses that path. A successful probe under another profile is insufficient; public stdio compatibility remains an open release boundary. No private orchestration configuration, generated agents, templates or runtime state belongs in the public package.
 

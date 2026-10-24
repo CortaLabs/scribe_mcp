@@ -45,11 +45,13 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Development candidate: `scribe-mcp 2.15.20` · Updated: `2026-10-20`
+Development candidate: `scribe-mcp 2.15.21` · Updated: `2026-10-23`
 
 This maintenance candidate restores repository scope from an existing verified session binding after runtime reconstruction, loads tool definitions before first-call validation, and keeps document metadata updates from changing the caller's selected project. PostgreSQL bootstrap replaces the existing binding classifier trigger atomically, so concurrent writers cannot observe a missing classifier. Export-policy creation uses the verifier's existing canonical digest.
 
 Version `2.15.20` also reports the loaded package directory separately from the configured project root in doctor diagnostics and removes an obsolete onboarding-directory packaging rule. Canonical skills still ship from `skills/` and the plugin bundles.
+
+Version `2.15.21` builds releases from a temporary tracked-source snapshot, preserving existing build outputs, package metadata and source files. It refuses output collisions before building, checks both distributions with Twine, and includes nested regression tests and Markdown fixtures in source distributions while retaining explicit exclusions.
 
 Public MCP arguments and storage APIs remain unchanged. This cut does not include the planned binding API/schema redesign or the broader artifact and receipt refactor. It is not yet a published release or a verified fleet rollout. The actual failing client path must pass against this candidate before rollout, including public stdio first binding if that is its effective path; successful probes under another profile do not certify it. Public stdio compatibility remains an open release boundary.
 
