@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.metadata
+import copy
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -246,3 +248,163 @@ async def test_first_call_loads_lazy_definitions_and_preserves_refusals(era):
     with pytest.raises(ValueError, match="Unknown tool"):
         await server.call_tool("missing", {}, protocol_era=era)
     assert events.count("call") == 2
+
+
+@pytest.mark.core
+@pytest.mark.regression
+class TestSBRDefaultOutput:
+    """Adapter value/serialization tests; no authenticated caller is simulated."""
+
+    @staticmethod
+    def _size(result):
+        payload = result.model_dump(by_alias=True, exclude_none=True)
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, allow_nan=False).encode("utf-8")
+        actual_sdk = result.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8")
+        return len(canonical), len(actual_sdk)
+
+    @pytest.mark.parametrize("era", list(ProtocolEra))
+    @pytest.mark.parametrize("kind", ["raw-dict", "raw-string", "text-structured", "sdk-result"])
+    def test_current_default_raw_and_existing_sdk_envelopes_fit(self, test_agent, era, kind):
+        runtime = load_mcp_runtime()
+        value = "漢🌊\\\"\n" * 20000
+        data = {"ok": True, "metadata": {"notes": value}, "count": 1}
+        if kind == "raw-dict":
+            source = data
+        elif kind == "raw-string":
+            source = value
+        else:
+            source = {"content": [{"type": "text", "text": json.dumps(data)}],
+                      "structuredContent": data, "isError": False}
+            if kind == "sdk-result":
+                source = runtime.types.CallToolResult(**source)
+        before = copy.deepcopy(source)
+        result = normalize_tool_result(source, runtime=runtime, era=era)
+        canonical, sdk = self._size(result)
+        assert source == before
+        print(json.dumps({"fixture": "adapter-default", "era": era.value, "kind": kind,
+                          "canonical_bytes": canonical, "sdk_bytes": sdk}))
+        assert max(canonical, sdk) <= 2048, f"adapter bytes canonical={canonical} sdk={sdk}"
+
+    @pytest.mark.parametrize("era", list(ProtocolEra))
+    def test_normalizer_preserves_exact_control_facts(self, test_agent, era):
+        """Small transient control values, independent of runtime authentication."""
+        runtime = load_mcp_runtime()
+        data = {"ok": True, "entries": [{"id": 1, "message": "漢🌊"}],
+                "binding": {"id": "b" * 64, "generation": 23, "reused": True, "write_performed": False},
+                "durability": {"file": "committed", "db_mirror": "queued", "audit_id": "a" * 64},
+                "convergence": {"state": "queued", "digest": "d" * 64, "generation": 8, "replay": False},
+                "retry": {"queued": True, "retryable": False, "retry_after_ms": 1200},
+                "correlation_id": "c" * 64, "release_handle": "response-only-control"}
+        before = copy.deepcopy(data)
+        result = normalize_tool_result(data, runtime=runtime, era=era)
+        assert result.structured_content == before
+        assert json.loads(result.content[0].text) == before
+        assert result.is_error is False
+        assert data == before
+
+    @pytest.mark.parametrize("era", list(ProtocolEra))
+    @pytest.mark.parametrize("code", ["SCRIBE_OUTPUT_DETAIL_REQUIRED", "SCRIBE_FACT_PERSISTENCE_FAILED", "UNKNOWN_TOOL"])
+    def test_error_control_retry_and_effect_facts_survive_both_eras(self, test_agent, era, code):
+        runtime = load_mcp_runtime()
+        data = {"schema_version": "scribe-error-summary.v1", "ok": False, "error_code": code,
+                "message": "Use explicit full detail for this operation.", "retryable": False,
+                "correlation_id": "c" * 64, "retry_after_ms": 1200,
+                "effect_status": "unknown", "mutation_retry_safe": False,
+                "target": {"state": "not_disclosed"},
+                "candidates": {"state": "unavailable", "total_count": None}}
+        before = copy.deepcopy(data)
+        result = normalize_tool_result(data, runtime=runtime, era=era, is_error=True)
+        assert result.is_error is True
+        assert result.structured_content == before
+        assert json.loads(result.content[0].text) == before
+        assert max(self._size(result)) <= 2048
+        assert data == before
+
+    @pytest.mark.parametrize("era", list(ProtocolEra))
+    def test_legacy_text_only_projection_remains_complete_json(self, test_agent, era):
+        projected = {"ok": True, "kind": "preview", "returned_count": 3, "total_count": 10,
+                     "omitted_count": 7, "complete": False,
+                     "continuation": {"tool": "read_recent", "arguments": {"page": 4, "response_detail": "full"},
+                                      "consistency": "current"}}
+        result = normalize_tool_result(
+            {"content": [{"type": "text", "text": json.dumps(projected)}], "isError": False},
+            runtime=load_mcp_runtime(), era=era)
+        assert json.loads(result.content[0].text) == projected
+        assert max(self._size(result)) <= 2048
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("era", list(ProtocolEra))
+    @pytest.mark.parametrize("selector", [None, False, 0, 1, [], {}, "", "FULL", " full", "full ", "unknown"])
+    async def test_invalid_detail_is_rejected_before_adapter_producer(self, test_agent, era, selector):
+        from scribe_mcp import server as source_server
+
+        runtime = load_mcp_runtime()
+        sdk_server = build_mcp_server("scribe-output-selector-test", MCPCompatibilityPolicy())
+        source_server.list_registered_tools()
+        definition = source_server._SCRIBE_TOOL_DEFS["append_entry"]
+        calls = []
+
+        async def list_handler(request_era):
+            return [definition]
+
+        async def producer(name, arguments, context, request_era):
+            calls.append(name)
+            return {"ok": True}
+
+        configure_mcp_server(sdk_server, runtime=runtime,
+                             definition_provider=lambda: {"append_entry": definition},
+                             list_handler=list_handler, call_handler=producer)
+        with pytest.raises(ValueError, match="response_detail|invalid arguments"):
+            await sdk_server.call_tool("append_entry", {"agent": test_agent, "message": "one write",
+                                                       "response_detail": selector}, protocol_era=era)
+        assert calls == [], f"invalid detail reached producer {len(calls)} time(s)"
+
+    @pytest.mark.parametrize("era", list(ProtocolEra))
+    def test_raw_early_error_is_bounded_and_marked_error(self, test_agent, era):
+        data = {"ok": False, "error_code": "SCRIBE_ARGUMENT_INVALID", "retryable": False,
+                "correlation_id": "c" * 64, "effect_status": "none", "mutation_retry_safe": True,
+                "message": "Invalid input", "debug": {"exception_notes": "x" * 100000}}
+        before = copy.deepcopy(data)
+        result = normalize_tool_result(data, runtime=load_mcp_runtime(), era=era)
+        canonical, sdk = self._size(result)
+        error_flag = result.is_error
+        assert data == before
+        print(json.dumps({"fixture": "early-error", "era": era.value,
+                          "canonical_bytes": canonical, "sdk_bytes": sdk, "is_error": error_flag}))
+        assert error_flag is True
+        assert max(canonical, sdk) <= 2048
+        for field in ("ok", "error_code", "retryable", "correlation_id", "effect_status", "mutation_retry_safe"):
+            assert result.structured_content[field] == before[field]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("era", list(ProtocolEra))
+    async def test_explicit_full_adapter_preserves_transient_content_once(self, test_agent, era):
+        """SDK adapter proof only; the external producer makes no authority grant."""
+        runtime = load_mcp_runtime()
+        sdk_server = build_mcp_server("scribe-output-full-test", MCPCompatibilityPolicy())
+        definition = normalize_tool_definition(
+            runtime=runtime, era=era, name="selected_output", description="Test-only value producer",
+            input_schema={"type": "object", "properties": {
+                "agent": {"type": "string"},
+                "response_detail": {"type": "string", "enum": ["default", "full"], "default": "default"}},
+                "required": ["agent"], "additionalProperties": False})
+        data = {"ok": True, "body": "漢🌊\\\"\n" * 20000,
+                "apply": {"receipt": "test-only-response-control", "expires_at": "2030-01-01T00:00:00Z"}}
+        calls = []
+
+        async def list_handler(request_era):
+            return [definition]
+
+        async def producer(name, arguments, context, request_era):
+            calls.append(name)
+            return copy.deepcopy(data)
+
+        configure_mcp_server(sdk_server, runtime=runtime,
+                             definition_provider=lambda: {"selected_output": definition},
+                             list_handler=list_handler, call_handler=producer)
+        result = await sdk_server.call_tool("selected_output", {"agent": test_agent, "response_detail": "full"},
+                                            protocol_era=era)
+        assert calls == ["selected_output"]
+        assert result.structured_content == data
+        assert json.loads(result.content[0].text) == data

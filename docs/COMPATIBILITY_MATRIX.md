@@ -1,11 +1,11 @@
 # Compatibility Matrix
 
 Baseline date: **2026-08-26**
-Release framing: **3.3.3 development candidate; SDK v2 baseline below**
+Release framing: **3.3.4 development test checkpoint; SDK v2 baseline below**
 
 ## Development status
 
-The current working package is `scribe-mcp==3.3.3`, a development checkpoint adding compact runtime identity to Doctor: loaded package version, module origins and process ID, independent of the configured checkout. It retains consumer-agnostic bridge hygiene through existing manifest discovery and generic deployment guidance. It retains the 3.3.1 repair restoring existing-project classification for verified empty or rotated logs without baseline hashes. It retains SQLite persistence for bounded background receipts (atomic capacity, project idempotency, fenced transitions and reopen recovery; scheduling and PostgreSQL parity pending), an additive abstract binding-clear API and explicit patch body-hash guidance and an additive pure call-timing recorder, operation-local canonical scope reuse and fenced-artifact preservation, probe import isolation, preserved release artifacts and complete nested-test source packaging, SQLite bootstrap lifetime and configuration-error cleanup, plus the breaking Doctor default described below. Ordinary Doctor calls defer physical/logical inventory collection; explicit full mode preserves the existing v1 report. Earlier module-origin, document metadata and fixture repairs are retained. Broader binding/schema integration and release validation remain unresolved; this is not a certified or published release. The `2.13.0` migration baseline below is historical MCP SDK evidence, not certification of every change on this branch.
+The current working package is `scribe-mcp==3.3.4`, a test-first checkpoint for bounded default responses. Its 78 new cases include expected failures until implementation is integrated; this does not certify the new response contract. It retains the 3.3.3 compact runtime identity in Doctor: loaded package version, module origins and process ID, independent of the configured checkout. It retains consumer-agnostic bridge hygiene through existing manifest discovery and generic deployment guidance. It retains the 3.3.1 repair restoring existing-project classification for verified empty or rotated logs without baseline hashes. It retains SQLite persistence for bounded background receipts (atomic capacity, project idempotency, fenced transitions and reopen recovery; scheduling and PostgreSQL parity pending), an additive abstract binding-clear API and explicit patch body-hash guidance and an additive pure call-timing recorder, operation-local canonical scope reuse and fenced-artifact preservation, probe import isolation, preserved release artifacts and complete nested-test source packaging, SQLite bootstrap lifetime and configuration-error cleanup, plus the breaking Doctor default described below. Ordinary Doctor calls defer physical/logical inventory collection; explicit full mode preserves the existing v1 report. Earlier module-origin, document metadata and fixture repairs are retained. Broader binding/schema integration and release validation remain unresolved; this is not a certified or published release. The `2.13.0` migration baseline below is historical MCP SDK evidence, not certification of every change on this branch.
 
 ## Baseline contract
 
@@ -24,7 +24,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==3.3.3` (development candidate; publication pending)
+- **Core package version:** `scribe-mcp==3.3.4` (development candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -40,6 +40,7 @@ MCP SDK v3 is outside the historical SDK baseline; the Scribe package major vers
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
+| `3.3.4` | Development test checkpoint | Adds bounded-output, exact envelope-accounting and explicit-full regression coverage. Expected contract failures, implementation, integration and affected-client acceptance remain open. |
 | `3.3.3` | Development candidate | Adds observed loaded-package version, module origins and process ID to Doctor while preserving deferred inventory. Source integrity, integration and affected-client acceptance remain separate requirements. |
 | `3.3.2` | Development candidate | Restores consumer-agnostic Doctor bridge hygiene for YAML manifests and generic deployment guidance, preserving low severity and nonblocking diagnostics. Retains the 3.3.1 checkpoint below; integration, publication and live acceptance remain pending. |
 | `3.3.1` | Development candidate | Restores existing-project classification for verified empty or rotated progress logs without baseline hashes. Retains the 3.3.0 checkpoint below; integration, publication and live acceptance remain pending. |

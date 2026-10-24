@@ -896,7 +896,7 @@ async def test_doctor_runtime_identity_uses_loaded_package_not_checkout(
 
     expected_identity = {
         "schema_version": "scribe-runtime-identity.v1",
-        "package_version": "3.3.3",
+        "package_version": scribe_mcp.__version__,
         "package_origin": str(Path(scribe_mcp.__file__).resolve()),
         "doctor_origin": str(Path(doctor_module.__file__).resolve()),
         "process_id": os.getpid(),
@@ -916,3 +916,148 @@ async def test_doctor_runtime_identity_uses_loaded_package_not_checkout(
     assert absent_origins["runtime_identity"]["package_origin"] is None
     assert absent_origins["runtime_identity"]["doctor_origin"] == str(Path(doctor_module.__file__).resolve())
     assert doctor_module._canonical_origin(None) is None
+
+
+@pytest.mark.core
+@pytest.mark.regression
+class TestSBRDefaultOutput:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("family", ["plugins", "cases", "config-error"])
+    async def test_current_diagnostic_envelope_is_bounded_without_collecting(
+        self, monkeypatch, tmp_path, test_agent, family
+    ):
+        """Real Doctor and adapter on ephemeral inputs; no public authority claim."""
+        from scribe_mcp.mcp_adapter import load_mcp_runtime, normalize_tool_result, ProtocolEra
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        backend = _FakeBackend()
+        _configure_doctor_fixture(monkeypatch, root, backend)
+        if family == "plugins":
+            plugins = root / ".scribe" / "plugins"
+            plugins.mkdir(parents=True)
+            for n in range(1000):
+                (plugins / f"plugin_{n:04d}.py").write_text("# never imported\n", encoding="utf-8")
+            config = SimpleNamespace(
+                repo_slug="test", repo_root=root, plugins_dir=plugins,
+                plugin_config={"enabled": True, "allowlist": [], "blocklist": []},
+                storage_backend="sqlite", doc_snapshots=False,
+                plugin_loading_requested=lambda: True)
+            monkeypatch.setattr(doctor_module.RepoDiscovery, "load_config", lambda path: config)
+            monkeypatch.delenv("SCRIBE_TRUST_REPO_PLUGINS", raising=False)
+        elif family == "cases":
+            async def cases(**kwargs):
+                assert kwargs["limit"] == 200
+                return [SimpleNamespace(case_id=f"BUG-{n}", case_type="bug", status="open",
+                                        project_name="漢🌊" * 20000, repo_id="r", project_key="p",
+                                        source_tool="open_bug") for n in range(200)]
+            monkeypatch.setattr(backend, "query_case_registry_records", cases)
+        else:
+            def unavailable_config(path):
+                raise ValueError("configuration unavailable " + "x" * 100000)
+            monkeypatch.setattr(doctor_module.RepoDiscovery, "load_config", unavailable_config)
+
+        builder_calls = 0
+        original = doctor_module.build_physical_logical_reconciliation
+
+        async def counted_builder(**kwargs):
+            nonlocal builder_calls
+            builder_calls += 1
+            return await original(**kwargs)
+
+        monkeypatch.setattr(doctor_module, "build_physical_logical_reconciliation", counted_builder)
+        data = await doctor_module.scribe_doctor(agent=test_agent)
+        before = copy.deepcopy(data)
+        assert builder_calls == 0
+        assert data["runtime"]["physical_logical_reconciliation"] is None
+        assert data["runtime"]["physical_logical_reconciliation_collection"]["state"] == "not_collected"
+        result = normalize_tool_result(data, runtime=load_mcp_runtime(), era=ProtocolEra.MODERN)
+        size = len(json.dumps(result.model_dump(by_alias=True, exclude_none=True), sort_keys=True,
+                              separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8"))
+        assert data == before
+        print(json.dumps({"fixture": "doctor-default", "family": family, "wire_bytes": size,
+                          "builder_calls": builder_calls}, sort_keys=True))
+        assert size <= 2048, f"Doctor {family} delivered envelope={size} bytes"
+
+    @pytest.mark.asyncio
+    async def test_full_real_builder_once_and_exact_complete_wire_value(
+        self, monkeypatch, tmp_path, test_agent
+    ):
+        from scribe_mcp.mcp_adapter import (
+            MCPCompatibilityPolicy, ProtocolEra, build_mcp_server, configure_mcp_server,
+            load_mcp_runtime, normalize_tool_definition,
+        )
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        backend = _FakeBackend()
+        _configure_doctor_fixture(monkeypatch, root, backend)
+        configs = _configs(25, root)
+        monkeypatch.setattr(reconciliation_module, "list_project_configs", lambda: configs)
+        original = reconciliation_module.build_physical_logical_reconciliation
+        calls = 0
+
+        async def counted_builder(**kwargs):
+            nonlocal calls
+            calls += 1
+            return await original(**kwargs)
+
+        monkeypatch.setattr(doctor_module, "build_physical_logical_reconciliation", counted_builder)
+        runtime = load_mcp_runtime()
+        sdk_server = build_mcp_server("scribe-doctor-full-test", MCPCompatibilityPolicy())
+        definition = normalize_tool_definition(
+            runtime=runtime, era=ProtocolEra.MODERN, name="scribe_doctor", description="Real Doctor fixture",
+            input_schema={"type": "object", "properties": {
+                "agent": {"type": "string"}, "reconciliation": {"type": "string", "enum": ["deferred", "full"]},
+                "response_detail": {"type": "string", "enum": ["default", "full"]}},
+                "required": ["agent"], "additionalProperties": False})
+
+        async def list_handler(era):
+            return [definition]
+
+        async def real_doctor(name, arguments, context, era):
+            return await doctor_module.scribe_doctor(agent=arguments["agent"], reconciliation=arguments["reconciliation"])
+
+        configure_mcp_server(sdk_server, runtime=runtime, definition_provider=lambda: {"scribe_doctor": definition},
+                             list_handler=list_handler, call_handler=real_doctor)
+        model = await sdk_server.call_tool("scribe_doctor", {"agent": test_agent, "reconciliation": "full",
+                                                           "response_detail": "full"})
+        data = model.structured_content
+        assert calls == 1
+        direct = await original(repo_root=root, storage_backend=backend, project_configs=configs)
+        actual = data["runtime"]["physical_logical_reconciliation"]
+        assert actual == direct
+        assert len(actual["items"]) == 25
+        assert model.structured_content == data
+        assert json.loads(model.content[0].text)["runtime"]["physical_logical_reconciliation"] == direct
+        assert data["runtime"]["physical_logical_reconciliation_collection"] == {
+            "schema_version": "doctor-reconciliation-collection.v1", "mode": "full",
+            "state": "returned", "reason": None}
+
+    @pytest.mark.asyncio
+    async def test_full_presentation_of_deferred_doctor_does_not_collect(
+        self, monkeypatch, tmp_path, test_agent
+    ):
+        from scribe_mcp.utils.formatters import dispatcher
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        _configure_doctor_fixture(monkeypatch, root, _FakeBackend())
+        calls = 0
+        original = doctor_module.build_physical_logical_reconciliation
+
+        async def counted_builder(**kwargs):
+            nonlocal calls
+            calls += 1
+            return await original(**kwargs)
+
+        monkeypatch.setattr(doctor_module, "build_physical_logical_reconciliation", counted_builder)
+        data = await doctor_module.scribe_doctor(agent=test_agent)
+        before = copy.deepcopy(data)
+        context = dispatcher.ResponseBudgetContextV1(
+            tool_name="scribe_doctor", action=None, detail="full", explicit_body_selection=False)
+        result = dispatcher.project_default_response(data, budget_context=context, resolved_request_context=None)
+        assert calls == 0
+        assert result["runtime"]["physical_logical_reconciliation"] is None
+        assert result["runtime"]["physical_logical_reconciliation_collection"] == before["runtime"]["physical_logical_reconciliation_collection"]
+        assert result == before and data == before

@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-23**
-Applies to: **v3.3.3 development candidate; integration and fleet acceptance pending**
+Updated: **2026-10-24**
+Applies to: **v3.3.4 development test checkpoint; implementation, integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.4 adds 78 regression cases for complete default-response size, honest envelope accounting, explicit full detail, preserved control facts and same-page continuation. This is a test-first checkpoint with expected contract failures. It does not implement or certify the bounded response contract; implementation, source integration and affected-client verification remain pending.
 
 Version 3.3.3 adds `runtime_identity` to Doctor, reporting the loaded package version, package and Doctor module origins, and process ID. It reads the running package, not the configured repository version, and preserves deferred inventory collection. These observed diagnostics help identify a candidate; they do not attest source integrity or complete affected-client acceptance.
 

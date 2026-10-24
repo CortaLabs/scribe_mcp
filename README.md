@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.3` · Updated: `2026-10-23`
+Development candidate: `scribe-mcp 3.3.4` · Updated: `2026-10-24`
+
+`3.3.4` adds 78 regression cases for bounded default responses, explicit full detail, accurate envelope accounting and content preservation. This is a test-first checkpoint: implementation and integration remain pending; the new contract tests currently include expected failures.
 
 `3.3.3` adds compact runtime identity to Doctor: the loaded package version, package and Doctor module origins, and process ID. These observations help verify which candidate answers a call without collecting the full inventory. Integration and affected-client acceptance remain pending.
 
