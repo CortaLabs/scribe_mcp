@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.9` · Updated: `2026-10-24`
+Development candidate: `scribe-mcp 3.3.10` · Updated: `2026-10-24`
+
+`3.3.10` integrates the maintained-line regression fixtures: real persisted bindings precede session allocation/reuse checks, and fenced-artifact tests verify actual metadata writes. The genuine SDK recency fixture and product authority rules are preserved.
 
 `3.3.9` honors the existing read_recent priority-sort flag: false/default preserves database recency and file source order; true retains priority ordering.
 

@@ -43,6 +43,7 @@ async def test_fenced_patch_bytes_survive_section_and_frontmatter_writes(
     project = await _setup_project(tmp_path)
     path = Path(project["docs"]["architecture"])
     path.write_text(
+        "---\ntags: [initial]\n---\n"
         "# Title\n\n<!-- ID: artifact -->\nold\n\n"
         "<!-- ID: after -->\nKeep this section\n", encoding="utf-8",
     )
@@ -60,6 +61,11 @@ async def test_fenced_patch_bytes_survive_section_and_frontmatter_writes(
     observed = {}
 
     for action in ("replace_section", "frontmatter_update"):
+        before_bytes = path.read_bytes()
+        before = parse_frontmatter(before_bytes.decode("utf-8"))
+        before_trace = before.frontmatter_data.get("edit_trace", {})
+        assert before.frontmatter_data["tags"] != [action]
+        assert before_trace.get("last_action") != action
         change = await apply_doc_change(
             project, doc="architecture", action=action,
             section="artifact" if action == "replace_section" else None,
@@ -71,6 +77,26 @@ async def test_fenced_patch_bytes_survive_section_and_frontmatter_writes(
         assert change.success
         # Reopen the persisted UTF-8 file after each operation, not its preview.
         written = path.read_bytes()
+        parsed = parse_frontmatter(written.decode("utf-8"))
+        frontmatter = parsed.frontmatter_data
+        assert written != before_bytes
+        assert frontmatter["tags"] == [action]
+        assert frontmatter["created_by"] == test_agent
+        assert frontmatter["maintained_by"] == test_agent
+        trace = frontmatter["edit_trace"]
+        assert trace["tool"] == "manage_docs"
+        assert trace["created_via"] == "replace_section"
+        assert trace["last_action"] == action
+        assert trace["last_edited_by"] == test_agent
+        assert trace["last_edited_at"] == frontmatter["last_updated"]
+        assert trace["created_at"]
+        if before_trace:
+            assert trace["created_at"] == before_trace["created_at"]
+            assert trace["created_via"] == before_trace["created_via"]
+            assert frontmatter["created_by"] == before.frontmatter_data["created_by"]
+            assert parsed.body == before.body
+        else:
+            assert trace["created_at"] == trace["last_edited_at"]
         actual = written.split((fence + "diff\n").encode("utf-8"), 1)[1].split(
             ("\n" + fence + "\n").encode("utf-8"), 1,
         )[0] + b"\n"

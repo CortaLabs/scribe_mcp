@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-24**
-Applies to: **v3.3.9 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.10 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.10 integrates dev 2.15.27 without replacing the major-line authority or output contracts. Session regression fixtures establish genuine persisted bindings, and fenced-artifact checks assert metadata and attribution effects. The genuine SDK recency fixture remains unchanged.
 
 Version 3.3.9 forwards the existing read_recent priority-sort flag to both limiting paths. False/default preserves database recency and file source order; explicit True retains priority sorting. Record membership, pagination, metadata and supplementation remain unchanged.
 
