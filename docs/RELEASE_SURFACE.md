@@ -1,11 +1,21 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **2.15.31 maintenance candidate**
+Applies to: **2.15.33 integrated maintenance candidate**
+
+## 2.15.33 candidate status
+
+This candidate combines the reviewed `2.15.30` heartbeat, `2.15.31` SQLite and `2.15.32` test repairs. Heartbeats retain durable bindings; SQLite retains WAL through startup and preserves primary errors/cancellation; regression tests enforce genuine identity/reconnect assertions. Public APIs, schema, dependencies and runtime defaults remain unchanged.
+
+Independent component reviews passed 199, 60 and 15 cases respectively. Combined-candidate, installed/native and publication verification are pending. Component checks do not certify every retained client or the separate 3.x redesign; deployed processes require the host's normal upgrade lifecycle.
+
+### 2.15.32 test component
+
+The three original positive journeys retain their semantic assertions and use genuine reconnect and persistence prerequisites with disposable SQLite. Two additional fault-sensitivity cases require incorrect observed project/activity results to fail; a direct script exits with the pytest result. Production runtime behavior is unchanged.
 
 ## Maintenance scope
 
-This release carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
+The `2.15.29` source baseline carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
 
 Version 2.15.30 stops identity and activity persistence from replaying cached session bindings. Ordinary heartbeat updates preserve the complete binding row, including its timestamp; explicit project selection remains the binding writer. The repair passes 199 scoped source checks, including real SDK auto/legacy calls, sibling isolation, explicit rebind, revocation and deletion. Installed 2.15.30 native and fleet acceptance remains pending; no public argument, API, schema or heartbeat-clock default changes.
 
