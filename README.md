@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.11` · Updated: `2026-10-25`
+Development candidate: `scribe-mcp 3.3.12` · Updated: `2026-10-25`
+
+`3.3.12` carries the maintenance 2.15.29 first-bind and cross-repository-rebind ordering repair: the existing verified session root is persisted before binding classification. Real SDK regressions cover absent defaults, both protocol modes, sibling isolation and foreign denials. The 2.15 maintenance release is on main; this separate 3.x candidate retains its unfinished source and runtime gates.
 
 `3.3.11` integrates maintenance `2.15.28`: SQLite catalog discovery waits for identity preparation. The existing transactional migration remains the sole identity backfill; removing a duplicate writer preserves keyed rows, including stored NULL repository identities and literal roots. New fresh/legacy/keyed catalog checks and startup-error guards retain all previous assertions. The original major-line authority and output integration work remains pending.
 

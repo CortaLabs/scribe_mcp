@@ -418,6 +418,135 @@ anyio.run(main)
 
 @pytest.mark.regression
 @pytest.mark.storage
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+@pytest.mark.parametrize("configured_default", [False, True])
+def test_real_sdk_first_bind_and_cross_repo_rebind(
+    tmp_path: Path, test_agent: str, mode: str, configured_default: bool,
+) -> None:
+    """Persist the authorized root before the first binding and a root change."""
+    source = Path(__file__).resolve().parents[1]
+    repo_a, repo_b = tmp_path / "repo_a", tmp_path / "repo_b"
+    for repo in (repo_a, repo_b):
+        (repo / ".git").mkdir(parents=True)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key not in {"DATABASE_URL", "REPO_ROOT"}}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(runtime / "scribe.sqlite3"),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"), "SCRIBE_ROOT": str(runtime),
+        "PYTHONPATH": str(source / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+        "SBR_TEST_AGENT": test_agent, "SBR_TEST_MODE": mode,
+        "SBR_TEST_REPO_A": str(repo_a), "SBR_TEST_REPO_B": str(repo_b),
+        "SBR_TEST_CONFIGURED_DEFAULT": "1" if configured_default else "0",
+    })
+    if configured_default:
+        env["SCRIBE_REPO_ROOT"] = str(repo_a)
+    probe = r'''
+import anyio, json, os, sqlite3, sys
+from pathlib import Path
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
+from scribe_mcp.config.settings import Settings
+from scribe_mcp.storage.models import compute_project_key
+
+agent = os.environ["SBR_TEST_AGENT"]
+repo_a, repo_b = Path(os.environ["SBR_TEST_REPO_A"]), Path(os.environ["SBR_TEST_REPO_B"])
+expected_default = repo_a if os.environ["SBR_TEST_CONFIGURED_DEFAULT"] == "1" else None
+assert Settings.load().default_repo_root == expected_default
+
+def bindings():
+    # Include timestamps: reads, writes and denials must not silently rebind.
+    with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute("""SELECT b.*, s.repo_root AS session_repo_root,
+            p.repo_root AS canonical_repo_root FROM session_projects AS b
+            JOIN scribe_sessions AS s ON s.session_id = b.session_id
+            LEFT JOIN scribe_projects AS p ON p.project_key = b.project_key
+            ORDER BY b.session_id""").fetchall()
+        return {row["session_id"]: dict(row) for row in rows}
+
+async def call(client, name, arguments, *, denied=False):
+    result = await client.call_tool(name, {"agent": agent, **arguments})
+    text = "\n".join(getattr(item, "text", "") for item in result.content)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        assert denied and result.is_error, (name, text)
+        return {"error": text}
+    if denied:
+        assert result.is_error or data.get("ok") is False, (name, data)
+    else:
+        assert not result.is_error and data.get("ok", True) is not False, (name, data)
+    return data
+
+def assert_binding(session, project, repo, generation):
+    row = bindings()[session]
+    assert row["project_name"] == project, row
+    assert row["project_key"] == compute_project_key(repo_root=str(repo), project_name=project), row
+    assert row["session_repo_root"] == row["canonical_repo_root"] == str(repo), row
+    assert row["binding_state"] == "resolved" and row["binding_state_reason"] is None, row
+    assert row["binding_generation"] == generation and row["updated_at"], row
+    return row
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"],
+                                   env=dict(os.environ))
+    with anyio.fail_after(100):
+        async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as client:
+            bound = await call(client, "set_project", {"name": "initial_a", "root": str(repo_a),
+                                                       "format": "structured"})
+            # No second set_project or diagnostic may mask the first-bind failure.
+            await call(client, "read_recent", {"limit": 1, "format": "structured"})
+            session = bound["project"]["session_id"]
+            first = assert_binding(session, "initial_a", repo_a, 1)
+            async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as sibling:
+                sibling_bound = await call(sibling, "set_project", {"name": "sibling_only",
+                    "root": str(repo_a), "format": "structured"})
+                await call(sibling, "read_recent", {"limit": 1, "format": "structured"})
+                sibling_session = sibling_bound["project"]["session_id"]
+                assert sibling_session != session
+                sibling_record = assert_binding(sibling_session, "sibling_only", repo_a, 1)
+                assert bindings()[session] == first
+                rebound = await call(client, "set_project", {"name": "chosen_b", "root": str(repo_b),
+                                                             "format": "structured"})
+                await call(client, "read_recent", {"limit": 1, "format": "structured"})
+                assert rebound["project"]["session_id"] == session
+                second = assert_binding(session, "chosen_b", repo_b, 2)
+                assert second["updated_at"] >= first["updated_at"]
+                assert bindings()[sibling_session] == sibling_record
+                records = bindings()
+                foreign_log = repo_a / ".scribe/docs/dev_plans/sibling_only/PROGRESS_LOG.md"
+                foreign_before = foreign_log.read_bytes()
+                await call(client, "append_entry", {"project": "sibling_only",
+                    "message": "must-not-reach-foreign-root", "format": "structured"}, denied=True)
+                await call(client, "read_recent", {"project": "sibling_only", "limit": 1,
+                    "format": "structured"}, denied=True)
+                assert foreign_log.read_bytes() == foreign_before
+                assert bindings() == records, "foreign denials changed caller or sibling binding"
+                for owner, project in ((client, "chosen_b"), (sibling, "sibling_only")):
+                    marker = "first-bind-rebind-" + project
+                    await call(owner, "append_entry", {"message": marker, "format": "structured"})
+                    recent = await call(owner, "read_recent", {"limit": 1, "format": "structured"})
+                    assert marker in json.dumps(recent), recent
+                assert bindings() == records, "mixed calls silently rebound or refreshed timestamps"
+                print(json.dumps({"mode": os.environ["SBR_TEST_MODE"], "first_generation": 1,
+                    "rebind_generation": 2, "recovery_binds": 0, "sibling_unchanged": True,
+                    "foreign_denied": True}), flush=True)
+anyio.run(main)
+'''
+    sdk_python = os.environ.get("SBR_SDK_PYTHON", sys.executable)
+    result = subprocess.run([sdk_python, "-c", probe], cwd=source, env=env,
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.regression
+@pytest.mark.storage
 @pytest.mark.asyncio
 @pytest.mark.parametrize("catalog_state", ["fresh", "legacy", "legacy-keyed"])
 @pytest.mark.parametrize("catalog", ["global", "repo"])

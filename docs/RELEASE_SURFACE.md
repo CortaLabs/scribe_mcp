@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **v3.3.11 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.12 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.12 integrates maintenance 2.15.29. The existing authorized session root is persisted before binding classification so first reads and repository changes retain a resolved binding without recovery binds. The existing identity-upgrade preservation contract and all original 3.x source, output and runtime gates remain.
 
 Version 3.3.11 integrates dev 2.15.28. Existing SQLite project identity preparation runs before catalog readiness. The transactional migration remains the sole identity backfill; removing a duplicate writer preserves already-keyed rows, including NULL repository identities, literal roots and extension data. Fresh, legacy and keyed catalog checks cover both entrypoints and reopen; genuine SDK guards reject startup discovery failures. The original authority, output and release gates remain open.
 
