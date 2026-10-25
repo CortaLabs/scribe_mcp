@@ -103,6 +103,36 @@ class SQLiteInternals:
                 continue
         return task.result()
 
+    def _open_bootstrap_connection(self) -> sqlite3.Connection:
+        conn = self.connect()
+        try:
+            # Opening a handle and setting journal_mode do not attach it to WAL.
+            # Finish a schema read so this idle keeper prevents helper teardown.
+            cursor = conn.execute("SELECT COUNT(*) FROM sqlite_master;")
+            try:
+                cursor.fetchone()
+            except BaseException:
+                try:
+                    cursor.close()
+                except BaseException:
+                    logger.warning(
+                        "Failed to close SQLite cursor after bootstrap activation failure",
+                        exc_info=True,
+                    )
+                raise
+            else:
+                cursor.close()
+        except BaseException:
+            try:
+                conn.close()
+            except BaseException:
+                logger.warning(
+                    "Failed to close SQLite connection after bootstrap activation failure",
+                    exc_info=True,
+                )
+            raise
+        return conn
+
     @asynccontextmanager
     async def bootstrap_connection(self) -> AsyncIterator[None]:
         """Keep WAL open across bootstrap's otherwise independent connections.
@@ -111,13 +141,13 @@ class SQLiteInternals:
         connection alive avoids last-connection teardown after every helper.
         It owns no transaction and is closed before initialization is ready.
         """
-        opening = asyncio.create_task(asyncio.to_thread(self.connect))
+        opening = asyncio.create_task(asyncio.to_thread(self._open_bootstrap_connection))
         try:
             conn = await asyncio.shield(opening)
         except asyncio.CancelledError:
             try:
                 conn = await self._drain_bootstrap_io(opening)
-            except Exception:
+            except BaseException:
                 pass  # Preserve cancellation if the interrupted open also failed.
             else:
                 await self._drain_bootstrap_io(

@@ -1,13 +1,17 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **2.15.29 maintenance release**
+Applies to: **2.15.31 maintenance candidate**
 
 ## Maintenance scope
 
 This release carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
 
 Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
+
+Version 2.15.31 completes a nontransactional schema read on the existing SQLite bootstrap keeper so WAL remains attached across helper connections. Activation errors retain their original identity through cursor and connection cleanup; repeated cancellation drains the opening worker and preserves the original cancellation. Helper transactions, readiness ordering, public APIs, schemas, PRAGMAs, durability settings and inherited runtime defaults are unchanged. This candidate is based on 2.15.29.
+
+Controlled historical measurements on the same hardware and genuine fresh empty SQLite stores reduced median setup from 1.879 seconds to 0.265 seconds (7.1x). They do not establish full-suite, 40-minute-command, warm-store or fleet performance. The later failure-only correction measured 0.341 versus 0.361 seconds with host variance; it establishes no additional speedup. The repair passes 62 scoped source cases. Current independent behavioral review, integrated major-version checks, installed-package/native-client checks, fleet acceptance and publication remain pending.
 
 Version 2.15.29 persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
 
@@ -27,7 +31,7 @@ Version 2.15.22 corrects the build-backend minimum to setuptools 77.0.3 for its 
 
 Version 2.15.21 replaces destructive build-directory cleanup with an isolated tracked-source snapshot. Existing outputs, metadata and source bytes are preserved; same-version output collisions are rejected before effects. Both distributions must pass Twine and the existing private-artifact checks before exclusive publication. The source distribution includes nested Python regression tests and tracked Markdown fixtures, retaining the existing manifest exclusions.
 
-Validation includes real SDK first-bind and cross-repository-rebind cases with SQLite, plus installed-package first-bind and repeated append/read checks against the configured PostgreSQL server profile in both SDK modes. The PostgreSQL checks use no configured default repository, require a resolved verified binding and retain all binding fields without recovery binds. They certify that tested path; explicit public-profile stdio deployments require separate trusted-runtime-identity verification. Existing server processes need their host's normal restart or reconnect procedure to load an upgrade. Private orchestration configuration, generated agents, templates and runtime state are excluded from the public package.
+Historical 2.15.29 validation includes real SDK first-bind and cross-repository-rebind cases with SQLite, plus installed-package first-bind and repeated append/read checks against the configured PostgreSQL server profile in both SDK modes. The PostgreSQL checks use no configured default repository, require a resolved verified binding and retain all binding fields without recovery binds. They certify that tested path, not the current candidate; explicit public-profile stdio deployments require separate trusted-runtime-identity verification. Existing server processes need their host's normal restart or reconnect procedure to load an upgrade. Private orchestration configuration, generated agents, templates and runtime state are excluded from the public package.
 
 ## Public contract
 
