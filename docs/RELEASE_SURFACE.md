@@ -1,11 +1,17 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **2.15.29 maintenance release**
+Applies to: **2.15.32 standalone test-repair candidate based on 2.15.29**
+
+## 2.15.32 candidate status
+
+This standalone candidate repairs identity/resumption tests that returned boolean failure values accepted by pytest. The three original positive journeys retain their semantic assertions and use genuine reconnect and persistence prerequisites with disposable SQLite. Two separate fault-sensitivity cases require incorrect observed project/activity results to fail. Product runtime behavior, public APIs, dependencies and schema are unchanged.
+
+Published `main` and live runtime remain at `2.15.29`. Independent behavioral review, publication and delivery of `2.15.32` remain pending. The separate `2.15.30` heartbeat candidate (PR #29) and `2.15.31` SQLite candidate (PR #30) are not included. This is not the broader 3.x development line, and earlier runtime checks do not establish candidate or fleet acceptance.
 
 ## Maintenance scope
 
-This release carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
+The published `2.15.29` baseline carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
 
 Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
 
@@ -27,7 +33,7 @@ Version 2.15.22 corrects the build-backend minimum to setuptools 77.0.3 for its 
 
 Version 2.15.21 replaces destructive build-directory cleanup with an isolated tracked-source snapshot. Existing outputs, metadata and source bytes are preserved; same-version output collisions are rejected before effects. Both distributions must pass Twine and the existing private-artifact checks before exclusive publication. The source distribution includes nested Python regression tests and tracked Markdown fixtures, retaining the existing manifest exclusions.
 
-Validation includes real SDK first-bind and cross-repository-rebind cases with SQLite, plus installed-package first-bind and repeated append/read checks against the configured PostgreSQL server profile in both SDK modes. The PostgreSQL checks use no configured default repository, require a resolved verified binding and retain all binding fields without recovery binds. They certify that tested path; explicit public-profile stdio deployments require separate trusted-runtime-identity verification. Existing server processes need their host's normal restart or reconnect procedure to load an upgrade. Private orchestration configuration, generated agents, templates and runtime state are excluded from the public package.
+Historical `2.15.29` validation includes real SDK first-bind and cross-repository-rebind cases with SQLite, plus installed-package first-bind and repeated append/read checks against the configured PostgreSQL server profile in both SDK modes. The PostgreSQL checks use no configured default repository, require a resolved verified binding and retain all binding fields without recovery binds. They certify that tested path; explicit public-profile stdio deployments require separate trusted-runtime-identity verification. Existing server processes need their host's normal restart or reconnect procedure to load an upgrade. Private orchestration configuration, generated agents, templates and runtime state are excluded from the public package.
 
 ## Public contract
 

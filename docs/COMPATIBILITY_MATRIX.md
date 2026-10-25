@@ -1,9 +1,11 @@
 # Compatibility Matrix
 
 Updated: **2026-10-25**
-Release framing: **2.15.29 maintenance release, retaining the MCP SDK v2 baseline**
+Release framing: **2.15.32 standalone test-repair candidate based on 2.15.29, retaining the MCP SDK v2 baseline**
 
 ## Maintenance release status
+
+`2.15.32` is a standalone candidate based on published `2.15.29`. It repairs false-green identity/resumption tests using real assertions, current reconnect and persistence prerequisites, disposable SQLite and separate fault-sensitivity checks. Runtime behavior and public APIs are unchanged. Published `main` and live runtime remain at `2.15.29`; independent behavioral review, publication and delivery of this candidate remain pending. Separate `2.15.30` heartbeat and `2.15.31` SQLite candidates are not included, and no 3.x or fleet acceptance is claimed.
 
 Version `2.15.29` persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
 
@@ -26,7 +28,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.29` (maintenance release)
+- **Core package version:** `scribe-mcp==2.15.32` (standalone candidate; published main/live baseline `2.15.29`)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -42,6 +44,7 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
+| `2.15.32` | Standalone candidate | Test-only identity/resumption assertion and fixture repair based on `2.15.29`; independent behavioral review, publication and delivery pending. Separate `2.15.30`/`2.15.31` candidates are not included. |
 | `2.15.29` | Maintenance release | Persists the verified session root before binding classification. Genuine SDK first-bind/rebind coverage and installed PostgreSQL server-profile first-bind/mixed-call checks pass; explicit public-profile deployment verification remains separate. |
 | `2.15.28` | Candidate | Prepares SQLite catalog identity before discovery and preserves existing keys and binding generations on reopen; native and fleet acceptance pending. |
 | `2.15.27` | Candidate | Restores genuine binding prerequisites in regression fixtures; product authority unchanged, native and fleet acceptance pending. |
