@@ -1342,6 +1342,15 @@ async def set_project(
     # Mirror project data into JSON state; global current_project only updates for legacy fallback.
 
     _mark("agent_context_manager")
+    backend = server_module.storage_backend
+    if backend and state_write_session_id and hasattr(backend, "upsert_session"):
+        # The binding classifier selects by the session's stored root. Persist
+        # the root authorized above before classifying a first bind or rebind.
+        await backend.upsert_session(
+            session_id=state_write_session_id,
+            repo_root=str(resolved_root),
+            mode="project",
+        )
     state = await server_module.state_manager.set_current_project(
         name,
         project_data,
@@ -1361,7 +1370,6 @@ async def set_project(
             "project",
         )
     _mark("state_set_session_mode")
-    backend = server_module.storage_backend
     if backend:
         session_key = state_write_session_id
         if session_key:
@@ -1369,18 +1377,6 @@ async def set_project(
                 session_key,
                 name,
             )
-            if hasattr(backend, "upsert_session"):
-                # set_project is the authority that verified this root; persist
-                # it as the session's stored root so later requests adopt the
-                # binding's repo scope. This also heals sessions whose stored
-                # root was poisoned by a pre-binding fallback root — without
-                # this write, a wedged session stays wedged no matter how many
-                # times the caller re-runs set_project.
-                await backend.upsert_session(
-                    session_id=session_key,
-                    repo_root=str(resolved_root),
-                    mode="project",
-                )
             if _SESSION_DEBUG_ENABLED:
                 logger.debug(
                     "set_project authoritative session binding | session_key=%s project=%s stable_session_id=%s context_session_id=%s",
