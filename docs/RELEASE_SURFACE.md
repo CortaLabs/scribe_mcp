@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **v3.3.12 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.13 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.13 development checkpoint carries the reviewed 2.15.34 maintenance fixes: heartbeat binding preservation, SQLite WAL startup and error cleanup, atomic entry/metric writes, genuine identity and format regressions, and isolated transport-policy tests. Public maintenance APIs and durability defaults are retained. This does not complete the original 3.x authority, output, background, schema or runtime gates.
 
 Version 3.3.12 integrates maintenance 2.15.29. The existing authorized session root is persisted before binding classification so first reads and repository changes retain a resolved binding without recovery binds. The existing identity-upgrade preservation contract and all original 3.x source, output and runtime gates remain.
 

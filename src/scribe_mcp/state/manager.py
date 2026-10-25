@@ -149,9 +149,10 @@ class StateManager:
         every project in state.projects here was O(N) redundant work — the
         data is unchanged by the time persist() is called.
 
-        For local backends: updates global project pointer, session project
-        bindings, and session modes.  For remote backends: skips all DB
-        writes and only updates in-memory caches.
+        For local backends: updates the global project pointer and session
+        modes. Session project bindings are written by explicit selection,
+        never replayed from this cached snapshot. For remote backends: skips
+        all DB writes and only updates in-memory caches.
         """
         async with self._lock:
             from scribe_mcp.storage.remote import RemoteStorageBackend
@@ -166,13 +167,6 @@ class StateManager:
                     updated_by=state.last_updated_by or _GLOBAL_AGENT_ID,
                     session_id=None,
                 )
-
-                for session_id, project_payload in state.session_projects.items():
-                    project_name = self._resolve_project_name(project_payload)
-                    if not project_name:
-                        continue
-                    if hasattr(self._storage_backend, "set_session_project"):
-                        await self._storage_backend.set_session_project(session_id, project_name)
 
                 for session_id, mode in state.session_modes.items():
                     if mode not in {"project", "sentinel"}:

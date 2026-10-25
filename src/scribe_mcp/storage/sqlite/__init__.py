@@ -424,7 +424,7 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
         await entry_ops.insert_entry(
             initialise_fn=self._initialise,
             write_lock=self._write_lock,
-            execute_fn=self._execute,
+            run_transaction_fn=self._internals._run_transaction,
             entry_id=entry_id,
             project=project,
             ts=ts,

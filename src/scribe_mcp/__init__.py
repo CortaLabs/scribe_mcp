@@ -1,6 +1,6 @@
 """Scribe MCP server package."""
 
-__version__ = "3.3.12"
+__version__ = "3.3.13"
 
 __all__ = [
     "__version__",

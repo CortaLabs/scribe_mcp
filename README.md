@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.12` · Updated: `2026-10-25`
+Development candidate: `scribe-mcp 3.3.13` · Updated: `2026-10-25`
+
+The 3.3.13 development checkpoint carries the reviewed 2.15.34 maintenance fixes: heartbeat binding preservation, SQLite WAL startup and error cleanup, atomic entry/metric writes, genuine identity and format regressions, and isolated transport-policy tests. Public maintenance APIs and durability defaults are retained. This does not complete the original 3.x authority, output, background, schema or runtime gates.
 
 `3.3.12` carries the maintenance 2.15.29 first-bind and cross-repository-rebind ordering repair: the existing verified session root is persisted before binding classification. Real SDK regressions cover absent defaults, both protocol modes, sibling isolation and foreign denials. The 2.15 maintenance release is on main; this separate 3.x candidate retains its unfinished source and runtime gates.
 

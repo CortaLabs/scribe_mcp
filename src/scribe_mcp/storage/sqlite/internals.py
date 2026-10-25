@@ -103,6 +103,36 @@ class SQLiteInternals:
                 continue
         return task.result()
 
+    def _open_bootstrap_connection(self) -> sqlite3.Connection:
+        conn = self.connect()
+        try:
+            # Opening a handle and setting journal_mode do not attach it to WAL.
+            # Finish a schema read so this idle keeper prevents helper teardown.
+            cursor = conn.execute("SELECT COUNT(*) FROM sqlite_master;")
+            try:
+                cursor.fetchone()
+            except BaseException:
+                try:
+                    cursor.close()
+                except BaseException:
+                    logger.warning(
+                        "Failed to close SQLite cursor after bootstrap activation failure",
+                        exc_info=True,
+                    )
+                raise
+            else:
+                cursor.close()
+        except BaseException:
+            try:
+                conn.close()
+            except BaseException:
+                logger.warning(
+                    "Failed to close SQLite connection after bootstrap activation failure",
+                    exc_info=True,
+                )
+            raise
+        return conn
+
     @asynccontextmanager
     async def bootstrap_connection(self) -> AsyncIterator[None]:
         """Keep WAL open across bootstrap's otherwise independent connections.
@@ -111,13 +141,13 @@ class SQLiteInternals:
         connection alive avoids last-connection teardown after every helper.
         It owns no transaction and is closed before initialization is ready.
         """
-        opening = asyncio.create_task(asyncio.to_thread(self.connect))
+        opening = asyncio.create_task(asyncio.to_thread(self._open_bootstrap_connection))
         try:
             conn = await asyncio.shield(opening)
         except asyncio.CancelledError:
             try:
                 conn = await self._drain_bootstrap_io(opening)
-            except Exception:
+            except BaseException:
                 pass  # Preserve cancellation if the interrupted open also failed.
             else:
                 await self._drain_bootstrap_io(
@@ -154,6 +184,34 @@ class SQLiteInternals:
                 )
 
         self._with_lock_retry(_op, query=query, is_write=True)
+
+    async def _run_transaction(self, fn: Callable[[sqlite3.Connection], T]) -> T:
+        """Run a write transaction while retaining worker ownership on cancellation."""
+        def _transaction(conn: sqlite3.Connection) -> T:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                result = fn(conn)
+                conn.commit()
+                return result
+            except BaseException:
+                conn.rollback()
+                raise
+
+        def _op() -> T:
+            with self._write_gate:
+                return self._run_with_connection(_transaction)
+
+        worker = asyncio.create_task(asyncio.to_thread(
+            self._with_lock_retry, _op, query="BEGIN IMMEDIATE", is_write=True,
+        ))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            try:
+                await self._drain_bootstrap_io(worker)
+            except BaseException:
+                pass  # Cleanup failure must not replace the caller's cancellation.
+            raise
 
     async def execute_many(self, statements: List[str]) -> None:
         await asyncio.to_thread(self.execute_many_sync, statements)
