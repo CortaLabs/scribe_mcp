@@ -1,13 +1,15 @@
 # Release Surface
 
-Updated: **2026-10-24**
-Applies to: **2.15.27 maintenance candidate; publication and fleet validation pending**
+Updated: **2026-10-25**
+Applies to: **2.15.28 maintenance candidate; publication and fleet validation pending**
 
 ## Maintenance scope
 
 This candidate carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
 
 Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
+
+Version 2.15.28 runs the existing SQLite project identity preparation before initialization reports readiness, allowing startup catalog discovery before any project fetch or write. Backfill retains populated project keys when only repository identity is missing, preserving binding generations and timestamps across reopen. Existing normalization, collision handling, legacy fallback, schema, recovery and authority checks remain unchanged.
 
 Version 2.15.27 restores regression fixtures using real persisted project bindings before their original session observations. It changes no runtime authority policy.
 

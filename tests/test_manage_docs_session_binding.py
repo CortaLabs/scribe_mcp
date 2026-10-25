@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import sqlite3
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -291,6 +292,7 @@ def test_resolve_authoritative_write_scope_verified_scope_still_wins() -> None:
 
 
 @pytest.mark.regression
+@pytest.mark.storage
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
 def test_real_sdk_document_target_preserves_default(tmp_path: Path, test_agent: str, mode: str) -> None:
     """Real stdio ingress must keep metadata writes separate from selection."""
@@ -410,3 +412,69 @@ anyio.run(main)
     result = subprocess.run([sdk_python, "-c", probe], cwd=source, env=env,
                             capture_output=True, text=True, timeout=110)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "Project discovery failed during recovery:" not in result.stderr, result.stderr
+    assert "Failed to load projects from backend:" not in result.stderr, result.stderr
+
+
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.asyncio
+@pytest.mark.parametrize("catalog_state", ["fresh", "legacy", "legacy-keyed"])
+@pytest.mark.parametrize("catalog", ["global", "repo"])
+async def test_sqlite_catalog_ready_before_project_lookup(
+    tmp_path: Path, catalog_state: str, catalog: str,
+) -> None:
+    """Startup discovery must work before fetch/upsert can prepare identity columns."""
+    from scribe_mcp.storage.models import compute_project_key, compute_repo_id
+    from scribe_mcp.storage.sqlite import SQLiteStorage
+
+    db_path = tmp_path / "catalog.sqlite3"
+    repo = str(tmp_path.resolve())
+    progress_log = str(tmp_path / "PROGRESS_LOG.md")
+    legacy = catalog_state != "fresh"
+    retained_key = "pk-historical-retained" if catalog_state == "legacy-keyed" else None
+    if legacy:
+        # Supported historical project table, with a real row to verify backfill.
+        with sqlite3.connect(db_path) as connection:
+            connection.execute("""CREATE TABLE scribe_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+                repo_root TEXT NOT NULL, progress_log_path TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+            connection.execute(
+                "INSERT INTO scribe_projects (name, repo_root, progress_log_path) VALUES (?, ?, ?)",
+                ("legacy_project", repo, progress_log),
+            )
+            if retained_key:
+                connection.execute("ALTER TABLE scribe_projects ADD COLUMN project_key TEXT")
+                connection.execute("UPDATE scribe_projects SET project_key = ?", (retained_key,))
+
+    storage = SQLiteStorage(db_path)
+    try:
+        await storage.setup()
+        projects = (await storage.list_projects() if catalog == "global"
+                    else await storage.list_projects_by_repo(repo))
+        assert [project.name for project in projects] == (["legacy_project"] if legacy else [])
+        if legacy:
+            project = projects[0]
+            assert project.id == 1
+            assert project.repo_root == repo
+            assert project.progress_log_path == progress_log
+            assert project.repo_id == compute_repo_id(repo)
+            assert project.project_key == (retained_key or compute_project_key(
+                repo_root=repo, project_name=project.name,
+            ))
+            assert await storage.list_projects_by_repo(str(tmp_path / "other")) == []
+        # Readiness includes the schema even when the catalog is empty.
+        with sqlite3.connect(db_path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(scribe_projects)")}
+            assert {"repo_id", "project_key", "bridge_id", "bridge_managed"} <= columns
+        assert await storage.list_projects() == projects
+    finally:
+        await storage.close()
+    reopened = SQLiteStorage(db_path)
+    try:
+        assert await reopened.list_projects() == projects
+    finally:
+        await reopened.close()
