@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import sqlite3
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -28,7 +32,7 @@ class _RegistryStub:
 
 
 @pytest.mark.asyncio
-async def test_register_document_path_uses_authoritative_context_session_id(tmp_path: Path) -> None:
+async def test_register_document_path_requires_authority_without_selecting_default(tmp_path: Path) -> None:
     doc_path = tmp_path / "CHECKLIST.md"
     doc_path.write_text("# Checklist\n", encoding="utf-8")
 
@@ -74,7 +78,7 @@ async def test_register_document_path_uses_authoritative_context_session_id(tmp_
     )
 
     assert warning is None
-    assert captured["session_id"] == "authoritative-session"
+    assert captured == {}, "metadata registration must never call the selecting setter"
     assert backend.update_calls == 1
     assert registry.calls == 1
 
@@ -145,7 +149,7 @@ def test_resolve_authoritative_write_scope_rejects_transport_only_scope() -> Non
 
 
 @pytest.mark.asyncio
-async def test_handle_edit_action_register_doc_uses_authoritative_context_session_id(tmp_path: Path) -> None:
+async def test_handle_edit_action_register_doc_does_not_select_default(tmp_path: Path) -> None:
     created_path = tmp_path / "NOTE.md"
     created_path.write_text("# Note\n", encoding="utf-8")
 
@@ -253,7 +257,7 @@ async def test_handle_edit_action_register_doc_uses_authoritative_context_sessio
     assert result["ok"] is True
     warnings = result.get("warnings") or []
     assert all("Registry update failed" not in warning for warning in warnings)
-    assert captured["session_id"] == "authoritative-session"
+    assert captured == {}, "document registration must never select a caller default"
 
 
 def test_resolve_authoritative_write_scope_prefers_context_session_id_over_stable() -> None:
@@ -285,3 +289,321 @@ def test_resolve_authoritative_write_scope_verified_scope_still_wins() -> None:
     scope = resolve_authoritative_write_scope(context=context, agent_session_id=None)
 
     assert scope["authoritative_session_id"] == "scope-derived-key"
+
+
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_real_sdk_document_target_preserves_default(tmp_path: Path, test_agent: str, mode: str) -> None:
+    """Real stdio ingress must keep metadata writes separate from selection."""
+    source = Path(__file__).resolve().parents[1]
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key != "DATABASE_URL"}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(runtime / "scribe.sqlite3"),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"), "SCRIBE_ROOT": str(runtime),
+        "SCRIBE_REPO_ROOT": str(repo), "SCRIBE_TRUSTED_REPO_ROOTS": str(repo),
+        "PYTHONPATH": str(source / "src"),
+        "SBR_TEST_AGENT": test_agent, "SBR_TEST_MODE": mode, "SBR_TEST_SOURCE": str(source),
+    })
+    probe = r'''
+import anyio, json, os, sqlite3, sys
+from pathlib import Path
+from importlib.metadata import version
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
+import scribe_mcp
+from scribe_mcp.utils.frontmatter import parse_frontmatter
+
+agent = os.environ["SBR_TEST_AGENT"]
+repo = Path(os.environ["SCRIBE_REPO_ROOT"])
+fields = ("authoritative_session_key", "repo_root", "project_name", "project_key",
+          "binding_generation", "caller_session_key_hash")
+
+def bindings():
+    # Read the disposable store, including timestamps; never manufacture authority.
+    with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+        return connection.execute("SELECT * FROM session_projects ORDER BY session_id").fetchall()
+
+async def call(client, name, arguments):
+    result = await client.call_tool(name, {"agent": agent, **arguments})
+    assert not result.is_error, (name, result)
+    data = json.loads("\n".join(getattr(item, "text", "") for item in result.content))
+    assert data.get("ok", True) is not False, (name, data)
+    return data
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"],
+                                   env=dict(os.environ), cwd=os.environ["SBR_TEST_SOURCE"])
+    with anyio.fail_after(90):
+        async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as client:
+            async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as sibling:
+                await call(sibling, "set_project", {"name": "sibling_default", "root": str(repo), "format": "structured"})
+                await call(client, "set_project", {"name": "target_b", "root": str(repo), "format": "structured"})
+                await call(client, "set_project", {"name": "default_a", "root": str(repo), "format": "structured"})
+                doctor = await call(client, "scribe_doctor", {})
+                before = tuple(doctor["runtime"]["repo_authority"].get(key) for key in fields)
+                assert before[2] == "default_a" and before[4] == 2, before
+                records = bindings()
+                assert len(records) >= 2, records
+                created = await call(client, "manage_docs", {"project": "target_b", "action": "create",
+                    "doc_name": "DEFAULT_GUARD", "metadata": {"doc_type": "custom",
+                    "body": "# Default guard\n\n<!-- ID: proof -->\nInitial text.\n",
+                    "summary": "Isolated default binding regression.", "status": "in_progress"}})
+                path = Path(created["path"]).resolve()
+                assert path.is_relative_to(repo.resolve())
+                await call(client, "manage_docs", {"project": "target_b", "action": "replace_section",
+                    "doc": "DEFAULT_GUARD", "section": "proof", "content": "Verified default guard text.\n"})
+                after_doc = await call(client, "scribe_doctor", {})
+                observed = tuple(after_doc["runtime"]["repo_authority"].get(key) for key in fields)
+                print(json.dumps({"sdk": version("mcp"), "source": scribe_mcp.__file__,
+                    "mode": os.environ["SBR_TEST_MODE"], "before": before, "after": observed}), flush=True)
+                assert observed == before, "explicit B document changed caller default A"
+                assert bindings() == records, "document changed a binding record or timestamp"
+                assert "Verified default guard text.\n" in path.read_text(encoding="utf-8")
+                with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+                    docs = json.loads(connection.execute(
+                        "SELECT docs_json FROM scribe_projects WHERE name = ? AND repo_root = ?",
+                        ("target_b", str(repo))).fetchone()[0])
+                assert docs["DEFAULT_GUARD"] == str(path)
+                review = await call(client, "manage_docs", {"project": "target_b", "action": "create",
+                    "doc_name": "REVIEW_DEFAULT_GUARD", "metadata": {"doc_type": "review",
+                    "stage": "phase_4_2", "summary": "Review metadata persistence guard."}})
+                await call(client, "manage_docs", {"project": "target_b", "action": "replace_section",
+                    "doc": review["doc_name"], "section": "executive_summary",
+                    "content": "Review metadata followup.\n"})
+                review_path = Path(review["path"]).resolve()
+                assert review_path.is_relative_to(repo.resolve())
+                assert "Review metadata followup." in review_path.read_text(encoding="utf-8")
+                spec = await call(client, "manage_docs", {"project": "target_b", "action": "create",
+                    "doc": "spec_guard", "metadata": {"doc_type": "spec", "doc_name": "SPEC_DEFAULT_GUARD",
+                    "body": "# Spec\n\nMetadata persistence guard.\n"}})
+                await call(client, "manage_docs", {"project": "target_b", "action": "frontmatter_update",
+                    "doc": "SPEC_DEFAULT_GUARD", "metadata": {"frontmatter": {"status": "ready"}}})
+                spec_path = Path(spec["path"]).resolve()
+                assert spec_path.is_relative_to(repo.resolve())
+                spec_metadata = parse_frontmatter(spec_path.read_text(encoding="utf-8")).frontmatter_data
+                assert spec_metadata["doc_type"] == "spec"
+                assert spec_metadata["status"] == "ready"
+                with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+                    docs = json.loads(connection.execute(
+                        "SELECT docs_json FROM scribe_projects WHERE name = ? AND repo_root = ?",
+                        ("target_b", str(repo))).fetchone()[0])
+                assert docs[review["doc_name"]] == str(review_path)
+                assert docs["SPEC_DEFAULT_GUARD"] == str(spec_path)
+                assert bindings() == records, "metadata persistence changed a caller or sibling binding"
+                for owner, project in ((client, "default_a"), (sibling, "sibling_default")):
+                    marker = "default-guard-" + project
+                    await call(owner, "append_entry", {"message": marker, "format": "structured"})
+                    recent = await call(owner, "read_recent", {"limit": 1, "format": "structured"})
+                    assert marker in json.dumps(recent)
+                assert bindings() == records
+anyio.run(main)
+'''
+    sdk_python = os.environ.get("SBR_SDK_PYTHON", sys.executable)
+    result = subprocess.run([sdk_python, "-c", probe], cwd=source, env=env,
+                            capture_output=True, text=True, timeout=110)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Project discovery failed during recovery:" not in result.stderr, result.stderr
+    assert "Failed to load projects from backend:" not in result.stderr, result.stderr
+
+
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+@pytest.mark.parametrize("configured_default", [False, True])
+def test_real_sdk_first_bind_and_cross_repo_rebind(
+    tmp_path: Path, test_agent: str, mode: str, configured_default: bool,
+) -> None:
+    """Persist the authorized root before the first binding and a root change."""
+    source = Path(__file__).resolve().parents[1]
+    repo_a, repo_b = tmp_path / "repo_a", tmp_path / "repo_b"
+    for repo in (repo_a, repo_b):
+        (repo / ".git").mkdir(parents=True)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key not in {"DATABASE_URL", "REPO_ROOT"}}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(runtime / "scribe.sqlite3"),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"), "SCRIBE_ROOT": str(runtime),
+        "PYTHONPATH": str(source / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+        "SBR_TEST_AGENT": test_agent, "SBR_TEST_MODE": mode,
+        "SBR_TEST_REPO_A": str(repo_a), "SBR_TEST_REPO_B": str(repo_b),
+        "SBR_TEST_CONFIGURED_DEFAULT": "1" if configured_default else "0",
+    })
+    if configured_default:
+        env["SCRIBE_REPO_ROOT"] = str(repo_a)
+    probe = r'''
+import anyio, json, os, sqlite3, sys
+from pathlib import Path
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
+from scribe_mcp.config.settings import Settings
+from scribe_mcp.storage.models import compute_project_key
+
+agent = os.environ["SBR_TEST_AGENT"]
+repo_a, repo_b = Path(os.environ["SBR_TEST_REPO_A"]), Path(os.environ["SBR_TEST_REPO_B"])
+expected_default = repo_a if os.environ["SBR_TEST_CONFIGURED_DEFAULT"] == "1" else None
+assert Settings.load().default_repo_root == expected_default
+
+def bindings():
+    # Include timestamps: reads, writes and denials must not silently rebind.
+    with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute("""SELECT b.*, s.repo_root AS session_repo_root,
+            p.repo_root AS canonical_repo_root FROM session_projects AS b
+            JOIN scribe_sessions AS s ON s.session_id = b.session_id
+            LEFT JOIN scribe_projects AS p ON p.project_key = b.project_key
+            ORDER BY b.session_id""").fetchall()
+        return {row["session_id"]: dict(row) for row in rows}
+
+async def call(client, name, arguments, *, denied=False):
+    result = await client.call_tool(name, {"agent": agent, **arguments})
+    text = "\n".join(getattr(item, "text", "") for item in result.content)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        assert denied and result.is_error, (name, text)
+        return {"error": text}
+    if denied:
+        assert result.is_error or data.get("ok") is False, (name, data)
+    else:
+        assert not result.is_error and data.get("ok", True) is not False, (name, data)
+    return data
+
+def assert_binding(session, project, repo, generation):
+    row = bindings()[session]
+    assert row["project_name"] == project, row
+    assert row["project_key"] == compute_project_key(repo_root=str(repo), project_name=project), row
+    assert row["session_repo_root"] == row["canonical_repo_root"] == str(repo), row
+    assert row["binding_state"] == "resolved" and row["binding_state_reason"] is None, row
+    assert row["binding_generation"] == generation and row["updated_at"], row
+    return row
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"],
+                                   env=dict(os.environ))
+    with anyio.fail_after(100):
+        async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as client:
+            bound = await call(client, "set_project", {"name": "initial_a", "root": str(repo_a),
+                                                       "format": "structured"})
+            # No second set_project or diagnostic may mask the first-bind failure.
+            await call(client, "read_recent", {"limit": 1, "format": "structured"})
+            session = bound["project"]["session_id"]
+            first = assert_binding(session, "initial_a", repo_a, 1)
+            async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as sibling:
+                sibling_bound = await call(sibling, "set_project", {"name": "sibling_only",
+                    "root": str(repo_a), "format": "structured"})
+                await call(sibling, "read_recent", {"limit": 1, "format": "structured"})
+                sibling_session = sibling_bound["project"]["session_id"]
+                assert sibling_session != session
+                sibling_record = assert_binding(sibling_session, "sibling_only", repo_a, 1)
+                assert bindings()[session] == first
+                rebound = await call(client, "set_project", {"name": "chosen_b", "root": str(repo_b),
+                                                             "format": "structured"})
+                await call(client, "read_recent", {"limit": 1, "format": "structured"})
+                assert rebound["project"]["session_id"] == session
+                second = assert_binding(session, "chosen_b", repo_b, 2)
+                assert second["updated_at"] >= first["updated_at"]
+                assert bindings()[sibling_session] == sibling_record
+                records = bindings()
+                foreign_log = repo_a / ".scribe/docs/dev_plans/sibling_only/PROGRESS_LOG.md"
+                foreign_before = foreign_log.read_bytes()
+                await call(client, "append_entry", {"project": "sibling_only",
+                    "message": "must-not-reach-foreign-root", "format": "structured"}, denied=True)
+                await call(client, "read_recent", {"project": "sibling_only", "limit": 1,
+                    "format": "structured"}, denied=True)
+                assert foreign_log.read_bytes() == foreign_before
+                assert bindings() == records, "foreign denials changed caller or sibling binding"
+                for owner, project in ((client, "chosen_b"), (sibling, "sibling_only")):
+                    marker = "first-bind-rebind-" + project
+                    await call(owner, "append_entry", {"message": marker, "format": "structured"})
+                    recent = await call(owner, "read_recent", {"limit": 1, "format": "structured"})
+                    assert marker in json.dumps(recent), recent
+                assert bindings() == records, "mixed calls silently rebound or refreshed timestamps"
+                print(json.dumps({"mode": os.environ["SBR_TEST_MODE"], "first_generation": 1,
+                    "rebind_generation": 2, "recovery_binds": 0, "sibling_unchanged": True,
+                    "foreign_denied": True}), flush=True)
+anyio.run(main)
+'''
+    sdk_python = os.environ.get("SBR_SDK_PYTHON", sys.executable)
+    result = subprocess.run([sdk_python, "-c", probe], cwd=source, env=env,
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.asyncio
+@pytest.mark.parametrize("catalog_state", ["fresh", "legacy", "legacy-keyed"])
+@pytest.mark.parametrize("catalog", ["global", "repo"])
+async def test_sqlite_catalog_ready_before_project_lookup(
+    tmp_path: Path, catalog_state: str, catalog: str,
+) -> None:
+    """Startup discovery must work before fetch/upsert can prepare identity columns."""
+    from scribe_mcp.storage.models import compute_project_key, compute_repo_id
+    from scribe_mcp.storage.sqlite import SQLiteStorage
+
+    db_path = tmp_path / "catalog.sqlite3"
+    repo = str(tmp_path.resolve())
+    progress_log = str(tmp_path / "PROGRESS_LOG.md")
+    legacy = catalog_state != "fresh"
+    retained_key = "pk-historical-retained" if catalog_state == "legacy-keyed" else None
+    if legacy:
+        # Supported historical project table, with a real row to verify backfill.
+        with sqlite3.connect(db_path) as connection:
+            connection.execute("""CREATE TABLE scribe_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+                repo_root TEXT NOT NULL, progress_log_path TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+            connection.execute(
+                "INSERT INTO scribe_projects (name, repo_root, progress_log_path) VALUES (?, ?, ?)",
+                ("legacy_project", repo, progress_log),
+            )
+            if retained_key:
+                connection.execute("ALTER TABLE scribe_projects ADD COLUMN project_key TEXT")
+                connection.execute("UPDATE scribe_projects SET project_key = ?", (retained_key,))
+
+    storage = SQLiteStorage(db_path)
+    try:
+        await storage.setup()
+        projects = (await storage.list_projects() if catalog == "global"
+                    else await storage.list_projects_by_repo(repo))
+        assert [project.name for project in projects] == (["legacy_project"] if legacy else [])
+        if legacy:
+            project = projects[0]
+            assert project.id == 1
+            assert project.repo_root == repo
+            assert project.progress_log_path == progress_log
+            assert project.repo_id == compute_repo_id(repo)
+            assert project.project_key == (retained_key or compute_project_key(
+                repo_root=repo, project_name=project.name,
+            ))
+            assert await storage.list_projects_by_repo(str(tmp_path / "other")) == []
+        # Readiness includes the schema even when the catalog is empty.
+        with sqlite3.connect(db_path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(scribe_projects)")}
+            assert {"repo_id", "project_key", "bridge_id", "bridge_managed"} <= columns
+        assert await storage.list_projects() == projects
+    finally:
+        await storage.close()
+    reopened = SQLiteStorage(db_path)
+    try:
+        assert await reopened.list_projects() == projects
+    finally:
+        await reopened.close()

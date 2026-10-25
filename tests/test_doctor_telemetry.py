@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import scribe_mcp
 import scribe_mcp.tools.doctor as doctor_module
 from scribe_mcp.storage.models import SessionBindingRecordV2
 
@@ -128,6 +129,11 @@ async def test_scribe_doctor_surfaces_authority_and_case_telemetry(monkeypatch: 
     )
 
     result = await doctor_module.scribe_doctor(agent="test-agent")
+
+    loaded_package_root = str(Path(scribe_mcp.__file__).resolve().parent)
+    assert result["repo_root"] == str(repo_root)
+    assert result["module_root"] == loaded_package_root
+    assert result["repo_root_candidates"]["from_module_root"] == loaded_package_root
 
     repo_authority = result["runtime"]["repo_authority"]
     assert repo_authority["authority_state"] == "verified"

@@ -1,7 +1,13 @@
 # Compatibility Matrix
 
-Baseline date: **2026-08-26**
-Release framing: **v2.13.x MCP SDK v2 migration baseline (current: 2.13.0)**
+Updated: **2026-10-25**
+Release framing: **2.15.29 maintenance release, retaining the MCP SDK v2 baseline**
+
+## Maintenance release status
+
+Version `2.15.29` persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
+
+`2.15.28` prepares SQLite project identity columns before startup catalog reads and preserves populated project keys during repository-identity backfill. It also honors the read_recent priority-sort flag, retains an idle SQLite connection during initialization without changing transaction or durability settings, preserves literal comparison operators in JSON metadata and requires setuptools 77.0.3 or newer to build its SPDX license metadata. It preserves public MCP arguments and the released storage APIs. Its bounded fixes cover verified session-binding reconstruction, first-call tool loading, document metadata that preserves the caller default, atomic PostgreSQL classifier bootstrap and canonical export digests. Release builds preserve existing artifacts and source files, reject output collisions, and retain nested tests in source distributions. At that candidate checkpoint, publication and deployment acceptance remained pending. The 2.15.29 serving-profile checks above do not certify untested explicit public-profile stdio deployments. The historical SDK baseline below remains applicable; its exact migration environment is historical evidence, not a claim that every installed SDK has been certified.
 
 ## Baseline contract
 
@@ -20,7 +26,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.13.0` (MCP SDK v2 migration baseline)
+- **Core package version:** `scribe-mcp==2.15.29` (maintenance release)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -36,7 +42,17 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.13.0` | Supported (current) | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
+| `2.15.29` | Maintenance release | Persists the verified session root before binding classification. Genuine SDK first-bind/rebind coverage and installed PostgreSQL server-profile first-bind/mixed-call checks pass; explicit public-profile deployment verification remains separate. |
+| `2.15.28` | Candidate | Prepares SQLite catalog identity before discovery and preserves existing keys and binding generations on reopen; native and fleet acceptance pending. |
+| `2.15.27` | Candidate | Restores genuine binding prerequisites in regression fixtures; product authority unchanged, native and fleet acceptance pending. |
+| `2.15.26` | Candidate | Honors read_recent priority_sort=False/default while retaining explicit priority sorting; native and fleet acceptance pending. |
+| `2.15.25` | Candidate | Retains SQLite bootstrap connection lifetime and closes failed handles; native and fleet acceptance pending. |
+| `2.15.24` | Candidate | Preserves comparison operators in JSON metadata; public stdio and fleet acceptance pending. |
+| `2.15.23` | Candidate | Preserves literal fenced-code whitespace during section and frontmatter writes; public stdio and fleet acceptance pending. |
+| `2.15.22` | Candidate | Requires a compatible setuptools backend for SPDX license metadata; retains prior runtime behavior and pending fleet acceptance. |
+| `2.15.21` | Candidate | Adds artifact-preserving release builds and nested source-distribution tests; public stdio and fleet acceptance pending. |
+| `2.15.20` | Candidate | Maintenance fixes above; public stdio and fleet acceptance pending. |
+| `2.13.0` | Supported SDK baseline | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
 | `2.11.1` | Supported (previous) | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
 | `2.10.1` | Supported (previous) | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |
 | `2.9.0` | Supported (previous) | Adds MCP/CLI read-only affected-row referential inventory preflight for governed repair planning, with public-safe labels/aggregates only and fail-closed guards for target binding, selected-context, reference inventory, low-cardinality/private-output, missing backend, and mutation-shaped invocation. |
@@ -92,7 +108,7 @@ One behavior change is worth naming explicitly because it changes a return value
 
 ## Versioning contract
 
-- `main` is release-bound for `scribe-mcp`: pushes that touch package/release surfaces trigger the PyPI publish workflow.
+- `main` is the stable release branch. A merge alone does not prove package publication; confirm the built artifact and its published package version separately.
 - Any release-bound change must bump `pyproject.toml` before merge/push to `main`.
 
 ## Public boundary summary

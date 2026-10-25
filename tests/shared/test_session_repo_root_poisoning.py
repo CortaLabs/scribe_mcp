@@ -661,6 +661,7 @@ async def test_modern_application_handle_reconnect_reuses_only_its_persisted_ses
 @pytest.mark.parametrize("first_tool", ["read_recent", "append_entry", "manage_docs"])
 async def test_first_explicit_call_after_reconstruction_uses_bound_key_despite_stale_root(
     server_root: Path, project_repo: Path, tmp_path: Path, first_tool: str,
+    test_agent: str,
 ) -> None:
     original = _Harness(server_root, project_repo, connection_id="original-explicit")
     identity = resolve_application_identity(
@@ -676,7 +677,7 @@ async def test_first_explicit_call_after_reconstruction_uses_bound_key_despite_s
         context.application_handle = identity.application_handle
 
     use_identity(original, identity)
-    bound = await original.call("set_project", {"agent": "forge", "name": "shared", "root": str(project_repo)})
+    bound = await original.call("set_project", {"agent": test_agent, "name": "shared", "root": str(project_repo)})
     key = bound["session_key"]
     default = await original.backend.get_session_project(key)
     foreign_repo = tmp_path / "foreign"
@@ -713,7 +714,7 @@ async def test_first_explicit_call_after_reconstruction_uses_bound_key_despite_s
         return context, record
 
     reconstructed.registry[first_tool] = probe
-    context, record = await reconstructed.call(first_tool, {"agent": "forge", "project": "shared"})
+    context, record = await reconstructed.call(first_tool, {"agent": test_agent, "project": "shared"})
     assert context.authoritative_session_key == key
     assert context.repo_root == str(project_repo)
     assert record.project_key == default.project_key
@@ -726,6 +727,6 @@ async def test_first_explicit_call_after_reconstruction_uses_bound_key_despite_s
     reconstructed.router = RouterContextManager(storage_backend=original.backend)
     original.backend.sessions[key]["repo_root"] = None
     with pytest.raises(ProjectResolutionError, match="session-bound|not authorized"):
-        await reconstructed.call(first_tool, {"agent": "forge", "project": "foreign_only"})
+        await reconstructed.call(first_tool, {"agent": test_agent, "project": "foreign_only"})
     assert await reconstructed.backend.get_session_project(key) == default
     assert await reconstructed.backend.get_session_project(sibling_key) == sibling_default

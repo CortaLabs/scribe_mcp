@@ -1,7 +1,33 @@
 # Release Surface
 
-Baseline date: **2026-06-16**
-Applies to: **v2.7.1 public release line**
+Updated: **2026-10-25**
+Applies to: **2.15.29 maintenance release**
+
+## Maintenance scope
+
+This release carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
+
+Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
+
+Version 2.15.29 persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
+
+Version 2.15.28 runs the existing SQLite project identity preparation before initialization reports readiness, allowing startup catalog discovery before any project fetch or write. Backfill retains populated project keys when only repository identity is missing, preserving binding generations and timestamps across reopen. Existing normalization, collision handling, legacy fallback, schema, recovery and authority checks remain unchanged.
+
+Version 2.15.27 restores regression fixtures using real persisted project bindings before their original session observations. It changes no runtime authority policy.
+
+Version 2.15.26 forwards the existing read_recent priority_sort flag to both result-limiting paths. False and default preserve database recency or existing file source order, while True retains priority ordering; record membership, pagination, metadata and supplementation gates remain unchanged.
+
+Version 2.15.25 keeps one idle, nontransactional SQLite connection open until the existing initialization sequence finishes. Helpers retain their own transactions and commits; WAL, synchronous mode, migration ordering and schema are unchanged. Repeated cancellation drains pending open/close ownership, and configuration failures close returned handles while preserving the primary exception. Lazy initialization retains no pool. Local cold-node timings improve in the retained samples; full-suite, warm and fleet performance remain unproved.
+
+Version 2.15.24 stops treating valid JSON metadata strings as expression syntax. Comparisons such as `payload <=2048 bytes` and `1 > 2` retain their operators without invented backslashes or quotes. Request healing no longer labels these unchanged values as corrections. Log-delimiter handling, existing size bounds and non-JSON fallback rules remain.
+
+Version 2.15.23 preserves literal trailing spaces and tabs inside fenced code across section replacements and frontmatter updates. Prose cleanup and final-newline behavior are retained. Persisted regression checks cover backtick and tilde fences, shorter inner fences, Unicode and actual metadata writes.
+
+Version 2.15.22 corrects the build-backend minimum to setuptools 77.0.3 for its SPDX license metadata.
+
+Version 2.15.21 replaces destructive build-directory cleanup with an isolated tracked-source snapshot. Existing outputs, metadata and source bytes are preserved; same-version output collisions are rejected before effects. Both distributions must pass Twine and the existing private-artifact checks before exclusive publication. The source distribution includes nested Python regression tests and tracked Markdown fixtures, retaining the existing manifest exclusions.
+
+Validation includes real SDK first-bind and cross-repository-rebind cases with SQLite, plus installed-package first-bind and repeated append/read checks against the configured PostgreSQL server profile in both SDK modes. The PostgreSQL checks use no configured default repository, require a resolved verified binding and retain all binding fields without recovery binds. They certify that tested path; explicit public-profile stdio deployments require separate trusted-runtime-identity verification. Existing server processes need their host's normal restart or reconnect procedure to load an upgrade. Private orchestration configuration, generated agents, templates and runtime state are excluded from the public package.
 
 ## Public contract
 

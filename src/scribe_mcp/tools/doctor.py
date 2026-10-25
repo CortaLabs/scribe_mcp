@@ -321,7 +321,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
     """Return runtime diagnostics for the current MCP server instance."""
     repo_root = settings.project_root
     repo_root_str = str(repo_root) if repo_root else None
-    module_root = Path(settings.project_root)
+    module_root = Path(__file__).resolve().parents[1]
     cwd = Path.cwd()
     config = None
     config_error = None

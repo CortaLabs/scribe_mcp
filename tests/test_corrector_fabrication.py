@@ -12,12 +12,35 @@ meant it, which is what makes it corruption rather than a rejected input.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from scribe_mcp.utils.parameter_validator import BulletproofParameterCorrector
 
 
 pytestmark = pytest.mark.regression
+
+
+@pytest.mark.parametrize("value", ["café <=2048 bytes", "phase >= 1", "1 > 2", r"literal \<tag\>"])
+@pytest.mark.parametrize("encoded", [False, True])
+def test_comparison_metadata_stays_literal(value: str, encoded: bool) -> None:
+    original = {"how": value}
+    supplied = json.dumps(original) if encoded else original
+    corrected = BulletproofParameterCorrector.correct_metadata_parameter(supplied)
+    assert corrected == original
+    assert original == {"how": value}
+    assert BulletproofParameterCorrector.correct_metadata_parameter(corrected) == corrected
+
+
+@pytest.mark.parametrize("value", ["café <=2048 bytes", "phase >= 1", "1 > 2", r"literal \<tag\>"])
+def test_valid_comparison_metadata_needs_no_request_healing(value: str) -> None:
+    from scribe_mcp.doc_management.healing import normalize_metadata_with_healing
+
+    mapping, healed, messages = normalize_metadata_with_healing({"how": value})
+    assert mapping == {"how": value}
+    assert healed is False
+    assert messages == []
 
 
 class TestNoneIsPreservedNotStringified:

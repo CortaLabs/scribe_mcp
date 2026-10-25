@@ -138,3 +138,116 @@ def test_concurrent_bootstrap_on_one_schema_never_fails() -> None:
 
     results = asyncio.run(run())
     assert [r for r in results if isinstance(r, BaseException)] == []
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.regression
+@pytest.mark.parametrize("migrated_binding", [False, True], ids=["fresh", "upgraded"])
+def test_binding_writer_keeps_classifier_during_bootstrap(migrated_binding: bool, test_agent: str) -> None:
+    """A normal writer must never observe bootstrap's trigger replacement gap."""
+    dsn = os.getenv("SCRIBE_TEST_POSTGRES_URL")
+    if not dsn:
+        pytest.skip("Set SCRIBE_TEST_POSTGRES_URL to run the live binding regression")
+    schema_name = f"scribe_binding_race_{uuid.uuid4().hex[:12]}"
+
+    async def run() -> None:
+        bootstrap = await asyncpg.connect(dsn)
+        writer = None
+        task = None
+        replacement_done = asyncio.Event()
+        resume_bootstrap = asyncio.Event()
+
+        class PausingBootstrap:
+            async def execute(self, query: str, *args: object) -> str:
+                result = await bootstrap.execute(query, *args)
+                if "DROP TRIGGER IF EXISTS session_projects_classify_binding" in query:
+                    # Pause only AFTER the real batch commits. With split batches
+                    # the trigger is absent; an atomic replacement leaves it live.
+                    replacement_done.set()
+                    await resume_bootstrap.wait()
+                return result
+
+            async def fetchval(self, query: str, *args: object) -> object:
+                return await bootstrap.fetchval(query, *args)
+
+        try:
+            trgm_schema = await bootstrap.fetchval(
+                "SELECT n.nspname FROM pg_extension e JOIN pg_namespace n "
+                "ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'"
+            )
+            if trgm_schema not in (None, "public"):
+                pytest.skip(f"pg_trgm is installed in schema {trgm_schema!r}, not public")
+            await schema_mod.ensure_schema_on_connection(
+                conn=bootstrap, schema_name=schema_name
+            )
+            if migrated_binding:
+                # Migration 007 adds binding_state to legacy tables without a
+                # default. Match that deployed shape as well as fresh init.sql.
+                await bootstrap.execute(
+                    f'ALTER TABLE "{schema_name}".session_projects '
+                    "ALTER COLUMN binding_state DROP DEFAULT"
+                )
+            await bootstrap.execute(
+                f'INSERT INTO "{schema_name}".scribe_projects '
+                "(name, repo_root, project_key, progress_log_path) "
+                "VALUES ($1, $2, $3, $4), ($5, $2, $6, $4)",
+                "first", "/binding-race", "canonical-first", "/binding-race/log",
+                "second", "canonical-second",
+            )
+            await bootstrap.execute(
+                f'INSERT INTO "{schema_name}".scribe_sessions (session_id, repo_root) '
+                "VALUES ($1, $2)", "binding-session", "/binding-race",
+            )
+            writer = await asyncpg.connect(dsn)
+            await writer.execute(f'SET search_path TO "{schema_name}", public;')
+            # This is the ordinary legacy upsert used by set_session_project;
+            # classification, canonical identity and generation belong to SQL.
+            binding_sql = (
+                f'INSERT INTO "{schema_name}".session_projects '
+                "(session_id, project_name, updated_at) VALUES ($1, $2, NOW()) "
+                "ON CONFLICT(session_id) DO UPDATE SET "
+                "project_name = EXCLUDED.project_name, updated_at = NOW()"
+            )
+            task = asyncio.create_task(schema_mod.ensure_schema_on_connection(
+                conn=PausingBootstrap(), schema_name=schema_name
+            ))
+            await asyncio.wait_for(replacement_done.wait(), timeout=10)
+            for project_name, project_key, generation in (
+                ("first", "canonical-first", 1),
+                ("second", "canonical-second", 2),
+                ("second", "canonical-second", 2),
+            ):
+                await asyncio.wait_for(
+                    writer.execute(binding_sql, "binding-session", project_name),
+                    timeout=10,
+                )
+                binding = await writer.fetchrow(
+                    f'SELECT project_key, binding_state, binding_state_reason, '
+                    f'binding_generation FROM "{schema_name}".session_projects '
+                    "WHERE session_id = $1", "binding-session",
+                )
+                assert dict(binding) == {
+                    "project_key": project_key,
+                    "binding_state": "resolved",
+                    "binding_state_reason": None,
+                    "binding_generation": generation,
+                }
+        finally:
+            resume_bootstrap.set()
+            try:
+                if task is not None:
+                    # Always finish/cancel the bootstrap before closing its
+                    # connection or dropping this test's disposable schema.
+                    await asyncio.wait_for(task, timeout=10)
+            finally:
+                try:
+                    if writer is not None:
+                        await writer.close()
+                    await bootstrap.execute(
+                        f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE;'
+                    )
+                finally:
+                    await bootstrap.close()
+
+    asyncio.run(run())

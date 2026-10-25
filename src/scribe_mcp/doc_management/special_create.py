@@ -19,6 +19,7 @@ from scribe_mcp.doc_management import utils as utils_shared
 from scribe_mcp.doc_management.boundary_guidance import (
     build_manage_docs_boundary_guidance,
 )
+from scribe_mcp.doc_management.intelligence_exports import _policy_digest
 from scribe_mcp.doc_management.naming import normalize_research_doc_name
 from scribe_mcp.doc_management.manager import (
     DocumentOperationError,
@@ -44,8 +45,7 @@ def _export_policy_metadata(
         "required_grants": metadata.get("required_grants", []),
         "revoked_at": metadata.get("revoked_at"),
     }
-    canonical = json.dumps(policy, sort_keys=True, separators=(",", ":"), default=str)
-    policy["policy_digest"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    policy["policy_digest"] = _policy_digest(policy)
     return policy
 
 
@@ -952,7 +952,6 @@ async def handle_special_document_creation(
                             registration_status["case_registry_error"] = (
                                 case_registry_warning
                             )
-                    state_manager = getattr(server_module, "state_manager", None)
                     authoritative_scope = resolve_authoritative_write_scope(
                         context=execution_context,
                         agent_session_id=None,
@@ -960,6 +959,10 @@ async def handle_special_document_creation(
                     authoritative_session_id = authoritative_scope.get(
                         "authoritative_session_id"
                     )
+                    if not authoritative_session_id:
+                        raise ValueError(
+                            "Cannot establish authoritative session binding for document registration."
+                        )
                     if storage_backend:
                         docs_json = json.dumps(current_docs)
                         update_result = await storage_backend.update_project_docs(
@@ -987,26 +990,10 @@ async def handle_special_document_creation(
                         registration_status["available_action"] = (
                             "Configure or restore the Scribe storage backend, then retry manage_docs(action='create', metadata={...})."
                         )
-                    if state_manager and hasattr(state_manager, "set_current_project"):
-                        await state_manager.set_current_project(
-                            project_name,
-                            project,
-                            agent_id=agent_id,
-                            session_id=authoritative_session_id,
-                            resolved_scope=authoritative_scope.get("resolved_scope"),
-                            mirror_global=False,
-                        )
+                    state_manager = getattr(server_module, "state_manager", None)
+                    if state_manager and hasattr(state_manager, "update_project_metadata"):
+                        await state_manager.update_project_metadata(project_name, project)
                         registration_status["state_project_updated"] = True
-                        if not authoritative_session_id:
-                            message = (
-                                "Doc registration could not bind authoritative session; "
-                                "state updated without session binding."
-                            )
-                            registration_warning = (
-                                f"{registration_warning}; {message}"
-                                if registration_warning
-                                else message
-                            )
                     try:
                         project_registry.record_doc_update(
                             project_name=project_name,

@@ -568,8 +568,8 @@ class BulletproofParameterCorrector:
                     if key in preserve_keys:
                         value = value
                     else:
-                        # Escape comparison operators and sanitize
-                        value = BulletproofParameterCorrector._escape_comparison_operators(value)
+                        # JSON string values are data, not expressions. Keep
+                        # comparison operators literal while normalizing log delimiters.
                         value = value.replace("\n", " ").replace("\r", " ").replace("|", ";")
                         if len(value) > 500:
                             value = value[:497] + "..."

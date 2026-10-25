@@ -467,6 +467,10 @@ def configure_mcp_server(
         definitions = definition_provider()
         definition = definitions.get(name)
         if definition is None:
+            # The first call may precede tools/list and its lazy registration.
+            await list_handler(protocol_era)
+            definition = definition_provider().get(name)
+        if definition is None:
             raise ValueError(f"Unknown tool {name!r}")
         validate_tool_arguments(definition, arguments)
         raw_result = await call_handler(name, dict(arguments), context, protocol_era)
