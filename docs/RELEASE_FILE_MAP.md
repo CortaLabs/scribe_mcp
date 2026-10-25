@@ -1,7 +1,7 @@
 # Release File Map
 
 Updated: **2026-10-25**
-Coverage: **2.15.33 integrated maintenance candidate**
+Coverage: **2.15.34 integrated maintenance candidate**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **2.15.33 integrated maintenance candidate**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines candidate `scribe-mcp==2.15.33`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines candidate `scribe-mcp==2.15.34`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -63,7 +63,7 @@ Coverage: **2.15.33 integrated maintenance candidate**
 | Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
 | Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
 
-The six package/CLI/documentation surfaces agree on integrated candidate `2.15.33`. They retain the Python, SDK, wire-policy and runtime-default baseline, describe the three reviewed fixes and preserve earlier history. Combined-candidate, installed/native and publication verification remain pending. Consumer integrations are packaged and versioned separately.
+The six package/CLI/documentation surfaces agree on integrated candidate `2.15.34`. They retain the Python, SDK, wire-policy and runtime-default baseline, describe the reviewed binding, startup, identity-test and atomic metrics fixes, and preserve earlier history. Combined-candidate, installed/native and publication verification remain pending. Consumer integrations are packaged and versioned separately.
 
 ## Public support material
 

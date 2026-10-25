@@ -79,7 +79,7 @@ async def insert_entry(
     *,
     initialise_fn: AsyncInitialise,
     write_lock: Any,
-    execute_fn: AsyncExecute,
+    run_transaction_fn: Callable[[Callable[..., None]], Awaitable[None]],
     entry_id: str,
     project: ProjectRecord,
     ts: datetime,
@@ -95,6 +95,8 @@ async def insert_entry(
     confidence: Optional[float] = None,
     log_type: Optional[str] = None,
 ) -> None:
+    import sqlite3
+
     await initialise_fn()
     ts_iso = ts.isoformat()
     meta_json = json.dumps(meta or {}, sort_keys=True)
@@ -119,8 +121,8 @@ async def insert_entry(
     if log_type == "tool_logs":
         return
 
-    async with write_lock:
-        await execute_fn(
+    def _insert_and_count(conn: sqlite3.Connection) -> None:
+        cursor = conn.execute(
             """
             INSERT OR IGNORE INTO scribe_entries
                 (id, project_id, ts, emoji, agent, message, meta, raw_line, sha256, ts_iso, priority, category, tags, confidence, log_type)
@@ -144,7 +146,9 @@ async def insert_entry(
                 log_type,
             ),
         )
-        await execute_fn(
+        if cursor.rowcount == 0:
+            return
+        conn.execute(
             """
             INSERT INTO scribe_metrics (project_id, total_entries, success_count, warn_count, error_count, last_update)
             VALUES (?, 1, ?, ?, ?, ?)
@@ -163,6 +167,9 @@ async def insert_entry(
                 utcnow().isoformat(),
             ),
         )
+
+    async with write_lock:
+        await run_transaction_fn(_insert_and_count)
 
 
 async def update_entry_meta(

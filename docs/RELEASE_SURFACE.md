@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **2.15.33 integrated maintenance candidate**
+Applies to: **2.15.34 integrated maintenance candidate**
 
-## 2.15.33 candidate status
+## 2.15.34 candidate status
+
+Entry insertion and metric counting are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; metric-write failures roll back the entry. SQLite cancellation retains worker and connection ownership through cleanup. Independent behavioral and quality reviews passed against real SQLite and isolated PostgreSQL databases.
 
 This candidate combines the reviewed `2.15.30` heartbeat, `2.15.31` SQLite and `2.15.32` test repairs. Heartbeats retain durable bindings; SQLite retains WAL through startup and preserves primary errors/cancellation; regression tests enforce genuine identity/reconnect assertions. Public APIs, schema, dependencies and runtime defaults remain unchanged.
 

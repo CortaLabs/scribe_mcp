@@ -185,6 +185,34 @@ class SQLiteInternals:
 
         self._with_lock_retry(_op, query=query, is_write=True)
 
+    async def _run_transaction(self, fn: Callable[[sqlite3.Connection], T]) -> T:
+        """Run a write transaction while retaining worker ownership on cancellation."""
+        def _transaction(conn: sqlite3.Connection) -> T:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                result = fn(conn)
+                conn.commit()
+                return result
+            except BaseException:
+                conn.rollback()
+                raise
+
+        def _op() -> T:
+            with self._write_gate:
+                return self._run_with_connection(_transaction)
+
+        worker = asyncio.create_task(asyncio.to_thread(
+            self._with_lock_retry, _op, query="BEGIN IMMEDIATE", is_write=True,
+        ))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            try:
+                await self._drain_bootstrap_io(worker)
+            except BaseException:
+                pass  # Cleanup failure must not replace the caller's cancellation.
+            raise
+
     async def execute_many(self, statements: List[str]) -> None:
         await asyncio.to_thread(self.execute_many_sync, statements)
 
