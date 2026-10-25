@@ -1,17 +1,31 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **2.15.31 maintenance candidate**
+Applies to: **2.15.34 integrated maintenance candidate**
+
+## 2.15.34 candidate status
+
+Entry insertion and metric counting are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; metric-write failures roll back the entry. SQLite cancellation retains worker and connection ownership through cleanup. Independent behavioral and quality reviews passed against real SQLite and isolated PostgreSQL databases.
+
+This candidate combines the reviewed `2.15.30` heartbeat, `2.15.31` SQLite and `2.15.32` test repairs. Heartbeats retain durable bindings; SQLite retains WAL through startup and preserves primary errors/cancellation; regression tests enforce genuine identity/reconnect assertions. Public APIs, schema, dependencies and runtime defaults remain unchanged.
+
+Independent component reviews passed 199, 60 and 15 cases respectively. Combined-candidate, installed/native and publication verification are pending. Component checks do not certify every retained client or the separate 3.x redesign; deployed processes require the host's normal upgrade lifecycle.
+
+### 2.15.32 test component
+
+The three original positive journeys retain their semantic assertions and use genuine reconnect and persistence prerequisites with disposable SQLite. Two additional fault-sensitivity cases require incorrect observed project/activity results to fail; a direct script exits with the pytest result. Production runtime behavior is unchanged.
 
 ## Maintenance scope
 
-This release carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
+The `2.15.29` source baseline carries verified-binding recovery after runtime reconstruction, first-call tool-definition loading, nonselecting document metadata updates, atomic PostgreSQL classifier-trigger replacement, and canonical export-policy digest generation. Public arguments and existing storage APIs are unchanged. The planned key-only binding API, migration 008, new receipt guarantees and broader document engine are outside this cut.
+
+Version 2.15.30 stops identity and activity persistence from replaying cached session bindings. Ordinary heartbeat updates preserve the complete binding row, including its timestamp; explicit project selection remains the binding writer. The repair passes 199 scoped source checks, including real SDK auto/legacy calls, sibling isolation, explicit rebind, revocation and deletion. Installed 2.15.30 native and fleet acceptance remains pending; no public argument, API, schema or heartbeat-clock default changes.
 
 Version 2.15.20 corrects doctor module-origin reporting and removes the obsolete onboarding-directory packaging include. The loaded package directory is distinct from the configured project root; canonical skills remain included from `skills/` and the plugin bundles.
 
 Version 2.15.31 completes a nontransactional schema read on the existing SQLite bootstrap keeper so WAL remains attached across helper connections. Activation errors retain their original identity through cursor and connection cleanup; repeated cancellation drains the opening worker and preserves the original cancellation. Helper transactions, readiness ordering, public APIs, schemas, PRAGMAs, durability settings and inherited runtime defaults are unchanged. This candidate is based on 2.15.29.
 
-Controlled historical measurements on the same hardware and genuine fresh empty SQLite stores reduced median setup from 1.879 seconds to 0.265 seconds (7.1x). They do not establish full-suite, 40-minute-command, warm-store or fleet performance. The later failure-only correction measured 0.341 versus 0.361 seconds with host variance; it establishes no additional speedup. The repair passes 62 scoped source cases. Current independent behavioral review, integrated major-version checks, installed-package/native-client checks, fleet acceptance and publication remain pending.
+Controlled historical measurements on the same hardware and genuine fresh empty SQLite stores reduced median setup from 1.879 seconds to 0.265 seconds (7.1x). They do not establish full-suite, 40-minute-command, warm-store or fleet performance. The later failure-only correction measured 0.341 versus 0.361 seconds with host variance; it establishes no additional speedup. The component has 60 independent behavioral passes, with 199 for the carried heartbeat fix. Combined-candidate, installed-package/native-client, fleet and publication checks remain pending.
 
 Version 2.15.29 persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
 

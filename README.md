@@ -45,20 +45,22 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Maintenance candidate: `scribe-mcp 2.15.31` · Updated: `2026-10-25`
+Maintenance candidate: `scribe-mcp 2.15.34` · Updated: `2026-10-25`
 
-This candidate builds on the 2.15.29 maintenance baseline:
+This candidate combines the reviewed maintenance fixes:
 
-- SQLite initialization completes a schema read on its existing idle keeper, retaining WAL across helper connections without holding a transaction.
-- Activation failures preserve the primary error through cleanup; repeated cancellation drains the opening worker and preserves the original cancellation.
-- Verified session roots support immediate first-bind and cross-repository-rebind reads without a configured default repository.
-- Startup catalog preparation preserves populated project keys during repository-identity backfill.
-- Document updates preserve literal fenced-code whitespace and JSON comparison operators while retaining the caller's selected project.
-- Recent-log ordering honors the caller's priority flag, and isolated release builds preserve existing artifacts and source files.
+- Entry and metric writes are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; failed metric writes roll back the entry. Cancellation retains SQLite worker and connection ownership through cleanup.
+- Project bindings survive identity and activity heartbeats; first binding and cross-repository rebinding support immediate reads without a configured default repository.
+- SQLite startup keeps its existing WAL connection attached through initialization, preserving transactions and durability settings. Cleanup retains the original activation error or cancellation.
+- Identity and reconnect tests use real disposable storage and fail on incorrect results, with separate checks proving their assertions detect bad observations.
+- Managed documents retain literal fenced-code whitespace and JSON comparison operators; recent-log ordering honors the caller's priority flag.
+- Releases build from an isolated tracked-source snapshot, preserve existing artifacts, validate distributions and include nested regression tests.
 
-Public MCP arguments, storage APIs, schemas, helper transactions, durability settings and runtime defaults remain unchanged. The SDK support range remains `mcp>=2.0.0,<3.0`, with modern wire default `2026-07-28`.
+Public MCP arguments, storage APIs, schemas, runtime defaults and the SDK support range (`mcp>=2.0.0,<3.0`) are retained. The modern wire default is `2026-07-28`; SDK versions and wire revisions are separate contracts.
 
-The SQLite repair passes 62 scoped source checks. Current independent behavioral review, integrated major-version checks, installed-package/native-client checks, fleet acceptance and package publication remain pending. Earlier installed 2.15.29 checks do not certify this candidate. Detailed maintenance history and compatibility limits remain in the [release surface](docs/RELEASE_SURFACE.md) and [compatibility matrix](docs/COMPATIBILITY_MATRIX.md).
+The components passed independent behavioral review: 199 heartbeat checks, 60 SQLite startup checks, 15 identity-test checks and 79 distinct metrics checks across SQLite and PostgreSQL. The metrics repair also passed independent quality review. Combined-candidate, installed-package and publication verification is still pending. Deployed processes retain their loaded version until upgraded through the host's normal lifecycle; component checks alone do not certify every retained client.
+
+See the [release surface](docs/RELEASE_SURFACE.md) and [compatibility matrix](docs/COMPATIBILITY_MATRIX.md) for history and deployment limits. Explicit public-profile stdio still requires trusted runtime identity and separate verification. The broader binding API/schema, receipt, document engine and global default-output redesign remain on the separate 3.x line.
 
 ### MCP v2 default and compatibility boundary
 

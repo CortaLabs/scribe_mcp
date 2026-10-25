@@ -6,11 +6,17 @@ Tests for SPEC-FORMAT-002 fixes:
 """
 
 import pytest
-import asyncio
+import pytest_asyncio
+from mcp.types import CallToolResult
+from scribe_mcp import server
+from scribe_mcp.state.manager import StateManager
+from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.tools.rotate_log import rotate_log, _format_readable
 from scribe_mcp.tools.get_project import get_project
 from scribe_mcp.tools.set_project import set_project
 from scribe_mcp.tools.append_entry import append_entry
+
+pytestmark = pytest.mark.regression
 
 
 def extract_result(mcp_result):
@@ -46,56 +52,97 @@ def test_project_name():
     return f"test_format_fixes_{uuid.uuid4().hex[:8]}"
 
 
+def successful_result(mcp_result, *, readable_header=None):
+    """Require real tool success before checking its presentation."""
+    result = extract_result(mcp_result)
+    assert isinstance(result, dict), result
+    if readable_header is not None:
+        # Readable tools deliberately return text only, without an ok payload.
+        assert isinstance(mcp_result, CallToolResult), mcp_result
+        assert mcp_result.is_error is False, mcp_result
+        readable = result.get("readable_content")
+        assert isinstance(readable, str) and readable.strip(), result
+        assert readable_header in readable, readable
+    else:
+        assert result.get("ok") is True, result
+    assert not result.get("error"), result
+    return result
+
+
+@pytest_asyncio.fixture
+async def format_project(tmp_path, monkeypatch, sqlite_db_path, test_agent, test_project_name):
+    """Bind the canonical agent through real tools to an isolated repository."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    # The shared async sqlite_storage fixture uses pytest.fixture, which strict
+    # asyncio mode leaves as a generator. Reuse its path with real setup/close.
+    storage = SQLiteStorage(sqlite_db_path)
+    await storage.setup()
+    try:
+        manager = StateManager(path=tmp_path / "state.json", storage_backend=storage)
+        # Rebind real dependencies; no tool, authority, or result is mocked.
+        monkeypatch.setattr(server, "storage_backend", storage)
+        monkeypatch.setattr(server, "state_manager", manager)
+        monkeypatch.setattr(server, "agent_context_manager", None)
+        monkeypatch.setattr(server, "agent_identity", None)
+        setup = successful_result(await set_project(
+            agent=test_agent, name=test_project_name, root=str(root), format="structured",
+        ))
+        assert setup["project"]["name"] == test_project_name
+        assert setup["project"]["root"] == str(root)
+        yield setup["project"]
+    finally:
+        await storage.close()
+
+
+async def append_test_entry(test_agent, message, status):
+    return successful_result(await append_entry(
+        agent=test_agent, message=message, status=status,
+    ))
+
+
 class TestRotateLogReadableFormat:
     """Test rotate_log readable format output."""
 
     @pytest.mark.asyncio
-    async def test_rotate_log_has_format_parameter(self, test_project_name):
+    async def test_rotate_log_has_format_parameter(self, test_project_name, test_agent, format_project):
         """Verify rotate_log accepts format parameter."""
-        # Create test project
-        await set_project(name=test_project_name, root="/tmp")
-
         # Add some entries to create a log
-        await append_entry(message="Test entry 1", status="info")
-        await append_entry(message="Test entry 2", status="success")
+        await append_test_entry(test_agent, message="Test entry 1", status="info")
+        await append_test_entry(test_agent, message="Test entry 2", status="success")
 
         # Call with format parameter - dry run
-        mcp_result = await rotate_log(format="readable", dry_run=True)
-        result = extract_result(mcp_result)
+        mcp_result = await rotate_log(agent=test_agent, format="readable", dry_run=True)
+        result = successful_result(mcp_result, readable_header=f"📋 Dry run: {test_project_name}")
 
         # Should not error
         assert result is not None
         assert isinstance(result, dict)
 
     @pytest.mark.asyncio
-    async def test_rotate_log_readable_mode_returns_readable_content(self, test_project_name):
+    async def test_rotate_log_readable_mode_returns_readable_content(self, test_project_name, test_agent, format_project):
         """Verify readable mode includes readable_content field."""
-        # Create test project
-        await set_project(name=test_project_name, root="/tmp")
-
         # Add entries
-        await append_entry(message="Test entry", status="info")
+        await append_test_entry(test_agent, message="Test entry", status="info")
 
         # Dry run with readable format
-        mcp_result = await rotate_log(format="readable", dry_run=True)
-        result = extract_result(mcp_result)
+        mcp_result = await rotate_log(agent=test_agent, format="readable", dry_run=True)
+        result = successful_result(mcp_result, readable_header=f"📋 Dry run: {test_project_name}")
 
         # Check for readable_content
         assert "readable_content" in result, "readable_content missing from response"
         assert isinstance(result["readable_content"], str)
 
     @pytest.mark.asyncio
-    async def test_rotate_log_readable_content_format(self, test_project_name):
+    async def test_rotate_log_readable_content_format(self, test_project_name, test_agent, format_project):
         """Verify readable content has expected format."""
-        # Create test project
-        await set_project(name=test_project_name, root="/tmp")
-
         # Add entries
-        await append_entry(message="Test entry", status="info")
+        await append_test_entry(test_agent, message="Test entry", status="info")
 
         # Dry run with readable format
-        mcp_result = await rotate_log(format="readable", dry_run=True)
-        result = extract_result(mcp_result)
+        mcp_result = await rotate_log(agent=test_agent, format="readable", dry_run=True)
+        result = successful_result(mcp_result, readable_header=f"📋 Dry run: {test_project_name}")
 
         readable = result.get("readable_content", "")
 
@@ -105,17 +152,14 @@ class TestRotateLogReadableFormat:
         assert "{" not in readable or "}" not in readable
 
     @pytest.mark.asyncio
-    async def test_rotate_log_structured_format_unchanged(self, test_project_name):
+    async def test_rotate_log_structured_format_unchanged(self, test_project_name, test_agent, format_project):
         """Verify structured format still works (backwards compatibility)."""
-        # Create test project
-        await set_project(name=test_project_name, root="/tmp")
-
         # Add entries
-        await append_entry(message="Test entry", status="info")
+        await append_test_entry(test_agent, message="Test entry", status="info")
 
         # Dry run with structured format (default)
-        mcp_result = await rotate_log(format="structured", dry_run=True)
-        result = extract_result(mcp_result)
+        mcp_result = await rotate_log(agent=test_agent, format="structured", dry_run=True)
+        result = successful_result(mcp_result)
 
         # Should have standard structure (no readable_content wrapping)
         assert "ok" in result
@@ -190,48 +234,46 @@ class TestGetProjectVerboseParameter:
     """Test get_project verbose parameter."""
 
     @pytest.mark.asyncio
-    async def test_get_project_has_verbose_parameter(self, test_project_name):
+    async def test_get_project_has_verbose_parameter(self, test_project_name, test_agent, format_project):
         """Verify get_project accepts verbose parameter."""
-        # Create test project
-        await set_project(name=test_project_name, root="/tmp")
-
         # Should not error
-        mcp_result = await get_project(format="readable", verbose=False)
-        result = extract_result(mcp_result)
+        mcp_result = await get_project(agent=test_agent, format="readable", verbose=False)
+        result = successful_result(mcp_result, readable_header=f"📋 {test_project_name} (")
         assert result is not None
 
-        mcp_result_verbose = await get_project(format="readable", verbose=True)
-        result_verbose = extract_result(mcp_result_verbose)
+        mcp_result_verbose = await get_project(agent=test_agent, format="readable", verbose=True)
+        result_verbose = successful_result(mcp_result_verbose, readable_header=f"📋 {test_project_name} (")
         assert result_verbose is not None
 
     @pytest.mark.asyncio
-    async def test_get_project_verbose_false_excludes_entries(self, test_project_name):
+    async def test_get_project_verbose_false_excludes_entries(self, test_project_name, test_agent, format_project):
         """Verify verbose=False excludes recent entries from readable output."""
         # Create test project with entries
-        await set_project(name=test_project_name, root="/tmp")
-        await append_entry(message="Test entry 1", status="info")
-        await append_entry(message="Test entry 2", status="success")
+        await append_test_entry(test_agent, message="Test entry 1", status="info")
+        await append_test_entry(test_agent, message="Test entry 2", status="success")
 
         # Get project with verbose=False (default)
-        mcp_result = await get_project(format="readable", verbose=False)
-        result = extract_result(mcp_result)
+        mcp_result = await get_project(agent=test_agent, format="readable", verbose=False)
+        result = successful_result(mcp_result, readable_header=f"📋 {test_project_name} (")
 
         # Check that recent_entries is empty or not in payload
         recent = result.get("recent_entries", [])
         assert len(recent) == 0, f"verbose=False should exclude entries, got {len(recent)}"
+        assert "Test entry" not in result["readable_content"]
 
     @pytest.mark.asyncio
-    async def test_get_project_verbose_true_includes_entries(self, test_project_name):
+    async def test_get_project_verbose_true_includes_entries(self, test_project_name, test_agent, format_project):
         """Verify verbose=True parameter is accepted and processed."""
         # Create test project with entries
-        await set_project(name=test_project_name, root="/tmp")
-        await append_entry(message="Test entry 1", status="info")
-        await append_entry(message="Test entry 2", status="success")
-        await append_entry(message="Test entry 3", status="warn")
+        await append_test_entry(test_agent, message="Test entry 1", status="info")
+        await append_test_entry(test_agent, message="Test entry 2", status="success")
+        await append_test_entry(test_agent, message="Test entry 3", status="warn")
 
         # Get project with verbose=True
-        mcp_result = await get_project(format="readable", verbose=True)
-        result = extract_result(mcp_result)
+        mcp_result = await get_project(agent=test_agent, format="readable", verbose=True)
+        result = successful_result(mcp_result, readable_header=f"📋 {test_project_name} (")
+        for message in ("Test entry 1", "Test entry 2", "Test entry 3"):
+            assert message in result["readable_content"]
 
         # Verify the call succeeded and verbose parameter was accepted
         assert result is not None, "verbose=True call should succeed"
@@ -246,18 +288,17 @@ class TestGetProjectVerboseParameter:
             assert len(recent) <= 3, "Should limit to 3 entries when present"
 
     @pytest.mark.asyncio
-    async def test_get_project_default_verbose_is_false(self, test_project_name):
+    async def test_get_project_default_verbose_is_false(self, test_project_name, test_agent, format_project):
         """Verify default verbose behavior matches verbose=False."""
         # Create test project with entries
-        await set_project(name=test_project_name, root="/tmp")
-        await append_entry(message="Test entry", status="info")
+        await append_test_entry(test_agent, message="Test entry", status="info")
 
         # Get project without verbose parameter (should default to False)
-        mcp_result_default = await get_project(format="readable")
-        result_default = extract_result(mcp_result_default)
+        mcp_result_default = await get_project(agent=test_agent, format="readable")
+        result_default = successful_result(mcp_result_default, readable_header=f"📋 {test_project_name} (")
 
-        mcp_result_explicit = await get_project(format="readable", verbose=False)
-        result_explicit = extract_result(mcp_result_explicit)
+        mcp_result_explicit = await get_project(agent=test_agent, format="readable", verbose=False)
+        result_explicit = successful_result(mcp_result_explicit, readable_header=f"📋 {test_project_name} (")
 
         # Should have same behavior
         recent_default = result_default.get("recent_entries", [])
@@ -266,20 +307,21 @@ class TestGetProjectVerboseParameter:
         assert len(recent_default) == len(recent_explicit), \
             "Default verbose should match verbose=False"
         assert len(recent_default) == 0, "Default should exclude entries"
+        assert "Test entry" not in result_default["readable_content"]
+        assert result_default["readable_content"] == result_explicit["readable_content"]
 
     @pytest.mark.asyncio
-    async def test_get_project_structured_format_unaffected(self, test_project_name):
+    async def test_get_project_structured_format_unaffected(self, test_project_name, test_agent, format_project):
         """Verify structured format ignores verbose parameter."""
         # Create test project with entries
-        await set_project(name=test_project_name, root="/tmp")
-        await append_entry(message="Test entry", status="info")
+        await append_test_entry(test_agent, message="Test entry", status="info")
 
         # Structured format should work regardless of verbose
-        mcp_result_false = await get_project(format="structured", verbose=False)
-        result_false = extract_result(mcp_result_false)
+        mcp_result_false = await get_project(agent=test_agent, format="structured", verbose=False)
+        result_false = successful_result(mcp_result_false)
 
-        mcp_result_true = await get_project(format="structured", verbose=True)
-        result_true = extract_result(mcp_result_true)
+        mcp_result_true = await get_project(agent=test_agent, format="structured", verbose=True)
+        result_true = successful_result(mcp_result_true)
 
         # Both should return valid structured data
         assert result_false.get("ok") == True
