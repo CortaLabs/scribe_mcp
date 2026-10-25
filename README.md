@@ -45,31 +45,19 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance release
 
-Maintenance release: `scribe-mcp 2.15.29` · Updated: `2026-10-25`
+Current maintenance candidate: `scribe-mcp 2.15.30` · Updated: `2026-10-25`
 
-This maintenance release restores repository scope from an existing verified session binding after runtime reconstruction, loads tool definitions before first-call validation, and keeps document metadata updates from changing the caller's selected project. PostgreSQL bootstrap replaces the existing binding classifier trigger atomically, so concurrent writers cannot observe a missing classifier. Export-policy creation uses the verifier's existing canonical digest.
+This candidate carries the maintenance line's correctness and packaging repairs:
 
-Version `2.15.20` also reports the loaded package directory separately from the configured project root in doctor diagnostics and removes an obsolete onboarding-directory packaging rule. Canonical skills still ship from `skills/` and the plugin bundles.
+- Session continuity: restore an existing verified binding after runtime reconstruction and support immediate reads after first binding or cross-repository rebinding, including clients without a configured default repository.
+- Nonselecting updates: identity and activity heartbeats preserve the complete binding row, including its timestamp, and document metadata updates preserve the caller's selected project. Explicit project selection remains the binding writer.
+- Literal data: retain comparison operators in JSON metadata and trailing whitespace inside fenced code. `read_recent(priority_sort=False)` and its default retain source order; explicit priority sorting remains available.
+- Startup correctness: prepare SQLite project identity before discovery, preserve populated keys during backfill, replace the PostgreSQL classifier atomically, and drain cancelled connection ownership without changing transactions or durability settings.
+- Tracked-source packaging: build from an isolated tracked snapshot, preserve existing outputs and source files, reject output collisions, validate distributions, and retain nested source-distribution tests. Builds require setuptools 77.0.3 or newer. Canonical skills still ship from `skills/` and the plugin bundles; doctor reports the loaded package directory separately from the configured project root.
 
-Version `2.15.29` persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
+Public MCP arguments, storage APIs and schema contracts are retained. The heartbeat repair passes 199 scoped source checks, including genuine SDK auto/legacy calls, complete binding-row stability, explicit rebind, sibling isolation and foreign-access refusals. Installed 2.15.30 native and fleet acceptance remains pending. Earlier installed 2.15.29 PostgreSQL server-profile first-bind and repeated append/read checks remain separate evidence. See [Release Surface](docs/RELEASE_SURFACE.md) for the maintenance history and validation boundaries.
 
-Version `2.15.28` prepares the existing SQLite project identity columns before startup catalog discovery. Backfilling a missing repository ID preserves an existing project key, avoiding binding-generation changes on reopen. Recovery and existing identity checks remain enabled.
-
-Version `2.15.27` restores three regression fixtures through real SQLite and public project binding, preserving their original session allocation and reuse assertions. Product authority rules remain unchanged.
-
-Version `2.15.26` honors `read_recent(priority_sort=False)` and its default, preserving database recency and file source order. Explicit priority sorting remains available.
-
-Version `2.15.25` keeps one idle SQLite connection open during initialization, reducing repeated final-connection teardown without changing helper transactions, commits or durability settings. Cancellation drains pending connection ownership, and failed configuration closes its handle while preserving the original error.
-
-Version `2.15.24` keeps comparison operators literal in valid JSON metadata instead of inserting backslashes or quotes. Existing log-delimiter normalization and metadata bounds remain.
-
-Version `2.15.23` preserves literal trailing spaces and tabs inside fenced code during section and frontmatter edits, while retaining prose cleanup. Builds require setuptools 77.0.3 or newer for SPDX license metadata.
-
-Version `2.15.21` builds releases from a temporary tracked-source snapshot, preserving existing build outputs, package metadata and source files. It refuses output collisions before building, checks both distributions with Twine, and includes nested regression tests and Markdown fixtures in source distributions while retaining explicit exclusions.
-
-Public MCP arguments and storage APIs are retained. Real SDK tests cover first binding without a configured default, cross-repository rebinding, sibling isolation and foreign-access refusals. The installed package also passed first-bind reads and repeated append/read calls in both SDK modes against the configured PostgreSQL server profile, with no recovery binds. Existing server processes retain loaded code; use your host's normal restart or reconnect procedure after upgrading.
-
-These checks cover the default local/operator-controlled profile. Explicit public-profile stdio configurations still require trusted runtime identity and separate deployment verification. The planned binding API/schema redesign, broader artifact and receipt refactor, and global default-output budget belong to the separate 3.x development line.
+These checks cover the default local/operator-controlled profile. Explicit public-profile stdio configurations still require trusted runtime identity and separate deployment verification. Existing server processes retain loaded code; use your host's normal restart or reconnect procedure after upgrading. The planned binding API/schema redesign, broader artifact and receipt refactor, and global default-output budget belong to the separate 3.x development line.
 
 The existing SDK support range remains `mcp>=2.0.0,<3.0`; the modern wire default is protocol revision `2026-07-28`. SDK package versions and wire protocol revisions are separate contracts.
 
