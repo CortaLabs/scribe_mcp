@@ -178,7 +178,7 @@ async def _ensure_project_identity_schema(
     while True:
         row = await fetchone_fn(
             """
-            SELECT id, name, repo_root
+            SELECT id, name, repo_root, project_key
             FROM scribe_projects
             WHERE repo_id IS NULL
                OR repo_id = ''
@@ -193,7 +193,10 @@ async def _ensure_project_identity_schema(
             break
         repo_root = normalize_repo_root(str(row["repo_root"]))
         name = str(row["name"])
-        project_key = compute_project_key(repo_root=repo_root, project_name=name)
+        # A missing repo_id must not replace an established project identity.
+        project_key = str(row["project_key"]) if row["project_key"] else compute_project_key(
+            repo_root=repo_root, project_name=name,
+        )
         existing_project_key_row = await fetchone_fn(
             """
             SELECT id
