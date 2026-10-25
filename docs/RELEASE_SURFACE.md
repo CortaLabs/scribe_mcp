@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-24**
-Applies to: **v3.3.10 development candidate; default projection, integration and fleet acceptance pending**
+Updated: **2026-10-25**
+Applies to: **v3.3.11 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+Version 3.3.11 integrates dev 2.15.28. Existing SQLite project identity preparation runs before catalog readiness. The transactional migration remains the sole identity backfill; removing a duplicate writer preserves already-keyed rows, including NULL repository identities, literal roots and extension data. Fresh, legacy and keyed catalog checks cover both entrypoints and reopen; genuine SDK guards reject startup discovery failures. The original authority, output and release gates remain open.
 
 Version 3.3.10 integrates dev 2.15.27 without replacing the major-line authority or output contracts. Session regression fixtures establish genuine persisted bindings, and fenced-artifact checks assert metadata and attribution effects. The genuine SDK recency fixture remains unchanged.
 

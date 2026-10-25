@@ -12,7 +12,6 @@ from typing import Any, Awaitable, Callable, List, Optional
 from scribe_mcp.storage.models import (
     ProjectRecord,
     RepoScopeGrantRecord,
-    compute_legacy_project_key,
     compute_project_key,
     compute_repo_id,
     normalize_repo_root,
@@ -110,56 +109,9 @@ async def _ensure_project_identity_schema(
     if not await _column_exists("bridge_managed"):
         await execute_fn("ALTER TABLE scribe_projects ADD COLUMN bridge_managed INTEGER NOT NULL DEFAULT 0;", ())
 
-    assigned_project_keys: set[str] = set()
-    while True:
-        row = await fetchone_fn(
-            """
-            SELECT id, name, repo_root
-            FROM scribe_projects
-            WHERE repo_id IS NULL
-               OR repo_id = ''
-               OR project_key IS NULL
-               OR project_key = ''
-            ORDER BY id
-            LIMIT 1;
-            """,
-            (),
-        )
-        if not row:
-            break
-        repo_root = normalize_repo_root(str(row["repo_root"]))
-        name = str(row["name"])
-        project_key = compute_project_key(repo_root=repo_root, project_name=name)
-        existing_project_key_row = await fetchone_fn(
-            """
-            SELECT id
-            FROM scribe_projects
-            WHERE project_key = ?
-              AND id != ?
-            LIMIT 1;
-            """,
-            (project_key, int(row["id"])),
-        )
-        if project_key in assigned_project_keys or existing_project_key_row:
-            project_key = compute_legacy_project_key(
-                repo_root=repo_root,
-                project_name=name,
-                row_id=int(row["id"]),
-            )
-        assigned_project_keys.add(project_key)
-        await execute_fn(
-            """
-            UPDATE scribe_projects
-            SET repo_root = ?, repo_id = ?, project_key = ?
-            WHERE id = ?;
-            """,
-            (
-                repo_root,
-                compute_repo_id(repo_root),
-                project_key,
-                int(row["id"]),
-            ),
-        )
+    # create_schema owns the connection-affine missing-key backfill. This
+    # readiness helper must preserve keyed rows, even with a NULL repo_id or
+    # a literal, non-normalized stored root.
 
     await execute_fn(
         """

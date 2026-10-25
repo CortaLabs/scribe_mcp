@@ -636,6 +636,11 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
                     db_path=self._path,
                     logger=logger,
                 )
+                # Catalog discovery can precede the first project fetch/upsert.
+                await project_ops._ensure_project_identity_schema(
+                    execute_fn=self._execute,
+                    fetchone_fn=self._fetchone,
+                )
                 await case_ops.ensure_case_registry_schema(execute_fn=self._execute, fetchone_fn=self._fetchone)
 
             self._initialised = True
