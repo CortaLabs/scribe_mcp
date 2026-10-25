@@ -891,11 +891,28 @@ class PostgresStorage(StorageBackend):
 
         await self._execute(
             """
-            INSERT INTO scribe_entries
+            WITH inserted AS (
+                INSERT INTO scribe_entries
                 (id, project_id, ts, ts_iso, emoji, agent, message, meta, raw_line, sha256, priority, category, tags, confidence, log_type)
-            VALUES
+                VALUES
                 ($1, $2, $3, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14)
-            ON CONFLICT(id) DO NOTHING;
+                ON CONFLICT(id) DO NOTHING
+                RETURNING project_id, emoji
+            )
+            INSERT INTO scribe_metrics (project_id, total_entries, success_count, warn_count, error_count, last_update)
+            SELECT project_id, 1,
+                   CASE WHEN emoji = '✅' THEN 1 ELSE 0 END,
+                   CASE WHEN emoji = '⚠️' THEN 1 ELSE 0 END,
+                   CASE WHEN emoji = '❌' THEN 1 ELSE 0 END,
+                   NOW()
+            FROM inserted
+            WHERE TRUE
+            ON CONFLICT(project_id) DO UPDATE SET
+                total_entries = scribe_metrics.total_entries + 1,
+                success_count = scribe_metrics.success_count + EXCLUDED.success_count,
+                warn_count = scribe_metrics.warn_count + EXCLUDED.warn_count,
+                error_count = scribe_metrics.error_count + EXCLUDED.error_count,
+                last_update = NOW();
             """,
             entry_id,
             project.id,
@@ -911,22 +928,6 @@ class PostgresStorage(StorageBackend):
             tags_value,
             confidence_value,
             log_type_value,
-        )
-        await self._execute(
-            """
-            INSERT INTO scribe_metrics (project_id, total_entries, success_count, warn_count, error_count, last_update)
-            VALUES ($1, 1, $2, $3, $4, NOW())
-            ON CONFLICT(project_id) DO UPDATE SET
-                total_entries = scribe_metrics.total_entries + 1,
-                success_count = scribe_metrics.success_count + EXCLUDED.success_count,
-                warn_count = scribe_metrics.warn_count + EXCLUDED.warn_count,
-                error_count = scribe_metrics.error_count + EXCLUDED.error_count,
-                last_update = NOW();
-            """,
-            project.id,
-            1 if emoji == "✅" else 0,
-            1 if emoji == "⚠️" else 0,
-            1 if emoji == "❌" else 0,
         )
 
     async def update_entry_meta(

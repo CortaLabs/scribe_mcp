@@ -43,35 +43,24 @@ Scribe turns that into a tighter loop:
 - CLI helpers for bootstrap, MCP server startup, migrations, backups, metrics, and Codex projection
 - host-facing tool discoverability and onboarding skills (`/scribe-integration`, `/scribe-onboarding`) so agents can learn the tool surface in place
 
-## Maintenance release
+## Maintenance candidate
 
-Maintenance release: `scribe-mcp 2.15.29` · Updated: `2026-10-25`
+Maintenance candidate: `scribe-mcp 2.15.34` · Updated: `2026-10-25`
 
-This maintenance release restores repository scope from an existing verified session binding after runtime reconstruction, loads tool definitions before first-call validation, and keeps document metadata updates from changing the caller's selected project. PostgreSQL bootstrap replaces the existing binding classifier trigger atomically, so concurrent writers cannot observe a missing classifier. Export-policy creation uses the verifier's existing canonical digest.
+This candidate combines the reviewed maintenance fixes:
 
-Version `2.15.20` also reports the loaded package directory separately from the configured project root in doctor diagnostics and removes an obsolete onboarding-directory packaging rule. Canonical skills still ship from `skills/` and the plugin bundles.
+- Entry and metric writes are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; failed metric writes roll back the entry. Cancellation retains SQLite worker and connection ownership through cleanup.
+- Project bindings survive identity and activity heartbeats; first binding and cross-repository rebinding support immediate reads without a configured default repository.
+- SQLite startup keeps its existing WAL connection attached through initialization, preserving transactions and durability settings. Cleanup retains the original activation error or cancellation.
+- Identity and reconnect tests use real disposable storage and fail on incorrect results, with separate checks proving their assertions detect bad observations.
+- Managed documents retain literal fenced-code whitespace and JSON comparison operators; recent-log ordering honors the caller's priority flag.
+- Releases build from an isolated tracked-source snapshot, preserve existing artifacts, validate distributions and include nested regression tests.
 
-Version `2.15.29` persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
+Public MCP arguments, storage APIs, schemas, runtime defaults and the SDK support range (`mcp>=2.0.0,<3.0`) are retained. The modern wire default is `2026-07-28`; SDK versions and wire revisions are separate contracts.
 
-Version `2.15.28` prepares the existing SQLite project identity columns before startup catalog discovery. Backfilling a missing repository ID preserves an existing project key, avoiding binding-generation changes on reopen. Recovery and existing identity checks remain enabled.
+The components passed independent behavioral review: 199 heartbeat checks, 60 SQLite startup checks, 15 identity-test checks and 79 distinct metrics checks across SQLite and PostgreSQL. The metrics repair also passed independent quality review. Combined-candidate, installed-package and publication verification is still pending. Deployed processes retain their loaded version until upgraded through the host's normal lifecycle; component checks alone do not certify every retained client.
 
-Version `2.15.27` restores three regression fixtures through real SQLite and public project binding, preserving their original session allocation and reuse assertions. Product authority rules remain unchanged.
-
-Version `2.15.26` honors `read_recent(priority_sort=False)` and its default, preserving database recency and file source order. Explicit priority sorting remains available.
-
-Version `2.15.25` keeps one idle SQLite connection open during initialization, reducing repeated final-connection teardown without changing helper transactions, commits or durability settings. Cancellation drains pending connection ownership, and failed configuration closes its handle while preserving the original error.
-
-Version `2.15.24` keeps comparison operators literal in valid JSON metadata instead of inserting backslashes or quotes. Existing log-delimiter normalization and metadata bounds remain.
-
-Version `2.15.23` preserves literal trailing spaces and tabs inside fenced code during section and frontmatter edits, while retaining prose cleanup. Builds require setuptools 77.0.3 or newer for SPDX license metadata.
-
-Version `2.15.21` builds releases from a temporary tracked-source snapshot, preserving existing build outputs, package metadata and source files. It refuses output collisions before building, checks both distributions with Twine, and includes nested regression tests and Markdown fixtures in source distributions while retaining explicit exclusions.
-
-Public MCP arguments and storage APIs are retained. Real SDK tests cover first binding without a configured default, cross-repository rebinding, sibling isolation and foreign-access refusals. The installed package also passed first-bind reads and repeated append/read calls in both SDK modes against the configured PostgreSQL server profile, with no recovery binds. Existing server processes retain loaded code; use your host's normal restart or reconnect procedure after upgrading.
-
-These checks cover the default local/operator-controlled profile. Explicit public-profile stdio configurations still require trusted runtime identity and separate deployment verification. The planned binding API/schema redesign, broader artifact and receipt refactor, and global default-output budget belong to the separate 3.x development line.
-
-The existing SDK support range remains `mcp>=2.0.0,<3.0`; the modern wire default is protocol revision `2026-07-28`. SDK package versions and wire protocol revisions are separate contracts.
+See the [release surface](docs/RELEASE_SURFACE.md) and [compatibility matrix](docs/COMPATIBILITY_MATRIX.md) for history and deployment limits. Explicit public-profile stdio still requires trusted runtime identity and separate verification. The broader binding API/schema, receipt, document engine and global default-output redesign remain on the separate 3.x line.
 
 ### MCP v2 default and compatibility boundary
 

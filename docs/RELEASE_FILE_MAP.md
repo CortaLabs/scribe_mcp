@@ -1,7 +1,7 @@
 # Release File Map
 
 Updated: **2026-10-25**
-Coverage: **2.15.29 maintenance release**
+Coverage: **2.15.34 integrated maintenance candidate**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **2.15.29 maintenance release**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines `scribe-mcp==2.15.29`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines candidate `scribe-mcp==2.15.34`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -48,6 +48,7 @@ Coverage: **2.15.29 maintenance release**
 | `src/scribe_mcp/server_sse.py` | Shipped package source | SSE entry path. |
 | `src/scribe_mcp/tools/**` | Shipped package source | Tool implementations. |
 | `src/scribe_mcp/storage/**` | Shipped package source | Storage backends. |
+| `src/scribe_mcp/state/**` | Shipped package source | Session state and explicit project selection; identity/activity persistence preserves selected binding rows. |
 | `src/scribe_mcp/doc_management/**` | Shipped package source | Document management runtime. |
 | `src/scribe_mcp/bridges/**` | Shipped package source | Bridge/plugin runtime framework. |
 | `src/scribe_mcp/config/**` | Shipped package source | Runtime settings and config helpers. |
@@ -62,7 +63,7 @@ Coverage: **2.15.29 maintenance release**
 | Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
 | Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
 
-The four package/version surfaces are `pyproject.toml`, `src/scribe_mcp/__main__.py`, `docs/COMPATIBILITY_MATRIX.md`, and this file. They report maintenance release `2.15.29` and retain the Python, SDK and wire-policy baseline. README and RELEASE_SURFACE describe the exact maintenance scope and pending public/peer runtime checks; no publication or fleet acceptance is implied. Consumer integrations are packaged and versioned separately from the core release.
+The six package/CLI/documentation surfaces agree on integrated candidate `2.15.34`. They retain the Python, SDK, wire-policy and runtime-default baseline, describe the reviewed binding, startup, identity-test and atomic metrics fixes, and preserve earlier history. Combined-candidate, installed/native and publication verification remain pending. Consumer integrations are packaged and versioned separately.
 
 ## Public support material
 

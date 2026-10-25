@@ -1,9 +1,19 @@
 # Compatibility Matrix
 
 Updated: **2026-10-25**
-Release framing: **2.15.29 maintenance release, retaining the MCP SDK v2 baseline**
+Release framing: **2.15.34 integrated maintenance candidate, retaining the MCP SDK v2 baseline**
 
-## Maintenance release status
+## Maintenance candidate status
+
+Entry insertion and metric counting are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; metric-write failures roll back the entry. SQLite cancellation retains worker and connection ownership through cleanup. Independent behavioral and quality reviews passed against real SQLite and isolated PostgreSQL databases.
+
+`2.15.34` combines reviewed heartbeat binding preservation, SQLite WAL startup/error cleanup and assertion-based identity/reconnect regressions. Component reviews passed 199/60/15 checks respectively. Combined-candidate, installed/native and publication verification remain pending. Deployed instances require their host's normal upgrade and restart procedure.
+
+Version `2.15.31` completes the existing SQLite keeper's schema read to retain WAL through initialization, preserves primary activation errors during cleanup, and retains the original cancellation while draining the opening worker. It is based on `2.15.29` and retains public APIs, schema, helper transactions, PRAGMAs, durability settings and runtime defaults. The SQLite repair has 60 independent behavioral passes; the carried heartbeat fix has 199. Combined-candidate, installed-package/native-client, fleet and publication checks remain pending. Earlier installed `2.15.29` checks are separate evidence.
+
+Version `2.15.30` preserves complete session-binding rows during identity and activity heartbeats by removing cached binding replay from generic state persistence. Its 199 scoped source checks cover genuine SDK auto/legacy calls, sibling isolation, explicit rebind, revocation and deletion. Installed 2.15.30 native and fleet acceptance remains pending. Public arguments, APIs, schemas and heartbeat-clock defaults are unchanged.
+
+The `2.15.32` component repairs false-green identity/resumption tests with genuine storage and separate fault-sensitivity checks. Its independent module/neighbor checks pass 15 cases. It was developed separately on `2.15.29` and is now included with the heartbeat and SQLite components in `2.15.34`; it changes no runtime behavior or public API.
 
 Version `2.15.29` persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
 
@@ -24,9 +34,9 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 - **Packaging:** `asyncpg` is a core dependency, so a plain `pip install scribe-mcp` is Postgres-ready and matches the default Postgres runtime posture (the `[postgres]` extra is a redundant no-op alias kept only for explicit-intent convenience); plus plugin manifests; and the lean Claude/Codex plugin bundles **vendored into the wheel** (`src/scribe_mcp/plugins_bundle/**` via package-data, with `resolve_codex_plugin_root()` preferring the packaged bundle) so `pip install scribe-mcp` works with no clone.
 - **2.11.1 trust boundary:** repo-local plugins remain internal diagnostics/probe-only under `.scribe/plugins`, require explicit trusted local opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus process restart/reinitialization, and are not enabled by production defaults. Reminder hook/context injection remains security-blocked future work.
 
-It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
+It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.29` (maintenance release)
+- **Core package version:** `scribe-mcp==2.15.34` (integrated maintenance candidate)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -42,6 +52,10 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
+| `2.15.34` | Integrated candidate | Combines reviewed binding, startup, identity-test and atomic metrics fixes; combined, installed/native, fleet and publication checks pending. |
+| `2.15.32` | Reviewed component | Assertion-based identity/reconnect tests;15 independent module/neighbor cases pass. |
+| `2.15.31` | Reviewed component | Retains SQLite bootstrap WAL and preserves activation/cancellation errors. Component behavioral review passes; combined-candidate, installed/native, fleet and publication gates remain pending. |
+| `2.15.30` | Reviewed component | Preserves project bindings across heartbeats; 199 independent behavioral checks pass. |
 | `2.15.29` | Maintenance release | Persists the verified session root before binding classification. Genuine SDK first-bind/rebind coverage and installed PostgreSQL server-profile first-bind/mixed-call checks pass; explicit public-profile deployment verification remains separate. |
 | `2.15.28` | Candidate | Prepares SQLite catalog identity before discovery and preserves existing keys and binding generations on reopen; native and fleet acceptance pending. |
 | `2.15.27` | Candidate | Restores genuine binding prerequisites in regression fixtures; product authority unchanged, native and fleet acceptance pending. |
