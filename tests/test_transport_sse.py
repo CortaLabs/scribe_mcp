@@ -25,6 +25,19 @@ from starlette.routing import Route
 
 from scribe_mcp.state.agent_manager import SessionLeaseExpired
 
+
+@pytest.fixture(autouse=True)
+def restore_transport_policy():
+    """Keep real SSE startup policy changes local to each test."""
+    from scribe_mcp import server as server_module
+
+    original_policy = server_module.get_transport_policy()
+    try:
+        yield
+    finally:
+        server_module.app.state.transport_policy = original_policy
+
+
 # Ensure the src directory is on the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
