@@ -5,7 +5,9 @@ Release framing: **2.15.31 maintenance candidate, retaining the MCP SDK v2 basel
 
 ## Maintenance candidate status
 
-Version `2.15.31` completes the existing SQLite keeper's schema read to retain WAL through initialization, preserves primary activation errors during cleanup, and retains the original cancellation while draining the opening worker. It is based on `2.15.29` and retains public APIs, schema, helper transactions, PRAGMAs, durability settings and runtime defaults. The repair passes 62 scoped source cases; current independent behavioral review, integrated major-version checks, installed-package/native-client checks, fleet acceptance and publication remain pending. Earlier installed `2.15.29` checks are separate evidence.
+Version `2.15.31` completes the existing SQLite keeper's schema read to retain WAL through initialization, preserves primary activation errors during cleanup, and retains the original cancellation while draining the opening worker. It is based on `2.15.29` and retains public APIs, schema, helper transactions, PRAGMAs, durability settings and runtime defaults. The SQLite repair has 60 independent behavioral passes; the carried heartbeat fix has 199. Combined-candidate, installed-package/native-client, fleet and publication checks remain pending. Earlier installed `2.15.29` checks are separate evidence.
+
+Version `2.15.30` preserves complete session-binding rows during identity and activity heartbeats by removing cached binding replay from generic state persistence. Its 199 scoped source checks cover genuine SDK auto/legacy calls, sibling isolation, explicit rebind, revocation and deletion. Installed 2.15.30 native and fleet acceptance remains pending. Public arguments, APIs, schemas and heartbeat-clock defaults are unchanged.
 
 Version `2.15.29` persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
 
@@ -44,7 +46,8 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
-| `2.15.31` | Candidate | Retains SQLite bootstrap WAL and preserves activation/cancellation errors. 62 scoped source cases pass; current independent review, integrated major-version, installed/native, fleet and publication gates remain pending. |
+| `2.15.31` | Candidate | Retains SQLite bootstrap WAL and preserves activation/cancellation errors. Component behavioral review passes; combined-candidate, installed/native, fleet and publication gates remain pending. |
+| `2.15.30` | Reviewed component | Preserves project bindings across heartbeats; 199 independent behavioral checks pass. |
 | `2.15.29` | Maintenance release | Persists the verified session root before binding classification. Genuine SDK first-bind/rebind coverage and installed PostgreSQL server-profile first-bind/mixed-call checks pass; explicit public-profile deployment verification remains separate. |
 | `2.15.28` | Candidate | Prepares SQLite catalog identity before discovery and preserves existing keys and binding generations on reopen; native and fleet acceptance pending. |
 | `2.15.27` | Candidate | Restores genuine binding prerequisites in regression fixtures; product authority unchanged, native and fleet acceptance pending. |

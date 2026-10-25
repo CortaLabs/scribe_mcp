@@ -48,6 +48,7 @@ Coverage: **2.15.31 maintenance candidate**
 | `src/scribe_mcp/server_sse.py` | Shipped package source | SSE entry path. |
 | `src/scribe_mcp/tools/**` | Shipped package source | Tool implementations. |
 | `src/scribe_mcp/storage/**` | Shipped package source | Storage backends. |
+| `src/scribe_mcp/state/**` | Shipped package source | Session state and explicit project selection; identity/activity persistence preserves selected binding rows. |
 | `src/scribe_mcp/doc_management/**` | Shipped package source | Document management runtime. |
 | `src/scribe_mcp/bridges/**` | Shipped package source | Bridge/plugin runtime framework. |
 | `src/scribe_mcp/config/**` | Shipped package source | Runtime settings and config helpers. |
@@ -62,7 +63,7 @@ Coverage: **2.15.31 maintenance candidate**
 | Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
 | Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
 
-The four package/version surfaces are `pyproject.toml`, `src/scribe_mcp/__main__.py`, `docs/COMPATIBILITY_MATRIX.md`, and this file. They report maintenance candidate `2.15.31`, based on `2.15.29`, and retain the Python, SDK, wire-policy and runtime-default baseline. README and RELEASE_SURFACE describe the SQLite keeper and error-preservation repair, its 62 scoped source cases, and pending current independent review, integrated major-version, installed/native, fleet and publication checks. Consumer integrations are packaged and versioned separately from the core release.
+The four package/version surfaces are `pyproject.toml`, `src/scribe_mcp/__main__.py`, `docs/COMPATIBILITY_MATRIX.md`, and this file. They report maintenance candidate `2.15.31`, based on `2.15.29`, and retain the Python, SDK, wire-policy and runtime-default baseline. README and RELEASE_SURFACE describe the SQLite keeper and error-preservation repair, the carried heartbeat repair, completed component behavioral reviews and pending combined-candidate, installed/native, fleet and publication checks. Consumer integrations are packaged and versioned separately from the core release.
 
 ## Public support material
 

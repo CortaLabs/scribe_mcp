@@ -15,6 +15,124 @@ from scribe_mcp.doc_management.runtime import register_document_path
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 
 
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_real_sdk_heartbeats_preserve_binding_rows(tmp_path: Path, test_agent: str, mode: str) -> None:
+    """Cross both heartbeat clocks through genuine ingress and disposable storage."""
+    source = Path(__file__).resolve().parents[1]
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key not in {"DATABASE_URL", "REPO_ROOT"}}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(runtime / "scribe.sqlite3"),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"), "SCRIBE_ROOT": str(runtime),
+        "PYTHONPATH": str(source / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+        "SBR_TEST_AGENT": test_agent, "SBR_TEST_MODE": mode, "SBR_TEST_SOURCE": str(source),
+        "SBR_TEST_REPO": str(repo), "SBR_TEST_CLOCK": str(runtime / "clock"),
+        "SBR_TEST_CLOCK_SAMPLES": str(runtime / "clock_samples"),
+    })
+    probe = r'''
+import anyio, json, os, sqlite3, sys
+from pathlib import Path
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
+
+clock = Path(os.environ["SBR_TEST_CLOCK"])
+clock.write_text("0")
+samples = Path(os.environ["SBR_TEST_CLOCK_SAMPLES"])
+repo = Path(os.environ["SBR_TEST_REPO"])
+bootstrap = r"""
+import os, runpy, sys, time
+from pathlib import Path
+from types import SimpleNamespace
+import scribe_mcp
+from scribe_mcp.config.settings import Settings
+from scribe_mcp.state import agent_identity
+settings = Settings.load()
+assert settings.storage_backend == 'sqlite'
+assert os.environ['SCRIBE_MODE'] == 'standalone'
+assert Path(scribe_mcp.__file__).resolve() == Path(os.environ['SBR_TEST_SOURCE']) / 'src/scribe_mcp/__init__.py'
+assert 'SCRIBE_AGENT_ACTIVITY_PERSIST_INTERVAL_SECONDS' not in os.environ
+assert 'SCRIBE_AGENT_ID_PERSIST_INTERVAL_SECONDS' not in os.environ
+real_monotonic = time.monotonic
+def scheduling_clock():
+    identity = agent_identity.get_agent_identity()
+    assert identity._activity_persist_interval_seconds == 60
+    assert identity._persist_interval_seconds == 300
+    offset = float(Path(os.environ['SBR_TEST_CLOCK']).read_text())
+    with Path(os.environ['SBR_TEST_CLOCK_SAMPLES']).open('a') as output:
+        output.write(str(offset) + '\n')
+    return real_monotonic() + offset
+agent_identity.time = SimpleNamespace(monotonic=scheduling_clock)
+print('HEARTBEAT_SOURCE=' + scribe_mcp.__file__, file=sys.stderr, flush=True)
+runpy.run_module('scribe_mcp', run_name='__main__')
+"""
+
+def rows():
+    with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+        connection.row_factory = sqlite3.Row
+        return {row["session_id"]: dict(row) for row in connection.execute(
+            "SELECT * FROM session_projects ORDER BY session_id").fetchall()}
+
+async def call(client, name, args):
+    result = await client.call_tool(name, {"agent": os.environ["SBR_TEST_AGENT"], **args})
+    data = json.loads("\n".join(getattr(item, "text", "") for item in result.content))
+    assert not result.is_error and data.get("ok", True) is not False, (name, data)
+    return data
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-c", bootstrap], env=dict(os.environ))
+    with anyio.fail_after(60):
+        async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as owner:
+            async with Client(stdio_client(params), mode=os.environ["SBR_TEST_MODE"]) as sibling:
+                selected = await call(owner, "set_project", {"name": "heartbeat_owner", "root": str(repo), "format": "structured"})
+                await call(owner, "read_recent", {"limit": 1, "format": "structured"})
+                peer = await call(sibling, "set_project", {"name": "heartbeat_sibling", "root": str(repo), "format": "structured"})
+                session = selected["project"]["session_id"]
+                peer_session = peer["project"]["session_id"]
+                assert session != peer_session
+                before = rows()
+                assert before[session]["binding_generation"] == 1
+                await anyio.sleep(1.05)  # Make SQLite's second-resolution timestamp observable.
+                for offset in (61, 301):
+                    clock.write_text(str(offset))
+                    marker = "heartbeat-" + str(offset)
+                    await call(owner, "append_entry", {"message": marker, "format": "structured"})
+                    recent = await call(owner, "read_recent", {"limit": 1, "format": "structured"})
+                    assert marker in json.dumps(recent)
+                    assert float(offset) in [float(value) for value in samples.read_text().splitlines()]
+                    after = rows()
+                    print(json.dumps({"mode": os.environ["SBR_TEST_MODE"], "offset": offset,
+                        "before": before, "after": after, "recovery_binds": 0}), flush=True)
+                    assert after == before, "SDK heartbeat refreshed caller or sibling binding"
+                rebound = await call(owner, "set_project", {"name": "heartbeat_rebound", "root": str(repo), "format": "structured"})
+                assert rebound["project"]["session_id"] == session
+                after = rows()
+                assert after[session]["binding_generation"] == 2
+                assert after[session]["project_key"] != before[session]["project_key"]
+                assert after[peer_session] == before[peer_session]
+                await call(owner, "delete_project", {"name": "heartbeat_rebound",
+                    "root": str(repo), "confirm": True})
+                with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+                    assert connection.execute("SELECT COUNT(*) FROM scribe_projects WHERE name = ?",
+                        ("heartbeat_rebound",)).fetchone()[0] == 0
+                assert rows()[peer_session] == before[peer_session]
+anyio.run(main)
+'''
+    result = subprocess.run([os.environ.get("SBR_SDK_PYTHON", sys.executable), "-c", probe],
+                            cwd=source, env=env, capture_output=True, text=True, timeout=80)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stderr.count("HEARTBEAT_SOURCE=" + str(source / "src/scribe_mcp/__init__.py")) == 2
+
+
 class _BackendStub:
     def __init__(self) -> None:
         self.update_calls = 0

@@ -49,6 +49,7 @@ Maintenance candidate: `scribe-mcp 2.15.31` · Updated: `2026-10-25`
 
 This candidate builds on the 2.15.29 maintenance baseline:
 
+- Identity and activity heartbeats preserve complete project bindings, including timestamps; explicit project selection remains the binding writer.
 - SQLite initialization completes a schema read on its existing idle keeper, retaining WAL across helper connections without holding a transaction.
 - Activation failures preserve the primary error through cleanup; repeated cancellation drains the opening worker and preserves the original cancellation.
 - Verified session roots support immediate first-bind and cross-repository-rebind reads without a configured default repository.
@@ -58,7 +59,7 @@ This candidate builds on the 2.15.29 maintenance baseline:
 
 Public MCP arguments, storage APIs, schemas, helper transactions, durability settings and runtime defaults remain unchanged. The SDK support range remains `mcp>=2.0.0,<3.0`, with modern wire default `2026-07-28`.
 
-The SQLite repair passes 62 scoped source checks. Current independent behavioral review, integrated major-version checks, installed-package/native-client checks, fleet acceptance and package publication remain pending. Earlier installed 2.15.29 checks do not certify this candidate. Detailed maintenance history and compatibility limits remain in the [release surface](docs/RELEASE_SURFACE.md) and [compatibility matrix](docs/COMPATIBILITY_MATRIX.md).
+Component behavioral reviews pass: 199 checks for heartbeat binding preservation and 60 for SQLite startup. Combined-candidate, installed-package/native-client, fleet and package-publication checks remain pending. Earlier installed 2.15.29 checks do not certify this candidate. Detailed maintenance history and compatibility limits remain in the [release surface](docs/RELEASE_SURFACE.md) and [compatibility matrix](docs/COMPATIBILITY_MATRIX.md).
 
 ### MCP v2 default and compatibility boundary
 
