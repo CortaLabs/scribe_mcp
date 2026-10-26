@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **v3.3.13 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.14 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.14 checkpoint makes agent/session regression checks enforce real results, isolation, rejection paths, heartbeat and expiry cleanup. The same pytest journeys drive the direct script and propagate assertion failures. Current 3.x support targets SDK 2.3.x and protocol 2026-07-28 only; obsolete protocol and endpoint removal remains a release prerequisite.
 
 The 3.3.13 development checkpoint carries the reviewed 2.15.34 maintenance fixes: heartbeat binding preservation, SQLite WAL startup and error cleanup, atomic entry/metric writes, genuine identity and format regressions, and isolated transport-policy tests. Public maintenance APIs and durability defaults are retained. This does not complete the original 3.x authority, output, background, schema or runtime gates.
 
