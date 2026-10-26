@@ -205,7 +205,7 @@ def classify_protocol_era(
     transport: str,
     explicit_legacy: bool,
 ) -> ProtocolEra:
-    """Classify only the frozen modern and named-legacy combinations."""
+    """Classify supported current-protocol requests; reject historical modes."""
 
     policy = MCPCompatibilityPolicy()
     if not isinstance(transport, str) or not transport or transport != transport.strip():
@@ -285,7 +285,7 @@ def normalize_tool_definition(
     execution: Any = None,
     tags: Sequence[str] | None = None,
 ) -> Any:
-    """Build one canonical tool definition for modern or named-legacy listing."""
+    """Build a canonical tool definition for the supported current protocol."""
 
     if not isinstance(runtime, MCPRuntime) or runtime.major != 2:
         raise TypeError("runtime must be a loaded MCP SDK v2 runtime")

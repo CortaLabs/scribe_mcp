@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-26**
-Applies to: **v3.3.29 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.30 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.30 checkpoint corrects two adapter descriptions that still implied named legacy protocol support. The adapter supports the current protocol and rejects historical modes; fixed historical identifiers remain rejection discriminants. Executable adapter behavior is unchanged. Binding and integration acceptance remains open.
 
 The 3.3.29 checkpoint explicitly marks the HTTP rejection canary as synthetic test data. Authentication, rejection, no-echo and state-preservation checks are retained. This fixture clarification changes no publication policy or runtime behavior. Current-protocol binding, output, integration and live-release acceptance remain open.
 
