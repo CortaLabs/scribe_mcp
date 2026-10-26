@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **v3.3.15 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.16 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.16 checkpoint removes inherited Python source overrides from clean-room child commands. Installed-wheel probes and Codex projection now resolve the fresh installed package even when the development launcher injects PYTHONPATH. This repairs release verification; current-protocol and integration acceptance remain pending.
 
 The 3.3.15 checkpoint targets the latest MCP SDK, currently 2.3.0, without excluding otherwise compatible SDK 2.x releases solely by minor version. The dependency range remains `mcp>=2.0.0,<3.0`; SDK 1.x and older wire protocols are unsupported. Latest-SDK verification is required; an older-SDK certification matrix is not part of the release. This supersedes the 3.3.14 SDK-minor restriction; current-protocol transport removal and integration gates remain open.
 
