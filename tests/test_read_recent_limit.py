@@ -2,6 +2,11 @@
 """Tests for read_recent EntryLimitManager integration."""
 
 from types import SimpleNamespace
+from contextlib import asynccontextmanager
+import asyncio
+import json
+import os
+import sys
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -11,7 +16,6 @@ import pytest_asyncio
 from fixtures.storage import sqlite_storage as _sqlite_storage_fixture
 import scribe_mcp.tools.read_recent as read_recent_module
 from scribe_mcp.shared.logging_utils import LoggingContext
-from scribe_mcp.state.manager import StateManager
 from scribe_mcp.tools.read_recent import read_recent
 
 
@@ -254,6 +258,109 @@ async def test_priority_sorting_enabled():
             assert "message" in entry or "raw_line" in entry
 
 
+# Reuse the real SDK stdio pattern from test_manage_docs_session_binding.
+# The internal profile is identical for database/file cases; it is not public
+# profile certification. No request, session binding or authorization is forged.
+_RECENCY_SERVER_PROBE = r'''
+import asyncio, os
+from scribe_mcp import server
+import scribe_mcp.tools.read_recent as reader
+
+class FileReaderSource:
+    # Select only the real reader's file-data branch. Its helper captured the
+    # actual server at construction and still resolves the genuine binding.
+    storage_backend = None
+
+    def __getattr__(self, name):
+        return getattr(server, name)
+
+if os.environ["SBR_RECENCY_SOURCE"] == "file":
+    reader.server_module = FileReaderSource()
+asyncio.run(server.main())
+'''
+
+_RECENCY_CLIENT_PROBE = r'''
+import asyncio, json, os, sys
+from importlib.metadata import version
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
+import scribe_mcp
+
+async def main():
+    params = StdioServerParameters(command=sys.executable,
+        args=["-c", os.environ["SBR_RECENCY_SERVER_PROBE"]],
+        env=dict(os.environ), cwd=os.environ["SBR_RECENCY_SOURCE_ROOT"])
+    async with Client(stdio_client(params), mode="auto") as client:
+        print(json.dumps({"sdk": version("mcp"), "origin": scribe_mcp.__file__}), flush=True)
+        while line := await asyncio.to_thread(sys.stdin.readline):
+            name, arguments = json.loads(line)
+            result = await client.call_tool(name, arguments)
+            assert not result.is_error, (name, result)
+            data = json.loads("\n".join(getattr(item, "text", "") for item in result.content))
+            print(json.dumps(data), flush=True)
+asyncio.run(main())
+'''
+
+
+@asynccontextmanager
+async def _genuine_recency_reader(tmp_path, sqlite_db_path, project_payload, agent, source):
+    source_root = Path(__file__).resolve().parents[1]
+    repo = Path(project_payload["root"])
+    (repo / ".git").mkdir()
+    runtime = tmp_path / "sdk-runtime"
+    runtime.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key != "DATABASE_URL"}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(sqlite_db_path), "SCRIBE_STATE_PATH": str(runtime / "state.json"),
+        "SCRIBE_ROOT": str(runtime), "SCRIBE_REPO_ROOT": str(repo),
+        "SCRIBE_TRUSTED_REPO_ROOTS": str(repo), "PYTHONPATH": str(source_root / "src"),
+        "SBR_RECENCY_SOURCE": source, "SBR_RECENCY_SOURCE_ROOT": str(source_root),
+        "SBR_RECENCY_SERVER_PROBE": _RECENCY_SERVER_PROBE,
+    })
+    sdk_python = os.environ.get("SBR_SDK_PYTHON", sys.executable)
+    process = await asyncio.create_subprocess_exec(
+        sdk_python, "-c", _RECENCY_CLIENT_PROBE, cwd=source_root, env=env,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stderr = asyncio.create_task(process.stderr.read())
+
+    async def response():
+        line = await asyncio.wait_for(process.stdout.readline(), timeout=45)
+        assert line, (await stderr).decode()
+        return json.loads(line)
+
+    async def call(name, arguments):
+        process.stdin.write((json.dumps([name, arguments]) + "\n").encode())
+        await process.stdin.drain()
+        return await response()
+
+    try:
+        origin = await response()
+        assert Path(origin["origin"]).resolve() == source_root / "src/scribe_mcp/__init__.py"
+        selected = await call("set_project", {"agent": agent, **project_payload, "format": "structured"})
+        assert selected.get("ok", True) is not False, selected
+
+        async def read_recent(**arguments):
+            return await call("read_recent", arguments)
+
+        yield read_recent
+    finally:
+        process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=15)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+        errors = (await stderr).decode()
+        assert process.returncode == 0, errors
+
+
 @pytest.mark.regression
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ["database", "file"])
@@ -262,86 +369,80 @@ async def test_priority_sorting_enabled():
 @pytest.mark.parametrize("include_metadata", [False, True])
 @pytest.mark.parametrize("priority_sort", [False, True, None], ids=["false", "true", "default"])
 async def test_public_reader_preserves_requested_order(
-    monkeypatch, tmp_path, sqlite_storage, project_payload, test_agent,
+    tmp_path, sqlite_storage, sqlite_db_path, project_payload, test_agent,
     source, output_format, compact, include_metadata, priority_sort,
 ):
     """Real storage/state/file paths must keep source order unless opted in."""
     assert read_recent_module.server_module.get_execution_context() is None
-    manager = StateManager(tmp_path / "state.json", storage_backend=sqlite_storage)
-    await manager.set_current_project(
-        project_payload["name"], project_payload, agent_id=test_agent,
-    )
-    record = await sqlite_storage.fetch_project(
-        project_payload["name"], repo_root=project_payload["root"],
-    )
-    assert record is not None
-    priorities = ["critical", "high", "medium", "low"]
-    messages = [f"ordering record {i}" for i in range(4)]
-    lines = [
-        f"[ℹ️] [2026-01-03 14:0{i}:00 UTC] [Agent: {test_agent}] "
-        f"[Project: {record.name}] {messages[i]} | priority={priorities[i]}; detail=kept-{i}"
-        for i in range(4)
-    ]
-    for i in range(4):
-        await sqlite_storage.insert_entry(
-            entry_id=f"order-{i}", project=record,
-            ts=datetime(2026, 1, 3, 14, i, tzinfo=timezone.utc),
-            emoji="ℹ️", agent=test_agent, message=messages[i],
-            meta={"priority": priorities[i], "detail": f"kept-{i}"},
-            raw_line=lines[i], sha256=sha256(lines[i].encode()).hexdigest(),
+    async with _genuine_recency_reader(
+        tmp_path, sqlite_db_path, project_payload, test_agent, source,
+    ) as read_recent:
+        record = await sqlite_storage.fetch_project(
+            project_payload["name"], repo_root=project_payload["root"],
         )
-    # The file order deliberately differs from both timestamp and priority order.
-    file_order = [2, 0, 3, 1]
-    log_path = Path(project_payload["progress_log"])
-    log_path.write_text("\n".join(lines[i] for i in file_order) + "\n", encoding="utf-8")
-    original_log = log_path.read_bytes()
-    monkeypatch.setattr(read_recent_module.server_module, "state_manager", manager)
-    monkeypatch.setattr(
-        read_recent_module.server_module, "storage_backend",
-        sqlite_storage if source == "database" else None,
-    )
-    expected = [0, 1, 2, 3] if priority_sort else (
-        [3, 2, 1, 0] if source == "database" else file_order
-    )
-    options = {} if priority_sort is None else {"priority_sort": priority_sort}
-    id_key, message_key = ("i", "m") if compact else ("id", "message")
-    # Test the exact four-entry request and two actual pages independently.
-    for page_size in (4, 2):
-        for page in range(1, 4 // page_size + 1):
-            result = await read_recent(
-                agent=test_agent, limit=4, page_size=page_size, page=page,
-                format=output_format, compact=compact,
-                include_metadata=include_metadata, **options,
+        assert record is not None
+        priorities = ["critical", "high", "medium", "low"]
+        messages = [f"ordering record {i}" for i in range(4)]
+        lines = [
+            f"[ℹ️] [2026-01-03 14:0{i}:00 UTC] [Agent: {test_agent}] "
+            f"[Project: {record.name}] {messages[i]} | priority={priorities[i]}; detail=kept-{i}"
+            for i in range(4)
+        ]
+        for i in range(4):
+            await sqlite_storage.insert_entry(
+                entry_id=f"order-{i}", project=record,
+                ts=datetime(2026, 1, 3, 14, i, tzinfo=timezone.utc),
+                emoji="ℹ️", agent=test_agent, message=messages[i],
+                meta={"priority": priorities[i], "detail": f"kept-{i}"},
+                raw_line=lines[i], sha256=sha256(lines[i].encode()).hexdigest(),
             )
-            assert isinstance(result, dict)
-            assert result["ok"] is True, result
-            entries = result["entries"]
-            wanted = expected[(page - 1) * page_size:page * page_size]
-            assert len(entries) == page_size
-            assert [entry[message_key] for entry in entries] == [messages[i] for i in wanted]
-            if source == "database":
-                assert [entry[id_key] for entry in entries] == [f"order-{i}" for i in wanted]
-            else:
-                # The real file parser has no entry IDs; do not invent them.
-                assert all(id_key not in entry for entry in entries)
-            assert result["pagination"]["page"] == page
-            assert result["pagination"]["page_size"] == page_size
-            assert result["pagination"]["total_count"] == 4
-            assert result["pagination"]["has_prev"] == (page > 1)
-            assert result["pagination"]["has_next"] == (page * page_size < 4)
-            assert result["limit_metadata"] == {
-                "total_available": page_size, "filtered_count": page_size,
-                "returned_count": page_size, "entries_omitted": 0,
-                "mode": output_format,
-                "limit_applied": 100 if output_format == "structured" else 200,
-            }
-            for entry, i in zip(entries, wanted):
-                if include_metadata:
-                    assert entry["meta"] == {"priority": priorities[i], "detail": f"kept-{i}"}
+        # The file order deliberately differs from both timestamp and priority order.
+        file_order = [2, 0, 3, 1]
+        log_path = Path(project_payload["progress_log"])
+        log_path.write_text("\n".join(lines[i] for i in file_order) + "\n", encoding="utf-8")
+        original_log = log_path.read_bytes()
+        expected = [0, 1, 2, 3] if priority_sort else (
+            [3, 2, 1, 0] if source == "database" else file_order
+        )
+        options = {} if priority_sort is None else {"priority_sort": priority_sort}
+        id_key, message_key = ("i", "m") if compact else ("id", "message")
+        # Test the exact four-entry request and two actual pages independently.
+        for page_size in (4, 2):
+            for page in range(1, 4 // page_size + 1):
+                result = await read_recent(
+                    agent=test_agent, limit=4, page_size=page_size, page=page,
+                    format=output_format, compact=compact,
+                    include_metadata=include_metadata, **options,
+                )
+                assert isinstance(result, dict)
+                assert result["ok"] is True, result
+                entries = result["entries"]
+                wanted = expected[(page - 1) * page_size:page * page_size]
+                assert len(entries) == page_size
+                assert [entry[message_key] for entry in entries] == [messages[i] for i in wanted]
+                if source == "database":
+                    assert [entry[id_key] for entry in entries] == [f"order-{i}" for i in wanted]
                 else:
-                    assert "meta" not in entry
-                if not compact:
-                    assert entry["raw_line"] == lines[i]
-                    assert entry["ts"] == f"2026-01-03 14:0{i}:00 UTC"
-    assert log_path.read_bytes() == original_log
-    assert await sqlite_storage.count_entries(project=record) == 4
+                    # The real file parser has no entry IDs; do not invent them.
+                    assert all(id_key not in entry for entry in entries)
+                assert result["pagination"]["page"] == page
+                assert result["pagination"]["page_size"] == page_size
+                assert result["pagination"]["total_count"] == 4
+                assert result["pagination"]["has_prev"] == (page > 1)
+                assert result["pagination"]["has_next"] == (page * page_size < 4)
+                assert result["limit_metadata"] == {
+                    "total_available": page_size, "filtered_count": page_size,
+                    "returned_count": page_size, "entries_omitted": 0,
+                    "mode": output_format,
+                    "limit_applied": 100 if output_format == "structured" else 200,
+                }
+                for entry, i in zip(entries, wanted):
+                    if include_metadata:
+                        assert entry["meta"] == {"priority": priorities[i], "detail": f"kept-{i}"}
+                    else:
+                        assert "meta" not in entry
+                    if not compact:
+                        assert entry["raw_line"] == lines[i]
+                        assert entry["ts"] == f"2026-01-03 14:0{i}:00 UTC"
+        assert log_path.read_bytes() == original_log
+        assert await sqlite_storage.count_entries(project=record) == 4

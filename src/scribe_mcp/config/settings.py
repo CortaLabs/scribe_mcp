@@ -323,7 +323,6 @@ class Settings:
     transport_allowed_origins: Tuple[str, ...] = ()
     transport_max_request_bytes: int = 4 * 1024 * 1024
     transport_request_timeout_seconds: float = 30.0
-    transport_legacy_enabled: bool = True
 
     def resolve_outside_repo_read_policy(
         self,
@@ -454,7 +453,6 @@ class Settings:
             0.1,
             float(os.environ.get("SCRIBE_TRANSPORT_REQUEST_TIMEOUT_SECONDS", "30")),
         )
-        transport_legacy_enabled = _bool_env("SCRIBE_TRANSPORT_LEGACY_ENABLED", True)
         allow_outside_repo_reads = _bool_env(
             "SCRIBE_ALLOW_OUTSIDE_REPO_READS",
             _bool_env("SCRIBE_ALLOW_CROSS_REPO_READS", False),
@@ -624,7 +622,6 @@ class Settings:
             transport_allowed_origins=transport_allowed_origins,
             transport_max_request_bytes=transport_max_request_bytes,
             transport_request_timeout_seconds=transport_request_timeout_seconds,
-            transport_legacy_enabled=transport_legacy_enabled,
         )
 
 

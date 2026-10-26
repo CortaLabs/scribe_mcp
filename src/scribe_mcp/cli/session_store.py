@@ -102,21 +102,41 @@ class CliSessionState:
         }
 
 
+def scoped_session_state_path(session_name: str, repo_root: Path, agent: str) -> Path:
+    """Locate advisory cache by caller tuple, independently of project/transport identity."""
+    key = json.dumps([str(repo_root.resolve()), session_name, agent], ensure_ascii=True)
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return cli_session_state_path(f"scoped-{digest}")
+
+
+def _read_payload(session_path: Path) -> Dict[str, Any] | None:
+    try:
+        payload = json.loads(session_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _matches_tuple(payload: Dict[str, Any], session_name: str, repo_root: Path, agent: str) -> bool:
+    # Neither the filename nor its contents grant runtime authorization.
+    return (
+        payload.get("agent") == agent
+        and payload.get("repo_root") == str(repo_root.resolve())
+        and payload.get("session_name") == session_name
+    )
+
+
 def load_session_state(session_name: str, repo_root: Path, agent: str) -> CliSessionState:
-    """Load session state or create defaults when missing/corrupt."""
-    session_path = cli_session_state_path(session_name)
-    if session_path.exists():
-        try:
-            payload = json.loads(session_path.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                return CliSessionState.from_dict(
-                    payload,
-                    session_name=session_name,
-                    repo_root=repo_root,
-                    agent=agent,
-                )
-        except json.JSONDecodeError:
-            pass
+    """Load caller-scoped state, with exact-tuple compatibility for old cache files."""
+    session_path = scoped_session_state_path(session_name, repo_root, agent)
+    # An invalid scoped cache must not resurrect an older legacy binding.
+    if not session_path.exists():
+        session_path = cli_session_state_path(session_name)
+    payload = _read_payload(session_path)
+    if payload is not None and _matches_tuple(payload, session_name, repo_root, agent):
+        return CliSessionState.from_dict(
+            payload, session_name=session_name, repo_root=repo_root, agent=agent,
+        )
 
     transport_session_id = build_transport_session_id(repo_root, session_name, agent)
     scoped_reuse_key = build_scoped_reuse_key(repo_root, None)
@@ -137,8 +157,24 @@ def load_session_state(session_name: str, repo_root: Path, agent: str) -> CliSes
 
 def save_session_state(state: CliSessionState) -> Path:
     """Persist session state to the repo-local `.scribe/cli/` runtime namespace."""
-    session_path = cli_session_state_path(state.session_name)
+    state.repo_root = str(Path(state.repo_root).resolve())
+    session_path = scoped_session_state_path(state.session_name, Path(state.repo_root), state.agent)
     session_path.parent.mkdir(parents=True, exist_ok=True)
     state.updated_at = _utc_now_iso()
     session_path.write_text(json.dumps(state.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
     return session_path
+
+
+def reset_session_state(session_name: str, repo_root: Path, agent: str) -> list[Path]:
+    """Remove only this caller's scoped or exact-matching legacy advisory state."""
+    removed = []
+    scoped = scoped_session_state_path(session_name, repo_root, agent)
+    for path in (scoped, cli_session_state_path(session_name)):
+        payload = _read_payload(path)
+        # Corrupt state at our own locator can be reset. A shared legacy file
+        # or a valid foreign tuple must never be removed as this caller's state.
+        matches = payload is not None and _matches_tuple(payload, session_name, repo_root, agent)
+        if path.exists() and (matches or (path == scoped and payload is None)):
+            path.unlink(missing_ok=True)
+            removed.append(path)
+    return removed

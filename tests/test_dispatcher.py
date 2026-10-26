@@ -16,6 +16,8 @@ These tests MUST pass before and after extraction to ensure no regression.
 
 import re
 import json
+import copy
+import hashlib
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
@@ -767,3 +769,215 @@ class TestFullResponseFlow:
 
         # Should contain error formatting
         assert "error" in text.lower() or "wrong" in text.lower()
+
+
+@pytest.mark.core
+@pytest.mark.regression
+class TestSBRDefaultOutput:
+    """P1 measurement and SOURCE.1 projection are deliberately separate gates.
+
+    Values here are presentation inputs, never fabricated caller authority.
+    Large fixtures are generated, and assertion diagnostics contain sizes only.
+    """
+
+    @staticmethod
+    def _wire(result):
+        from scribe_mcp.mcp_adapter import load_mcp_runtime, normalize_tool_result, ProtocolEra
+
+        model = normalize_tool_result(result, runtime=load_mcp_runtime(), era=ProtocolEra.MODERN)
+        payload = model.model_dump(by_alias=True, exclude_none=True)
+        return json.dumps(payload, ensure_ascii=False, allow_nan=False,
+                          sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    @pytest.mark.parametrize("value", [
+        "plain", "漢字🌊\\\"\n" * 80, {"nested": {"notes": "x" * 100000}},
+        {"k" * 100000: 1},
+    ], ids=["small", "unicode-escaping", "nested-100k", "key-100k"])
+    def test_p1_measure_complete_sdk_envelope(self, test_agent, value):
+        """Independent P1 gate: exact measurement needs no receipt/runtime producer."""
+        from scribe_mcp.utils.config_manager import TokenBudgetManager
+        from scribe_mcp.mcp_adapter import load_mcp_runtime, normalize_tool_result, ProtocolEra
+
+        model = normalize_tool_result({"ok": True, "value": value},
+                                      runtime=load_mcp_runtime(), era=ProtocolEra.MODERN)
+        before = model.model_dump(by_alias=True, exclude_none=True)
+        measure = TokenBudgetManager().measure_response_envelope
+        expected = len(self._wire(model))
+        assert measure(model) == expected
+        assert measure(before) == expected
+        assert model.model_dump(by_alias=True, exclude_none=True) == before
+
+    def test_p1_measure_charges_nested_keys_depth_and_envelope_metadata(self, test_agent):
+        from scribe_mcp.utils.config_manager import TokenBudgetManager
+
+        nested = {"k" * 100000: "漢🌊\\\"\n"}
+        for _ in range(100):
+            nested = {"child": nested}
+        payload = {"content": [{"type": "text", "text": "summary"}],
+                   "structuredContent": {"ok": True, "value": nested},
+                   "isError": False, "_meta": {"notice": "x" * 1000}}
+        expected = len(json.dumps(payload, ensure_ascii=False, allow_nan=False,
+                                  sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        assert TokenBudgetManager().measure_response_envelope(payload) == expected
+
+    def test_p1_measure_rejects_nonfinite_json(self, test_agent):
+        from scribe_mcp.utils.config_manager import TokenBudgetManager
+
+        with pytest.raises(ValueError):
+            TokenBudgetManager().measure_response_envelope({"content": [], "structuredContent": {"value": float("nan")}})
+
+    def test_current_helper_accounts_for_whole_delivered_envelope(self, test_agent):
+        """Executed baseline regression: result-only token_count hides 100k metadata."""
+        from scribe_mcp.utils.config_manager import TokenBudgetManager
+
+        data = {"ok": True, "result": {"count": 1}, "metadata": {"notes": "x" * 100000}}
+        before = copy.deepcopy(data)
+        manager = TokenBudgetManager()
+        result = manager.apply_token_budget_to_response(data, token_limit=512)
+        actual_tokens = manager.estimate_response_tokens(result)
+        wire_bytes = len(self._wire(result))
+        assert data == before
+        print(json.dumps({"fixture": "ccfc5e", "wire_bytes": wire_bytes,
+                          "reported_tokens": result.get("token_count"),
+                          "whole_heuristic_tokens": actual_tokens}, sort_keys=True))
+        reported = result.get("token_count", 0)
+        assert reported >= actual_tokens, (
+            f"whole-envelope accounting: reported={reported} actual={actual_tokens} bytes={wire_bytes}"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("format", ["readable", "structured", "compact", "both"])
+    async def test_current_formatter_delivers_bounded_default_envelope(
+        self, formatter, monkeypatch, test_agent, format
+    ):
+        from scribe_mcp.utils.formatters import dispatcher
+        from scribe_mcp import server
+
+        # Replace only external telemetry IO; the formatter/helper/SDK stay real.
+        monkeypatch.setattr(dispatcher, "_log_tool_call", lambda **kwargs: None)
+        monkeypatch.setattr(server, "storage_backend", None)
+        data = {"ok": True, "result": {"count": 1}, "metadata": {"notes": "x" * 100000}}
+        before = copy.deepcopy(data)
+        result = await formatter.finalize_tool_response(data, format=format, tool_name="list_projects")
+        size = len(self._wire(result))
+        assert data == before
+        print(json.dumps({"fixture": "formatter-default", "format": format, "wire_bytes": size}))
+        assert size <= 2048, f"delivered default envelope={size} bytes exceeds 2048"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("format", ["structured_full", "both_full"])
+    async def test_full_preserves_original_selected_unicode_and_hash(
+        self, formatter, monkeypatch, test_agent, format
+    ):
+        from scribe_mcp.utils.formatters import dispatcher
+        from scribe_mcp import server
+
+        monkeypatch.setattr(dispatcher, "_log_tool_call", lambda **kwargs: None)
+        monkeypatch.setattr(server, "storage_backend", None)
+        content = "漢字🌊\\\"\n" * 1000
+        data = {"ok": True, "entries": [{"id": n, "message": content} for n in range(10)],
+                "pagination": {"page": 4, "page_size": 10, "total_count": 100}}
+        before = copy.deepcopy(data)
+        result = await formatter.finalize_tool_response(data, format=format, tool_name="read_recent")
+        structured = result.model_dump(by_alias=True, exclude_none=True)["structuredContent"] if hasattr(result, "model_dump") else result
+        actual = structured["entries"]
+        assert len(actual) == 10
+        assert actual == before["entries"]
+        assert hashlib.sha256(actual[0]["message"].encode()).hexdigest() == hashlib.sha256(content.encode()).hexdigest()
+        assert data == before
+
+    @staticmethod
+    def _project(data, *, tool="read_recent", detail="default", explicit=False):
+        from scribe_mcp.utils.formatters import dispatcher
+
+        context = dispatcher.ResponseBudgetContextV1(
+            tool_name=tool, action=None, detail=detail, explicit_body_selection=explicit
+        )
+        return dispatcher.project_default_response(
+            data, budget_context=context, resolved_request_context=None
+        )
+
+    @pytest.mark.parametrize("count", [0, 1, 3, 1000])
+    def test_projection_count_truth_and_default_ceiling(self, test_agent, count):
+        data = {"ok": True, "entries": [{"id": n, "message": "漢🌊" * 100} for n in range(count)],
+                "pagination": {"page": 4, "page_size": 1000, "total_count": count}}
+        before = copy.deepcopy(data)
+        result = self._project(data)
+        assert data == before
+        assert len(self._wire(result)) <= 2048
+        assert result["returned_count"] == min(count, 3)
+        assert result["total_count"] == count
+        assert result["omitted_count"] == count - min(count, 3)
+        if count > 3:
+            assert result["kind"] == "preview" and result["complete"] is False
+        if count == 0:
+            assert result["total_known"] is True
+
+    def test_three_of_ten_continues_same_full_page_without_skipping(self, test_agent):
+        data = {"ok": True, "entries": [{"id": n, "message": f"row {n}"} for n in range(30, 40)],
+                "pagination": {"page": 4, "page_size": 10, "total_count": 100}}
+        preview = self._project(data)
+        assert preview["returned_count"] == 3 and preview["omitted_count"] == 7
+        continuation = preview["continuation"]
+        assert continuation["tool"] == "read_recent"
+        assert continuation["consistency"] == "current"
+        assert continuation["arguments"]["page"] == 4
+        assert continuation["arguments"]["page_size"] == 10
+        assert continuation["arguments"]["response_detail"] == "full"
+        full = self._project(data, detail="full")
+        assert [row["id"] for row in full["entries"]] == list(range(30, 40))
+
+    def test_unknown_total_never_becomes_complete_empty(self, test_agent):
+        result = self._project({"ok": True, "entries": [{"id": n} for n in range(10)]})
+        assert result["total_count"] is None
+        assert result["total_known"] is False
+        assert result["complete"] is False
+        assert 0 < result["returned_count"] <= 3
+
+    @pytest.mark.parametrize("placement", ["value", "nested-key", "deep"])
+    def test_huge_optional_tree_has_bounded_honest_preview(self, test_agent, placement):
+        value = {"notes": "漢🌊\\\"\n" * 20000}
+        if placement == "nested-key":
+            value = {"k" * 100000: "value"}
+        elif placement == "deep":
+            for _ in range(100):
+                value = {"child": value}
+        data = {"ok": True, "projects": [{"name": "demo", "metadata": value}], "total_count": 1}
+        before = copy.deepcopy(data)
+        result = self._project(data, tool="list_projects")
+        assert len(self._wire(result)) <= 2048
+        assert data == before
+        assert result["complete"] is False
+        assert result["kind"] == "preview"
+
+    def test_optional_excerpts_are_utf8_safe_sized_and_losslessly_identified(self, test_agent):
+        text = "漢🌊\\\"\n" * 20000
+        result = self._project({"ok": True, "entries": [{"id": 1, "message": text}],
+                                "pagination": {"page": 1, "page_size": 10, "total_count": 1}})
+        row = result["entries"][0]
+        values = list(row.values())
+        excerpts = [value for value in values if isinstance(value, str) and value and text.startswith(value)]
+        assert excerpts and all(len(value.encode("utf-8")) <= 160 for value in excerpts)
+        assert len(text.encode("utf-8")) in values
+        assert hashlib.sha256(text.encode("utf-8")).hexdigest() in values
+
+    def test_default_has_one_notice_and_no_post_budget_unbounded_sidecar(self, test_agent):
+        data = {"ok": True, "projects": [{"name": f"p{n}"} for n in range(10)],
+                "total_count": 10, "reminders": [{"message": "漢🌊" * 10000} for _ in range(5)],
+                "timing": {"notes": "x" * 100000}}
+        before = copy.deepcopy(data)
+        result = self._project(data, tool="list_projects")
+        assert len(self._wire(result)) <= 2048
+        assert len(result.get("notices", result.get("reminders", []))) <= 1
+        assert data == before
+
+    @pytest.mark.parametrize("tool", ["read_file", "scribe_doctor", "read_recent"])
+    def test_explicit_default_conflicting_with_full_selection_is_rejected(self, test_agent, tool):
+        """Pure context consistency; actual pre-effect runtime admission remains V4/V5."""
+        from scribe_mcp.utils.formatters import dispatcher
+
+        with pytest.raises(ValueError, match="detail|selection|conflict"):
+            context = dispatcher.ResponseBudgetContextV1(
+                tool_name=tool, action=None, detail="default", explicit_body_selection=True)
+            dispatcher.project_default_response(
+                {"ok": True}, budget_context=context, resolved_request_context=None)

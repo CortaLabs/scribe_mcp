@@ -43,7 +43,8 @@ class HeuristicFenceScopeProvider:
         start_line = 1
         for line_no, raw_line in enumerate(lines, start=1):
             line = raw_line.rstrip("\n")
-            stripped = line.lstrip()
+            # Flat fences allow at most three leading ASCII spaces.
+            stripped = line.lstrip(" ")
             indent = len(line) - len(stripped)
             marker = ""
             fence_len = 0
@@ -56,11 +57,19 @@ class HeuristicFenceScopeProvider:
 
             if marker and fence_len >= 3:
                 if active is None:
-                    active = (marker, fence_len, offset)
-                    start_line = line_no
+                    # Backtick fence info strings cannot contain backticks.
+                    if marker != "`" or "`" not in stripped[fence_len:]:
+                        active = (marker, fence_len, offset)
+                        start_line = line_no
                 else:
                     active_marker, active_len, start_offset = active
-                    if marker == active_marker and fence_len >= active_len:
+                    # Fence padding is ASCII space/tab, not Unicode whitespace.
+                    # Raw lines retain the CR in a CRLF line ending.
+                    if (
+                        marker == active_marker
+                        and fence_len >= active_len
+                        and not stripped[fence_len:].strip(" \t\r")
+                    ):
                         end_offset = offset + len(raw_line)
                         scopes.append(
                             DocumentScope(

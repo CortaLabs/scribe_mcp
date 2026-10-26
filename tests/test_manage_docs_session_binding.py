@@ -695,7 +695,20 @@ async def test_sqlite_catalog_ready_before_project_lookup(
             )
             if retained_key:
                 connection.execute("ALTER TABLE scribe_projects ADD COLUMN project_key TEXT")
+                connection.execute("ALTER TABLE scribe_projects ADD COLUMN repo_id TEXT")
+                connection.execute("ALTER TABLE scribe_projects ADD COLUMN extension_blob BLOB")
+                connection.execute("ALTER TABLE scribe_projects ADD COLUMN extension_num REAL")
                 connection.execute("UPDATE scribe_projects SET project_key = ?", (retained_key,))
+                connection.execute(
+                    "UPDATE scribe_projects SET extension_blob = ?, extension_num = ?",
+                    (b"\x00\xff", 1.25),
+                )
+                keyed_snapshot_sql = (
+                    "SELECT id,name,repo_root,progress_log_path,created_at,updated_at,"
+                    "project_key,repo_id,extension_blob,typeof(extension_blob),"
+                    "extension_num,typeof(extension_num) FROM scribe_projects ORDER BY id"
+                )
+                keyed_before = connection.execute(keyed_snapshot_sql).fetchall()
 
     storage = SQLiteStorage(db_path)
     try:
@@ -708,7 +721,8 @@ async def test_sqlite_catalog_ready_before_project_lookup(
             assert project.id == 1
             assert project.repo_root == repo
             assert project.progress_log_path == progress_log
-            assert project.repo_id == compute_repo_id(repo)
+            # MAJOR preserves established keyed rows, including nullable repo_id.
+            assert project.repo_id == (None if retained_key else compute_repo_id(repo))
             assert project.project_key == (retained_key or compute_project_key(
                 repo_root=repo, project_name=project.name,
             ))
@@ -717,11 +731,16 @@ async def test_sqlite_catalog_ready_before_project_lookup(
         with sqlite3.connect(db_path) as connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(scribe_projects)")}
             assert {"repo_id", "project_key", "bridge_id", "bridge_managed"} <= columns
+            if retained_key:
+                assert connection.execute(keyed_snapshot_sql).fetchall() == keyed_before
         assert await storage.list_projects() == projects
     finally:
         await storage.close()
     reopened = SQLiteStorage(db_path)
     try:
         assert await reopened.list_projects() == projects
+        if retained_key:
+            with sqlite3.connect(db_path) as connection:
+                assert connection.execute(keyed_snapshot_sql).fetchall() == keyed_before
     finally:
         await reopened.close()

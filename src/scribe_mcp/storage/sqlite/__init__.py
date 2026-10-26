@@ -9,6 +9,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from scribe_mcp.background.models import (
+    BackgroundAdmissionResultV1,
+    BackgroundOperationIntentV1,
+    BackgroundPartitionV1,
+    BackgroundQueueLimitsV1,
+    BackgroundRecoverySnapshotV1,
+    BackgroundTransitionOutcomeV1,
+    DurableOperationReceiptV1,
+)
 from scribe_mcp.storage.base import StorageBackend
 from scribe_mcp.storage.affected_row_referential_inventory import AffectedRowReferentialInventoryReport
 from scribe_mcp.storage.models import (
@@ -29,6 +38,7 @@ from . import entries as entry_ops
 from . import projects as project_ops
 from . import telemetry as telemetry_ops
 from . import apply_preview_receipts as apply_preview_receipt_ops
+from . import background_receipts as background_receipt_ops
 from .migrations import (
     ensure_column,
     ensure_column_sync,
@@ -124,6 +134,78 @@ class SQLiteStorage(SQLiteDomainFacadeMixin, StorageBackend):
             initialise_fn=self._initialise,
             write_lock=self._write_lock,
             fetchall_fn=self._fetchall,
+        )
+
+    async def admit_background_receipt(
+        self,
+        intent: BackgroundOperationIntentV1,
+        limits: BackgroundQueueLimitsV1,
+        *,
+        now: datetime,
+    ) -> BackgroundAdmissionResultV1:
+        return await background_receipt_ops.admit_background_receipt(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            fetchone_fn=self._fetchone,
+            intent=intent,
+            limits=limits,
+            now=now,
+        )
+
+    async def get_background_receipt(
+        self, operation_id: str
+    ) -> DurableOperationReceiptV1 | None:
+        return await background_receipt_ops.get_background_receipt(
+            initialise_fn=self._initialise,
+            fetchone_fn=self._fetchone,
+            operation_id=operation_id,
+        )
+
+    async def claim_background_receipt(
+        self,
+        partition: BackgroundPartitionV1,
+        worker_id: str,
+        lease_ms: int,
+        *,
+        now: datetime,
+    ) -> DurableOperationReceiptV1 | None:
+        return await background_receipt_ops.claim_background_receipt(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            fetchone_fn=self._fetchone,
+            partition=partition,
+            worker_id=worker_id,
+            lease_ms=lease_ms,
+            now=now,
+        )
+
+    async def transition_background_receipt(
+        self,
+        operation_id: str,
+        expected_state_version: int,
+        fencing_token: int,
+        outcome: BackgroundTransitionOutcomeV1,
+        *,
+        now: datetime,
+    ) -> DurableOperationReceiptV1:
+        return await background_receipt_ops.transition_background_receipt(
+            initialise_fn=self._initialise,
+            write_lock=self._write_lock,
+            fetchone_fn=self._fetchone,
+            operation_id=operation_id,
+            expected_state_version=expected_state_version,
+            fencing_token=fencing_token,
+            outcome=outcome,
+            now=now,
+        )
+
+    async def recover_background_receipts(
+        self, now: datetime
+    ) -> BackgroundRecoverySnapshotV1:
+        return await background_receipt_ops.recover_background_receipts(
+            initialise_fn=self._initialise,
+            fetchall_fn=self._fetchall,
+            now=now,
         )
 
     async def upsert_project(

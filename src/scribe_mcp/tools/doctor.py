@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 from urllib.parse import urlsplit, urlunsplit
 import yaml
 
+import scribe_mcp
+from scribe_mcp.bridges.registry import BridgeRegistry
 from scribe_mcp import server as server_module
 from scribe_mcp.server import app
 from scribe_mcp.config.settings import settings
@@ -122,30 +124,40 @@ def _backend_name(value: Any) -> str | None:
     return type(value).__name__
 
 
+def _canonical_origin(value: Any) -> str | None:
+    if not isinstance(value, (str, os.PathLike)) or not value:
+        return None
+    try:
+        return str(Path(value).resolve())
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def _bridge_hygiene_advisory(repo_root: Path | None) -> Dict[str, Any]:
     if repo_root is None:
         return {"status": "unknown", "deferred_non_blocking": []}
-    manifest_path = repo_root / ".scribe" / "config" / "bridges" / "council_mcp.yaml"
-    if not manifest_path.exists():
+    registry = BridgeRegistry(None, config_dir=repo_root / ".scribe" / "config" / "bridges")
+    manifest_paths = sorted(registry.discover_manifests())
+    if not manifest_paths:
         return {"status": "not_present", "deferred_non_blocking": []}
-    try:
-        payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        payload = {}
-    runtime_plugin = payload.get("runtime_plugin") if isinstance(payload, dict) else None
-    if runtime_plugin:
-        return {"status": "configured", "deferred_non_blocking": []}
-    return {
-        "status": "deferred_hygiene",
-        "deferred_non_blocking": [
-            {
+    warnings = []
+    for manifest_path in manifest_paths:
+        try:
+            payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            payload = {}
+        runtime_plugin = payload.get("runtime_plugin") if isinstance(payload, dict) else None
+        if not runtime_plugin:
+            warnings.append({
                 "code": "BRIDGE_RUNTIME_PLUGIN_DEFERRED",
                 "severity": "low",
                 "blocking": False,
                 "path": str(manifest_path),
                 "message": "Bridge manifest runtime_plugin warning is deferred hygiene unless a bridge tool path is invoked.",
-            }
-        ],
+            })
+    return {
+        "status": "deferred_hygiene" if warnings else "configured",
+        "deferred_non_blocking": warnings,
     }
 
 
@@ -316,9 +328,32 @@ def _storage_diagnostics() -> dict[str, Any]:
     }
 
 
-@app.tool(**read_only_local_tool(title="Scribe Doctor", tags=("diagnostics", "runtime", "read-only")))
-async def scribe_doctor(agent: str) -> Dict[str, Any]:
+@app.tool(
+    input_schema={
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string"},
+            "reconciliation": {
+                "type": "string",
+                "enum": ["deferred", "full"],
+                "default": "deferred",
+                "description": "deferred skips inventory collection; full returns the complete existing physical/logical reconciliation report.",
+            },
+        },
+        "required": ["agent"],
+        "additionalProperties": True,
+    },
+    **read_only_local_tool(title="Scribe Doctor", tags=("diagnostics", "runtime", "read-only")),
+)
+async def scribe_doctor(
+    agent: str,
+    *,
+    reconciliation: Literal["deferred", "full"] = "deferred",
+) -> Dict[str, Any]:
     """Return runtime diagnostics for the current MCP server instance."""
+    if not isinstance(reconciliation, str) or reconciliation not in {"deferred", "full"}:
+        raise ValueError("reconciliation must be 'deferred' or 'full'")
+
     repo_root = settings.project_root
     repo_root_str = str(repo_root) if repo_root else None
     module_root = Path(__file__).resolve().parents[1]
@@ -359,10 +394,24 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
         storage_backend=runtime_storage_backend,
         runtime_exec_context=runtime_exec_context,
     )
-    physical_logical_reconciliation = await build_physical_logical_reconciliation(
-        repo_root=Path(repo_root) if repo_root else Path.cwd(),
-        storage_backend=runtime_storage_backend,
-    )
+    physical_logical_reconciliation = None
+    reconciliation_collection = {
+        "schema_version": "doctor-reconciliation-collection.v1",
+        "mode": "deferred",
+        "state": "not_collected",
+        "reason": "not_requested",
+    }
+    if reconciliation == "full":
+        physical_logical_reconciliation = await build_physical_logical_reconciliation(
+            repo_root=Path(repo_root) if repo_root else Path.cwd(),
+            storage_backend=runtime_storage_backend,
+        )
+        reconciliation_collection = {
+            "schema_version": "doctor-reconciliation-collection.v1",
+            "mode": "full",
+            "state": "returned",
+            "reason": None,
+        }
     planning_registry = get_runtime_project_registry()
     planning_registry_context: Dict[str, Any] = {}
     try:
@@ -372,6 +421,13 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
 
     config_view = None
     runtime_timing = dict(getattr(server_module, "_last_runtime_timing", {}) or {})
+    runtime_identity = {
+        "schema_version": "scribe-runtime-identity.v1",
+        "package_version": scribe_mcp.__version__,
+        "package_origin": _canonical_origin(getattr(scribe_mcp, "__file__", None)),
+        "doctor_origin": _canonical_origin(__file__),
+        "process_id": os.getpid(),
+    }
     if config is not None:
         plugin_info.update(_build_plugin_diagnostics(config, loaded_plugins))
         config_view = {
@@ -445,6 +501,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
             },
             "case_telemetry": case_snapshot,
             "physical_logical_reconciliation": physical_logical_reconciliation,
+            "physical_logical_reconciliation_collection": reconciliation_collection,
             "storage_diagnostics": storage_diagnostics,
             "timing_envelope": build_timing_envelope(
                 dispatch_path=runtime_timing.get("dispatch_path"),
@@ -463,6 +520,7 @@ async def scribe_doctor(agent: str) -> Dict[str, Any]:
                 "storage_backend": planning_registry_context.get("storage_backend"),
             },
         },
+        "runtime_identity": runtime_identity,
         "config": config_view,
         "config_path": str(config_path) if config_path else None,
         "config_error": config_error,

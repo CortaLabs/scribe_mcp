@@ -12,12 +12,15 @@ Design:
 - Supports format parameters: readable, structured, compact, both
 """
 
+import copy
+import hashlib
 import json
 import logging
 import inspect
 import time
 import uuid
-from typing import Dict, List, Any, Optional, Union
+from dataclasses import dataclass
+from typing import Dict, List, Any, Literal, Mapping, Optional, TYPE_CHECKING, Union
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,254 @@ except ImportError:
     CallToolResult = None
     TextContent = None
     MCP_TYPES_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from scribe_mcp.shared.execution_context import ResolvedRequestContextV1
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseBudgetContextV1:
+    """Immutable, presentation-only context for pure default projection."""
+
+    tool_name: str
+    action: Optional[str]
+    detail: Literal["default", "full"]
+    explicit_body_selection: bool
+
+    def __post_init__(self) -> None:
+        if type(self.tool_name) is not str or not self.tool_name:
+            raise ValueError("tool_name must be a non-empty string")
+        if self.action is not None and type(self.action) is not str:
+            raise ValueError("action must be a string or None")
+        if type(self.detail) is not str or self.detail not in {"default", "full"}:
+            raise ValueError("detail must be exactly 'default' or 'full'")
+        if type(self.explicit_body_selection) is not bool:
+            raise ValueError("explicit_body_selection must be a bool")
+
+
+_DEFAULT_OUTPUT_MAX_BYTES = 2048
+_DEFAULT_OUTPUT_BODY_TARGET_BYTES = 1024
+_DEFAULT_OUTPUT_MAX_PREVIEWS = 3
+_DEFAULT_OUTPUT_MAX_REQUIRED_TEXT_BYTES = _DEFAULT_OUTPUT_BODY_TARGET_BYTES
+_DEFAULT_OUTPUT_MAX_COUNT = 2**31 - 1
+_DEFAULT_OUTPUT_TOP_KEYS = frozenset(
+    {"ok", "entries", "projects", "pagination", "total_count", "reminders", "timing"}
+)
+_DEFAULT_OUTPUT_ROW_KEYS = frozenset({"id", "name", "message", "metadata"})
+_DEFAULT_OUTPUT_PAGINATION_KEYS = frozenset({"page", "page_size", "total_count"})
+
+
+def _default_output_count(value: Any, field_name: str, *, minimum: int = 0) -> int:
+    if type(value) is not int or not minimum <= value <= _DEFAULT_OUTPUT_MAX_COUNT:
+        raise ValueError(f"{field_name} must be a bounded integer >= {minimum}")
+    return value
+
+
+def _default_output_utf8_prefix(value: str, byte_limit: int) -> str:
+    return value.encode("utf-8")[:byte_limit].decode("utf-8", errors="ignore")
+
+
+def _validate_default_output_row(row: Mapping[str, Any]) -> None:
+    if not isinstance(row, Mapping) or set(row) - _DEFAULT_OUTPUT_ROW_KEYS:
+        raise ValueError("default projection row has unsupported fields")
+    if "id" in row:
+        identifier = row["id"]
+        if type(identifier) not in {str, int}:
+            raise ValueError("row id must be an exact string or integer")
+        if type(identifier) is str and len(identifier.encode("utf-8")) > _DEFAULT_OUTPUT_MAX_REQUIRED_TEXT_BYTES:
+            raise ValueError("required row id exceeds the default response limit")
+        if type(identifier) is int and abs(identifier) > _DEFAULT_OUTPUT_MAX_COUNT:
+            raise ValueError("required row id exceeds the default response limit")
+    if "name" in row:
+        name = row["name"]
+        if type(name) is not str:
+            raise ValueError("row name must be a string")
+        if len(name.encode("utf-8")) > _DEFAULT_OUTPUT_MAX_REQUIRED_TEXT_BYTES:
+            raise ValueError("required row name exceeds the default response limit")
+    if "message" in row and type(row["message"]) is not str:
+        raise ValueError("row message must be a string")
+
+
+def _default_output_row(
+    row: Mapping[str, Any], *, excerpt_bytes: int
+) -> tuple[dict[str, Any], bool]:
+    _validate_default_output_row(row)
+
+    preview: dict[str, Any] = {}
+    content_omitted = False
+    if "id" in row:
+        identifier = row["id"]
+        preview["id"] = identifier
+    if "name" in row:
+        name = row["name"]
+        preview["name"] = name
+    if "message" in row:
+        message = row["message"]
+        encoded = message.encode("utf-8")
+        excerpt = _default_output_utf8_prefix(message, excerpt_bytes)
+        preview["message"] = excerpt
+        preview["message_bytes"] = len(encoded)
+        preview["message_sha256"] = hashlib.sha256(encoded).hexdigest()
+        if len(excerpt.encode("utf-8")) < len(encoded):
+            preview["message_omitted"] = True
+            content_omitted = True
+    if "metadata" in row:
+        if row["metadata"] is None:
+            preview["metadata"] = None
+        else:
+            preview["metadata_omitted"] = True
+            content_omitted = True
+    return preview, content_omitted
+
+
+def _default_output_candidate_fits(candidate: dict[str, Any]) -> bool:
+    from scribe_mcp.utils.config_manager import TokenBudgetManager
+
+    manager = TokenBudgetManager()
+    try:
+        if manager.measure_response_envelope(candidate) > _DEFAULT_OUTPUT_BODY_TARGET_BYTES:
+            return False
+        if not (MCP_TYPES_AVAILABLE and CallToolResult and TextContent):
+            return manager.measure_response_envelope(
+                {"content": [{"type": "text", "text": json.dumps(
+                    candidate, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                    separators=(",", ":"),
+                )}]}
+            ) <= _DEFAULT_OUTPUT_MAX_BYTES
+
+        mapping_text = json.dumps(
+            candidate, allow_nan=False, sort_keys=True, separators=(",", ":"),
+        )
+        modern = CallToolResult(
+            content=[TextContent(type="text", text=mapping_text)],
+            structuredContent=candidate,
+        )
+        legacy_text = json.dumps(
+            candidate, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        legacy = CallToolResult(content=[TextContent(type="text", text=legacy_text)])
+        return (
+            manager.measure_response_envelope(modern) <= _DEFAULT_OUTPUT_MAX_BYTES
+            and manager.measure_response_envelope(legacy) <= _DEFAULT_OUTPUT_MAX_BYTES
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return False
+
+
+def project_default_response(
+    data: Mapping[str, Any],
+    *,
+    budget_context: ResponseBudgetContextV1,
+    resolved_request_context: "ResolvedRequestContextV1 | None",
+    committed_facts: Any = None,
+) -> dict[str, Any]:
+    """Return an immutable-input, bounded preview or detached full copy.
+
+    This pure helper does not collect data, authorize a request, persist facts,
+    or activate default projection in any caller.
+    """
+    if not isinstance(data, Mapping):
+        raise ValueError("response data must be a mapping")
+    if not isinstance(budget_context, ResponseBudgetContextV1):
+        raise ValueError("budget_context must be ResponseBudgetContextV1")
+    if budget_context.detail == "default" and budget_context.explicit_body_selection:
+        raise ValueError("default detail conflicts with explicit body selection")
+    if budget_context.detail == "full":
+        return copy.deepcopy(dict(data))
+
+    tool_name = budget_context.tool_name
+    if tool_name not in {"read_recent", "list_projects"}:
+        raise ValueError("default projection is unsupported for this tool")
+    if budget_context.action is not None:
+        raise ValueError("default projection requires action=None")
+    if resolved_request_context is not None or committed_facts is not None:
+        raise ValueError("default projection requires no request context or committed facts")
+    if set(data) - _DEFAULT_OUTPUT_TOP_KEYS or data.get("ok") is not True:
+        raise ValueError("default projection requires an allowed successful response")
+
+    rows_key = "entries" if tool_name == "read_recent" else "projects"
+    other_rows_key = "projects" if rows_key == "entries" else "entries"
+    if other_rows_key in data or rows_key not in data:
+        raise ValueError("default projection response rows do not match the tool")
+    rows = data[rows_key]
+    if not isinstance(rows, (list, tuple)) or any(not isinstance(row, Mapping) for row in rows):
+        raise ValueError("default projection rows must be a sequence of mappings")
+
+    pagination = data.get("pagination", {})
+    if not isinstance(pagination, Mapping) or set(pagination) - _DEFAULT_OUTPUT_PAGINATION_KEYS:
+        raise ValueError("default projection pagination has unsupported fields")
+    page = _default_output_count(pagination["page"], "page", minimum=1) if "page" in pagination else None
+    page_size = (
+        _default_output_count(pagination["page_size"], "page_size", minimum=1)
+        if "page_size" in pagination else None
+    )
+    pagination_total = pagination.get("total_count")
+    if pagination_total is not None:
+        pagination_total = _default_output_count(pagination_total, "pagination.total_count")
+    top_total = data.get("total_count")
+    if top_total is not None:
+        top_total = _default_output_count(top_total, "total_count")
+    if top_total is not None and pagination_total is not None and top_total != pagination_total:
+        raise ValueError("response total_count fields conflict")
+    total_count = top_total if top_total is not None else pagination_total
+    if total_count is not None and total_count < len(rows):
+        raise ValueError("total_count is smaller than the selected row set")
+
+    for row in rows:
+        _validate_default_output_row(row)
+
+    for visible_count in range(min(len(rows), _DEFAULT_OUTPUT_MAX_PREVIEWS), -1, -1):
+        for excerpt_bytes in (160, 128, 96, 64, 32, 16, 0):
+            previews: list[dict[str, Any]] = []
+            omitted_content = False
+            for row in rows[:visible_count]:
+                preview, row_omitted = _default_output_row(row, excerpt_bytes=excerpt_bytes)
+                previews.append(preview)
+                omitted_content = omitted_content or row_omitted
+
+            omitted_count = len(rows) - visible_count
+            is_complete = (
+                total_count is not None
+                and total_count == len(rows)
+                and omitted_count == 0
+                and not omitted_content
+                and "reminders" not in data
+                and "timing" not in data
+            )
+            candidate: dict[str, Any] = {
+                "kind": "preview",
+                "tool": tool_name,
+                rows_key: previews,
+                "returned_count": len(previews),
+                "total_count": total_count,
+                "total_known": total_count is not None,
+                "omitted_count": omitted_count,
+                "complete": is_complete,
+            }
+            if "reminders" in data:
+                candidate["reminders_omitted"] = True
+            if "timing" in data:
+                candidate["timing_omitted"] = True
+            if not is_complete:
+                continuation_arguments: dict[str, Any] = {"response_detail": "full"}
+                if page is not None:
+                    continuation_arguments["page"] = page
+                if page_size is not None:
+                    continuation_arguments["page_size"] = page_size
+                candidate["continuation"] = {
+                    "tool": tool_name,
+                    "arguments": continuation_arguments,
+                    "consistency": "current",
+                    "instruction": "Reuse the original arguments and request response_detail=full.",
+                }
+                candidate["notices"] = [
+                    "This is a preview; some selected rows or optional content were omitted."
+                ]
+            if _default_output_candidate_fits(candidate):
+                return candidate
+
+    raise ValueError("required default response facts cannot fit the response budget")
 
 
 class FormatterDispatcher:

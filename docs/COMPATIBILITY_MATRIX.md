@@ -1,27 +1,19 @@
 # Compatibility Matrix
 
-Updated: **2026-10-25**
-Release framing: **2.15.34 integrated maintenance candidate, retaining the MCP SDK v2 baseline**
+Updated: **2026-10-26**
+Release framing: **3.3.25 development candidate; latest MCP SDK and protocol**
 
-## Maintenance candidate status
+## Development status
 
-Entry insertion and metric counting are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; metric-write failures roll back the entry. SQLite cancellation retains worker and connection ownership through cleanup. Independent behavioral and quality reviews passed against real SQLite and isolated PostgreSQL databases.
+The 3.x support policy targets MCP protocol `2026-07-28` with the latest SDK, currently `2.3.0`, over stdio or Streamable HTTP. The package accepts compatible SDK 2.x releases (`mcp>=2.0.0,<3.0`); release verification targets the latest SDK rather than certifying every older minor. SDK 1.x and older protocol revisions are unsupported. Obsolete compatibility-code removal and explicit old-request rejection remain required before this development candidate can release. The migration baseline below is historical evidence.
 
-`2.15.34` combines reviewed heartbeat binding preservation, SQLite WAL startup/error cleanup and assertion-based identity/reconnect regressions. Component reviews passed 199/60/15 checks respectively. Combined-candidate, installed/native and publication verification remain pending. Deployed instances require their host's normal upgrade and restart procedure.
+The current candidate carries the reviewed 2.15.34 maintenance fixes for project bindings, SQLite startup and cleanup, and atomic entry/metric writes. Current-protocol stdio and HTTP verification use SDK `2.3.0`.
 
-Version `2.15.31` completes the existing SQLite keeper's schema read to retain WAL through initialization, preserves primary activation errors during cleanup, and retains the original cancellation while draining the opening worker. It is based on `2.15.29` and retains public APIs, schema, helper transactions, PRAGMAs, durability settings and runtime defaults. The SQLite repair has 60 independent behavioral passes; the carried heartbeat fix has 199. Combined-candidate, installed-package/native-client, fleet and publication checks remain pending. Earlier installed `2.15.29` checks are separate evidence.
+The current candidate is `scribe-mcp==3.3.29`. Binding-context, bounded default output, schema, background integration and live acceptance remain open. The pure preview/full projector is inactive; the 2 KiB default-response limit is not yet certified. Token counts are estimates, separate from exact UTF-8 byte counts. See [release status and checkpoint history](RELEASE_SURFACE.md) for verified changes and remaining gates. This candidate has not been published.
 
-Version `2.15.30` preserves complete session-binding rows during identity and activity heartbeats by removing cached binding replay from generic state persistence. Its 199 scoped source checks cover genuine SDK auto/legacy calls, sibling isolation, explicit rebind, revocation and deletion. Installed 2.15.30 native and fleet acceptance remains pending. Public arguments, APIs, schemas and heartbeat-clock defaults are unchanged.
+## Historical migration baseline
 
-The `2.15.32` component repairs false-green identity/resumption tests with genuine storage and separate fault-sensitivity checks. Its independent module/neighbor checks pass 15 cases. It was developed separately on `2.15.29` and is now included with the heartbeat and SQLite components in `2.15.34`; it changes no runtime behavior or public API.
-
-Version `2.15.29` persists the already-verified session root before classifying a project binding. First binding and cross-repository rebinding can then support immediate reads without a second bind, including clients with no configured default repository. Existing authorization, storage and schema contracts are retained.
-
-`2.15.28` prepares SQLite project identity columns before startup catalog reads and preserves populated project keys during repository-identity backfill. It also honors the read_recent priority-sort flag, retains an idle SQLite connection during initialization without changing transaction or durability settings, preserves literal comparison operators in JSON metadata and requires setuptools 77.0.3 or newer to build its SPDX license metadata. It preserves public MCP arguments and the released storage APIs. Its bounded fixes cover verified session-binding reconstruction, first-call tool loading, document metadata that preserves the caller default, atomic PostgreSQL classifier bootstrap and canonical export digests. Release builds preserve existing artifacts and source files, reject output collisions, and retain nested tests in source distributions. At that candidate checkpoint, publication and deployment acceptance remained pending. The 2.15.29 serving-profile checks above do not certify untested explicit public-profile stdio deployments. The historical SDK baseline below remains applicable; its exact migration environment is historical evidence, not a claim that every installed SDK has been certified.
-
-## Baseline contract
-
-This baseline advances Scribe to `2.13.0` for the MCP SDK v2 migration while retaining the maintenance and session-isolation work already present on `main`. Scribe requires Python `>=3.11` and supports MCP Python SDK `>=2.0.0,<3.0`. The isolated migration candidate remains exactly `mcp==2.0.0`, `mcp-types==2.0.0`, and `httpx2==2.5.0`. The modern wire default is protocol revision `2026-07-28`; legacy compatibility is deliberately limited to the known `mcp==1.26.0` client, protocol revision `2025-11-25`, handshake stdio, and the retained `/sse` plus `/messages/` routes. Production does not use automatic downgrade or arbitrary legacy fallback.
+The earlier `2.13.0` migration used Python `>=3.11`, SDK `>=2.0.0,<3.0`, and an isolated `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0` environment. At that time, it retained SDK `1.26.0`, protocol `2025-11-25`, handshake stdio and paired `/sse` plus `/messages/` routes. Those are historical migration facts. The current 3.x policy above supersedes them and supports only the current wire protocol.
 
 The carried maintenance line rejects hollow `append_entry` payloads before any write, fixes readable `read_recent(compact=True)` rendering, adds fail-closed repo-local plugin diagnostics in `scribe_doctor`, improves managed-doc registration/drift diagnostics, adds advisory reminder guidance fields, and accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input with **no breaking public API, CLI, or schema/data contract changes**. The carried 2.8.x baseline bundles the completed `scribe_refinement_audit` sweep:
 
@@ -34,46 +26,44 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 - **Packaging:** `asyncpg` is a core dependency, so a plain `pip install scribe-mcp` is Postgres-ready and matches the default Postgres runtime posture (the `[postgres]` extra is a redundant no-op alias kept only for explicit-intent convenience); plus plugin manifests; and the lean Claude/Codex plugin bundles **vendored into the wheel** (`src/scribe_mcp/plugins_bundle/**` via package-data, with `resolve_codex_plugin_root()` preferring the packaged bundle) so `pip install scribe-mcp` works with no clone.
 - **2.11.1 trust boundary:** repo-local plugins remain internal diagnostics/probe-only under `.scribe/plugins`, require explicit trusted local opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus process restart/reinitialization, and are not enabled by production defaults. Reminder hook/context injection remains security-blocked future work.
 
-It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, bulk quality checks, and Scribe write-barrier safety:
+It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.34` (integrated maintenance candidate)
+- **Core package version:** `scribe-mcp==3.3.29` (development candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
-- **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
-- **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
+- **Historical isolated candidate:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`; current release verification uses SDK `2.3.0`.
+- **Historical wire policy:** the earlier migration retained named legacy `mcp==1.26.0` / `2025-11-25`. The current 3.x policy above supersedes it and excludes that legacy path.
 - **Affected-row inventory posture:** read-only, public-safe labels/aggregates only, fail-closed, no mutation authority
 - **Default runtime posture:** Postgres-backed runtime contract
 - **Standalone SQLite posture:** explicit local-only opt-in (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`)
 - **Remote/client posture:** internal compatibility only, excluded by `SCRIBE_RELEASE_PROFILE=public`
 - **Governed-memory posture:** project `CHANGELOG.md` is curated source; `.scribe/docs/GLOBAL_CHANGELOG.md` is derived output
 
-`v3` is out of scope for this baseline.
+MCP SDK v3 is outside the historical SDK baseline; the Scribe package major version is a separate contract.
 
-## Supported combinations
+## Release and checkpoint history
 
-| Core (`scribe-mcp`) | Status | Intended use |
+| Core (`scribe-mcp`) | Status | Historical change or current target |
 | --- | --- | --- |
-| `2.15.34` | Integrated candidate | Combines reviewed binding, startup, identity-test and atomic metrics fixes; combined, installed/native, fleet and publication checks pending. |
-| `2.15.32` | Reviewed component | Assertion-based identity/reconnect tests;15 independent module/neighbor cases pass. |
-| `2.15.31` | Reviewed component | Retains SQLite bootstrap WAL and preserves activation/cancellation errors. Component behavioral review passes; combined-candidate, installed/native, fleet and publication gates remain pending. |
-| `2.15.30` | Reviewed component | Preserves project bindings across heartbeats; 199 independent behavioral checks pass. |
-| `2.15.29` | Maintenance release | Persists the verified session root before binding classification. Genuine SDK first-bind/rebind coverage and installed PostgreSQL server-profile first-bind/mixed-call checks pass; explicit public-profile deployment verification remains separate. |
-| `2.15.28` | Candidate | Prepares SQLite catalog identity before discovery and preserves existing keys and binding generations on reopen; native and fleet acceptance pending. |
-| `2.15.27` | Candidate | Restores genuine binding prerequisites in regression fixtures; product authority unchanged, native and fleet acceptance pending. |
-| `2.15.26` | Candidate | Honors read_recent priority_sort=False/default while retaining explicit priority sorting; native and fleet acceptance pending. |
-| `2.15.25` | Candidate | Retains SQLite bootstrap connection lifetime and closes failed handles; native and fleet acceptance pending. |
-| `2.15.24` | Candidate | Preserves comparison operators in JSON metadata; public stdio and fleet acceptance pending. |
-| `2.15.23` | Candidate | Preserves literal fenced-code whitespace during section and frontmatter writes; public stdio and fleet acceptance pending. |
-| `2.15.22` | Candidate | Requires a compatible setuptools backend for SPDX license metadata; retains prior runtime behavior and pending fleet acceptance. |
-| `2.15.21` | Candidate | Adds artifact-preserving release builds and nested source-distribution tests; public stdio and fleet acceptance pending. |
-| `2.15.20` | Candidate | Maintenance fixes above; public stdio and fleet acceptance pending. |
-| `2.13.0` | Supported SDK baseline | MCP SDK v2 migration baseline: Python `>=3.11`, SDK `>=2.0.0,<3.0`, modern protocol `2026-07-28`, and no silent downgrade. The exact isolated candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`. Named legacy compatibility remains `mcp==1.26.0` / protocol `2025-11-25` over handshake stdio and retained `/sse` plus `/messages/`. |
-| `2.11.1` | Supported (previous) | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
-| `2.10.1` | Supported (previous) | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |
-| `2.9.0` | Supported (previous) | Adds MCP/CLI read-only affected-row referential inventory preflight for governed repair planning, with public-safe labels/aggregates only and fail-closed guards for target binding, selected-context, reference inventory, low-cardinality/private-output, missing backend, and mutation-shaped invocation. |
-| `2.8.1` | Supported (previous) | Patch on the 2.8.0 feature baseline: existing physical managed docs are auto-registered for targeted `manage_docs` actions, path-like registration preserves existing aliases, plugin sync works in clean checkout CI, shipped plugin bundles contain only `scribe-integration` and `scribe-onboarding`, the packaged Codex projection writes every shipped skill, and `complete` is terminal for case filtering. |
-| `2.8.0` | Supported (feature baseline) | Feature baseline for the 2.8.x line. Bundles the `scribe_refinement_audit` sweep: host-facing `manage_docs` input-schema enrichment, unified case-status vocabulary + exact case-path resolution, dead-code/honest-envelope maintainability cleanup, `read_file` pagination + single-pass AST + SQL-pushdown message filtering, a wired reminder engine, tool discoverability + onboarding skills, a managed-doc `title`-preservation fix, and packaged plugin projection. Backward-compatible additive + fix release; no breaking public API/CLI/schema contract. |
-| `2.7.2` | Supported (previous) | Prior patch line with furnace-project quality-check O(N^2) elimination; 2.8.x is a drop-in upgrade with no breaking public API changes. |
-| `2.7.1` | Supported (previous) | Earlier patch line; superseded by 2.7.2 and 2.8.0. |
+| `3.3.25` | Development candidate | Targets the latest SDK without an arbitrary SDK 2.x minor-version exclusion; original source/runtime gates remain pending. |
+| `3.3.11` | Development candidate | Integrates maintained SQLite startup readiness and stable project-key backfill; original source/runtime gates remain pending. |
+| `3.3.10` | Development candidate | Integrates maintained-line binding and metadata-write regression fixtures; original source/runtime gates remain pending. |
+| `3.3.9` | Development candidate | Honors explicit/default read_recent priority-sort behavior; default response integration and live acceptance remain pending. |
+| `3.3.8` | Development candidate | Preserves comparison operators in JSON metadata; default response integration and live acceptance remain pending. |
+| `3.3.7` | Development candidate | Adds an inactive bounded preview/full projector; live tool and transport integration remain pending. |
+| `3.3.6` | Development candidate | Corrects complete-response accounting and adds exact UTF-8 envelope measurement; final default projection and runtime acceptance remain pending. |
+| `3.3.4` | Development test checkpoint | Adds bounded-output, exact envelope-accounting and explicit-full regression coverage. Expected contract failures, implementation, integration and affected-client acceptance remain open. |
+| `3.3.3` | Development candidate | Adds observed loaded-package version, module origins and process ID to Doctor while preserving deferred inventory. Source integrity, integration and affected-client acceptance remain separate requirements. |
+| `3.3.2` | Development candidate | Restores consumer-agnostic Doctor bridge hygiene for YAML manifests and generic deployment guidance, preserving low severity and nonblocking diagnostics. Retains the 3.3.1 checkpoint below; integration, publication and live acceptance remain pending. |
+| `3.3.1` | Development candidate | Restores existing-project classification for verified empty or rotated progress logs without baseline hashes. Retains the 3.3.0 checkpoint below; integration, publication and live acceptance remain pending. |
+| `3.3.0` | Development candidate | Adds SQLite background-receipt persistence with atomic capacity, idempotency, fenced transitions and reopen recovery; scheduling and PostgreSQL parity remain pending. Adds the abstract storage binding-clear API; concrete backend execution remains pending. Clarifies patch body-hash guidance without changing validation. Adds a pure call-timing recorder with finite phase accumulation, ordered phases, honest unaccounted time and strict thresholds. Tool instrumentation remains pending. Section helpers reuse one canonical scope scan per unchanged input. Section targeting ignores fenced literal markers and preserves artifact bytes. Probe imports preserve caller environment. Preserved release artifacts and complete nested-test source packaging; SQLite bootstrap lifetime and configuration-error cleanup. Breaking Doctor default: deferred inventory, explicit full-report migration. Broader integration and release acceptance pending. |
+| `2.13.0` | Historical SDK migration | Earlier SDK 2 migration and isolation baseline. Its named SDK 1.26 compatibility is superseded by the current 3.x support policy. |
+| `2.11.1` | Historical release | Rejects hollow `append_entry` payloads before any write and carries the readable recent-log, repo-local plugin diagnostic, managed-doc drift, reminder guidance, and bounded patch-input maintenance fixes. |
+| `2.10.1` | Historical release | Maintenance baseline for readable recent-log output, fail-closed repo-local plugin diagnostics, managed-doc registration/drift diagnostics, reminder guidance, and bounded single-managed-doc patch input. |
+| `2.9.0` | Historical release | Adds MCP/CLI read-only affected-row referential inventory preflight for governed repair planning, with public-safe labels/aggregates only and fail-closed guards for target binding, selected-context, reference inventory, low-cardinality/private-output, missing backend, and mutation-shaped invocation. |
+| `2.8.1` | Historical release | Patch on the 2.8.0 feature baseline: existing physical managed docs are auto-registered for targeted `manage_docs` actions, path-like registration preserves existing aliases, plugin sync works in clean checkout CI, shipped plugin bundles contain only `scribe-integration` and `scribe-onboarding`, the packaged Codex projection writes every shipped skill, and `complete` is terminal for case filtering. |
+| `2.8.0` | Historical feature baseline | Feature baseline for the 2.8.x line. Bundles the `scribe_refinement_audit` sweep: host-facing `manage_docs` input-schema enrichment, unified case-status vocabulary + exact case-path resolution, dead-code/honest-envelope maintainability cleanup, `read_file` pagination + single-pass AST + SQL-pushdown message filtering, a wired reminder engine, tool discoverability + onboarding skills, a managed-doc `title`-preservation fix, and packaged plugin projection. Backward-compatible additive + fix release; no breaking public API/CLI/schema contract. |
+| `2.7.2` | Historical release | Prior patch line with furnace-project quality-check O(N^2) elimination; 2.8.x is a drop-in upgrade with no breaking public API changes. |
+| `2.7.1` | Historical release | Earlier patch line; superseded by 2.7.2 and 2.8.0. |
 
 ## Notable behavior change in 2.8.0 (non-breaking)
 
@@ -81,17 +71,25 @@ One behavior change is worth naming explicitly because it changes a return value
 
 - **`query_entries` with a non-project `search_scope` now returns an honest `ok: false` teaching error** instead of a silent no-op. That cross-project search engine path was dead/broken, so prior "success" responses could be empty or misleading. This is a correctness fix (honest envelope), not a removal of a working contract: project-scoped `query_entries` behavior is unchanged, and emergency/degraded paths likewise return honest `ok: false` envelopes rather than fabricated rows. No public API/CLI/schema contract is broken.
 
-## Not supported by this baseline
+## Doctor reconciliation default in the 3.0 line
+
+Version 3.0.0 introduced the Doctor default change. The 2.15.x maintenance line keeps its existing Doctor behavior.
+
+On the major line, `scribe_doctor(agent=...)` and explicit `reconciliation="deferred"` retain ordinary diagnostics while returning a null reconciliation report and `not_collected` metadata. Callers that need the full v1 report must pass `reconciliation="full"`. This is a breaking default change for callers that previously expected a report from the argument-only call. Callers that support both release eras should branch on their pinned package/tool schema; they should not retry arbitrary errors to guess which default is active.
+
+Full mode delegates to the existing builder and preserves its report shape and availability fallbacks. Collection state `returned` means the builder returned a report; it does not certify that every source was available. The 2.15.x maintenance line does not acquire this default change.
+
+## Unsupported combinations
 
 | Combination / practice | Status | Why |
 | --- | --- | --- |
-| MCP SDK `<2.0.0` as the Scribe server runtime | Unsupported | The 2.13.0 runtime dependency supports MCP SDK major 2 only. |
-| Automatic fallback from a failed modern request to legacy mode | Unsupported | Legacy selection must be explicit and source-owned; auth, transport, protocol, and capability failures fail closed. |
-| Legacy clients other than `mcp==1.26.0` / protocol `2025-11-25` | Not signed off | This migration preserves only the named compatibility lane. |
+| MCP SDK `<2.0.0` as the Scribe server runtime | Unsupported | The current dependency accepts SDK 2.x; release verification uses the latest stable SDK. |
+| Automatic fallback from a failed modern request to legacy mode | Unsupported | Auth, transport, protocol, and capability failures fail closed; there is no supported legacy mode. |
+| Clients using protocol revisions older than `2026-07-28` | Unsupported | The 3.x release targets the current wire protocol. Earlier named compatibility lanes are historical and superseded. |
 | Public onboarding that treats remote/client as generally available | Unsupported | Public release profile fail-closes remote/client startup. |
 | Standalone SQLite presented as default runtime posture | Unsupported | Runtime settings default storage backend to Postgres. |
 | Guidance that depends on repo-local/operator files as public setup | Unsupported | Those files are local convenience, not release contract. |
-| Unversioned or mixed versions outside the baseline above | Not signed off | This baseline only certifies the combinations listed in this document. |
+| SDK versions outside `mcp>=2.0.0,<3.0` | Unsupported | The dependency range and wire policy are separate; compatible SDK 2.x versions are allowed, while verification targets the latest stable SDK. |
 
 ## What is shipped
 
@@ -129,4 +127,4 @@ One behavior change is worth naming explicitly because it changes a return value
 
 - Public install/setup guidance must map to shipped package files and tracked docs.
 - Local/operator overlays are never release truth.
-- This baseline is intentionally conservative: compatibility first, breaking changes deferred.
+- The historical SDK baseline remains conservative; the package-major Doctor migration is documented above.

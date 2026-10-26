@@ -43,57 +43,29 @@ Scribe turns that into a tighter loop:
 - CLI helpers for bootstrap, MCP server startup, migrations, backups, metrics, and Codex projection
 - host-facing tool discoverability and onboarding skills (`/scribe-integration`, `/scribe-onboarding`) so agents can learn the tool surface in place
 
-## Maintenance candidate
+## Current release highlights
 
-Maintenance candidate: `scribe-mcp 2.15.34` · Updated: `2026-10-25`
+Development candidate: `scribe-mcp 3.3.29` · Updated: `2026-10-26`
 
-This candidate combines the reviewed maintenance fixes:
+This branch prepares the next major Scribe release. It carries the maintenance fixes for durable project bindings, SQLite startup and cleanup, atomic entry/metric writes, literal document content and genuine regression checks. Agent/session tests now assert isolation, rejected sessions, heartbeat and expiry cleanup instead of printing success.
 
-- Entry and metric writes are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; failed metric writes roll back the entry. Cancellation retains SQLite worker and connection ownership through cleanup.
-- Project bindings survive identity and activity heartbeats; first binding and cross-repository rebinding support immediate reads without a configured default repository.
-- SQLite startup keeps its existing WAL connection attached through initialization, preserving transactions and durability settings. Cleanup retains the original activation error or cancellation.
-- Identity and reconnect tests use real disposable storage and fail on incorrect results, with separate checks proving their assertions detect bad observations.
-- Managed documents retain literal fenced-code whitespace and JSON comparison operators; recent-log ordering honors the caller's priority flag.
-- Releases build from an isolated tracked-source snapshot, preserve existing artifacts, validate distributions and include nested regression tests.
+The development candidate still needs binding-context, default-output, schema and background integration. The pure preview/full projector is not yet active, and the global 2 KiB default-response limit is not yet certified. See [release status and history](docs/RELEASE_SURFACE.md) and the [compatibility matrix](docs/COMPATIBILITY_MATRIX.md) for verification and migration limits.
 
-Public MCP arguments, storage APIs, schemas, runtime defaults and the SDK support range (`mcp>=2.0.0,<3.0`) are retained. The modern wire default is `2026-07-28`; SDK versions and wire revisions are separate contracts.
+### Current MCP support policy
 
-The components passed independent behavioral review: 199 heartbeat checks, 60 SQLite startup checks, 15 identity-test checks and 79 distinct metrics checks across SQLite and PostgreSQL. The metrics repair also passed independent quality review. Combined-candidate, installed-package and publication verification is still pending. Deployed processes retain their loaded version until upgraded through the host's normal lifecycle; component checks alone do not certify every retained client.
+The 3.x release targets **MCP protocol `2026-07-28` and the latest Python SDK**, currently `2.3.0`. The dependency range is `mcp>=2.0.0,<3.0`; compatible SDK 2.x versions are not excluded solely by minor version. Development and release verification focus on the latest SDK, without an older-version certification promise. SDK and wire revisions are distinct contracts.
 
-See the [release surface](docs/RELEASE_SURFACE.md) and [compatibility matrix](docs/COMPATIBILITY_MATRIX.md) for history and deployment limits. Explicit public-profile stdio still requires trusted runtime identity and separate verification. The broader binding API/schema, receipt, document engine and global default-output redesign remain on the separate 3.x line.
+| Client path | Transport | Support |
+| --- | --- | --- |
+| Current local clients | stdio through `scribe-server` | Supported release target |
+| Current HTTP clients | Streamable HTTP at `/mcp` | Supported release target, with Origin and bearer-auth checks |
+| Older MCP clients | SDK 1.x, initialization handshake, paired `/sse` and `/messages/` | Unsupported |
 
-### MCP v2 default and compatibility boundary
+SSE event streaming inside current Streamable HTTP remains supported. Application project bindings are distinct from MCP protocol sessions.
 
-| Client path | Transport and endpoint | Protocol | Policy |
-| --- | --- | --- | --- |
-| Modern default | stdio through `scribe-server` | `2026-07-28` | Default local host path |
-| Modern HTTP | Streamable HTTP at `/mcp` | `2026-07-28` | Requires the same Origin and bearer-auth checks as every protected HTTP route |
-| Named legacy | handshake stdio, or HTTP+SSE at `/sse` with posts to `/messages/` | `2025-11-25` with known client `mcp==1.26.0` | Explicit compatibility only; never selected because a modern call failed |
+Obsolete compatibility code is being removed from this development branch. The 3.x release is gated on rejecting old requests before application effects, retiring paired legacy endpoints and passing current-protocol conformance checks. Older MCP versions are unsupported.
 
-The static HTTP bearer is an **operator-root credential**. It is suitable only for an operator-controlled trust boundary; it is not scoped multi-user authorization. All HTTP MCP routes except `/health` require authentication, and modern `/mcp` and legacy `/sse` plus `/messages/` enforce the same Origin and authorization policy. Authentication, protocol, transport, capability, timeout, and malformed-request failures fail closed with no silent downgrade.
-
-Legacy HTTP session continuity is limited to the current single-worker, sticky-process model. Unknown-session or wrong-worker traffic fails before tool dispatch. Operators should retire the legacy lane only after telemetry shows no named legacy use and compatibility, schema/result parity, auth/Origin, and client migration gates pass. Rollback restores the prior dependency, adapter, and default-policy sources from version control; it never reinterprets modern failures as legacy. See the [compatibility matrix](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/COMPATIBILITY_MATRIX.md) and [remote client contract](https://github.com/CortaLabs/scribe_mcp/blob/main/docs/REMOTE_CLIENT.md).
-
-The release also rejects hollow `append_entry` payloads before any write, fixes readable `read_recent(compact=True)` output, adds clearer internal repo-local plugin diagnostics in `scribe_doctor`, improves `manage_docs` registration/drift diagnostics, adds advisory reminder guidance fields, accepts bounded single-managed-doc Codex-style `manage_docs(apply_patch)` input, and carries the public-safe affected-row inventory primitive plus the tool-discoverability, onboarding, install-ergonomics, runtime-honesty, registration, lean-plugin, and cleanbuild repairs. Repo-local plugins remain diagnostics/probe-only for trusted local runtimes, require explicit opt-in such as `SCRIBE_TRUST_REPO_PLUGINS=1` plus restart/reinitialization, and are not enabled by production defaults. Reminder hook/context injection remains security-blocked future work:
-
-- A new read-only affected-row referential inventory preflight is available through MCP as `scribe_affected_row_referential_inventory_readonly_public_safe` and through the CLI as `scribe affected-row-inventory preflight --dry-run`. It inspects SQLite/Postgres project-row repair readiness using public-safe labels, booleans, and aggregate buckets only; it fails closed on unproven target binding, ambiguous selected context, incomplete reference inventory, low-cardinality/private-output risk, missing storage backend, and mutation-shaped invocations.
-- `manage_docs` now auto-registers existing physical managed docs for targeted actions instead of rejecting them as `DOC_NOT_FOUND` when the registry is stale; path-like registration also preserves existing basename aliases.
-- Clean-room plugin sync now works from a checkout that does not have ignored generated `.claude/skills` or `.codex/skills` trees, which fixes the GitHub cleanbuild/publish blocker.
-- The shipped plugin/wheel surface is intentionally lean: only `/scribe-integration` and `/scribe-onboarding` ship in the Claude/Codex plugin bundles. Legacy broad-form `scribe-mcp-usage` content is not shipped; `scribe-integration`, `scribe-onboarding`, and repo docs cover the supported usage surface.
-- Codex projection now projects every shipped Codex skill from the packaged plugin bundle, and clean-room install proof verifies the wheel install, runtime version, bundled skills, and projection output.
-- Completed bug/security reports whose managed frontmatter status is `complete` are treated as terminal by the shared case-status filter.
-- Host-facing `manage_docs` now advertises a live `action` enum and documented `metadata` keys in its MCP input schema (with `additionalProperties` preserved), so an MCP host can teach an agent about a mistyped action instead of failing silently.
-- `append_entry` and `health_check` tool descriptions were rewritten, and the `manage_docs`/`read_file` docstrings now surface the full governance action set plus `read_file` scan flags.
-- A completed `/scribe-integration` skill (the full ~28-tool surface) and a new `/scribe-onboarding` install skill ship in the package; new-project reminders now point to both.
-- The install story no longer requires a clone: the Codex/Claude plugin and onboarding bundles are vendored into the wheel via package-data, and `resolve_codex_plugin_root()` prefers the packaged bundle, so `pip install scribe-mcp` followed by `scribe install --commit --yes --project-codex` projects them with no checkout required. The repo `plugins/` tree remains the canonical development and marketplace fallback.
-- `query_entries` with a non-project `search_scope` now returns an honest `ok: false` teaching error instead of a silent no-op (a non-breaking behavior change — project-scoped behavior is unchanged); emergency and degraded paths likewise return honest `ok: false` envelopes instead of fabricated rows.
-- `read_file` gained real pagination slicing, a single-pass AST structure visitor, and SQL-pushdown of the message predicate on both SQLite and Postgres — the headline performance fix, filtering in the database instead of after the fact.
-- The reminder engine is wired live: 16 previously-dead conditions, category-keyed priority sorting, and warm-rebind refresh with configurable knobs.
-- Managed-doc frontmatter no longer clobbers a user-set `title` (BUG-2026-06-17-0002).
-- A plain `pip install scribe-mcp` is Postgres-ready out of the box: `asyncpg` is a core dependency and Postgres is the default runtime posture. SQLite standalone is the explicit opt-out (`SCRIBE_MODE=standalone` + `SCRIBE_STORAGE_BACKEND=sqlite`). The `[postgres]` extra remains only as a harmless no-op alias for anyone who prefers to make the Postgres intent visible in their dependency list.
-- Maintainability: the dead cross-project search engine in `query_entries` (-728 lines) and dead self-healing in the error handler were removed.
-
-This builds on the 2.7.x runtime work — queryable tool-runtime telemetry, `append_entry` phase timing, fast same-binding `set_project` reuse, agent-ready `quality_check` output with ranked `agent_actions`, Scribe-owned write barriers around mutation surfaces, and the furnace-project quality-check O(N^2) elimination from 2.7.2. Release governance still treats missing current-version changelog coverage as blocking quality truth via `SCF_CHANGELOG_CURRENT_VERSION_MISSING`.
+The static HTTP bearer is an **operator-root credential** for an operator-controlled boundary, not scoped multi-user authorization. Origin, authorization, body-limit and timeout protections remain required. See the [remote client contract](docs/REMOTE_CLIENT.md) for deployment constraints.
 
 ## What makes Scribe different
 

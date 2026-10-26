@@ -12,6 +12,7 @@ Tests comprehensive status reporting including:
 """
 
 import pytest
+import hashlib
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
@@ -26,66 +27,84 @@ from scribe_mcp.tools.get_project import (
 )
 
 
+from test_get_project_integration import reader_environment
+
+
+async def _seed_sitrep_entries(env, messages):
+    for index, message in enumerate(messages):
+        raw = f"[info] {message}"
+        await env.storage.insert_entry(
+            entry_id=f"sitrep-{index}", project=env.record,
+            ts=datetime(2026, 1, 6, 12, index, tzinfo=timezone.utc),
+            emoji="info", agent=env.agent, message=message, meta={},
+            raw_line=raw, sha256=hashlib.sha256(raw.encode()).hexdigest(),
+            log_type="progress",
+        )
+
+
 class TestGetProjectStateDetection:
     """Test state detection integration in get_project."""
 
     @pytest.mark.asyncio
-    async def test_get_project_includes_state_detection(self):
-        """Verify get_project integrates detect_project_state correctly."""
-        # Mock project data with docs metadata
-        project_data = {
-            "name": "test_project",
-            "meta": {
-                "docs": {
-                    "baseline_hashes": {"architecture": "abc123"},
-                    "current_hashes": {"architecture": "def456"},
-                    "flags": {"architecture_modified": True}
-                }
-            }
-        }
+    @pytest.mark.regression
+    async def test_existing_rotated_project_without_hashes_is_not_new(self, reader_environment):
+        """An empty canonical log after rotation retains existing-project state."""
+        env = reader_environment
+        log = Path(env.record.progress_log_path)
+        log.write_text("# Progress Log\n[info] Archived project activity\n")
+        archive = log.with_suffix(".archive.md")
+        log.rename(archive)
+        log.write_text("# Progress Log\n")
+        sibling_log = env.root / "SIBLING_LOG.md"
+        sibling_log.write_text("# Sibling Progress Log\n")
+        sibling = await env.storage.upsert_project(
+            name="sibling", repo_root=str(env.root), progress_log_path=str(sibling_log),
+        )
 
-        with patch('scribe_mcp.tools.get_project._GET_PROJECT_HELPER') as mock_helper, \
-             patch('scribe_mcp.tools.get_project._PROJECT_REGISTRY') as mock_registry, \
-             patch('scribe_mcp.tools.get_project.server_module') as mock_server, \
-             patch('scribe_mcp.tools.get_project.detect_project_state') as mock_detect:
+        async def snapshot():
+            return (
+                await env.snapshot(),
+                await env.storage.fetch_project("sibling", repo_root=str(env.root), project_key=sibling.project_key),
+                await env.storage.count_entries(sibling),
+                sibling_log.read_bytes(), archive.read_bytes(),
+            )
 
-            # Setup mocks
-            mock_context = Mock()
-            mock_context.project = project_data
-            mock_context.recent_projects = []
-            mock_context.reminders = []
-            # build_resolution_metadata reads these attrs directly; set real values
-            # so list(context.fallback_chain or []) doesn't hit TypeError on a Mock.
-            mock_context.resolution_source = "direct"
-            mock_context.fallback_used = False
-            mock_context.fallback_chain = None
-            mock_context.denied_fallback_attempts = None
-            mock_helper.prepare_context = AsyncMock(return_value=mock_context)
-            mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
+        before = await snapshot()
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
+        assert result["ok"] is True
+        assert result["project"]["project_key"] == env.record.project_key
+        assert result["project"]["progress_log"] == str(log)
+        assert not result["project"].get("meta", {}).get("docs", {}).get("baseline_hashes")
+        assert result["entry_count"] == 0
+        assert await snapshot() == before
+        assert result["state"] == "EXISTING_LEGACY"
 
-            # Mock server_module components
-            mock_server.state_manager.record_tool = AsyncMock(return_value={})
-            mock_server.state_manager.load = AsyncMock(return_value=Mock(get_project=Mock(return_value=project_data)))
-            mock_server.get_agent_identity = Mock(return_value=None)
-            mock_server.get_execution_context = Mock(side_effect=Exception("Not in execution context"))
-
-            backend_mock = Mock()
-            backend_mock.count_entries = AsyncMock(return_value=15)
-            mock_server.storage_backend = backend_mock
-
-            mock_detect.return_value = ("MODIFIED", "✏️ Modified: architecture (15 entries)")
-
-            # Call get_project with structured format
-            result = await get_project(project="test_project", format="structured")
-
-            # Verify detect_project_state was called
-            mock_detect.assert_called_once()
-            assert mock_detect.call_args[0][1] == 15  # entry_count
-
-            # Verify state in response
-            assert result["state"] == "MODIFIED"
-            assert result["sitrep_message"] == "✏️ Modified: architecture (15 entries)"
-            assert result["entry_count"] == 15
+    @pytest.mark.asyncio
+    @pytest.mark.regression
+    async def test_get_project_includes_state_detection(self, reader_environment, monkeypatch):
+        """SITREP detection receives the verified target and its actual entry count."""
+        env = reader_environment
+        await _seed_sitrep_entries(env, [f"Entry {i}" for i in range(15)])
+        before = await env.snapshot()
+        detect = Mock(return_value=("MODIFIED", "Modified: architecture (15 entries)"))
+        monkeypatch.setattr("scribe_mcp.tools.get_project.detect_project_state", detect)
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
+        detect.assert_called_once()
+        assert detect.call_args.args[0]["project_key"] == env.record.project_key
+        assert detect.call_args.args[0]["root"] == str(env.root)
+        assert detect.call_args.args[1] == 15
+        assert result["state"] == "MODIFIED"
+        assert result["sitrep_message"] == "Modified: architecture (15 entries)"
+        assert result["entry_count"] == 15
+        assert await env.snapshot() == before
 
 
 class TestRecentEntriesDisplay:
@@ -117,56 +136,28 @@ class TestRecentEntriesDisplay:
             Path(temp_path).unlink()
 
     @pytest.mark.asyncio
-    async def test_get_project_includes_recent_entries(self):
-        """Verify get_project includes 2-5 recent entries."""
-        project_data = {
-            "name": "test_project",
-            "progress_log": "/fake/path/PROGRESS_LOG.md",
-            "meta": {"docs": {}}
-        }
-
-        recent_entries = [
-            {"emoji": "ℹ️", "timestamp": "2026-01-06 12:00:00 UTC", "agent": "Agent1", "message": "Entry 1"},
-            {"emoji": "✅", "timestamp": "2026-01-06 12:01:00 UTC", "agent": "Agent2", "message": "Entry 2"},
-            {"emoji": "🐞", "timestamp": "2026-01-06 12:02:00 UTC", "agent": "Agent3", "message": "Entry 3"}
-        ]
-
-        with patch('scribe_mcp.tools.get_project._GET_PROJECT_HELPER') as mock_helper, \
-             patch('scribe_mcp.tools.get_project._PROJECT_REGISTRY') as mock_registry, \
-             patch('scribe_mcp.tools.get_project.server_module') as mock_server, \
-             patch('scribe_mcp.tools.get_project._read_recent_progress_entries') as mock_read:
-
-            mock_context = Mock()
-            mock_context.project = project_data
-            mock_context.recent_projects = []
-            mock_context.reminders = []
-            # build_resolution_metadata reads these attrs directly; set real values
-            # so list(context.fallback_chain or []) doesn't raise TypeError.
-            mock_context.resolution_source = "direct"
-            mock_context.fallback_used = False
-            mock_context.fallback_chain = None
-            mock_context.denied_fallback_attempts = None
-            mock_helper.prepare_context = AsyncMock(return_value=mock_context)
-            mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
-
-            # Mock server_module components
-            mock_server.state_manager.record_tool = AsyncMock(return_value={})
-            mock_server.state_manager.load = AsyncMock(return_value=Mock(get_project=Mock(return_value=project_data)))
-            mock_server.get_agent_identity = Mock(return_value=None)
-            mock_server.get_execution_context = Mock(side_effect=Exception("Not in execution context"))
-
-            backend_mock = Mock()
-            backend_mock.count_entries = AsyncMock(return_value=3)
-            mock_server.storage_backend = backend_mock
-
-            mock_read.return_value = recent_entries
-
-            result = await get_project(project="test_project", format="structured")
-
-            # Verify recent entries included
-            assert "recent_entries" in result
-            assert len(result["recent_entries"]) == 3
-            assert result["recent_entries"][0]["message"] == "Entry 1"
+    @pytest.mark.regression
+    async def test_get_project_includes_recent_entries(self, reader_environment):
+        """The real verified target supplies its recent entries without truncation."""
+        env = reader_environment
+        messages = ["Entry 1", "Entry 2", "Entry 3 " + "complete message " * 20]
+        await _seed_sitrep_entries(env, messages)
+        expected = await env.storage.fetch_recent_entries(
+            project=env.record, limit=5,
+            filters={"log_type": ["progress", "bugs", "bug", "security"]},
+        )
+        before = await env.snapshot()
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
+        assert result["project"]["project_key"] == env.record.project_key
+        assert len(result["recent_entries"]) == 3
+        assert [row["message"] for row in result["recent_entries"]] == [row["message"] for row in expected]
+        assert {row["message"] for row in result["recent_entries"]} == set(messages)
+        assert all({"emoji", "timestamp", "agent", "message"} <= row.keys() for row in result["recent_entries"])
+        assert await env.snapshot() == before
 
 
 class TestDocCountsAndList:
@@ -234,59 +225,30 @@ class TestTimestamps:
     """Test timestamp inclusion."""
 
     @pytest.mark.asyncio
-    async def test_get_project_includes_timestamps(self):
-        """Verify get_project includes created_at, last_entry_at, current_time."""
-        project_data = {
-            "name": "test_project",
-            "meta": {"docs": {}}
-        }
-
-        with patch('scribe_mcp.tools.get_project._GET_PROJECT_HELPER') as mock_helper, \
-             patch('scribe_mcp.tools.get_project._PROJECT_REGISTRY') as mock_registry, \
-             patch('scribe_mcp.tools.get_project.server_module') as mock_server, \
-             patch('scribe_mcp.tools.get_project.detect_project_state') as mock_detect, \
-             patch('scribe_mcp.tools.get_project._compute_doc_status') as mock_doc_status:
-
-            mock_context = Mock()
-            mock_context.project = project_data
-            mock_context.recent_projects = []
-            mock_context.reminders = []
-            # build_resolution_metadata reads these attrs directly; set real values
-            # so list(context.fallback_chain or []) doesn't raise TypeError.
-            mock_context.resolution_source = "direct"
-            mock_context.fallback_used = False
-            mock_context.fallback_chain = None
-            mock_context.denied_fallback_attempts = None
-            mock_helper.prepare_context = AsyncMock(return_value=mock_context)
-            mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
-
-            # Mock server_module components
-            mock_server.state_manager.record_tool = AsyncMock(return_value={})
-            mock_server.state_manager.load = AsyncMock(return_value=Mock(get_project=Mock(return_value=project_data)))
-            mock_server.get_agent_identity = Mock(return_value=None)
-            mock_server.get_execution_context = Mock(side_effect=Exception("Not in execution context"))
-
-            backend_mock = Mock()
-            backend_mock.count_entries = AsyncMock(return_value=10)
-            mock_server.storage_backend = backend_mock
-
-            # Mock registry info with timestamps and meta
-            mock_info = Mock()
-            mock_info.created_at = datetime(2025, 12, 15, 14, 23, 0, tzinfo=timezone.utc)
-            mock_info.last_entry_at = datetime(2026, 1, 6, 13, 41, 0, tzinfo=timezone.utc)
-            mock_info.meta = {"docs": {}}  # Empty docs metadata
-            mock_registry.get_project.return_value = mock_info
-
-            mock_detect.return_value = ("NEW", "🆕 New project initialized")
-            mock_doc_status.return_value = {"total_docs": 4, "base_docs": 4, "custom_docs": 0, "doc_list": []}
-
-            result = await get_project(project="test_project", format="structured")
-
-            # Verify timestamps field exists in result
-            # Note: Due to complex mocking requirements, we verify structure rather than exact content
-            assert "timestamps" in result, "timestamps field should be present in structured format"
-            # Verify it's a dict (may be empty in test due to mocking complexity, but structure is correct)
-            assert isinstance(result["timestamps"], dict), "timestamps should be a dictionary"
+    @pytest.mark.regression
+    async def test_get_project_includes_timestamps(self, reader_environment, monkeypatch):
+        """Timestamp structure survives without borrowing label-only registry metadata."""
+        env = reader_environment
+        registry = Mock()
+        registry.get_project.return_value = Mock(
+            project_key="foreign-key", repo_root="/foreign",
+            created_at=datetime(2025, 12, 15, tzinfo=timezone.utc),
+            last_entry_at=datetime(2026, 1, 6, tzinfo=timezone.utc), meta={},
+        )
+        monkeypatch.setattr("scribe_mcp.tools.get_project._PROJECT_REGISTRY", registry)
+        before = await env.snapshot()
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
+        assert result["project"]["project_key"] == env.record.project_key
+        assert isinstance(result["timestamps"], dict)
+        assert {"created_at", "last_entry_at", "current_time"} <= result["timestamps"].keys()
+        assert result["timestamps"]["created_at"] is None
+        assert result["timestamps"]["last_entry_at"] is None
+        assert datetime.fromisoformat(result["timestamps"]["current_time"]).tzinfo is not None
+        assert await env.snapshot() == before
 
 
 class TestReadableFormat:
@@ -348,54 +310,24 @@ class TestJSONFormat:
     """Test JSON format with pagination."""
 
     @pytest.mark.asyncio
-    async def test_get_project_json_format_includes_pagination(self):
-        """Verify JSON format includes pagination info."""
-        project_data = {
-            "name": "test_project",
-            "progress_log": "/fake/path/PROGRESS_LOG.md",
-            "meta": {"docs": {}}
-        }
-
-        with patch('scribe_mcp.tools.get_project._GET_PROJECT_HELPER') as mock_helper, \
-             patch('scribe_mcp.tools.get_project._PROJECT_REGISTRY') as mock_registry, \
-             patch('scribe_mcp.tools.get_project.server_module') as mock_server, \
-             patch('scribe_mcp.tools.get_project._read_recent_progress_entries') as mock_read, \
-             patch('scribe_mcp.tools.get_project._compute_doc_status') as mock_doc_status:
-
-            mock_context = Mock()
-            mock_context.project = project_data
-            mock_context.recent_projects = []
-            mock_context.reminders = []
-            # Give resolution fields concrete values (not bare Mocks) so the
-            # build_resolution_metadata list(...) calls don't raise TypeError.
-            mock_context.resolution_source = "direct"
-            mock_context.fallback_used = False
-            mock_context.fallback_chain = None
-            mock_context.denied_fallback_attempts = None
-            mock_context.compatibility_usage = None
-            mock_helper.prepare_context = AsyncMock(return_value=mock_context)
-            mock_helper.apply_context_payload = Mock(side_effect=lambda x, _: x)
-
-            # Mock server_module components
-            mock_server.state_manager.record_tool = AsyncMock(return_value={})
-            mock_server.state_manager.load = AsyncMock(return_value=Mock(get_project=Mock(return_value=project_data)))
-            mock_server.get_agent_identity = Mock(return_value=None)
-            mock_server.get_execution_context = Mock(side_effect=Exception("Not in execution context"))
-
-            backend_mock = Mock()
-            backend_mock.count_entries = AsyncMock(return_value=5)
-            mock_server.storage_backend = backend_mock
-
-            mock_read.return_value = [{"message": f"Entry {i}"} for i in range(5)]
-            mock_doc_status.return_value = {"total_docs": 4, "base_docs": 4, "custom_docs": 0, "doc_list": []}
-
-            result = await get_project(project="test_project", format="json")
-
-            # Verify pagination
-            assert "pagination" in result
-            assert result["pagination"]["page"] == 1
-            assert result["pagination"]["page_size"] == 5
-            assert result["pagination"]["total_count"] == 5  # PaginationInfo uses total_count not total
+    @pytest.mark.regression
+    async def test_get_project_json_format_includes_pagination(self, reader_environment):
+        """JSON pagination describes real entries under current canonical authority."""
+        env = reader_environment
+        await _seed_sitrep_entries(env, [f"Entry {i}" for i in range(5)])
+        before = await env.snapshot()
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="json")
+        finally:
+            env.router.reset(token)
+        assert result["ok"] is True
+        assert result["project"]["project_key"] == env.record.project_key
+        assert result["pagination"]["page"] == 1
+        assert result["pagination"]["page_size"] == 5
+        assert result["pagination"]["total_count"] == 5
+        assert len(result["recent_entries"]) == 5
+        assert await env.snapshot() == before
 
 
 class TestInfrastructureReuse:

@@ -719,7 +719,8 @@ async def _apply_doc_change_unlocked(
 
                 if patch_source_hash and current_hash != patch_source_hash:
                     raise DocumentOperationError(
-                        "PATCH_STALE_SOURCE: patch_source_hash does not match current file content",
+                        "PATCH_STALE_SOURCE: patch_source_hash does not match the current document body "
+                        "(excluding YAML frontmatter); use extra.patch_source_hash from a fresh apply_patch dry run",
                         extra={"precondition_failed": "SOURCE_HASH_MISMATCH"},
                     )
 
@@ -1803,7 +1804,23 @@ def _associated_heading_start(text: str, marker_index: int) -> Optional[int]:
     return None
 
 
-def _section_body_span(text: str, section: Optional[str]) -> Optional[tuple[int, int]]:
+def _next_section_boundary(
+    text: str, start: int, anchor_matches: Sequence[re.Match[str]],
+) -> tuple[int, bool]:
+    """Find the next real anchor's heading, preserving structural separators."""
+    section_end = len(text)
+    for match in anchor_matches:
+        if match.start() >= start:
+            heading_start = _associated_heading_start(text, match.start())
+            section_end = heading_start if heading_start is not None else match.start()
+            break
+    return _pull_back_trailing_separator(text, start, section_end)
+
+
+def _section_body_span(
+    text: str, section: Optional[str], *,
+    anchor_matches: Optional[Sequence[re.Match[str]]] = None,
+) -> Optional[tuple[int, int]]:
     """Return the ``(start, end)`` offsets of a section's editable body.
 
     The span matches exactly the region ``_replace_section`` overwrites: from
@@ -1812,23 +1829,23 @@ def _section_body_span(text: str, section: Optional[str]) -> Optional[tuple[int,
     back so it is not consumed. Returns ``None`` when the anchor is missing or
     appears more than once (no single unambiguous body).
     """
+    # Matches belong only to this unchanged input, shared within one operation.
+    if anchor_matches is None:
+        anchor_matches = list(doc_errors.document_anchor_matches(text))
     marker = SECTION_MARKER.format(section=section)
-    idx = text.find(marker)
-    if idx == -1 or text.find(marker, idx + 1) != -1:
+    matches = [
+        match for match in anchor_matches
+        if match.group() == marker
+    ]
+    if len(matches) != 1:
         return None
+    idx = matches[0].start()
     start = idx + len(marker)
     if start < len(text) and text[start] == "\r":
         start += 1
     if start < len(text) and text[start] == "\n":
         start += 1
-    next_marker = text.find("<!-- ID:", start)
-    section_end = len(text)
-    if next_marker != -1:
-        next_heading_start = _associated_heading_start(text, next_marker)
-        section_end = (
-            next_heading_start if next_heading_start is not None else next_marker
-        )
-    section_end, _ = _pull_back_trailing_separator(text, start, section_end)
+    section_end, _ = _next_section_boundary(text, start, anchor_matches)
     return start, section_end
 
 
@@ -1869,7 +1886,11 @@ def _managed_anchor_snapshot(
             extra={"precondition_failed": "ANCHOR_MISSING"},
         )
     marker = SECTION_MARKER.format(section=anchor_id)
-    matches = list(re.finditer(re.escape(marker), text))
+    anchor_matches = list(doc_errors.document_anchor_matches(text))
+    matches = [
+        match for match in anchor_matches
+        if match.group() == marker
+    ]
     if not matches:
         raise AnchorCASDenied(
             f"ANCHOR_MISSING: '{anchor_id}' was not found",
@@ -1913,7 +1934,7 @@ def _managed_anchor_snapshot(
         1
         for match in re.finditer(r"(?m)^[ \t]*#{1,6}[ \t]+\S.*$", text[:heading_start])
     ) + 1
-    body_span = _section_body_span(text, anchor_id)
+    body_span = _section_body_span(text, anchor_id, anchor_matches=anchor_matches)
     if body_span is None:
         raise AnchorCASDenied(
             f"ANCHOR_MALFORMED: unable to resolve block for '{anchor_id}'",
@@ -1969,6 +1990,7 @@ def _replace_section(
     info: Optional[Dict[str, Any]] = None,
 ) -> str:
     marker = SECTION_MARKER.format(section=section)
+    anchor_matches = list(doc_errors.document_anchor_matches(text))
 
     # Additive mode: when the caller opts in via ``preserve_authored`` and the
     # target section already holds authored content, append the new block to
@@ -1976,7 +1998,8 @@ def _replace_section(
     # (structure only) still replaces as normal. This is what makes fix-linking
     # non-destructive to a report's authored prose/evidence.
     if preserve_authored and content.strip():
-        existing_body = _extract_section_body(text, section)
+        body_span = _section_body_span(text, section, anchor_matches=anchor_matches)
+        existing_body = text[body_span[0] : body_span[1]] if body_span is not None else None
         if existing_body is not None and _section_body_has_authored_content(
             existing_body
         ):
@@ -2008,8 +2031,11 @@ def _replace_section(
             after_marker = content_stripped[marker_pos + len(marker):]
             content = after_marker.lstrip('\n\r')
 
-    idx = text.find(marker)
-    if idx == -1:
+    matches = [
+        match for match in anchor_matches
+        if match.group() == marker
+    ]
+    if not matches:
         if not allow_append:
             available = doc_errors.document_anchor_ids(text)
             near = doc_errors.find_near_misses(str(section or ""), available)
@@ -2034,7 +2060,7 @@ def _replace_section(
         if prefix:
             prefix = prefix + "\n\n"
         return prefix + marker + "\n" + content.strip() + "\n"
-    if text.find(marker, idx + 1) != -1:
+    if len(matches) != 1:
         raise DocumentOperationError(
             f"SECTION_ANCHOR_AMBIGUOUS: '{section}' appears multiple times; resolve duplicates first "
             "or use replace_range/apply_patch for explicit boundaries",
@@ -2047,6 +2073,7 @@ def _replace_section(
                 alternatives=["replace_range", "apply_patch"],
             ),
         )
+    idx = matches[0].start()
     section_start = idx
     if replacement_heading_prefix:
         heading_start = _associated_heading_start(text, idx)
@@ -2077,13 +2104,7 @@ def _replace_section(
         start += 1
     if start < len(text) and text[start] == "\n":
         start += 1
-    next_marker = text.find("<!-- ID:", start)
-    section_end = len(text)
-    if next_marker != -1:
-        next_heading_start = _associated_heading_start(text, next_marker)
-        section_end = next_heading_start if next_heading_start is not None else next_marker
-
-    section_end, preserved_separator = _pull_back_trailing_separator(text, start, section_end)
+    section_end, preserved_separator = _next_section_boundary(text, start, anchor_matches)
     if preserved_separator and info is not None:
         info["preserved_separator"] = True
 
@@ -2191,16 +2212,21 @@ def _replace_text_with_scope(
             if not section_id:
                 raise DocumentOperationError("REPLACE_TEXT_SCOPE_INVALID: section id missing")
             marker = SECTION_MARKER.format(section=section_id)
-            idx = text.find(marker)
-            if idx == -1:
+            anchor_matches = list(doc_errors.document_anchor_matches(text))
+            matches = [
+                match for match in anchor_matches
+                if match.group() == marker
+            ]
+            if not matches:
                 raise DocumentOperationError(
                     f"SECTION_ANCHOR_MISSING: '{section_id}' not found in replace_text scope"
                 )
-            if text.find(marker, idx + 1) != -1:
+            if len(matches) != 1:
                 raise DocumentOperationError(
                     f"SECTION_ANCHOR_AMBIGUOUS: '{section_id}' appears multiple times"
                 )
 
+            idx = matches[0].start()
             line_start = text.rfind("\n", 0, idx) + 1
             line_end = text.find("\n", idx)
             if line_end == -1:
@@ -2213,14 +2239,7 @@ def _replace_text_with_scope(
                     start += 1
                 if start < len(text) and text[start] == "\n":
                     start += 1
-                next_marker_match = re.search(
-                    r"(?m)^[ \t]*<!--\s*ID:\s*[^>]+-->\s*$",
-                    text[start:],
-                )
-                if next_marker_match:
-                    next_marker = start + next_marker_match.start()
-                else:
-                    next_marker = len(text)
+                next_marker, _ = _next_section_boundary(text, start, anchor_matches)
                 prefix = text[:start]
                 target_text = text[start:next_marker]
                 suffix = text[next_marker:]
@@ -2334,8 +2353,12 @@ def _append_block(text: str, content: str, section: Optional[str] = None, positi
         return text
 
     marker = SECTION_MARKER.format(section=section)
-    idx = text.find(marker)
-    if idx == -1:
+    anchor_matches = list(doc_errors.document_anchor_matches(text))
+    matches = [
+        match for match in anchor_matches
+        if match.group() == marker
+    ]
+    if not matches:
         doc_logger.warning(
             "Append anchor '%s' missing; creating new block.",
             section,
@@ -2346,12 +2369,11 @@ def _append_block(text: str, content: str, section: Optional[str] = None, positi
             prefix = prefix + "\n\n"
         return prefix + marker + "\n" + normalized + "\n"
 
+    idx = matches[0].start()
     after_marker = idx + len(marker)
     while after_marker < len(text) and text[after_marker] in "\r\n":
         after_marker += 1
-    next_marker = text.find("<!-- ID:", after_marker)
-    if next_marker == -1:
-        next_marker = len(text)
+    section_end, _ = _next_section_boundary(text, after_marker, anchor_matches)
 
     position = position.lower()
     if position == "before":
@@ -2359,7 +2381,7 @@ def _append_block(text: str, content: str, section: Optional[str] = None, positi
     elif position in {"inside", "within", "start"}:
         insertion_point = after_marker
     else:
-        insertion_point = next_marker
+        insertion_point = section_end
 
     prefix = text[:insertion_point]
     suffix = text[insertion_point:]

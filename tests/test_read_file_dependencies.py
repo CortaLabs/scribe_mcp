@@ -253,7 +253,7 @@ class TestReadFileIntegration:
     """Integration tests for read_file with include_dependencies parameter."""
 
     @pytest.mark.asyncio
-    async def test_read_file_with_dependencies_structured(self):
+    async def test_read_file_with_dependencies_structured(self, test_agent):
         """Test read_file returns dependencies in structured mode."""
         from scribe_mcp.tools.read_file import read_file
         from scribe_mcp import server as server_module
@@ -283,7 +283,7 @@ class TestReadFileIntegration:
         try:
             # Test with tools/append_entry.py (known to have imports)
             result = await read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path="src/scribe_mcp/tools/append_entry.py",
                 mode="scan_only",
                 include_dependencies=True,
@@ -315,7 +315,7 @@ class TestReadFileIntegration:
             server_module.router_context_manager.reset(token)
 
     @pytest.mark.asyncio
-    async def test_read_file_with_dependencies_readable(self):
+    async def test_read_file_with_dependencies_readable(self, test_agent):
         """Test read_file displays dependencies in readable mode."""
         from scribe_mcp.tools.read_file import read_file
         from scribe_mcp import server as server_module
@@ -345,7 +345,7 @@ class TestReadFileIntegration:
         try:
             # Test with tools/read_file.py itself (meta!)
             result = await read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path="src/scribe_mcp/tools/read_file.py",
                 mode="scan_only",
                 include_dependencies=True,
@@ -373,7 +373,7 @@ class TestReadFileIntegration:
             server_module.router_context_manager.reset(token)
 
     @pytest.mark.asyncio
-    async def test_read_file_without_dependencies_no_overhead(self):
+    async def test_read_file_without_dependencies_no_overhead(self, test_agent):
         """Test that include_dependencies=False doesn't add dependencies to response."""
         from scribe_mcp.tools.read_file import read_file
         from scribe_mcp import server as server_module
@@ -402,7 +402,7 @@ class TestReadFileIntegration:
         try:
             # Test with include_dependencies=False (default)
             result = await read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path="src/scribe_mcp/tools/append_entry.py",
                 mode="scan_only",
                 include_dependencies=False,
@@ -417,7 +417,7 @@ class TestReadFileIntegration:
 
     @pytest.mark.performance
     @pytest.mark.asyncio
-    async def test_read_file_performance_impact(self):
+    async def test_read_file_performance_impact(self, test_agent):
         """Test that dependency analysis doesn't significantly impact performance."""
         import time
         from scribe_mcp.tools.read_file import read_file
@@ -451,7 +451,7 @@ class TestReadFileIntegration:
             # Baseline: without dependencies
             start_baseline = time.time()
             result_baseline = await read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path=test_path,
                 mode="scan_only",
                 include_dependencies=False,
@@ -462,7 +462,7 @@ class TestReadFileIntegration:
             # With dependencies
             start_deps = time.time()
             result_deps = await read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path=test_path,
                 mode="scan_only",
                 include_dependencies=True,
@@ -817,15 +817,18 @@ class TestResolutionPerformance:
     """Performance tests for Phase 2 resolution overhead."""
 
     @pytest.mark.asyncio
-    async def test_resolution_overhead(self, tmp_path):
-        """Test that resolution adds < 20% overhead."""
+    async def test_resolution_overhead(self, tmp_path, test_agent, record_property):
+        """Time real import resolution and verify the complete read separately."""
         import time
-        from scribe_mcp.tools.read_file import read_file
+        from scribe_mcp.tools.read_file import read_file, _extract_imports
         from scribe_mcp import server as server_module
         from scribe_mcp.shared.execution_context import ExecutionContext, AgentIdentity
         from datetime import datetime, timezone
 
-        # Create test file with imports
+        # The fixture is an authorized, isolated workspace with a real local import.
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "resolution-fixture"\n')
+        local_module = tmp_path / "local_module.py"
+        local_module.write_text("VALUE = 1\n")
         test_file = tmp_path / "test.py"
         test_file.write_text("""
 import os
@@ -834,13 +837,16 @@ from pathlib import Path
 import json
 import datetime
 from typing import Dict, List, Optional
+from .local_module import VALUE
 """)
+        expected_modules = ["os", "sys", "pathlib", "json", "datetime", "typing", "local_module"]
+        expected_types = ["stdlib"] * 6 + ["local"]
 
         # Set execution context
         context = ExecutionContext(
             execution_id="test_exec_perf",
             session_id="test_session_perf",
-            repo_root=REPO_ROOT,
+            repo_root=str(tmp_path),
             mode="interactive",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             affected_dev_projects=[],
@@ -856,21 +862,23 @@ from typing import Dict, List, Optional
         token = server_module.router_context_manager.set_current(context)
 
         try:
-            # Measure multiple runs for more stable timing
+            # Time production extraction/resolution, without response-state I/O.
             runs = 5
             resolution_times = []
 
             for _ in range(runs):
-                # Measure resolution performance
-                start = time.time()
-                await read_file(
-                    agent="test_agent",
-                    path=str(test_file),
-                    mode="scan_only",
-                    include_dependencies=True,
-                    format="structured"
+                start = time.perf_counter()
+                imports = _extract_imports(
+                    ast.parse(test_file.read_text()),
+                    current_file=test_file,
+                    workspace_root=tmp_path,
                 )
-                resolution_times.append(time.time() - start)
+                resolution_times.append(time.perf_counter() - start)
+                assert [item["module"] for item in imports] == expected_modules
+                assert [item["import_type"] for item in imports] == expected_types
+                assert all(item["resolved_path"] is None for item in imports[:6])
+                assert imports[-1]["resolved_path"] == str(local_module)
+                assert imports[-1]["exists"] is True
 
             # Average times
             avg_resolution = sum(resolution_times) / len(resolution_times)
@@ -878,24 +886,28 @@ from typing import Dict, List, Optional
             # Resolution should complete in reasonable time (< 100ms for simple file)
             assert avg_resolution < 0.1, f"Resolution too slow: {avg_resolution:.4f}s"
 
-            # Verify dependencies were extracted with resolution (using real file)
+            # Exercise genuine reminder/state/finalization too, recording its
+            # end-to-end latency separately from the import-resolution ceiling.
+            start = time.perf_counter()
             result = await read_file(
-                agent="test_agent",
-                path="src/scribe_mcp/tools/read_file.py",
+                agent=test_agent,
+                path=str(test_file),
                 mode="scan_only",
                 include_dependencies=True,
                 format="structured"
             )
+            end_to_end = time.perf_counter() - start
+            record_property("import_resolution_samples_seconds", str(resolution_times))
+            record_property("read_file_end_to_end_seconds", end_to_end)
+            print(f"resolution_seconds={resolution_times!r}; read_file_end_to_end_seconds={end_to_end:.6f}")
 
-            # Verify resolution metadata is present
-            if 'dependencies' in result and 'imports' in result['dependencies']:
-                imports = result['dependencies']['imports']
-                assert len(imports) > 0, "Should have found imports in tools/read_file.py"
-                # Check for Phase 2 resolution metadata
-                assert all('import_type' in imp for imp in imports), "All imports should have import_type field"
-                # Verify we have some stdlib imports (os, sys, pathlib, etc.)
-                stdlib_imports = [imp for imp in imports if imp.get('import_type') == 'stdlib']
-                assert len(stdlib_imports) > 0, "Should have detected stdlib imports"
+            assert result["ok"] is True
+            imports = result["dependencies"]["imports"]
+            assert [item["module"] for item in imports] == expected_modules
+            assert [item["import_type"] for item in imports] == expected_types
+            assert all(item["resolved_path"] is None for item in imports[:6])
+            assert imports[-1]["resolved_path"] == str(local_module)
+            assert imports[-1]["exists"] is True
 
         finally:
             server_module.router_context_manager.reset(token)
@@ -907,6 +919,132 @@ from typing import Dict, List, Optional
 
 class TestRepositoryScanning:
     """Test Phase 3 Task 3A: Repository scanner"""
+
+    @pytest.mark.regression
+    def test_scan_prunes_excluded_subtrees(self, tmp_path, monkeypatch):
+        """Excluded trees must cost no directory reads, even without .py files."""
+        import os
+        from scribe_mcp.tools.read_file import _scan_repository_imports
+
+        (tmp_path / "included.py").write_text("import os\nif True:\n    import json")
+        excluded = {'.git', '__pycache__', '.venv', 'node_modules', '.tox',
+                    'venv', 'env', 'build', 'dist', '.eggs'}
+        for name in excluded:
+            nested = tmp_path / name / "deep" / "tree"
+            nested.mkdir(parents=True)
+            (nested / "data.txt").write_text("not Python")
+        package = tmp_path / "package"
+        package.mkdir()
+        (package / "included.py").write_text("from pathlib import Path")
+        (package / "build").mkdir()
+        (package / "build" / "excluded.py").write_text("import sys")
+
+        visited = []
+        original_scandir = os.scandir
+
+        def track_scandir(path):
+            visited.append(Path(path).relative_to(tmp_path))
+            return original_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", track_scandir)
+        assert _scan_repository_imports(tmp_path) == {
+            "included.py": ["os", "json"],
+            "package/included.py": ["pathlib"],
+        }
+        descended = [path for path in visited if excluded.intersection(path.parts)]
+        assert descended == [], f"Entered excluded directories: {descended}"
+
+    @pytest.mark.regression
+    def test_scan_import_walk_skips_expression_subtrees(self, tmp_path, monkeypatch):
+        """Large data expressions cannot contain imports and need no AST walk."""
+        from scribe_mcp.tools.read_file import _scan_repository_imports
+
+        source = """import os, sys
+def outer():
+    import json
+    try:
+        import pathlib
+    except Exception:
+        import typing
+match 1:
+    case 1:
+        import asyncio
+from . import sibling
+""" + "data = [" + ",".join(str(i) for i in range(10000)) + "]\n"
+        (tmp_path / "module.py").write_text(source)
+        # ast.walk supplies the control: preserve its breadth-first import order.
+        control = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                control.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                control.append(node.module)
+        visited = []
+        original_children = ast.iter_child_nodes
+
+        def track_children(node):
+            visited.append(node)
+            return original_children(node)
+
+        monkeypatch.setattr(ast, "iter_child_nodes", track_children)
+        assert _scan_repository_imports(tmp_path) == {"module.py": control}
+        assert len(visited) < 100, f"Walked {len(visited)} AST nodes for imports"
+
+    @pytest.mark.regression
+    def test_scan_preserves_symlinks_and_candidate_limit(self, tmp_path):
+        """Keep file links, do not follow directory links, and cap candidates."""
+        from scribe_mcp.tools.read_file import _scan_repository_imports
+
+        (tmp_path / "valid.py").write_text("import os")
+        (tmp_path / "linked.py").symlink_to(tmp_path / "valid.py")
+        package = tmp_path / "package"
+        package.mkdir()
+        (package / "nested.py").write_text("import json")
+        (package / "loop").symlink_to(tmp_path, target_is_directory=True)
+        (tmp_path / "directory.py").mkdir()
+        (tmp_path / "directory.py" / "child.py").write_text("import typing")
+        (tmp_path / "directory_link.py").symlink_to(package, target_is_directory=True)
+        (tmp_path / "broken.py").symlink_to(tmp_path / "missing.py")
+        complete = {
+            "valid.py": ["os"], "linked.py": ["os"],
+            "package/nested.py": ["json"], "directory.py/child.py": ["typing"],
+        }
+        assert _scan_repository_imports(tmp_path) == complete
+        candidates = list(tmp_path.rglob("*.py"))
+        for limit in (0, 1, 2, 3, 4, 5, 20):
+            expected = {
+                str(path.relative_to(tmp_path)): complete[str(path.relative_to(tmp_path))]
+                for path in candidates[:max(1, limit)]
+                if str(path.relative_to(tmp_path)) in complete
+            }
+            assert _scan_repository_imports(tmp_path, max_files=limit) == expected
+
+    @pytest.mark.regression
+    def test_scan_keeps_import_limit_and_read_failures(self, tmp_path, monkeypatch):
+        from scribe_mcp.tools.read_file import _scan_repository_imports
+
+        (tmp_path / "limited.py").write_text(
+            "from . import sibling\n" + "\n".join(f"import module_{i}" for i in range(205))
+        )
+        (tmp_path / "encoding.py").write_bytes(b"\xff")
+        unreadable = tmp_path / "unreadable.py"
+        unreadable.write_text("import hidden")
+        original_read = Path.read_text
+
+        def read_text(path, *args, **kwargs):
+            if path == unreadable:
+                raise PermissionError("unreadable fixture")
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read_text)
+        assert _scan_repository_imports(tmp_path) == {
+            "limited.py": [f"module_{i}" for i in range(199)],
+        }
+        # The existing exclusion also applies when an ancestor is excluded.
+        excluded_root = tmp_path / "build" / "project"
+        excluded_root.mkdir(parents=True)
+        (excluded_root / "module.py").write_text("import os")
+        assert _scan_repository_imports(excluded_root) == {}
 
     def test_scan_repository_basic(self, tmp_path):
         """Test basic repository scanning with simple Python files"""
@@ -1121,7 +1259,7 @@ class TestImpactIntegration:
     """Test Phase 3 Task 3D+3E: Full integration with read_file"""
 
     @pytest.mark.asyncio
-    async def test_read_file_with_impact(self):
+    async def test_read_file_with_impact(self, test_agent):
         """Test read_file with include_impact=True"""
         from scribe_mcp.tools import read_file as read_file_module
         from scribe_mcp import server as server_module
@@ -1150,7 +1288,7 @@ class TestImpactIntegration:
         try:
             # Test on a file that's likely to have importers (storage/sqlite/__init__.py)
             result = await read_file_module.read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path="src/scribe_mcp/storage/sqlite/__init__.py",
                 mode="scan_only",
                 include_dependencies=True,
@@ -1178,7 +1316,7 @@ class TestImpactIntegration:
             server_module.router_context_manager.reset(token)
 
     @pytest.mark.asyncio
-    async def test_include_impact_requires_dependencies(self):
+    async def test_include_impact_requires_dependencies(self, test_agent):
         """Test that include_impact=True requires include_dependencies=True"""
         from scribe_mcp.tools import read_file as read_file_module
         from scribe_mcp import server as server_module
@@ -1206,7 +1344,7 @@ class TestImpactIntegration:
         try:
             # Should fail with include_impact=True but include_dependencies=False
             result = await read_file_module.read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path="storage/sqlite.py",
                 mode="scan_only",
                 include_dependencies=False,
@@ -1533,7 +1671,7 @@ class TestBoundaryIntegration:
     """Test boundary enforcement integration with read_file (Phase 4)."""
 
     @pytest.mark.asyncio
-    async def test_read_file_with_violations(self, tmp_path):
+    async def test_read_file_with_violations(self, tmp_path, test_agent):
         """Test read_file integration with boundary violations."""
         from scribe_mcp.shared.execution_context import ExecutionContext
         from scribe_mcp.tools.read_file import read_file
@@ -1587,7 +1725,7 @@ rules:
 
         try:
             result = await read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path=str(test_file),
                 format="structured",
                 include_dependencies=True
@@ -1603,7 +1741,7 @@ rules:
         assert result["boundary_violations"]["violations"][0]["severity"] == "error"
 
     @pytest.mark.asyncio
-    async def test_read_file_no_violations(self, tmp_path):
+    async def test_read_file_no_violations(self, tmp_path, test_agent):
         """Test read_file with no boundary violations."""
         from scribe_mcp.shared.execution_context import ExecutionContext
         from scribe_mcp.tools.read_file import read_file
@@ -1654,7 +1792,7 @@ rules:
 
         try:
             result = await read_file(
-                agent="test_agent",
+                agent=test_agent,
                 path=str(test_file),
                 format="structured",
                 include_dependencies=True

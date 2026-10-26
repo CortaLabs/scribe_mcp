@@ -120,12 +120,16 @@ any regression, cleanup failure, or mismatch with the ratified contract.
 Rollback is proven without touching the worktree or index:
 
 - read current `pyproject.toml` and confirm `mcp>=2.0.0,<3.0`;
-- read `HEAD:pyproject.toml` into memory and confirm the prior
-  `mcp==1.26.0` dependency;
+- locate a committed legacy baseline in `HEAD` history whose manifest pins
+  `mcp==1.26.0` and whose tree has no adapter; record its immutable
+  `baseline_ref` in the receipt and fail if no qualifying baseline exists;
+- read that baseline's manifest and CLI into memory to confirm the prior
+  dependency and `stdio` transport default;
 - construct an in-memory dependency rollback shadow and confirm the prior
   `mcp==1.26.0` pin replaces the candidate range while the prior transport
   default remains `stdio`;
-- confirm `HEAD` has no `src/scribe_mcp/mcp_adapter.py` while the candidate does;
+- confirm `baseline_ref` has no `src/scribe_mcp/mcp_adapter.py` while the
+  candidate does;
 - confirm the current explicit legacy policy remains `2025-11-25` and every
   source-owned release/readback document names `2025-11-25` with no
   `2025-06-18` expected readback;

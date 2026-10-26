@@ -11,6 +11,8 @@ from starlette.testclient import TestClient
 import scribe_mcp.server as server_module
 from scribe_mcp.server_sse import TransportAuthMiddleware, handle_backend_operation, handle_batch, handle_tool_invoke
 
+pytestmark = pytest.mark.startup
+
 
 LOCAL_OPERATOR_TOOL_DESCRIPTIONS = {
     "scribe_doctor": {
@@ -105,7 +107,7 @@ def test_tool_invoke_requires_auth(client) -> None:
     assert response.json()["type"] == "Unauthorized"
 
 
-@pytest.mark.parametrize("tool_name", ["scribe_doctor", "read_file"])
+@pytest.mark.parametrize("tool_name", ["read_file"])
 def test_public_exported_tool_invoke_denies_local_operator_tools_before_dispatch(
     monkeypatch,
     client,
@@ -129,7 +131,7 @@ def test_public_exported_tool_invoke_denies_local_operator_tools_before_dispatch
     invoke_tool.assert_not_awaited()
 
 
-@pytest.mark.parametrize("tool_name", ["scribe_doctor", "read_file"])
+@pytest.mark.parametrize("tool_name", ["read_file"])
 def test_internal_network_exposed_tool_invoke_denies_local_operator_tools_before_dispatch(
     monkeypatch,
     client,
@@ -151,30 +153,6 @@ def test_internal_network_exposed_tool_invoke_denies_local_operator_tools_before
 
     _assert_local_operator_tool_denied(response, tool_name)
     describe_tools.assert_called_once()
-    invoke_tool.assert_not_awaited()
-
-
-def test_crafted_context_cannot_self_label_exported_remote_invoke_as_local(
-    monkeypatch,
-    client,
-    restore_transport_policy,
-) -> None:
-    monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "public")
-    invoke_tool = AsyncMock(return_value={"repo_root": "/private/repo"})
-    monkeypatch.setattr(server_module, "describe_registered_tools", MagicMock(return_value=LOCAL_OPERATOR_TOOL_DESCRIPTIONS))
-    monkeypatch.setattr(server_module, "invoke_tool", invoke_tool)
-
-    response = client.post(
-        "/api/v1/tools/invoke",
-        json={
-            "tool_name": "scribe_doctor",
-            "arguments": {},
-            "context": {"transport": "stdio", "local": True, "profile": "operator"},
-        },
-        headers={"authorization": "Bearer test-token"},
-    )
-
-    _assert_local_operator_tool_denied(response, "scribe_doctor")
     invoke_tool.assert_not_awaited()
 
 
@@ -290,16 +268,19 @@ def test_modern_ingress_attaches_only_authenticated_application_identity(monkeyp
     hostile_body = {
         "jsonrpc": "2.0",
         "id": "caller-request-id",
-        "method": "initialize",
+        "method": "tools/list",
         "params": {
-            "protocolVersion": "2026-07-28",
-            "clientInfo": {"name": "forged-agent", "version": "1"},
-            "capabilities": {"forged": True},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {"forged": True},
+                "io.modelcontextprotocol/clientInfo": {"name": "forged-agent", "version": "1"},
+            },
         },
     }
     hostile_headers = {
         "authorization": "Bearer test-token",
         "mcp-protocol-version": "2026-07-28",
+        "mcp-method": "tools/list",
         "mcp-session-id": "caller-selected-session",
         "x-agent-id": "forged-agent",
         "x-request-id": "forged-request",
@@ -310,7 +291,12 @@ def test_modern_ingress_attaches_only_authenticated_application_identity(monkeyp
         handle = first.headers["scribe-application-handle"]
         second = test_client.post(
             "/mcp",
-            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {"_meta": hostile_body["params"]["_meta"]},
+            },
             headers={
                 **hostile_headers,
                 "scribe-application-handle": handle,
@@ -334,18 +320,7 @@ def test_modern_ingress_attaches_only_authenticated_application_identity(monkeyp
         assert observed[0][untrusted_name] is None
 
 
-@pytest.mark.parametrize(
-    ("path", "revision"),
-    [
-        ("/mcp", "2026-07-28"),
-        ("/messages/?session_id=caller-selected", "2025-11-25"),
-    ],
-)
-def test_native_modern_and_legacy_tool_calls_share_remote_authorization(
-    monkeypatch,
-    path: str,
-    revision: str,
-) -> None:
+def test_native_modern_tool_call_keeps_remote_authorization(monkeypatch) -> None:
     import scribe_mcp.server_sse as sse_mod
 
     monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "public")
@@ -358,22 +333,28 @@ def test_native_modern_and_legacy_tool_calls_share_remote_authorization(
     monkeypatch.setattr(sse_mod.app, "call_tool", call_tool)
     monkeypatch.setattr(sse_mod, "_shutdown", AsyncMock())
     app = sse_mod._build_starlette_app(
-        sse_transport=sse_mod.SseServerTransport("/messages/"),
         expected_auth_token="test-token",
     )
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
         response = test_client.post(
-            path,
+            "/mcp",
             json={
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "tools/call",
-                "params": {"name": "scribe_doctor", "arguments": {}},
+                "params": {
+                    "name": "scribe_doctor",
+                    "arguments": {},
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    },
+                },
             },
             headers={
                 "authorization": "Bearer test-token",
-                "mcp-protocol-version": revision,
+                "mcp-protocol-version": "2026-07-28",
                 "mcp-method": "tools/call",
                 "mcp-name": "scribe_doctor",
                 "accept": "application/json, text/event-stream",
@@ -384,6 +365,26 @@ def test_native_modern_and_legacy_tool_calls_share_remote_authorization(
     call_tool.assert_not_awaited()
 
 
+def test_retired_message_route_is_404_before_identity_even_with_legacy_env(monkeypatch) -> None:
+    import scribe_mcp.server_sse as sse_mod
+
+    monkeypatch.setenv("SCRIBE_TRANSPORT_LEGACY_ENABLED", "1")
+    resolve_identity = MagicMock(side_effect=AssertionError("retired route resolved identity"))
+    monkeypatch.setattr(sse_mod, "resolve_application_identity", resolve_identity)
+    monkeypatch.setattr(sse_mod, "_shutdown", AsyncMock())
+    app = sse_mod._build_starlette_app(expected_auth_token="test-token")
+
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        response = test_client.post(
+            "/messages/?session_id=caller-selected",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call"},
+            headers={"authorization": "Bearer test-token"},
+        )
+
+    assert response.status_code == 404
+    resolve_identity.assert_not_called()
+
+
 def test_modern_header_and_capability_errors_never_dispatch_or_fallback(monkeypatch) -> None:
     import scribe_mcp.server_sse as sse_mod
 
@@ -391,7 +392,6 @@ def test_modern_header_and_capability_errors_never_dispatch_or_fallback(monkeypa
     monkeypatch.setattr(sse_mod.app, "call_tool", call_tool)
     monkeypatch.setattr(sse_mod, "_shutdown", AsyncMock())
     app = sse_mod._build_starlette_app(
-        sse_transport=sse_mod.SseServerTransport("/messages/"),
         expected_auth_token="test-token",
     )
     base_headers = {
@@ -462,7 +462,6 @@ def test_native_modern_dispatch_consumes_only_ingress_attached_identity(monkeypa
 
     monkeypatch.setattr(sse_mod, "_shutdown", AsyncMock())
     app = sse_mod._build_starlette_app(
-        sse_transport=sse_mod.SseServerTransport("/messages/"),
         expected_auth_token="test-token",
     )
     meta = {
@@ -529,7 +528,6 @@ def test_caller_selected_modern_application_handle_rejects_before_dispatch(monke
     monkeypatch.setattr(sse_mod.app, "call_tool", call_tool)
     monkeypatch.setattr(sse_mod, "_shutdown", AsyncMock())
     app = sse_mod._build_starlette_app(
-        sse_transport=sse_mod.SseServerTransport("/messages/"),
         expected_auth_token="test-token",
     )
 
@@ -540,7 +538,14 @@ def test_caller_selected_modern_application_handle_rejects_before_dispatch(monke
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "tools/call",
-                "params": {"name": "unknown", "arguments": {}},
+                "params": {
+                    "name": "unknown",
+                    "arguments": {},
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    },
+                },
             },
             headers={
                 "authorization": "Bearer test-token",
@@ -556,3 +561,40 @@ def test_caller_selected_modern_application_handle_rejects_before_dispatch(monke
     assert response.json()["type"] == "InvalidApplicationIdentity"
     assert response.json()["reason_code"] == "application_identity_denied"
     call_tool.assert_not_awaited()
+
+
+@pytest.mark.parametrize("profile", ["public", "internal"])
+@pytest.mark.parametrize("selector", [None, "deferred", "full", "invalid"])
+@pytest.mark.parametrize(
+    "context",
+    [
+        pytest.param({}, id="empty_context"),
+        pytest.param({"transport": "stdio", "local": True, "profile": "operator"}, id="forged_local_context"),
+    ],
+)
+def test_doctor_selector_modes_are_denied_before_remote_dispatch(
+    monkeypatch,
+    client,
+    restore_transport_policy,
+    profile: str,
+    selector: str | None,
+    context: dict[str, object],
+) -> None:
+    monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", profile)
+    if profile == "internal":
+        _set_network_exposed_transport()
+    invoke_tool = AsyncMock(return_value={"repo_root": "/private/repo"})
+    describe_tools = MagicMock(return_value=LOCAL_OPERATOR_TOOL_DESCRIPTIONS)
+    monkeypatch.setattr(server_module, "describe_registered_tools", describe_tools)
+    monkeypatch.setattr(server_module, "invoke_tool", invoke_tool)
+    arguments = {} if selector is None else {"reconciliation": selector}
+
+    response = client.post(
+        "/api/v1/tools/invoke",
+        json={"tool_name": "scribe_doctor", "arguments": arguments, "context": context},
+        headers={"authorization": "Bearer test-token"},
+    )
+
+    _assert_local_operator_tool_denied(response, "scribe_doctor")
+    describe_tools.assert_called_once()
+    invoke_tool.assert_not_awaited()

@@ -2,23 +2,23 @@
 # Scribe MCP - Docker Compose Service Definition
 # =============================================================================
 #
-# COMPOSABLE OVERLAY for use with Council's docker-compose.yaml.
+# COMPOSABLE OVERLAY for use with a compatible infrastructure Compose file.
 #
-# Usage (with Council's base compose):
+# Usage (with your infrastructure base Compose file):
 #   docker compose \
-#     -f /path/to/council_mcp/deploy/docker-compose.yaml \
+#     -f /path/to/infrastructure/docker-compose.yaml \
 #     -f /path/to/scribe_mcp/deploy/docker-compose.scribe.yaml \
 #     up -d
 #
 # This file defines the Scribe MCP service as a composable overlay.
-# When merged with Council's compose, the shared infrastructure (postgres,
+# When merged with the base Compose file, shared infrastructure (postgres,
 # backend network) definitions are unified by Docker Compose.
 #
 # Standalone validation:
 #   docker compose -f deploy/docker-compose.scribe.yaml config
 #
-# Scribe communicates with Council over the Docker backend network.
-# Council connects to Scribe via http://scribe:8200/sse (Docker DNS).
+# Authenticated clients use the Docker backend network.
+# Clients connect to Scribe via http://scribe:8200/sse (Docker DNS).
 # No host ports are exposed -- Scribe is internal-only.
 #
 # =============================================================================
@@ -31,7 +31,7 @@ services:
   # Documentation governance server providing project logging, managed docs,
   # and audit trail capabilities over SSE transport.
   #
-  # Council connects via http://scribe:8200/sse on the backend network.
+  # Authenticated clients connect via http://scribe:8200/sse on the backend network.
   # No host port mapping needed -- internal service only.
   # ---------------------------------------------------------------------------
   scribe:
@@ -44,13 +44,13 @@ services:
     restart: unless-stopped
 
     # --- Networking ---
-    # Shared backend network with Council and Postgres.
-    # Council reaches Scribe via Docker DNS: http://scribe:8200/sse
+    # Shared backend network with clients and Postgres.
+    # Clients reach Scribe via Docker DNS: http://scribe:8200/sse
     networks:
       - backend
 
     # No ports exposed to host -- internal Docker network only.
-    # Council connects via http://scribe:8200/sse
+    # Authenticated clients connect via http://scribe:8200/sse
 
     # --- Persistent storage ---
     # .scribe/ directory contains project logs, managed docs, and state.
@@ -86,7 +86,7 @@ services:
 
     # --- Startup order ---
     # Wait for Postgres to be healthy before starting Scribe.
-    # The postgres service is defined in Council's base compose file;
+    # The healthy postgres service is defined in your base Compose file;
     # this reference is resolved when both compose files are merged.
     depends_on:
       postgres:
@@ -124,8 +124,8 @@ services:
   # PostgreSQL (stub for standalone validation)
   # ---------------------------------------------------------------------------
   # This minimal definition allows `docker compose config` to validate
-  # this file independently. When merged with Council's compose file,
-  # Council's full postgres definition takes precedence.
+  # this file independently. Supply the full healthy postgres definition
+  # in your infrastructure Compose file before starting services.
   # ---------------------------------------------------------------------------
   postgres:
     image: pgvector/pgvector:pg16
@@ -147,7 +147,7 @@ volumes:
 # =============================================================================
 # Networks
 # =============================================================================
-# The backend network is shared with Council's compose. When both files are
+# The backend network is shared with the base Compose file. When both files are
 # merged, Docker Compose unifies the network definitions.
 # =============================================================================
 networks:
@@ -164,7 +164,7 @@ networks:
 #
 # Setup:
 #   mkdir -p secrets/
-#   echo -n "postgresql://council:password@postgres:5432/agentkit?options=-c%20search_path%3Dscribe" \
+#   echo -n "postgresql://scribe:password@postgres:5432/scribe?options=-c%20search_path%3Dscribe" \
 #     > secrets/scribe_db_url.txt
 #   echo -n "replace-with-random-bearer-token" > secrets/scribe_transport_auth_token.txt
 #   chmod 600 secrets/scribe_db_url.txt
