@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import textwrap
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +25,95 @@ from scribe_mcp.mcp_adapter import (
     normalize_tool_definition,
     normalize_tool_result,
 )
+
+
+_CHILD_TERMINATE_TIMEOUT = 0.5
+_CHILD_KILL_TIMEOUT = 1.0
+
+
+async def _terminate_and_reap(process):
+    if process.stdin is not None and not process.stdin.is_closing():
+        process.stdin.close()
+        try:
+            await asyncio.wait_for(process.stdin.wait_closed(), timeout=_CHILD_TERMINATE_TIMEOUT)
+        except (asyncio.TimeoutError, BrokenPipeError, ConnectionResetError):
+            pass
+
+    if process.returncode is None:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_CHILD_TERMINATE_TIMEOUT)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await asyncio.wait_for(process.wait(), timeout=_CHILD_KILL_TIMEOUT)
+    else:
+        await process.wait()
+
+
+@asynccontextmanager
+async def _managed_child_process(*args, **kwargs):
+    process = await asyncio.create_subprocess_exec(*args, **kwargs)
+    try:
+        yield process
+    except BaseException as failure:
+        cleanup = asyncio.create_task(_terminate_and_reap(process))
+        try:
+            await asyncio.shield(cleanup)
+        except BaseException as cleanup_error:
+            if not cleanup.done():
+                try:
+                    await cleanup
+                except BaseException as final_cleanup_error:
+                    cleanup_error = final_cleanup_error
+            if hasattr(failure, "add_note"):
+                failure.add_note(f"child cleanup also failed: {cleanup_error!r}")
+        raise
+    else:
+        await _terminate_and_reap(process)
+
+
+@pytest.mark.startup
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["timeout", "cancellation"])
+async def test_managed_child_process_is_reaped_on_timeout_and_cancellation(failure):
+    ready = asyncio.Event()
+    spawned = []
+
+    async def wait_for_child():
+        async with _managed_child_process(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        ) as process:
+            spawned.append(process)
+            ready.set()
+            if failure == "timeout":
+                await asyncio.wait_for(process.wait(), timeout=0.01)
+            else:
+                await process.wait()
+
+    task = asyncio.create_task(wait_for_child())
+    await asyncio.wait_for(ready.wait(), timeout=5)
+    if failure == "timeout":
+        with pytest.raises(asyncio.TimeoutError):
+            await task
+    else:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    process = spawned[0]
+    assert process.returncode is not None
+    assert await asyncio.wait_for(process.wait(), timeout=_CHILD_KILL_TIMEOUT) == process.returncode
 
 
 def test_load_mcp_runtime_selects_public_sdk_v2_surfaces():
@@ -93,6 +183,7 @@ def test_load_mcp_runtime_does_not_swallow_transitive_import_failures(monkeypatc
     assert exc_info.value.__cause__.name == "unrelated_dependency"
 
 
+@pytest.mark.startup
 def test_load_mcp_runtime_rejects_missing_current_protocol_api(monkeypatch):
     original_import = importlib.import_module
 
@@ -263,6 +354,7 @@ def test_build_mcp_server_uses_the_public_sdk_v2_surface():
     assert getattr(server.middleware[-1], "__name__", None) == "modern_only"
 
 
+@pytest.mark.startup
 @pytest.mark.asyncio
 async def test_modern_stdio_discover_list_and_call_use_real_sdk_pipe(tmp_path):
     """Exercise the current protocol through the SDK's explicit discover flow."""
@@ -328,6 +420,7 @@ async def test_modern_stdio_discover_list_and_call_use_real_sdk_pipe(tmp_path):
     ]
 
 
+@pytest.mark.startup
 @pytest.mark.asyncio
 async def test_scribe_module_catalog_uses_current_sdk_discover(tmp_path):
     """Launch the actual package entrypoint and discover its nonbinding catalog."""
@@ -366,7 +459,7 @@ async def test_scribe_module_catalog_uses_current_sdk_discover(tmp_path):
     assert len(names) > 10
 
 
-@pytest.mark.integration
+@pytest.mark.startup
 @pytest.mark.asyncio
 async def test_real_scribe_rejections_preserve_storage_session_defaults_and_files(tmp_path):
     """Observe actual Scribe state around SDK middleware without replacing it."""
@@ -539,7 +632,7 @@ async def test_real_scribe_rejections_preserve_storage_session_defaults_and_file
         (request(1, "tools/list", version="2025-11-25"), True),
         ('{"jsonrpc":"2.0","id":13,"method":"tools/list","params":', False),
     ]
-    process = await asyncio.create_subprocess_exec(
+    async with _managed_child_process(
         sys.executable,
         "-c",
         child,
@@ -548,19 +641,19 @@ async def test_real_scribe_rejections_preserve_storage_session_defaults_and_file
         stderr=asyncio.subprocess.PIPE,
         env=child_env,
         cwd=os.getcwd(),
-    )
-    responses = []
-    for message, expects_response in wire:
-        process.stdin.write((message + "\n").encode())
-        await process.stdin.drain()
-        if expects_response:
-            line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
-            assert line, "the real Scribe child closed before replying to a request"
-            responses.append(json.loads(line))
-    process.stdin.close()
-    await asyncio.wait_for(process.wait(), timeout=10)
-    stderr = await process.stderr.read()
-    assert process.returncode == 0, stderr.decode()
+    ) as process:
+        responses = []
+        for message, expects_response in wire:
+            process.stdin.write((message + "\n").encode())
+            await process.stdin.drain()
+            if expects_response:
+                line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+                assert line, "the real Scribe child closed before replying to a request"
+                responses.append(json.loads(line))
+        process.stdin.close()
+        await asyncio.wait_for(process.wait(), timeout=10)
+        stderr = await process.stderr.read()
+        assert process.returncode == 0, stderr.decode()
     response_by_id = {item.get("id"): item for item in responses}
     assert response_by_id[0]["result"]
     assert response_by_id[1]["error"]["code"] == -32022
@@ -589,6 +682,7 @@ async def test_real_scribe_rejections_preserve_storage_session_defaults_and_file
     assert all(event["before"] == event["after"] for event in notifications)
 
 
+@pytest.mark.startup
 @pytest.mark.asyncio
 async def test_rejected_wire_requests_and_notifications_have_no_application_effects(tmp_path, monkeypatch):
     """The SDK parses real JSON-RPC pipes; the middleware fences legacy ingress."""
@@ -644,8 +738,8 @@ async def test_rejected_wire_requests_and_notifications_have_no_application_effe
             }
         return json.dumps(payload, separators=(",", ":"))
 
-    async def exchange(messages, *, child_source=child):
-        process = await asyncio.create_subprocess_exec(
+    async def exchange(messages, *, child_source=child, sequential=False):
+        async with _managed_child_process(
             sys.executable,
             "-c",
             child_source,
@@ -654,11 +748,24 @@ async def test_rejected_wire_requests_and_notifications_have_no_application_effe
             stderr=asyncio.subprocess.PIPE,
             env=child_env,
             cwd=os.getcwd(),
-        )
-        wire = "\n".join(messages) + "\n"
-        stdout, stderr = await asyncio.wait_for(process.communicate(wire.encode()), timeout=15)
-        assert process.returncode == 0, stderr.decode()
-        return [json.loads(line) for line in stdout.decode().splitlines() if line.strip()]
+        ) as process:
+            if sequential:
+                responses = []
+                for message in messages:
+                    process.stdin.write((message + "\n").encode())
+                    await process.stdin.drain()
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+                    assert line, "the SDK child dropped a sequential request response"
+                    responses.append(json.loads(line))
+                process.stdin.close()
+                await asyncio.wait_for(process.wait(), timeout=10)
+                stderr = await process.stderr.read()
+                assert process.returncode == 0, stderr.decode()
+                return responses
+            wire = "\n".join(messages) + "\n"
+            stdout, stderr = await asyncio.wait_for(process.communicate(wire.encode()), timeout=15)
+            assert process.returncode == 0, stderr.decode()
+            return [json.loads(line) for line in stdout.decode().splitlines() if line.strip()]
 
     rejected = [
         (1, request(1, "initialize", version="2025-11-25", params={"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "wire-test", "version": "1.0"}}), -32022),
@@ -704,17 +811,34 @@ async def test_rejected_wire_requests_and_notifications_have_no_application_effe
     effects = [json.loads(line) for line in marker.read_text().splitlines()]
     assert effects == [{"event": "list", "era": "modern"}]
 
+    discover = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 19,
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    version_key: "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": {"name": "wire-test", "version": "1.0"},
+                    capabilities_key: {},
+                }
+            },
+        }
+    )
     after_valid = await exchange(
         [
+            discover,
             request(20, "tools/list"),
             request(21, "initialize", version="2026-07-28", params={"protocolVersion": "2026-07-28", "capabilities": {}, "clientInfo": {"name": "wire-test", "version": "1.0"}}),
-        ]
+        ],
+        sequential=True,
     )
-    assert after_valid[0]["id"] == 20
-    assert len(after_valid) in {1, 2}
-    if len(after_valid) == 2:
-        assert after_valid[1]["id"] == 21
-        assert after_valid[1]["error"]["code"] == -32022
+    assert [item["id"] for item in after_valid] == [19, 20, 21]
+    assert after_valid[0]["result"]
+    assert after_valid[1]["result"]["tools"][0]["name"] == "effect"
+    assert after_valid[2]["id"] == 21
+    assert after_valid[2]["error"]["code"] == -32022
+    assert after_valid[2]["error"]["data"]["supported"] == ["2026-07-28"]
     after_valid_effects = [json.loads(line) for line in marker.read_text().splitlines()]
     assert after_valid_effects == [
         {"event": "list", "era": "modern"},
@@ -827,7 +951,7 @@ _RETIRED_LEGACY_WIRE_NODES = (
 )
 
 
-@pytest.mark.core
+@pytest.mark.startup
 class TestModernTransportIngress:
     @pytest.mark.parametrize(
         ("retired_node", "operation"),
@@ -892,21 +1016,21 @@ class TestModernTransportIngress:
                 },
             },
         }
-        process = await asyncio.create_subprocess_exec(
+        async with _managed_child_process(
             sys.executable, "-c", child,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=child_env, cwd=os.getcwd(),
-        )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate((json.dumps(payload) + "\n").encode()), timeout=15
-        )
-        assert process.returncode == 0, f"{retired_node}: {stderr.decode()}"
-        responses = [json.loads(line) for line in stdout.decode().splitlines() if line.strip()]
-        assert len(responses) == 1, retired_node
-        assert responses[0]["id"] == 1
-        assert responses[0]["error"]["code"] == -32022, retired_node
-        assert responses[0]["error"]["data"]["supported"] == ["2026-07-28"]
-        assert not marker.exists(), f"{retired_node} dispatched {operation}"
+        ) as process:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate((json.dumps(payload) + "\n").encode()), timeout=15
+            )
+            assert process.returncode == 0, f"{retired_node}: {stderr.decode()}"
+            responses = [json.loads(line) for line in stdout.decode().splitlines() if line.strip()]
+            assert len(responses) == 1, retired_node
+            assert responses[0]["id"] == 1
+            assert responses[0]["error"]["code"] == -32022, retired_node
+            assert responses[0]["error"]["data"]["supported"] == ["2026-07-28"]
+            assert not marker.exists(), f"{retired_node} dispatched {operation}"
 
 
 @pytest.mark.core

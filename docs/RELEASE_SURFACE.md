@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-26**
-Applies to: **v3.3.17 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.18 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.18 checkpoint tightens transport regression proof and adds bounded child-process cleanup with forced timeout and cancellation checks. Independent review of this repair remains pending; the default-output integration failures remain visible.
 
 The 3.3.17 checkpoint adds current-protocol ingress rejection before application dispatch. Real SDK 2.3.0 stdio discovery, listing and calling pass, including actual Scribe storage/session/file non-effect checks for rejected traffic. This source checkpoint awaits independent reviews; HTTP retirement, bounded output and integrated release validation remain pending.
 
