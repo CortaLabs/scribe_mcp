@@ -1,11 +1,13 @@
 # Release Surface
 
 Updated: **2026-10-25**
-Applies to: **v3.3.14 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.15 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
 
-The 3.3.14 checkpoint makes agent/session regression checks enforce real results, isolation, rejection paths, heartbeat and expiry cleanup. The same pytest journeys drive the direct script and propagate assertion failures. Current 3.x support targets SDK 2.3.x and protocol 2026-07-28 only; obsolete protocol and endpoint removal remains a release prerequisite.
+The 3.3.15 checkpoint targets the latest MCP SDK, currently 2.3.0, without excluding otherwise compatible SDK 2.x releases solely by minor version. The dependency range remains `mcp>=2.0.0,<3.0`; SDK 1.x and older wire protocols are unsupported. Latest-SDK verification is required; an older-SDK certification matrix is not part of the release. This supersedes the 3.3.14 SDK-minor restriction; current-protocol transport removal and integration gates remain open.
+
+The 3.3.14 checkpoint makes agent/session regression checks enforce real results, isolation, rejection paths, heartbeat and expiry cleanup. The same pytest journeys drive the direct script and propagate assertion failures. Its SDK 2.3.x restriction was superseded in 3.3.15; protocol 2026-07-28 remains the release target, with obsolete protocol and endpoint removal still required.
 
 The 3.3.13 development checkpoint carries the reviewed 2.15.34 maintenance fixes: heartbeat binding preservation, SQLite WAL startup and error cleanup, atomic entry/metric writes, genuine identity and format regressions, and isolated transport-policy tests. Public maintenance APIs and durability defaults are retained. This does not complete the original 3.x authority, output, background, schema or runtime gates.
 

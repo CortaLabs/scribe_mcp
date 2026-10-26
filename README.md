@@ -45,7 +45,7 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.14` · Updated: `2026-10-25`
+Development candidate: `scribe-mcp 3.3.15` · Updated: `2026-10-25`
 
 This branch prepares the next major Scribe release. It carries the maintenance fixes for durable project bindings, SQLite startup and cleanup, atomic entry/metric writes, literal document content and genuine regression checks. Agent/session tests now assert isolation, rejected sessions, heartbeat and expiry cleanup instead of printing success.
 
@@ -53,7 +53,7 @@ The development candidate still needs binding-context, default-output, schema an
 
 ### Current MCP support policy
 
-The 3.x release supports **MCP protocol `2026-07-28` with Python SDK `2.3.x`** (`mcp>=2.3.0,<2.4`). SDK and wire revisions are distinct contracts.
+The 3.x release targets **MCP protocol `2026-07-28` and the latest Python SDK**, currently `2.3.0`. The dependency range is `mcp>=2.0.0,<3.0`; compatible SDK 2.x versions are not excluded solely by minor version. Development and release verification focus on the latest SDK, without an older-version certification promise. SDK and wire revisions are distinct contracts.
 
 | Client path | Transport | Support |
 | --- | --- | --- |
