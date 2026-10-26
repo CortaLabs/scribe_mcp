@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 
 class ProtocolEra(str, Enum):
-    """The finite protocol eras supported by Scribe."""
+    """The current era and an inert historical discriminant retained for callers."""
 
     MODERN = "modern"
     LEGACY = "legacy"
@@ -22,24 +22,27 @@ class ProtocolEra(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class MCPCompatibilityPolicy:
-    """Closed compatibility policy for Scribe's supported MCP clients."""
+    """Closed current-only MCP policy with inert historical constructor fields."""
 
     default_revision: str = "2026-07-28"
     legacy_revisions: tuple[str, ...] = ("2025-11-25",)
     modern_transports: tuple[str, ...] = ("stdio", "streamable-http")
     legacy_transports: tuple[str, ...] = ("stdio", "http-sse")
-    legacy_enabled: bool = True
+    legacy_enabled: bool = False
 
     def __post_init__(self) -> None:
-        _validate_revision(self.default_revision, field="default_revision")
-        if not self.legacy_revisions:
-            raise ValueError("legacy_revisions must not be empty")
-        for revision in self.legacy_revisions:
-            _validate_revision(revision, field="legacy revision")
-        if self.default_revision in self.legacy_revisions:
-            raise ValueError("modern and legacy protocol revisions must be distinct")
-        _validate_transport_set(self.modern_transports, field="modern_transports")
-        _validate_transport_set(self.legacy_transports, field="legacy_transports")
+        if self.default_revision != "2026-07-28":
+            raise ValueError("default_revision is fixed to the current MCP protocol revision")
+        if self.legacy_revisions != ("2025-11-25",):
+            raise ValueError("legacy_revisions are fixed historical discriminants")
+        if self.modern_transports != ("stdio", "streamable-http"):
+            raise ValueError("modern_transports are fixed to current transports")
+        if self.legacy_transports != ("stdio", "http-sse"):
+            raise ValueError("legacy_transports are fixed historical discriminants")
+        if type(self.legacy_enabled) is not bool:
+            raise TypeError("legacy_enabled must be boolean")
+        if self.legacy_enabled:
+            object.__setattr__(self, "legacy_enabled", False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,18 +97,34 @@ def load_mcp_runtime() -> MCPRuntime:
         raise RuntimeError("mcp distribution is not installed") from exc
     if not isinstance(version, str) or version != version.strip():
         raise RuntimeError("malformed mcp distribution version")
-    match = _VERSION_PATTERN.fullmatch(version)
+    if _VERSION_PATTERN.fullmatch(version) is None:
+        raise RuntimeError("malformed mcp distribution version")
+    match = re.fullmatch(
+        r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)(?P<suffix>[A-Za-z.+-][0-9A-Za-z.+-]*)?",
+        version,
+    )
     if match is None:
         raise RuntimeError("malformed mcp distribution version")
     major = int(match.group("major"))
     if major != 2:
         raise RuntimeError(f"unsupported mcp distribution major: {major}")
+    if match.group("suffix") is not None:
+        raise RuntimeError(f"unsupported mcp distribution release: {version}")
 
     try:
         server_module = importlib.import_module("mcp.server.mcpserver")
+        context_module = importlib.import_module("mcp.server.context")
+        exceptions_module = importlib.import_module("mcp.shared.exceptions")
         types_module = importlib.import_module("mcp.types")
         stdio_module = importlib.import_module("mcp.server.stdio")
+        meta_module = importlib.import_module("mcp_types")
         server_type = getattr(server_module, "MCPServer")
+        getattr(context_module, "ServerRequestContext")
+        getattr(context_module, "CallNext")
+        getattr(context_module, "HandlerResult")
+        getattr(exceptions_module, "MCPError")
+        getattr(types_module, "UNSUPPORTED_PROTOCOL_VERSION")
+        getattr(meta_module, "PROTOCOL_VERSION_META_KEY")
         getattr(types_module, "Tool")
         getattr(types_module, "CallToolResult")
         getattr(types_module, "TextContent")
@@ -124,14 +143,58 @@ def load_mcp_runtime() -> MCPRuntime:
 
 
 def build_mcp_server(name: str, policy: MCPCompatibilityPolicy) -> Any:
-    """Construct Scribe's server from the public MCP SDK v2 surface."""
+    """Construct Scribe's server with a fail-closed modern ingress boundary."""
 
     if not isinstance(name, str) or not name.strip() or name != name.strip():
         raise ValueError("MCP server name must be a non-empty normalized string")
     if not isinstance(policy, MCPCompatibilityPolicy):
         raise TypeError("policy must be MCPCompatibilityPolicy")
     runtime = load_mcp_runtime()
-    server = runtime.server_type(name=name)
+    from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+    from mcp.shared.exceptions import MCPError
+    from mcp.types import UNSUPPORTED_PROTOCOL_VERSION
+    from mcp_types import PROTOCOL_VERSION_META_KEY
+
+    async def modern_only(
+        ctx: ServerRequestContext[Any, Any], call_next: CallNext
+    ) -> HandlerResult:
+        params = ctx.params
+        method = ctx.method
+        requested = ctx.protocol_version
+        if method == "initialize":
+            initialize_params = params.get("params") if isinstance(params, Mapping) else None
+            candidate = (
+                initialize_params.get("protocolVersion")
+                if isinstance(initialize_params, Mapping)
+                else None
+            )
+            if isinstance(candidate, str):
+                requested = candidate
+        is_notification = ctx.request_id is None
+        reject = (
+            method in {"initialize", "notifications/initialized"}
+            or requested != "2026-07-28"
+        )
+        if is_notification and isinstance(params, Mapping) and "_meta" in params:
+            meta = params.get("_meta")
+            if not isinstance(meta, Mapping):
+                reject = True
+            elif (
+                PROTOCOL_VERSION_META_KEY in meta
+                and meta[PROTOCOL_VERSION_META_KEY] != "2026-07-28"
+            ):
+                reject = True
+        if reject:
+            if is_notification:
+                return None
+            raise MCPError(
+                code=UNSUPPORTED_PROTOCOL_VERSION,
+                message="Unsupported protocol version",
+                data={"supported": ["2026-07-28"], "requested": requested},
+            )
+        return await call_next(ctx)
+
+    server = runtime.server_type(name=name, middleware=[modern_only])
     setattr(server, "scribe_compatibility_policy", policy)
     return server
 
@@ -153,18 +216,9 @@ def classify_protocol_era(
         _validate_revision(protocol_revision, field="protocol_revision")
 
     if explicit_legacy:
-        if not policy.legacy_enabled:
-            raise ValueError("legacy MCP compatibility is disabled")
-        revision = protocol_revision or policy.legacy_revisions[0]
-        if revision not in policy.legacy_revisions:
-            raise ValueError(f"unsupported MCP protocol revision: {revision}")
-        if transport not in policy.legacy_transports:
-            raise ValueError(f"unsupported MCP transport for legacy era: {transport}")
-        return ProtocolEra.LEGACY
+        raise ValueError("unsupported MCP protocol revision")
 
     revision = protocol_revision or policy.default_revision
-    if revision in policy.legacy_revisions:
-        raise ValueError("legacy MCP revision requires explicit legacy mode")
     if revision != policy.default_revision:
         raise ValueError(f"unsupported MCP protocol revision: {revision}")
     if transport not in policy.modern_transports:

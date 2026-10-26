@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-25**
-Applies to: **v3.3.16 development candidate; default projection, integration and fleet acceptance pending**
+Updated: **2026-10-26**
+Applies to: **v3.3.17 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.17 checkpoint adds current-protocol ingress rejection before application dispatch. Real SDK 2.3.0 stdio discovery, listing and calling pass, including actual Scribe storage/session/file non-effect checks for rejected traffic. This source checkpoint awaits independent reviews; HTTP retirement, bounded output and integrated release validation remain pending.
 
 The 3.3.16 checkpoint removes inherited Python source overrides from clean-room child commands. Installed-wheel probes and Codex projection now resolve the fresh installed package even when the development launcher injects PYTHONPATH. This repairs release verification; current-protocol and integration acceptance remain pending.
 
