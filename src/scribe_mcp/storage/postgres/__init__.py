@@ -109,7 +109,7 @@ def _json_text(value: Any) -> Optional[str]:
     if value is None:
         return None
     if isinstance(value, str):
-        return value
+        value = json.loads(value)
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 

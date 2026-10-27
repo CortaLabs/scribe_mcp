@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-26**
-Applies to: **v3.3.30 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.31 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.31 checkpoint fixes PostgreSQL preview-receipt persistence: JSONB text is decoded and written through the existing canonical JSON encoder before strict record comparison. Receipt equality, scope checks, fences and literal content remain intact. Regression coverage exercises text and decoded codecs, reordered keys, Unicode, malformed JSON and real PostgreSQL insert/fetch round trips. The isolated PostgreSQL receipt suite passes all 23 cases. Foreign managed-document recovery and live acceptance remain open.
 
 The 3.3.30 checkpoint corrects two adapter descriptions that still implied named legacy protocol support. The adapter supports the current protocol and rejects historical modes; fixed historical identifiers remain rejection discriminants. Executable adapter behavior is unchanged. Binding and integration acceptance remains open.
 
