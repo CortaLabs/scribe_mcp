@@ -16,6 +16,133 @@ from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_sco
 
 
 @pytest.mark.regression
+@pytest.mark.integration
+@pytest.mark.storage
+@pytest.mark.parametrize("docs_base", [".scribe/docs/dev_plans", "custom/plans"])
+@pytest.mark.parametrize("target_name", ["receipt_source", "receipt_target"])
+def test_real_sdk_receipt_rehome_apply_and_replay(
+    tmp_path: Path, test_agent: str, docs_base: str, target_name: str,
+) -> None:
+    """Retained rehome uses the same real project metadata as SDK preview."""
+    source = Path(__file__).resolve().parents[1]
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key not in {"DATABASE_URL", "REPO_ROOT"}}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(runtime / "scribe.sqlite3"),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"), "SCRIBE_ROOT": str(runtime),
+        "SCRIBE_PROJECT_ROOT": str(repo), "SCRIBE_DEV_PLANS_BASE": docs_base,
+        "PYTHONPATH": str(source / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+        "SBR_TEST_AGENT": test_agent, "SBR_TEST_SOURCE": str(source), "SBR_TEST_REPO": str(repo),
+        "SBR_TEST_TARGET": target_name,
+    })
+    probe = r'''
+import asyncio, importlib.metadata, json, os, sqlite3, sys
+from pathlib import Path
+from mcp import Client, StdioServerParameters
+import scribe_mcp
+
+assert importlib.metadata.version("mcp") == "2.3.0"
+assert Path(scribe_mcp.__file__).resolve() == Path(os.environ["SBR_TEST_SOURCE"]) / "src/scribe_mcp/__init__.py"
+repo = Path(os.environ["SBR_TEST_REPO"])
+agent = os.environ["SBR_TEST_AGENT"]
+target_name = os.environ["SBR_TEST_TARGET"]
+
+async def call(client, name, arguments):
+    result = await client.call_tool(name, {"agent": agent, **arguments})
+    assert not result.is_error, (name, result)
+    body = result.model_dump(mode="json", by_alias=True)["structuredContent"]
+    assert isinstance(body, dict)
+    return body
+
+def aliases(name="receipt_source"):
+    with sqlite3.connect(os.environ["SCRIBE_DB_PATH"]) as connection:
+        row = connection.execute("SELECT docs_json FROM scribe_projects WHERE name = ?", (name,)).fetchone()
+        return json.loads(row[0])
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"],
+                                   env=dict(os.environ), cwd=str(repo))
+    async with asyncio.timeout(60):
+        async with Client(params, mode="2026-07-28", cache=None) as client:
+            await client.session.send_discover("2026-07-28")
+            target_docs = None
+            if target_name != "receipt_source":
+                target_bound = await call(client, "set_project", {
+                    "name": target_name, "root": str(repo), "format": "structured",
+                })
+                assert target_bound["ok"] is True
+                target_docs = Path(target_bound["project"]["docs_dir"])
+            bound = await call(client, "set_project", {
+                "name": "receipt_source", "root": str(repo), "format": "structured",
+            })
+            assert bound["ok"] is True
+            docs = Path(bound["project"]["docs_dir"])
+            assert docs == repo / os.environ["SCRIBE_DEV_PLANS_BASE"] / "receipt_source"
+            target_docs = target_docs or docs
+            source = docs / "ARCHITECTURE_GUIDE.md"
+            target = target_docs / "archive/ARCHITECTURE_GUIDE.md"
+            protected_target = target_docs / "ARCHITECTURE_GUIDE.md"
+            protected_bytes = protected_target.read_bytes()
+            before = source.read_bytes()
+            before_aliases = aliases()
+            before_target_aliases = aliases(target_name)
+            preview = await call(client, "manage_docs", {
+                "action": "rehome_doc", "doc": "architecture", "dry_run": True,
+                "metadata": {"target_project": target_name,
+                             "target_relative_path": "archive/ARCHITECTURE_GUIDE.md"},
+            })
+            assert preview["ok"] is True
+            receipt = preview["apply"]["receipt"]
+            assert source.read_bytes() == before and not target.exists()
+            assert aliases() == before_aliases
+            assert aliases(target_name) == before_target_aliases
+            applied = await call(client, "manage_docs", {
+                "action": "apply_preview", "metadata": {"receipt": receipt},
+            })
+            assert applied.get("code") == "APPLY_RECEIPT_APPLIED", applied
+            assert not source.exists() and target.read_bytes() == before
+            after_aliases = aliases()
+            after_target_aliases = aliases(target_name)
+            assert after_target_aliases["architecture"] == str(target)
+            assert str(source) not in after_aliases.values()
+            if target_name != "receipt_source":
+                assert "architecture" not in after_aliases
+                assert protected_target.read_bytes() == protected_bytes
+            replayed = await call(client, "manage_docs", {
+                "action": "apply_preview", "metadata": {"receipt": receipt},
+            })
+            assert replayed.get("code") == "APPLY_RECEIPT_REPLAYED", replayed
+            assert not source.exists() and target.read_bytes() == before
+            assert aliases() == after_aliases
+            assert aliases(target_name) == after_target_aliases
+            denied = await call(client, "manage_docs", {
+                "action": "apply_preview", "project": "receipt_source",
+                "metadata": {"receipt": receipt},
+            })
+            assert denied.get("code") == "APPLY_RECEIPT_INVALID", denied
+            assert not source.exists() and target.read_bytes() == before
+            assert aliases() == after_aliases
+            assert aliases(target_name) == after_target_aliases
+            print(json.dumps({"sdk": importlib.metadata.version("mcp"),
+                "protocol": "2026-07-28", "docs_base": os.environ["SCRIBE_DEV_PLANS_BASE"],
+                "target_project": target_name,
+                "apply": applied["code"], "replay": replayed["code"],
+                "caller_intent": denied["code"], "aliases_stable": True}), flush=True)
+asyncio.run(main())
+'''
+    result = subprocess.run([sys.executable, "-c", probe], cwd=source, env=env,
+                            capture_output=True, text=True, timeout=80)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.regression
 @pytest.mark.storage
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
 def test_real_sdk_heartbeats_preserve_binding_rows(tmp_path: Path, test_agent: str, mode: str) -> None:

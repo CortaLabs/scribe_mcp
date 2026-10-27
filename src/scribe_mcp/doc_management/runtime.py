@@ -58,12 +58,15 @@ from scribe_mcp.doc_management.actions import query as query_actions
 from scribe_mcp.doc_management.actions import search as search_actions
 from scribe_mcp.doc_management.actions import status as status_actions
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
+from scribe_mcp.shared.execution_context import ExecutionContext
 from scribe_mcp.shared.logging_utils import (
     LoggingContext,
     ProjectResolutionError,
     build_resolution_metadata,
 )
 from scribe_mcp.shared.write_barrier import assert_writes_allowed
+from scribe_mcp.shared.session_scope import ResolvedScope
+from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.utils.files import async_atomic_write
 from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input
@@ -361,6 +364,27 @@ def _receipt_scope(
         active_project.get("project_key") or active_project.get("name") or ""
     ).strip()
     repo_root = str(Path(str(active_project.get("root") or "")).expanduser().resolve())
+    # Explicit-project logging metadata may omit the persisted key. Preserve
+    # the request's canonical snapshot only for the same caller and target;
+    # a default binding must never replace an explicit target's identity.
+    if not active_project.get("project_key") and isinstance(execution_context, ExecutionContext):
+        binding = execution_context.session_binding
+        resolved = execution_context.resolved_scope
+        if (
+            isinstance(binding, SessionBindingRecordV2)
+            and isinstance(resolved, ResolvedScope)
+            and session_id
+            and binding.caller_session_key_hash == hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+            and active_project.get("name") == binding.project_name == resolved.project_name
+            and active_project.get("root")
+            and repo_root == str(Path(binding.canonical_repo_root).expanduser().resolve())
+            and repo_root == str(Path(execution_context.repo_root).expanduser().resolve())
+            and resolved.repo_root
+            and repo_root == str(Path(resolved.repo_root).expanduser().resolve())
+            and resolved.provenance.repo_root == "verified"
+            and resolved.provenance.project_name == "verified"
+        ):
+            project_key = binding.project_key
     repo_id = str(active_project.get("repo_id") or "").strip()
     if not repo_id and repo_root:
         repo_id = hashlib.sha256(repo_root.encode("utf-8")).hexdigest()
@@ -3377,7 +3401,9 @@ async def handle_manage_docs_request(
             dry_run=False,
             doc_name=retained.pop("doc_name", None),
             target_dir=retained.pop("target_dir", None),
-            project=None,
+            # Re-resolve full source metadata through the normal context owner;
+            # the apply request's session projection can omit docs_dir.
+            project=rehome_binding.source_project if rehome_binding is not None else None,
             state_snapshot=state_snapshot,
             helper=helper,
             context=context,
