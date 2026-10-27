@@ -345,9 +345,12 @@ def test_result_normalization_preserves_structured_text_and_error_semantics():
 
 
 def test_build_mcp_server_uses_the_public_sdk_v2_surface():
+    from scribe_mcp import __version__
+
     server = build_mcp_server("scribe-test", MCPCompatibilityPolicy())
 
     assert type(server).__name__ == "MCPServer"
+    assert server.version == __version__
     assert callable(server.list_tools)
     assert callable(server.call_tool)
     assert callable(server.run_stdio_async)

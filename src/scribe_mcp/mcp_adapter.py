@@ -12,6 +12,8 @@ from enum import Enum
 from types import MethodType, ModuleType, SimpleNamespace
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
+from scribe_mcp import __version__
+
 
 class ProtocolEra(str, Enum):
     """The current era and an inert historical discriminant retained for callers."""
@@ -194,7 +196,7 @@ def build_mcp_server(name: str, policy: MCPCompatibilityPolicy) -> Any:
             )
         return await call_next(ctx)
 
-    server = runtime.server_type(name=name, middleware=[modern_only])
+    server = runtime.server_type(name=name, version=__version__, middleware=[modern_only])
     setattr(server, "scribe_compatibility_policy", policy)
     return server
 

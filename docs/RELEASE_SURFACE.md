@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-27**
-Applies to: **v3.3.32 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.33 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.33 checkpoint advertises the package version in current MCP server metadata. The CLI and MCP server both use the existing canonical runtime version, avoiding an empty wire version or a separate CLI version literal. Protocol admission, identity and binding behavior are unchanged; current PostgreSQL reconnection and full release acceptance remain open.
 
 The 3.3.32 checkpoint places the nine database-free receipt codec cases in the core storage regression lane. The original assertions and payload bytes are preserved; shared receipt factories have one reusable location, and live PostgreSQL round trips retain their integration, PostgreSQL, storage and regression markers. Production receipt decoding is unchanged. Source review, foreign recovery and live-release acceptance remain open.
 
