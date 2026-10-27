@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-26**
-Applies to: **v3.3.31 development candidate; default projection, integration and fleet acceptance pending**
+Updated: **2026-10-27**
+Applies to: **v3.3.32 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.32 checkpoint places the nine database-free receipt codec cases in the core storage regression lane. The original assertions and payload bytes are preserved; shared receipt factories have one reusable location, and live PostgreSQL round trips retain their integration, PostgreSQL, storage and regression markers. Production receipt decoding is unchanged. Source review, foreign recovery and live-release acceptance remain open.
 
 The 3.3.31 checkpoint fixes PostgreSQL preview-receipt persistence: JSONB text is decoded and written through the existing canonical JSON encoder before strict record comparison. Receipt equality, scope checks, fences and literal content remain intact. Regression coverage exercises text and decoded codecs, reordered keys, Unicode, malformed JSON and real PostgreSQL insert/fetch round trips. The isolated PostgreSQL receipt suite passes all 23 cases. Foreign managed-document recovery and live acceptance remain open.
 
