@@ -1,26 +1,8 @@
 import asyncio
 from pathlib import Path
-import sys
-import types
 
-from scribe_mcp.doc_management import indexing
-
-if "scribe_mcp.server" not in sys.modules:
-    class _AppStub:
-        @staticmethod
-        def tool(*_args, **_kwargs):
-            def _decorator(func):
-                return func
-
-            return _decorator
-
-    sys.modules["scribe_mcp.server"] = types.SimpleNamespace(
-        app=_AppStub(),
-        settings=types.SimpleNamespace(storage_timeout_seconds=5),
-        state_manager=None,
-    )
-
-from scribe_mcp.doc_management import special_create
+# conftest isolates state and SQLite before collection; use the real server imports.
+from scribe_mcp.doc_management import indexing, special_create
 
 
 class _Helper:

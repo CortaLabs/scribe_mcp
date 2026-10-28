@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.61 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.62 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.62 checkpoint removes a global fake server from document-routing tests to prevent order-dependent failures.
 
 The 3.3.61 checkpoint isolates append tests from collection-time fake modules so neighboring tests run in either order.
 
