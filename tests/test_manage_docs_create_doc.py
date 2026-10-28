@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from dataclasses import replace
+from importlib import import_module
 import json
+import os
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -16,11 +18,29 @@ from scribe_mcp.doc_management.utils import classify_scribe_source_document
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.doc_management.special_create import _normalize_stage
 from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp import server as server_module
 from scribe_mcp.config.repo_config import RepoConfig, resolve_create_doc_type_config
 from test_manage_docs_create_intent import _read_persisted_project
+
+
+def _planning_registries():
+    modules = [import_module(f"scribe_mcp.tools.{name}") for name in
+               ("set_project", "generate_doc_templates", "manage_docs", "append_entry")]
+    doctor = import_module("scribe_mcp.tools.doctor")
+    return [module._PROJECT_REGISTRY for module in modules] + [
+        doctor.get_runtime_project_registry()]
+
+
+@pytest.fixture(autouse=True)
+def _assert_disposable_registries():
+    expected = Path(os.environ["SCRIBE_DB_PATH"]).resolve()
+    assert expected.parent.name.startswith("scribe-tests-state-")
+    for facade in _planning_registries():
+        assert facade.available
+        assert facade._registry._db_path.resolve() == expected
 
 
 @asynccontextmanager
@@ -36,10 +56,19 @@ async def _isolated_server(state_manager, *, project_root, project_name, agent,
     assert Path(seeded.repo_root).resolve() == root
     runtime_settings = replace(server_module.settings,
         default_repo_root=root, trusted_repo_roots=(root,))
-    with patch.multiple(server_module, state_manager=state_manager,
-                        storage_backend=backend,
-                        router_context_manager=RouterContextManager(storage_backend=backend),
-                        settings=runtime_settings, get_agent_identity=lambda: None):
+    with ExitStack() as registry_paths, patch.multiple(
+        server_module, state_manager=state_manager, storage_backend=backend,
+        router_context_manager=RouterContextManager(storage_backend=backend),
+        settings=runtime_settings, get_agent_identity=lambda: None,
+    ):
+        # Cached registries are real SQLite clients too. Keep every one on the
+        # scenario DB; the process-wide registry can be locked by another case.
+        registries = {id(facade._registry): facade._registry
+                      for facade in _planning_registries()}
+        for registry in registries.values():
+            registry_paths.enter_context(patch.object(registry, "_db_path", backend._path))
+        assert all(facade._registry._db_path.resolve() == backend._path.resolve()
+                   for facade in _planning_registries())
         with anyio.fail_after(60):
             async with Client(server_module.app, mode="auto") as client:
                 for caller in (agent, *additional_agents):
@@ -66,6 +95,11 @@ async def _isolated_server(state_manager, *, project_root, project_name, agent,
                 assert binding.project_name == project_name
                 assert binding.project_key == seeded.project_key
                 assert binding.canonical_repo_root == str(root)
+                # Template telemetry must persist beside the scenario's binding,
+                # rather than silently timing out against another test's DB.
+                registry_info = ProjectRegistry(backend._path).get_project(project_name)
+                assert registry_info is not None
+                assert registry_info.meta["docs"]["update_count"] > 0
                 if storage_backend is not None:
                     server_module.storage_backend = storage_backend
                 yield client

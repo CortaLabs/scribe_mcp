@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.35 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.36 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.36 checkpoint isolates the managed-document test registry to each scenario database. The original test group and persisted registry checks remain intact while avoiding repeated SQLite lock timeouts.
 
 The 3.3.35 checkpoint fixes managed-document edit metrics: edits now pass the document identifier using the registry API, allowing its existing hygiene hashes and flags to update. The original document-change and session-provenance behavior remains intact.
 
