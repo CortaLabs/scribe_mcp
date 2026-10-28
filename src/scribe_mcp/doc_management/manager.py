@@ -32,6 +32,7 @@ from scribe_mcp.utils.parameter_validator import (
     BulletproofParameterCorrector,
 )
 from scribe_mcp.doc_management.utils import strip_trailing_whitespace_lines
+from scribe_mcp.doc_management.quality.scopes import markdown_lines
 from scribe_mcp.shared.write_barrier import WriteBarrierError, assert_writes_allowed
 from scribe_mcp.utils.error_handler import sanitize_error_message
 from scribe_mcp.doc_management.lifecycle import derive_canonical_doc_type, normalize_canonical_status
@@ -2414,7 +2415,7 @@ def _format_hunk_header(old_start: int, old_count: int, new_start: int, new_coun
 
 def _parse_patch_hunks(patch_text: str) -> tuple[list[str], list[Dict[str, Any]]]:
     """Parse unified diff into header lines and hunk definitions."""
-    lines = patch_text.splitlines(keepends=False)
+    lines = [line.rstrip("\r\n") for line in markdown_lines(patch_text)]
     header_lines: list[str] = []
     hunks: list[Dict[str, Any]] = []
     i = 0
@@ -3045,8 +3046,8 @@ def _apply_unified_patch_smart(
     if not patch_text or not patch_text.strip():
         raise DocumentOperationError("apply_patch requires non-empty patch text")
 
-    original_lines = original_text.splitlines(keepends=True)
-    patch_lines = patch_text.splitlines(keepends=False)
+    original_lines = markdown_lines(original_text)
+    patch_lines = [line.rstrip("\r\n") for line in markdown_lines(patch_text)]
 
     # Skip --- and +++ headers
     i = 0
@@ -3202,8 +3203,8 @@ def _apply_unified_patch(original_text: str, patch_text: str) -> tuple[str, int]
     if not patch_text or not patch_text.strip():
         raise DocumentOperationError("apply_patch requires non-empty patch text")
 
-    original_lines = original_text.splitlines(keepends=True)
-    lines = patch_text.splitlines(keepends=False)
+    original_lines = markdown_lines(original_text)
+    lines = [line.rstrip("\r\n") for line in markdown_lines(patch_text)]
 
     i = 0
     while i < len(lines) and (lines[i].startswith("--- ") or lines[i].startswith("+++ ")):
@@ -3444,7 +3445,7 @@ def _replace_block_text(original_text: str, anchor: str, replacement: str) -> st
     if not anchor:
         raise DocumentOperationError("STRUCTURED_EDIT_ANCHOR_REQUIRED: anchor is required")
 
-    lines = original_text.splitlines()
+    lines = [line.rstrip("\r\n") for line in markdown_lines(original_text)]
     matches: list[int] = []
     in_fence = False
     for idx, line in enumerate(lines):
@@ -3474,14 +3475,14 @@ def _replace_block_text(original_text: str, anchor: str, replacement: str) -> st
     while end_index < len(lines) and lines[end_index].strip() != "":
         end_index += 1
 
-    replacement_lines = replacement.splitlines()
+    replacement_lines = [line.rstrip("\r\n") for line in markdown_lines(replacement)]
     new_lines = lines[:start_index] + replacement_lines + lines[end_index:]
     return "\n".join(new_lines)
 
 
 def _normalize_headers_text(original_text: str) -> str:
     """Normalize numbering for explicit ATX headers only, skipping fenced code blocks."""
-    lines = original_text.splitlines()
+    lines = [line.rstrip("\r\n") for line in markdown_lines(original_text)]
     counters = [0] * 6
     in_fence = False
     output: list[str] = []

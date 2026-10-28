@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.53 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.54 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.54 checkpoint preserves Unicode separators in untouched fenced content during structured block replacement and header normalization, including unified-diff compilation and patch parsing.
 
 The 3.3.53 checkpoint preserves Unicode line and paragraph separators in fenced document content during section and frontmatter updates. Existing CRLF normalization is unchanged.
 
