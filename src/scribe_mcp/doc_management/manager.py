@@ -2240,7 +2240,18 @@ def _replace_text_with_scope(
                     start += 1
                 if start < len(text) and text[start] == "\n":
                     start += 1
-                next_marker, _ = _next_section_boundary(text, start, anchor_matches)
+                # Inline item anchors belong to this block, rather than ending it.
+                # Keep all anchors above for ambiguity checks; only standalone,
+                # unfenced anchors can bound a standalone replace_text scope.
+                block_matches = []
+                for candidate in anchor_matches:
+                    candidate_start = _line_start_at(text, candidate.start())
+                    candidate_end = text.find("\n", candidate.end())
+                    if candidate_end == -1:
+                        candidate_end = len(text)
+                    if text[candidate_start:candidate_end].strip() == candidate.group():
+                        block_matches.append(candidate)
+                next_marker, _ = _next_section_boundary(text, start, block_matches)
                 prefix = text[:start]
                 target_text = text[start:next_marker]
                 suffix = text[next_marker:]

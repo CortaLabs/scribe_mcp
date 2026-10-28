@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.54 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.55 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.55 checkpoint keeps inline item anchors inside their parent section when applying a scoped text replacement.
 
 The 3.3.54 checkpoint preserves Unicode separators in untouched fenced content during structured block replacement and header normalization, including unified-diff compilation and patch parsing.
 
