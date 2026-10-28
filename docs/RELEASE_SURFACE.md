@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.39 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.40 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.40 checkpoint distinguishes clean Git working trees from unavailable Git status when recording document version context.
 
 The 3.3.39 checkpoint keeps managed-document registry updates awaited while moving their blocking SQLite work off the event loop. Isolated contention tests cover both persisted updates and nonfatal lock failures.
 
