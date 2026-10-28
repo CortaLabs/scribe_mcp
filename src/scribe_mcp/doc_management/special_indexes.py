@@ -81,7 +81,7 @@ def _build_research_index(research_dir: Path) -> str:
 
     content = f"""# Research Documents Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains research documents generated during the development process.
 
@@ -153,7 +153,7 @@ def _build_case_report_index(
 
     content = f"""# {heading} Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains {heading.lower()} generated during development and testing.
 
@@ -196,7 +196,7 @@ This directory contains {heading.lower()} generated during development and testi
 
 - **Index Location:** `{index_path}`
 - **Total Categories:** {len(categories)}
-- **Last Scan:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+- **Last Scan:** {_current_timestamp()}
 
 ---
 
@@ -334,7 +334,7 @@ async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | N
 
     content = f"""# Review Reports Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains review reports generated during the development quality assurance process.
 
@@ -377,7 +377,7 @@ This directory contains review reports generated during the development quality 
 
 - **Index Location:** `{index_path}`
 - **Total Stages:** {len(stages)}
-- **Last Scan:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+- **Last Scan:** {_current_timestamp()}
 
 ---
 
@@ -414,7 +414,7 @@ async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path
 
     content = f"""# Agent Report Cards Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains agent performance evaluation reports generated during the development process.
 
@@ -461,7 +461,7 @@ This directory contains agent performance evaluation reports generated during th
 
 - **Index Location:** `{index_path}`
 - **Total Agents:** {len(agents)}
-- **Last Scan:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+- **Last Scan:** {_current_timestamp()}
 
 ---
 
@@ -570,7 +570,7 @@ async def render_review_report_template(
         final_decision = prepared_metadata.get("final_decision", overall_decision)
         return f"""# Review Report: {stage.replace('_', ' ').title()} Stage
 
-**Review Date:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+**Review Date:** {_current_timestamp()}
 **Reviewer:** {agent_id}
 **Project:** {project.get('name')}
 **Stage:** {stage}
@@ -630,7 +630,7 @@ async def render_agent_report_card_template(
         return f"""# Agent Performance Report Card
 
 **Agent:** {agent_name}
-**Review Date:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+**Review Date:** {_current_timestamp()}
 **Reviewer:** {agent_id}
 **Project:** {project.get('name')}
 **Stage:** {stage}

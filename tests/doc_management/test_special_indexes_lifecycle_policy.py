@@ -200,6 +200,19 @@ class _FixedIndexTime(datetime):
 
 @pytest.mark.core
 @pytest.mark.regression
+def test_index_utc_label_uses_utc_clock(tmp_path, monkeypatch):
+    class NonUtcLocalTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 20, 12 if tz is not None else 7, 0, tzinfo=tz)
+
+    monkeypatch.setattr(special_indexes_shared, "datetime", NonUtcLocalTime)
+    content = special_indexes_shared._build_research_index(tmp_path / "research")
+    assert "Last Updated: 2026-01-20 12:00:00 UTC" in content
+
+
+@pytest.mark.core
+@pytest.mark.regression
 @pytest.mark.parametrize("family", ["research", "bug", "security"])
 def test_index_real_filesystem_content_and_sync_parity(tmp_path, monkeypatch, test_agent, family):
     from scribe_mcp import object_store

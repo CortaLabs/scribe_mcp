@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.50 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.51 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.51 checkpoint uses UTC for timestamps labeled UTC in generated indexes and reports.
 
 The 3.3.50 checkpoint moves research and case-index filesystem work off the event loop and keeps index writes joined through cancellation.
 
