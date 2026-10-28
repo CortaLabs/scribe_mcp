@@ -9,6 +9,11 @@ as part of scribe_tool_output_refinement project.
 import pytest
 import pytest_asyncio
 import json
+from scribe_mcp import server as server_module
+from scribe_mcp.tools import append_entry as append_entry_module
+from scribe_mcp.shared.logging_utils import ProjectResolutionError
+from scribe_mcp.state.manager import StateManager
+from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.tools.append_entry import append_entry
 from scribe_mcp.tools.set_project import set_project
 from scribe_mcp.config.settings import settings
@@ -286,6 +291,140 @@ async def test_backward_compatibility(test_project):
     assert result["ok"] is True
     # Should have auto-inferred priority from status
     assert "priority" in result.get("meta", {})
+
+
+@pytest_asyncio.fixture
+async def append_retry_project(tmp_path, monkeypatch, test_agent):
+    """Real standalone storage, with every mutable artifact in tmp_path."""
+    storage = SQLiteStorage(tmp_path / "retry.db")
+    await storage.setup()
+    log_path = tmp_path / "PROGRESS_LOG.md"
+    log_path.write_text("existing trail\n", encoding="utf-8")
+    project = await storage.upsert_project(
+        name="append_retry_project",
+        repo_root=str(tmp_path),
+        progress_log_path=str(log_path),
+    )
+    monkeypatch.setattr(server_module, "storage_backend", storage)
+    monkeypatch.setattr(
+        server_module, "state_manager",
+        StateManager(tmp_path / "state.json", storage_backend=storage),
+    )
+    monkeypatch.setattr(server_module, "get_execution_context", lambda: None)
+    monkeypatch.setattr(server_module, "get_agent_identity", lambda: None)
+    # This is the standalone explicit-project path, not a simulated fleet bind.
+    monkeypatch.setenv("SCRIBE_RELEASE_PROFILE", "internal")
+    try:
+        context = await append_entry_module.resolve_logging_context(
+            tool_name="append_entry", server_module=server_module,
+            agent_id=test_agent, explicit_project=project.name,
+            require_project=True, state_snapshot={},
+        )
+        assert context.project["root"] == str(tmp_path)
+        assert context.resolution_source == "explicit_project"
+        yield project, storage, log_path
+    finally:
+        await storage.close()
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_project_exists", [True, False], ids=["real-retry", "missing-project"])
+async def test_append_retry_resolution_returns_clean_refusal_without_write(
+    append_retry_project, monkeypatch, test_agent, retry_project_exists,
+):
+    """A controlled first failure must never turn into an uninitialized local.
+
+    The existing healer rewrites the oversized identity. This does not grant
+    permission to write as that identity: a clean refusal is the safe oracle
+    until the identity trust decision is made separately.
+    """
+    project, storage, log_path = append_retry_project
+    explicit_project = project.name if retry_project_exists else "missing_retry_project"
+    oversized_identity = (test_agent + "-" * 1100)[:1100]
+    real_resolve = append_entry_module.resolve_logging_context
+    calls = []
+    resolved = []
+    retry_errors = []
+
+    async def fail_first_resolution(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise ProjectResolutionError("controlled first resolution failure")
+        try:
+            context = await real_resolve(**kwargs)
+        except ProjectResolutionError as exc:
+            retry_errors.append(str(exc))
+            raise
+        resolved.append(context)
+        return context
+
+    before_log = log_path.read_bytes()
+    before_count = await storage.count_entries(project=project)
+    monkeypatch.setattr(append_entry_module, "resolve_logging_context", fail_first_resolution)
+    result = await append_entry(
+        agent=test_agent, agent_id=oversized_identity, project=explicit_project,
+        message="controlled retry regression", format="structured",
+    )
+    assert isinstance(result, dict), result
+    assert len(calls) == 2, (calls, result)
+    assert calls[0]["agent_id"] == oversized_identity
+    assert calls[1]["agent_id"] != oversized_identity  # observed healing, not authorization
+    assert all(call["explicit_project"] == explicit_project for call in calls)
+    assert all(call["require_project"] is True for call in calls)
+    if retry_project_exists:
+        assert not retry_errors, retry_errors
+        assert len(resolved) == 1
+        assert resolved[0].project["name"] == project.name
+        assert resolved[0].resolution_source == "explicit_project"
+    else:
+        assert not resolved
+        assert len(retry_errors) == 1
+        assert "not found" in retry_errors[0], retry_errors
+
+    # Check both actual persistence surfaces even when the response is faulty.
+    assert log_path.read_bytes() == before_log, result
+    assert await storage.count_entries(project=project) == before_count, result
+    assert result.get("ok") is False, result
+    error = result.get("error", "")
+    assert error, result
+    assert "error_response" not in error, result
+    assert "append_entry failed:" not in error, result
+    if retry_project_exists:
+        assert "controlled first resolution failure" in error, result
+        assert "does not authorize this append" in result.get("suggestion", ""), result
+        assert "original agent identity" in result["suggestion"], result
+        assert result.get("debug_path") == "project_resolution_failed_healed", result
+    if not retry_project_exists:
+        assert "controlled first resolution failure" in error, result
+        assert result.get("debug_path") == "project_resolution_failed_healed", result
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.storage
+@pytest.mark.asyncio
+async def test_append_retry_resolution_preserves_authorized_append(
+    append_retry_project, test_agent,
+):
+    """An unchanged identity still appends through the real file and DB path."""
+    project, storage, log_path = append_retry_project
+    before_log = log_path.read_bytes()
+    before_count = await storage.count_entries(project=project)
+    message = "authorized append positive control"
+
+    result = await append_entry(
+        agent=test_agent, agent_id=test_agent, project=project.name,
+        message=message, format="structured",
+    )
+
+    assert isinstance(result, dict), result
+    assert result.get("ok") is True, result
+    assert log_path.read_bytes().startswith(before_log), result
+    assert message in log_path.read_text(encoding="utf-8"), result
+    assert await storage.count_entries(project=project) == before_count + 1, result
 
 
 if __name__ == "__main__":

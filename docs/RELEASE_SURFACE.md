@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.59 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.60 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.60 checkpoint returns a clear refusal after an identity-changing append retry instead of an internal error, without writing under the altered identity.
 
 The 3.3.59 checkpoint aligns the development test dependencies with the async fixture API used by the test suite.
 
