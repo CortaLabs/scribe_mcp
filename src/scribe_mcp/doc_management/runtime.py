@@ -1872,6 +1872,13 @@ async def _handle_quality_check(
         )
         if resolved_research and resolved_research.exists():
             candidate_key = _canonical_doc_key(requested_stem)
+            # Keep the registered spelling only when it names the canonical
+            # file; an alias to the top-level fallback must not win selection.
+            scope_name = (
+                target_name
+                if preserve_scope_name and Path(path_str).resolve() == resolved_research.resolve()
+                else candidate_key
+            )
             try:
                 await register_document_path(
                     active_project,
@@ -1887,11 +1894,11 @@ async def _handle_quality_check(
                 docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
                 # A differently cased alias may still point at the generic
                 # top-level fallback. Use the canonical binding just registered.
-                target_name = candidate_key
+                target_name = scope_name
                 path_str = docs.get(candidate_key) or str(resolved_research)
             except Exception as exc:
                 logger.warning("quality_check research pre-bind failed for '%s': %s", requested_name, exc)
-                target_name = candidate_key
+                target_name = scope_name
                 path_str = str(resolved_research)
                 runtime_warnings.append(
                     f"quality_check used discovered research document '{requested_name}' at "

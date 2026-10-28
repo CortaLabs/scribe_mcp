@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.62 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.63 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.63 checkpoint preserves the registered research document name in quality results after rehoming when it identifies the canonical file.
 
 The 3.3.62 checkpoint removes a global fake server from document-routing tests to prevent order-dependent failures.
 
