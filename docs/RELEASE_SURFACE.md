@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.64 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.65 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.65 checkpoint uses generic path-mapping examples in public documentation.
 
 The 3.3.64 checkpoint loads bridge exports on demand while preserving the existing public exports and bridge behavior. Full startup memory budgets remain unmet.
 
