@@ -45,7 +45,7 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.34` · Updated: `2026-10-27`
+Development candidate: `scribe-mcp 3.3.35` · Updated: `2026-10-28`
 
 This branch prepares the next major Scribe release. It carries the maintenance fixes for durable project bindings, SQLite startup and cleanup, atomic entry/metric writes, literal document content and genuine regression checks. Agent/session tests now assert isolation, rejected sessions, heartbeat and expiry cleanup instead of printing success.
 

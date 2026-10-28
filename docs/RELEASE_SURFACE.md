@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-27**
-Applies to: **v3.3.34 development candidate; default projection, integration and fleet acceptance pending**
+Updated: **2026-10-28**
+Applies to: **v3.3.35 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.35 checkpoint fixes managed-document edit metrics: edits now pass the document identifier using the registry API, allowing its existing hygiene hashes and flags to update. The original document-change and session-provenance behavior remains intact.
 
 The 3.3.34 checkpoint keeps receipt-only `manage_docs/apply_preview` requests free of automatically injected project arguments. It preserves missing canonical receipt project keys from matching verified binding metadata while keeping explicit target keys and strict scope comparisons intact. Retained rehome execution reloads its source through the existing project context loader, preserving document-directory metadata for the unchanged transaction guards. Explicit caller project selectors still reach the unchanged receipt validator, and other actions and tools retain default-project projection. Identity, response-budget, foreign-recovery and fleet acceptance remain open.
 

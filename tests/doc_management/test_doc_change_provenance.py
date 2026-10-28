@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scribe_mcp.doc_management.actions.edit import handle_edit_action
+from scribe_mcp.shared.project_registry import ProjectRegistry
+from test_project_registry import _make_temp_db
 
 
 class _RecordingBackend:
@@ -20,6 +24,13 @@ class _RecordingBackend:
 async def test_managed_edit_records_session_provenance_in_doc_change_metadata(tmp_path: Path) -> None:
     backend = _RecordingBackend()
     doc_path = tmp_path / "CHECKLIST.md"
+    registry_path = _make_temp_db(tmp_path)
+    registry = ProjectRegistry(db_path=registry_path)
+    with sqlite3.connect(registry_path) as connection:
+        connection.execute(
+            "INSERT INTO scribe_projects (name, repo_root, progress_log_path, status) VALUES (?, ?, ?, ?)",
+            ("hardening", str(tmp_path), str(tmp_path / "PROGRESS_LOG.md"), "planning"),
+        )
 
     change = SimpleNamespace(
         success=True,
@@ -87,13 +98,18 @@ async def test_managed_edit_records_session_provenance_in_doc_change_metadata(tm
         index_doc_for_vector=_index_doc_for_vector,
         vector_indexing_enabled=False,
         get_index_updater_for_path=lambda **_kwargs: None,
-        project_registry=SimpleNamespace(record_doc_update=lambda *_args, **_kwargs: None),
+        project_registry=registry,
         server_module=SimpleNamespace(state_manager=None, storage_backend=None),
         logger=SimpleNamespace(warning=lambda *_args, **_kwargs: None),
     )
 
     assert response["ok"] is True
     assert len(backend.calls) == 1
+    with sqlite3.connect(registry_path) as connection:
+        raw = connection.execute("SELECT meta FROM scribe_projects WHERE name = ?", ("hardening",)).fetchone()[0]
+    docs = json.loads(raw)["docs"]
+    assert docs["baseline_hashes"]["checklist"] == "before-sha"
+    assert docs["current_hashes"]["checklist"] == "after-sha"
 
     metadata = backend.calls[0]["metadata"]
     assert metadata["ticket"] == "P3.2"
