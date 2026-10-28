@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.48 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.49 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.49 checkpoint restores research-document tests using isolated MCP session binding, retaining their original assertions.
 
 The 3.3.48 checkpoint fixes quality checks selecting a top-level alias over the canonical research document after registration.
 
