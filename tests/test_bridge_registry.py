@@ -10,9 +10,12 @@ Tests for Phases 1-4:
 """
 
 import asyncio
+import subprocess
+import sys
 import pytest
 import tempfile
 import os
+import textwrap
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -1294,6 +1297,175 @@ class TestPhase5BridgeHealthMonitor:
 
         # Restore
         set_health_monitor(original)
+
+
+def _run_bridge_subprocess(source: str, tmp_path: Path) -> None:
+    """Run bridge compatibility checks in a fresh, isolated Python process."""
+    repo_root = Path(__file__).resolve().parents[1]
+    env = {
+        key: os.environ[key]
+        for key in ("PATH", "LD_LIBRARY_PATH", "LANG", "LC_ALL", "TZ")
+        if key in os.environ
+    }
+    env.update(
+        {
+            "HOME": str(tmp_path),
+            "SCRIBE_MODE": "standalone",
+            "SCRIBE_STORAGE_BACKEND": "sqlite",
+            "SCRIBE_DISABLE_DOTENV": "1",
+            "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": os.pathsep.join(
+                (str(repo_root / "src"), str(repo_root / "tests"))
+            ),
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(source)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+
+@pytest.mark.core
+@pytest.mark.bridges
+def test_bridge_named_public_export_is_lazy_and_identity_stable_in_subprocess(
+    tmp_path, test_agent
+):
+    _run_bridge_subprocess(
+        """
+        import importlib
+        import sys
+        import scribe_mcp.bridges as bridges
+
+        expected = [
+            "BridgeManifest", "BridgeState", "LogTypeConfig", "HookConfig",
+            "BridgeProjectConfig", "BridgeValidationConfig", "BridgePlugin",
+            "BridgeRegistry", "BridgeToScribeAPI", "BridgePolicyPlugin",
+            "BridgeHookManager", "get_hook_manager", "BridgeSecurityManager",
+            "BridgeToolWrapper", "BridgeToolRegistry", "get_tool_registry",
+            "BridgeHealthMonitor", "get_health_monitor", "set_health_monitor",
+            "create_health_monitor",
+        ]
+        assert bridges.__all__ == expected
+        assert not any(
+            f"scribe_mcp.bridges.{name}" in sys.modules
+            for name in (
+                "manifest", "plugin", "registry", "api", "policy", "hooks",
+                "security", "tools", "health", "runtime",
+            )
+        )
+        assert set(expected).issubset(dir(bridges))
+
+        from scribe_mcp.bridges import BridgeManifest
+        manifest_module = importlib.import_module("scribe_mcp.bridges.manifest")
+        assert BridgeManifest is manifest_module.BridgeManifest
+        assert bridges.BridgeManifest is BridgeManifest
+        assert bridges.__dict__["BridgeManifest"] is BridgeManifest
+
+        try:
+            bridges.UnsupportedBridgeExport
+        except AttributeError as exc:
+            assert str(exc) == (
+                "module 'scribe_mcp.bridges' has no attribute "
+                "'UnsupportedBridgeExport'"
+            )
+        else:
+            raise AssertionError("unsupported exports must raise AttributeError")
+        """,
+        tmp_path,
+    )
+
+
+@pytest.mark.core
+@pytest.mark.bridges
+def test_bridge_star_import_preserves_every_public_export_identity_in_subprocess(
+    tmp_path, test_agent
+):
+    _run_bridge_subprocess(
+        """
+        import importlib
+        import scribe_mcp.bridges as bridges
+
+        expected = {
+            "BridgeManifest": "manifest", "BridgeState": "manifest",
+            "LogTypeConfig": "manifest", "HookConfig": "manifest",
+            "BridgeProjectConfig": "manifest", "BridgeValidationConfig": "manifest",
+            "BridgePlugin": "plugin", "BridgeRegistry": "registry",
+            "BridgeToScribeAPI": "api", "BridgePolicyPlugin": "policy",
+            "BridgeHookManager": "hooks", "get_hook_manager": "hooks",
+            "BridgeSecurityManager": "security", "BridgeToolWrapper": "tools",
+            "BridgeToolRegistry": "tools", "get_tool_registry": "tools",
+            "BridgeHealthMonitor": "health", "get_health_monitor": "health",
+            "set_health_monitor": "health", "create_health_monitor": "health",
+        }
+        exported = {}
+        exec("from scribe_mcp.bridges import *", exported, exported)
+        assert set(exported) - {"__builtins__"} == set(expected)
+        assert bridges.__all__ == list(expected)
+        for name, module_name in expected.items():
+            module = importlib.import_module(f"scribe_mcp.bridges.{module_name}")
+            assert exported[name] is getattr(module, name)
+            assert getattr(bridges, name) is exported[name]
+        """,
+        tmp_path,
+    )
+
+
+@pytest.mark.core
+@pytest.mark.bridges
+def test_bridge_registry_registration_works_after_lazy_public_import_in_subprocess(
+    tmp_path, test_agent
+):
+    _run_bridge_subprocess(
+        """
+        import asyncio
+        import tempfile
+        from pathlib import Path
+
+        from scribe_mcp.bridges import BridgeManifest, BridgePlugin, BridgeRegistry
+        from scribe_mcp.bridges.manifest import BridgeState
+        from scribe_mcp.storage.sqlite import SQLiteStorage
+
+        class ExamplePlugin(BridgePlugin):
+            async def on_activate(self):
+                return None
+
+            async def on_deactivate(self):
+                return None
+
+            async def health_check(self):
+                return {"healthy": True}
+
+        async def exercise_registration():
+            with tempfile.TemporaryDirectory() as directory:
+                storage = SQLiteStorage(Path(directory) / "bridge.sqlite")
+                await storage._initialise()
+                registry = BridgeRegistry(storage)
+                manifest = BridgeManifest(
+                    bridge_id="lazy_export_bridge",
+                    name="Lazy Export Bridge",
+                    version="1.0.0",
+                    description="Subprocess export compatibility",
+                    author="test",
+                )
+                bridge_id = await registry.register_bridge(manifest, ExamplePlugin)
+                assert bridge_id == "lazy_export_bridge"
+                assert registry.get_manifest(bridge_id) is manifest
+                assert isinstance(registry.get_bridge(bridge_id), ExamplePlugin)
+                await registry.activate_bridge(bridge_id)
+                assert registry.get_bridge(bridge_id).state is BridgeState.ACTIVE
+                await registry.deactivate_bridge(bridge_id)
+                assert registry.get_bridge(bridge_id).state is BridgeState.INACTIVE
+
+        asyncio.run(exercise_registration())
+        """,
+        tmp_path,
+    )
 
 
 # =============================================================================
