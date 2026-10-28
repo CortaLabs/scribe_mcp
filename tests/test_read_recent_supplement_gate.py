@@ -284,3 +284,29 @@ async def test_real_file_supplement_selects_newest_equal_priority_before_limit(
         project=project, rows=empty, page=2, page_size=1, filters=filters,
         db_authoritative=db_authoritative,
     ) is empty
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("timestamp", [
+    "0001-01-01T00:00:00+23:59",
+    "9999-12-31T23:59:59-23:59",
+])
+def test_file_priority_sort_treats_utc_overflow_as_invalid(timestamp, test_agent):
+    def line(time, message, priority="high"):
+        return (f"[ℹ️] [{time}] [Agent: {test_agent}] [Project: test_project] "
+                f"{message} | priority={priority}")
+
+    lines = [
+        line(timestamp, "out of UTC range"),
+        line("bad-time", "malformed"),
+        line("0001-01-01T00:00:00Z", "valid minimum"),
+        line("9999-12-31T23:59:59.999999Z", "valid maximum"),
+        line("2026-01-01T02:00:00+02:00", "older valid offset"),
+        line("2026-01-01T00:00:01Z", "newer valid UTC"),
+        line(timestamp, "critical invalid", "critical"),
+    ]
+    assert _apply_line_filters(lines, {}) == lines
+    assert _apply_line_filters(lines, {"priority_sort": False}) == lines
+    expected = [lines[i] for i in [6, 3, 5, 4, 2, 0, 1]]
+    assert _apply_line_filters(lines, {"priority_sort": True}) == expected
+    assert _apply_line_filters(lines, {"priority_sort": True}) == expected

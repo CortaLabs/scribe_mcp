@@ -520,3 +520,54 @@ async def test_public_reader_orders_equal_priorities_by_full_time(
             assert later["pagination"]["total_count"] == 0
         assert log_path.read_bytes() == original_log
         assert await sqlite_storage.count_entries(project=record) == (0 if source == "supplement" else 3)
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["file", "supplement"])
+@pytest.mark.parametrize("output_format", ["structured", "compact"])
+@pytest.mark.parametrize("priority_sort", [False, True, None], ids=["false", "true", "default"])
+async def test_public_reader_preserves_out_of_range_timestamps(
+    tmp_path, sqlite_storage, sqlite_db_path, project_payload, test_agent,
+    source, output_format, priority_sort,
+):
+    """UTC normalization overflow must use the stable invalid-time fallback."""
+    async with _genuine_recency_reader(
+        tmp_path, sqlite_db_path, project_payload, test_agent, source,
+    ) as reader:
+        record = await sqlite_storage.fetch_project(
+            project_payload["name"], repo_root=project_payload["root"],
+        )
+        assert record is not None
+        timestamps = ["0001-01-01T00:00:00+23:59", "9999-12-31T23:59:59-23:59",
+                      "2026-12-31 23:59:59 UTC"]
+        messages = ["UTC underflow", "UTC overflow", "valid UTC timestamp"]
+        lines = [
+            f"[ℹ️] [{timestamp}] [Agent: {test_agent}] [Project: {record.name}] "
+            f"{messages[i]} | priority=high"
+            for i, timestamp in enumerate(timestamps)
+        ]
+        log_path = Path(project_payload["progress_log"])
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        before = log_path.read_bytes()
+        options = {} if priority_sort is None else {"priority_sort": priority_sort}
+        compact = output_format == "compact"
+        message_key = "m" if compact else "message"
+        expected = [2, 0, 1] if priority_sort else [0, 1, 2]
+        for limit in (3, 1):
+            result = await reader(
+                agent=test_agent, limit=limit, page_size=limit,
+                format=output_format, compact=compact,
+                fields=["message", "ts", "meta", "raw_line"], **options,
+            )
+            assert result["ok"] is True, result
+            wanted = expected[:limit]
+            assert [entry[message_key] for entry in result["entries"]] == [messages[i] for i in wanted]
+            assert [entry["ts"] for entry in result["entries"]] == [timestamps[i] for i in wanted]
+            assert result["pagination"]["page_size"] == limit
+            assert result["pagination"]["total_count"] == (limit if source == "supplement" else 3)
+            assert all(entry["meta"] == {"priority": "high"} for entry in result["entries"])
+            if not compact:
+                assert [entry["raw_line"] for entry in result["entries"]] == [lines[i] for i in wanted]
+        assert log_path.read_bytes() == before
+        assert await sqlite_storage.count_entries(project=record) == 0

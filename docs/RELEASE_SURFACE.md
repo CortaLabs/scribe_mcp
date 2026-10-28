@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.57 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.58 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.58 checkpoint handles timestamps whose offsets overflow the UTC date range during priority sorting, using the existing stable invalid-time fallback.
 
 The 3.3.57 checkpoint corrects a schema test to verify both the patch hash type and its body-hash documentation.
 

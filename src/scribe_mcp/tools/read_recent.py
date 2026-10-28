@@ -746,7 +746,11 @@ def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:
     if priority_sort:
         def timestamp_key(item):
             # parse_log_line exposes the complete timestamp as ts, not ts_iso.
-            parsed_time = parse_utc(item[1].get("ts") or "")
+            try:
+                parsed_time = parse_utc(item[1].get("ts") or "")
+            except OverflowError:
+                # A valid local date/offset can normalize outside UTC's range.
+                parsed_time = None
             return (parsed_time is not None, parsed_time or datetime.min.replace(tzinfo=timezone.utc))
 
         # Stable passes keep equal/invalid times in source order, put valid
