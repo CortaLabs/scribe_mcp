@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.49 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.50 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.50 checkpoint moves research and case-index filesystem work off the event loop and keeps index writes joined through cancellation.
 
 The 3.3.49 checkpoint restores research-document tests using isolated MCP session binding, retaining their original assertions.
 
