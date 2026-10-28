@@ -21,6 +21,49 @@ from scribe_mcp.doc_management.runtime import build_create_intent_payload
 from scribe_mcp.template_engine import Jinja2TemplateEngine
 
 
+@pytest.mark.regression
+@pytest.mark.parametrize("separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+@pytest.mark.parametrize("fallback", [False, True])
+def test_unicode_separators_are_literal_with_ascii_scope_lines(
+    separator: str, newline: str, fallback: bool,
+) -> None:
+    from scribe_mcp.doc_management.quality.scopes import (
+        HeuristicFenceScopeProvider, MarkdownItScopeProvider,
+    )
+
+    provider = HeuristicFenceScopeProvider() if fallback else MarkdownItScopeProvider()
+    prefix = f"Prose{separator}continues{newline}"
+    payload = f"```text{newline}alpha{separator}```{newline}<!-- ID: fake -->{newline}```{newline}"
+    neighbor = f"<!-- ID: real -->{newline}"
+    body = prefix + payload + neighbor
+    scopes = [scope for scope in provider.collect_scopes(body) if scope.kind == "fenced_code"]
+    assert len(scopes) == 1
+    scope = scopes[0]
+    assert scope.start_line == 2 and scope.end_line == 5
+    assert scope.start_offset == len(prefix)
+    assert scope.contains_offset(body.index("<!-- ID: fake -->"))
+    assert not scope.contains_offset(body.index("<!-- ID: real -->"))
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85", "\v", "\f", "\x1c", "\x1d", "\x1e"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+@pytest.mark.parametrize("closed", [False, True])
+def test_normalizer_preserves_literal_separators_and_prose_policy(
+    separator: str, newline: str, closed: bool,
+) -> None:
+    from scribe_mcp.doc_management.utils import strip_trailing_whitespace_lines
+
+    payload = f"```text{newline}alpha{separator}beta  \t{newline}"
+    if closed:
+        payload += f"```{newline}"
+    original = f"prose{separator}continues  \t{newline}" + payload
+    # The existing normalizer converts ASCII CR/CRLF to LF, including fences.
+    expected = f"prose{separator}continues\n" + payload.replace(newline, "\n")
+    assert strip_trailing_whitespace_lines(original).encode("utf-8") == expected.encode("utf-8")
+
+
 def _count_marker(text: str, section_id: str) -> int:
     return text.count(f"<!-- ID: {section_id} -->")
 
