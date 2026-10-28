@@ -1,7 +1,7 @@
 # Release File Map
 
 Baseline date: **2026-08-26**
-Coverage: **3.3.41 development candidate; integration and publication pending**
+Coverage: **3.3.42 development candidate; integration and publication pending**
 
 ## Table of contents
 
@@ -28,7 +28,7 @@ Coverage: **3.3.41 development candidate; integration and publication pending**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines development candidate `scribe-mcp==3.3.41`, Python `>=3.11`, compatible MCP SDK 2.x range `>=2.0.0,<3.0`, and CLI scripts. The isolated current-protocol test environment uses `mcp==2.3.0` and `mcp-types==2.3.0`; the supported wire revision is `2026-07-28`. SDK 1.x, older protocol revisions and paired `/sse` plus `/messages/` are unsupported. Removal of obsolete compatibility code remains required before release. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines development candidate `scribe-mcp==3.3.42`, Python `>=3.11`, compatible MCP SDK 2.x range `>=2.0.0,<3.0`, and CLI scripts. The isolated current-protocol test environment uses `mcp==2.3.0` and `mcp-types==2.3.0`; the supported wire revision is `2026-07-28`. SDK 1.x, older protocol revisions and paired `/sse` plus `/messages/` are unsupported. Removal of obsolete compatibility code remains required before release. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
@@ -62,7 +62,7 @@ Coverage: **3.3.41 development candidate; integration and publication pending**
 | Changelog/version-memory behavior must be documented with the release bump. | Project `CHANGELOG.md`, derived global reconciliation, and version-context warnings are user-visible governance behavior. |
 | Missing accepted coverage for the current `pyproject.toml` version is release-blocking. | `SCF_CHANGELOG_CURRENT_VERSION_MISSING` appears via `quality_check`, reminders, and `project_health` until managed changelog coverage and reconciliation proof are complete. |
 
-Package metadata, runtime version surfaces, README, compatibility documentation and release status identify development candidate `3.3.41` together. Keep these surfaces consistent at each checkpoint. The [release status](RELEASE_SURFACE.md) records verified changes and pending integration, publication and live acceptance; this file classifies release contents and does not certify those gates.
+Package metadata, runtime version surfaces, README, compatibility documentation and release status identify development candidate `3.3.42` together. Keep these surfaces consistent at each checkpoint. The [release status](RELEASE_SURFACE.md) records verified changes and pending integration, publication and live acceptance; this file classifies release contents and does not certify those gates.
 
 ## Public support material
 

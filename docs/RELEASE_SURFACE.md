@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.41 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.42 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.42 checkpoint restores the changelog end-to-end test using an isolated persisted session and the real request router.
 
 The 3.3.41 checkpoint reuses one Git/version observation for a document context-drift scan instead of repeating it for each accepted entry.
 
