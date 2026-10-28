@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.43 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.44 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.44 checkpoint restores project-health tests with isolated native MCP session and real persisted project binding.
 
 The 3.3.43 checkpoint keeps document-quality scans responsive during slow Git and filesystem work for both single and bulk checks, while awaiting the same results and errors.
 
