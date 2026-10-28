@@ -70,7 +70,7 @@ async def _isolated_server(state_manager, *, project_root, project_name, agent,
         assert all(facade._registry._db_path.resolve() == backend._path.resolve()
                    for facade in _planning_registries())
         with anyio.fail_after(60):
-            async with Client(server_module.app, mode="auto") as client:
+            async with Client(server_module.app, mode="2026-07-28") as client:
                 for caller in (agent, *additional_agents):
                     selected = await client.call_tool("set_project", {
                         "agent": caller, "name": project_name, "root": str(root),

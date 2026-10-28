@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.37 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.38 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.38 checkpoint pins the managed-document test client to the current MCP protocol rather than automatic negotiation.
 
 The 3.3.37 checkpoint removes a redundant client process from the recency test harness while retaining a fresh real MCP server and isolated session for each case. Tests use the current protocol explicitly.
 
