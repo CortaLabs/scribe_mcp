@@ -313,7 +313,8 @@ async def refresh_case_indexes_for_rehome(
     return refreshed
 
 
-async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+def _build_review_index(docs_dir: Path) -> str:
+    """Keep filesystem discovery and rendering inside one worker thread."""
     index_path = docs_dir / "REVIEW_INDEX.md"
 
     review_reports = []
@@ -383,15 +384,21 @@ This directory contains review reports generated during the development quality 
 
 *This index is automatically updated when review reports are created or modified.*"""
 
+    return content
+
+
+async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    content = await asyncio.to_thread(_build_review_index, docs_dir)
     await _persist_index(
-        index_path=index_path,
+        index_path=docs_dir / "REVIEW_INDEX.md",
         content=content,
         doc_dir=docs_dir,
         repo_root=repo_root,
     )
 
 
-async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+def _build_agent_card_index(docs_dir: Path) -> str:
+    """Keep filesystem discovery and rendering inside one worker thread."""
     index_path = docs_dir / "AGENT_CARDS_INDEX.md"
 
     agent_cards = []
@@ -467,8 +474,13 @@ This directory contains agent performance evaluation reports generated during th
 
 *This index is automatically updated when agent report cards are created or modified.*"""
 
+    return content
+
+
+async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    content = await asyncio.to_thread(_build_agent_card_index, docs_dir)
     await _persist_index(
-        index_path=index_path,
+        index_path=docs_dir / "AGENT_CARDS_INDEX.md",
         content=content,
         doc_dir=docs_dir,
         repo_root=repo_root,

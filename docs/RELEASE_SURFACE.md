@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.51 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.52 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.52 checkpoint moves review and agent-card index discovery off the event loop while retaining the cancellation-safe write path.
 
 The 3.3.51 checkpoint uses UTC for timestamps labeled UTC in generated indexes and reports.
 

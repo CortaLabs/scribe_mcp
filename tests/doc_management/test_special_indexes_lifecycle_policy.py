@@ -200,6 +200,221 @@ class _FixedIndexTime(datetime):
 
 @pytest.mark.core
 @pytest.mark.regression
+@pytest.mark.parametrize("family", ["review", "agent_card"])
+@pytest.mark.parametrize("operation", ["glob", "iterate", "stat", "render"])
+def test_review_card_scan_and_render_allow_concurrent_progress(tmp_path, monkeypatch, test_agent, family, operation):
+    """Exercise real files with a controlled wait, not a filesystem speed claim."""
+    root = tmp_path / "docs"
+    root.mkdir()
+    name = "REVIEW_REPORT_phase0_a.md" if family == "review" else "AGENT_REPORT_CARD_Coder_phase0_a.md"
+    report = root / name
+    report.write_text("# Evidence\n", encoding="utf-8")
+    entered, release, progressed = threading.Event(), threading.Event(), threading.Event()
+    timed_out = []
+
+    def delay():
+        entered.set()
+        if not release.wait(1):
+            timed_out.append(True)
+
+    if operation == "render":
+        original = special_indexes_shared._current_timestamp
+
+        def timestamp():
+            delay()
+            return original()
+
+        monkeypatch.setattr(special_indexes_shared, "_current_timestamp", timestamp)
+    else:
+        method = "stat" if operation == "stat" else "glob"
+        original = getattr(Path, method)
+
+        def filesystem(path, *args, **kwargs):
+            if path == (report if operation == "stat" else root):
+                if operation == "iterate":
+                    def entries():
+                        delay()
+                        yield from original(path, *args, **kwargs)
+                    return entries()
+                delay()
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, method, filesystem)
+
+    async def run():
+        task = asyncio.create_task(getattr(special_indexes_shared, f"update_{family}_index")(root, test_agent))
+        try:
+            while not task.done():
+                if entered.is_set():
+                    progressed.set()
+                    release.set()
+                await asyncio.sleep(0)
+            await task
+        finally:
+            release.set()
+
+    asyncio.run(run())
+    assert entered.is_set()
+    assert not timed_out, "event loop stalled during scan/render"
+    assert progressed.is_set()
+    index_name = "REVIEW_INDEX.md" if family == "review" else "AGENT_CARDS_INDEX.md"
+    assert name in (root / index_name).read_text(encoding="utf-8")
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize("family", ["review", "agent_card"])
+def test_review_card_content_and_sync_parity(tmp_path, monkeypatch, test_agent, family):
+    from scribe_mcp import object_store
+
+    class NonUtcLocalTime(_FixedIndexTime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 20, 12 if tz is not None else 7, 0, tzinfo=tz)
+
+    monkeypatch.setattr(special_indexes_shared, "datetime", NonUtcLocalTime)
+    root = tmp_path / "docs"
+    root.mkdir()
+    review = family == "review"
+    index_name = "REVIEW_INDEX.md" if review else "AGENT_CARDS_INDEX.md"
+    index_path = root / index_name
+    index_path.write_text("invalid", encoding="utf-8")
+    entries = []
+    # Deliberately create oldest first; grouped display must retain newest first.
+    for number in range(23):
+        group = "beta" if number < 6 else "alpha"
+        name = f"REVIEW_REPORT_{group}_{number:02}" if review else f"AGENT_REPORT_CARD_{group}_phase0_{number:02}"
+        path = root / f"{name}.md"
+        path.write_text("abc", encoding="utf-8")
+        os.utime(path, (1000 + number, 1000 + number))
+        entries.append((name, group, 1000 + number))
+    for name in [index_name + ".backup", "_private.md", "unrelated.md", "REVIEW_REPORT_ignored.txt", "AGENT_REPORT_CARD_ignored.txt"]:
+        (root / name).write_text("ignored", encoding="utf-8")
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / f"{entries[0][0]}_nested.md").write_text("ignored", encoding="utf-8")
+    entries.reverse()
+    recent = "".join(
+        f"- **[{name}]({name}.md)** - {group} - "
+        + ("" if review else "phase0 - ")
+        + f"{datetime.fromtimestamp(mtime):%Y-%m-%d %H:%M}\n"
+        for name, group, mtime in entries[:20]
+    )
+    grouped = ""
+    for group in ["alpha", "beta"]:
+        members = [name for name, entry_group, _ in entries if entry_group == group]
+        grouped += f"### {group.title() if review else group} ({len(members)} {'reports' if review else 'evaluations'})\n"
+        grouped += "".join(f"- [{name}]({name}.md)\n" for name in members[:5])
+        grouped += f"- ... and {len(members) - 5} more\n\n"
+    timestamp = "2026-01-20 12:00:00 UTC"
+    if review:
+        expected = f"""# Review Reports Index
+
+*Last Updated: {timestamp}*
+
+This directory contains review reports generated during the development quality assurance process.
+
+## Review Statistics
+
+- **Total Reports:** 23
+- **Stages Reviewed:** 2
+
+## Recent Review Reports
+
+{recent}
+*... and 3 older reports*
+
+## Browse by Stage
+
+{grouped}
+
+## Index Information
+
+- **Index Location:** `{index_path}`
+- **Total Stages:** 2
+- **Last Scan:** {timestamp}
+
+---
+
+*This index is automatically updated when review reports are created or modified.*"""
+    else:
+        expected = f"""# Agent Report Cards Index
+
+*Last Updated: {timestamp}*
+
+This directory contains agent performance evaluation reports generated during the development process.
+
+## Agent Statistics
+
+- **Total Reports:** 23
+- **Agents Evaluated:** 2
+- **Stages Covered:** 1
+
+## Recent Agent Evaluations
+
+{recent}
+*... and 3 older evaluations*
+
+## Browse by Agent
+
+{grouped}
+
+## Index Information
+
+- **Index Location:** `{index_path}`
+- **Total Agents:** 2
+- **Last Scan:** {timestamp}
+
+---
+
+*This index is automatically updated when agent report cards are created or modified.*"""
+    synced = []
+
+    async def sync(path, content, repo_root):
+        assert path.read_text(encoding="utf-8") == content
+        synced.append((path, content, repo_root))
+
+    monkeypatch.setattr(object_store, "sync_file_to_store", sync)
+    asyncio.run(getattr(special_indexes_shared, f"update_{family}_index")(root, test_agent, repo_root=tmp_path))
+    assert index_path.read_text(encoding="utf-8") == expected
+    assert synced == [(index_path, expected, tmp_path)]
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize("family", ["review", "agent_card"])
+@pytest.mark.parametrize("failure", ["glob", "iterate", "stat_missing", "stat_denied"])
+def test_review_card_missing_directory_and_scan_errors(tmp_path, monkeypatch, test_agent, family, failure):
+    root = tmp_path / "missing"
+    updater = getattr(special_indexes_shared, f"update_{family}_index")
+    asyncio.run(updater(root, test_agent))
+    index_path = root / ("REVIEW_INDEX.md" if family == "review" else "AGENT_CARDS_INDEX.md")
+    content = index_path.read_text(encoding="utf-8")
+    assert ("*No review reports found.*" if family == "review" else "*No agent report cards found.*") in content
+    report = root / ("REVIEW_REPORT_phase0_a.md" if family == "review" else "AGENT_REPORT_CARD_Coder_phase0_a.md")
+    report.write_text("# Evidence\n", encoding="utf-8")
+    method = "stat" if failure.startswith("stat") else "glob"
+    original = getattr(Path, method)
+    error = FileNotFoundError if failure == "stat_missing" else PermissionError
+
+    def filesystem(path, *args, **kwargs):
+        if path == (report if method == "stat" else root):
+            if failure == "iterate":
+                def entries():
+                    raise error("controlled discovery failure")
+                    yield
+                return entries()
+            raise error("controlled discovery failure")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, filesystem)
+    with pytest.raises(error, match="controlled discovery failure"):
+        asyncio.run(updater(root, test_agent))
+    assert index_path.read_text(encoding="utf-8") == content
+
+
+@pytest.mark.core
+@pytest.mark.regression
 def test_index_utc_label_uses_utc_clock(tmp_path, monkeypatch):
     class NonUtcLocalTime(datetime):
         @classmethod
@@ -322,13 +537,14 @@ This directory contains {heading.lower()} generated during development and testi
 
 @pytest.mark.core
 @pytest.mark.regression
-@pytest.mark.parametrize("family", ["research", "bug", "security"])
+@pytest.mark.parametrize("family", ["research", "bug", "security", "review", "agent_card"])
 @pytest.mark.parametrize("failure", ["policy_false", "policy_error", "sync_error"])
 def test_index_persistence_error_contract(tmp_path, monkeypatch, test_agent, family, failure):
     from scribe_mcp import object_store
 
     root = tmp_path / "docs" / family
     root.mkdir(parents=True)
+    index_name = {"review": "REVIEW_INDEX.md", "agent_card": "AGENT_CARDS_INDEX.md"}.get(family, "INDEX.md")
     synced = []
 
     async def sync(path, content, repo_root):
@@ -353,18 +569,18 @@ def test_index_persistence_error_contract(tmp_path, monkeypatch, test_agent, fam
     else:
         asyncio.run(operation)
         assert len(synced) == 1
-        assert synced[0][0] == root / "INDEX.md"
+        assert synced[0][0] == root / index_name
         assert synced[0][2] == tmp_path
         if failure == "sync_error":
-            assert synced[0][1] == (root / "INDEX.md").read_text(encoding="utf-8")
+            assert synced[0][1] == (root / index_name).read_text(encoding="utf-8")
         else:
             # A false policy result has historically still attempted store sync.
-            assert not (root / "INDEX.md").exists()
+            assert not (root / index_name).exists()
 
 
 @pytest.mark.core
 @pytest.mark.regression
-@pytest.mark.parametrize("family", ["research", "bug", "security"])
+@pytest.mark.parametrize("family", ["research", "bug", "security", "review", "agent_card"])
 @pytest.mark.parametrize("repeat_cancel", [False, True])
 def test_cancelled_index_write_finishes_before_operation_releases_lock(tmp_path, monkeypatch, test_agent, family, repeat_cancel):
     from scribe_mcp import object_store
@@ -421,4 +637,5 @@ def test_cancelled_index_write_finishes_before_operation_releases_lock(tmp_path,
     asyncio.run(run())
     assert completed.is_set()
     assert order == ["write_complete", "operation_exit"]
-    assert "# " in (root / "INDEX.md").read_text(encoding="utf-8")
+    index_name = {"review": "REVIEW_INDEX.md", "agent_card": "AGENT_CARDS_INDEX.md"}.get(family, "INDEX.md")
+    assert "# " in (root / index_name).read_text(encoding="utf-8")
