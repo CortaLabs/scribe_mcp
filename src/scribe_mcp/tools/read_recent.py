@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -692,6 +693,7 @@ def _attach_planning_advisories(
 
 def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:
     from scribe_mcp.utils.logs import parse_log_line
+    from scribe_mcp.utils.time import parse_utc
     from scribe_mcp.shared.log_enums import get_priority_sort_key
 
     agent = filters.get("agent")
@@ -742,13 +744,16 @@ def _apply_line_filters(lines: List[str], filters: Dict[str, Any]) -> List[str]:
 
     # Sort by priority if requested
     if priority_sort:
-        # Sort by priority (critical=0 first) then by timestamp (DESC)
-        # Negate timestamp for DESC sort since we're doing ASC sort on tuple
+        def timestamp_key(item):
+            # parse_log_line exposes the complete timestamp as ts, not ts_iso.
+            parsed_time = parse_utc(item[1].get("ts") or "")
+            return (parsed_time is not None, parsed_time or datetime.min.replace(tzinfo=timezone.utc))
+
+        # Stable passes keep equal/invalid times in source order, put valid
+        # times newest first, and make priority the primary ordering key.
+        parsed_entries.sort(key=timestamp_key, reverse=True)
         parsed_entries.sort(
-            key=lambda item: (
-                get_priority_sort_key(item[1].get("meta", {}).get("priority", "medium")),
-                -(ord(item[1].get("ts_iso", "")[0]) if item[1].get("ts_iso") else 0)  # Simple DESC approx
-            )
+            key=lambda item: get_priority_sort_key(item[1].get("meta", {}).get("priority", "medium"))
         )
 
     return [line for line, _ in parsed_entries]

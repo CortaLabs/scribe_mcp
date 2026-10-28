@@ -438,3 +438,85 @@ async def test_public_reader_preserves_requested_order(
                         assert entry["ts"] == f"2026-01-03 14:0{i}:00 UTC"
         assert log_path.read_bytes() == original_log
         assert await sqlite_storage.count_entries(project=record) == 4
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["database", "file", "supplement"])
+@pytest.mark.parametrize("output_format", ["structured", "compact"])
+@pytest.mark.parametrize("priority_sort", [False, True, None], ids=["false", "true", "default"])
+async def test_public_reader_orders_equal_priorities_by_full_time(
+    tmp_path, sqlite_storage, sqlite_db_path, project_payload, test_agent,
+    source, output_format, priority_sort,
+):
+    """Real empty-DB supplementation must select the newest row before limiting."""
+    async with _genuine_recency_reader(
+        tmp_path, sqlite_db_path, project_payload, test_agent, source,
+    ) as reader:
+        record = await sqlite_storage.fetch_project(
+            project_payload["name"], repo_root=project_payload["root"],
+        )
+        assert record is not None
+        timestamps = ["2026-01-01 12:00:00 UTC", "2026-12-31 12:00:00 UTC",
+                      "2026-12-31 12:00:01 UTC"]
+        messages = [f"equal priority record {i}" for i in range(3)]
+        lines = [
+            f"[ℹ️] [{timestamp}] [Agent: {test_agent}] [Project: {record.name}] "
+            f"{messages[i]} | priority=high; detail=kept-{i}"
+            for i, timestamp in enumerate(timestamps)
+        ]
+        if source != "supplement":
+            for i, line in enumerate(lines):
+                await sqlite_storage.insert_entry(
+                    entry_id=f"tie-{i}", project=record,
+                    ts=datetime.strptime(timestamps[i], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc),
+                    emoji="ℹ️", agent=test_agent, message=messages[i],
+                    meta={"priority": "high", "detail": f"kept-{i}"},
+                    raw_line=line, sha256=sha256(line.encode()).hexdigest(),
+                )
+        file_order = [0, 2, 1]
+        log_path = Path(project_payload["progress_log"])
+        file_lines = [lines[i] for i in file_order]
+        if source == "database":
+            # A newer, higher-priority file-only record must never enter an
+            # authoritative DB page, including sparse later pages.
+            file_lines.append(
+                f"[ℹ️] [2027-01-01 00:00:00 UTC] [Agent: {test_agent}] "
+                f"[Project: {record.name}] file-only exclusion | priority=critical"
+            )
+        log_path.write_text("\n".join(file_lines) + "\n", encoding="utf-8")
+        original_log = log_path.read_bytes()
+        expected = [2, 1, 0] if priority_sort or source == "database" else file_order
+        options = {} if priority_sort is None else {"priority_sort": priority_sort}
+        compact = output_format == "compact"
+        message_key = "m" if compact else "message"
+        id_key = "i" if compact else "id"
+        for page_size in (3, 1):
+            pages = (1,) if source == "supplement" else range(1, 3 // page_size + 1)
+            for page in pages:
+                result = await reader(
+                    agent=test_agent, limit=page_size, page_size=page_size, page=page,
+                    format=output_format, compact=compact, **options,
+                )
+                assert result["ok"] is True, result
+                wanted = expected[(page - 1) * page_size:page * page_size]
+                assert [entry[message_key] for entry in result["entries"]] == [messages[i] for i in wanted]
+                assert result["pagination"]["page"] == page
+                assert result["pagination"]["page_size"] == page_size
+                assert result["pagination"]["total_count"] == (page_size if source == "supplement" else 3)
+                for entry, i in zip(result["entries"], wanted):
+                    assert entry["meta"] == {"priority": "high", "detail": f"kept-{i}"}
+                    if source == "database":
+                        assert entry[id_key] == f"tie-{i}"
+                    else:
+                        assert id_key not in entry
+                    if not compact:
+                        assert entry["raw_line"] == lines[i]
+                        assert entry["ts"] == timestamps[i]
+        if source == "supplement":
+            # Only page one may use the empty-DB lag fallback.
+            later = await reader(agent=test_agent, page=2, page_size=1, format="structured", **options)
+            assert later["entries"] == []
+            assert later["pagination"]["total_count"] == 0
+        assert log_path.read_bytes() == original_log
+        assert await sqlite_storage.count_entries(project=record) == (0 if source == "supplement" else 3)

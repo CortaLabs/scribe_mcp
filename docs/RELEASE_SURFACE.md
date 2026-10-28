@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.55 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.56 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.56 checkpoint orders equal-priority file-backed entries by their full timestamps before applying sparse-log limits.
 
 The 3.3.55 checkpoint keeps inline item anchors inside their parent section when applying a scoped text replacement.
 
