@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.56 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.57 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.57 checkpoint corrects a schema test to verify both the patch hash type and its body-hash documentation.
 
 The 3.3.56 checkpoint orders equal-priority file-backed entries by their full timestamps before applying sparse-log limits.
 
