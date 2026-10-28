@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 import subprocess
@@ -389,6 +390,141 @@ async def test_quality_check_auto_registers_package_doc_and_accepts_alias_forms(
     assert by_doc_name["scope"]["doc_name"].lower().removesuffix(".md") == "package_5_1_live_proof_doc"
     assert by_doc["ok"] is True
     assert by_doc["scope"]["doc_name"].lower().removesuffix(".md") == "package_5_1_live_proof_doc"
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize("reference", ["stem", "filename", "registered", "explicit", "unrelated", "fallback"])
+@pytest.mark.asyncio
+async def test_quality_check_research_selection_preserves_target_precedence(
+    tmp_path: Path, test_agent: str, dry_run: bool, reference: str,
+) -> None:
+    project_root = tmp_path / "quality_precedence_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    research_dir = docs_dir / "research"
+    research_dir.mkdir(parents=True)
+    doc_name = "PACKAGE_PROOF" if reference == "unrelated" else "RESEARCH_PROOF"
+    top_level = docs_dir / f"{doc_name}.md"
+    canonical = research_dir / f"{doc_name}.md"
+    if reference == "fallback":
+        # Similar names must never stand in for the requested exact identity.
+        canonical = research_dir / f"{doc_name}_OTHER.md"
+    top_level.write_text("# Top-level proof\n", encoding="utf-8")
+    canonical.write_text("# Canonical research proof\n", encoding="utf-8")
+    before = {path: path.read_bytes() for path in (top_level, canonical)}
+    project = {
+        "name": "q", "root": str(project_root), "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+        "docs": {doc_name: str(top_level)} if reference == "registered" else {},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    requested = doc_name + ".md" if reference == "filename" else doc_name
+    if reference == "explicit":
+        requested = str(top_level.relative_to(project_root))
+    expected = top_level if reference in {"explicit", "unrelated", "fallback"} else canonical
+
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(
+            client, test_agent, action="quality_check", doc_name=requested,
+            doc_category="" if reference in {"stem", "unrelated"} else "research",
+            dry_run=dry_run,
+        )
+        if expected == canonical:
+            # Registration must succeed through the real session-bound backend;
+            # failure fallback used to hide this exact alias-selection defect.
+            record = await state_manager._storage_backend.fetch_project(
+                project["name"], repo_root=str(project_root),
+            )
+
+    assert result["ok"] is True, result
+    assert result["scope"]["path"] == str(expected)
+    assert not any("registration failed" in warning or "pre-bind failed" in warning
+                   for warning in result["runtime_warnings"])
+    if expected == canonical:
+        assert record is not None
+        assert json.loads(record.docs_json)[doc_name.lower()] == str(canonical)
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+async def test_quality_check_research_refuses_foreign_path_with_active_binding(
+    tmp_path: Path, test_agent: str,
+) -> None:
+    project_root = tmp_path / "quality_bound_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True)
+    foreign_root = tmp_path / "foreign_repo"
+    foreign_root.mkdir()
+    foreign_doc = foreign_root / "RESEARCH_PROOF.md"
+    foreign_doc.write_text("# Foreign research\n", encoding="utf-8")
+    before = foreign_doc.read_bytes()
+    project = {
+        "name": "q", "root": str(project_root), "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"), "docs": {},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        record_before = await state_manager._storage_backend.fetch_project(
+            project["name"], repo_root=str(project_root),
+        )
+        result = await _call_manage_docs(
+            client, test_agent, action="quality_check", doc_name=str(foreign_doc),
+            doc_category="research", dry_run=True,
+        )
+        record_after = await state_manager._storage_backend.fetch_project(
+            project["name"], repo_root=str(project_root),
+        )
+
+    assert result["ok"] is False, result
+    assert record_before is not None and record_after is not None
+    assert record_after.docs_json == record_before.docs_json
+    assert foreign_doc.read_bytes() == before
+    assert list(foreign_root.iterdir()) == [foreign_doc]
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+async def test_quality_check_refuses_ambiguous_case_identity(
+    tmp_path: Path, test_agent: str,
+) -> None:
+    project_root = tmp_path / "quality_ambiguous_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True)
+    reports = []
+    for category in ("logic", "runtime"):
+        report = project_root / "docs" / "bugs" / category / "2026-01-01_duplicate" / "report.md"
+        report.parent.mkdir(parents=True)
+        report.write_text(
+            "---\ndoc_type: bug_report\ncase_id: BUG-DUP\nstatus: open\n"
+            f"category: {category}\n---\n# Duplicate identity\n",
+            encoding="utf-8",
+        )
+        reports.append(report)
+    before = {path: path.read_bytes() for path in reports}
+    project = {
+        "name": "q", "root": str(project_root), "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"), "docs": {},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(
+            client, test_agent, action="quality_check", doc_name="BUG-DUP", dry_run=True,
+        )
+
+    assert result["ok"] is False, result
+    assert {path: path.read_bytes() for path in reports} == before
 
 
 @pytest.mark.asyncio

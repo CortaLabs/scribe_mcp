@@ -1885,8 +1885,10 @@ async def _handle_quality_check(
                     agent_id=agent_id,
                 )
                 docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
-                target_name = resolve_registered_doc_key(active_project, requested_name) or candidate_key
-                path_str = docs.get(target_name) or str(resolved_research)
+                # A differently cased alias may still point at the generic
+                # top-level fallback. Use the canonical binding just registered.
+                target_name = candidate_key
+                path_str = docs.get(candidate_key) or str(resolved_research)
             except Exception as exc:
                 logger.warning("quality_check research pre-bind failed for '%s': %s", requested_name, exc)
                 target_name = candidate_key
@@ -1970,8 +1972,8 @@ async def _handle_quality_check(
                         agent_id=agent_id,
                     )
                     docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
-                    target_name = resolve_registered_doc_key(active_project, requested_name) or candidate_key
-                    path_str = docs.get(target_name) or str(resolved_research)
+                    target_name = candidate_key
+                    path_str = docs.get(candidate_key) or str(resolved_research)
                 except Exception as exc:
                     logger.warning("quality_check research re-bind failed for '%s': %s", requested_name, exc)
                     target_name = candidate_key

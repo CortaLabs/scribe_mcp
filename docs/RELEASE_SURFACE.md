@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.47 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.48 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.48 checkpoint fixes quality checks selecting a top-level alias over the canonical research document after registration.
 
 The 3.3.47 checkpoint aligns the public setup and remote guides with the current 3.x MCP policy. Legacy code removal and old-request rejection remain open.
 
