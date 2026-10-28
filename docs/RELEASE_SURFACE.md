@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.40 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.41 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.41 checkpoint reuses one Git/version observation for a document context-drift scan instead of repeating it for each accepted entry.
 
 The 3.3.40 checkpoint distinguishes clean Git working trees from unavailable Git status when recording document version context.
 
