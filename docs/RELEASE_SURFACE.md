@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.44 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.45 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.45 checkpoint reads a research index once per project-health request and reuses registered paths while preserving the full findings.
 
 The 3.3.44 checkpoint restores project-health tests with isolated native MCP session and real persisted project binding.
 

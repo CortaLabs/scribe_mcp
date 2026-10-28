@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +15,91 @@ from test_manage_docs_create_doc import _call_manage_docs, _isolated_server
 
 
 pytestmark = pytest.mark.regression
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("index_state", ["indexed", "unindexed", "missing", "unreadable"])
+async def test_project_health_bounds_index_reads_without_changing_full_output(
+    tmp_path: Path, index_state: str,
+) -> None:
+    from scribe_mcp.doc_management.runtime import _handle_project_health
+
+    # Exercise the actual handler and discovery against real files, without Git,
+    # a server or shared state. Fix mtimes so the entire output is comparable.
+    root = tmp_path / "repo"
+    docs_dir = root / ".scribe" / "docs" / "dev_plans" / "sample"
+    research_dir = docs_dir / "research"
+    research_dir.mkdir(parents=True)
+    research_paths = []
+    indexed_paths = []
+    for number in range(1200):
+        path = research_dir / f"RESEARCH_{number:04d}.md"
+        path.write_text("# Research\n", encoding="utf-8")
+        os.utime(path, (1700000000 + number, 1700000000 + number))
+        research_paths.append(path)
+        if number % 3 != 2:
+            indexed_paths.append(path)
+    index_path = research_dir / "INDEX.md"
+    if index_state != "missing":
+        index_text = "# Research index\n"
+        if index_state == "indexed":
+            index_text += "\n".join(
+                path.name if number % 2 == 0 else path.relative_to(docs_dir).as_posix()
+                for number, path in enumerate(indexed_paths)
+            )
+        index_path.write_text(index_text, encoding="utf-8")
+        os.utime(index_path, (1700002000, 1700002000))
+    project = {"name": "sample", "root": str(root), "docs_dir": str(docs_dir), "docs": {}}
+    helper = SimpleNamespace(apply_context_payload=lambda payload, context: payload)
+    real_read = Path.read_text
+    index_reads = 0
+
+    def observed_read(path: Path, *args, **kwargs):
+        nonlocal index_reads
+        if path == index_path:
+            index_reads += 1
+            if index_state == "unreadable":
+                # Portable read failure injection; all other IO is delegated.
+                raise PermissionError("controlled unreadable research index")
+        return real_read(path, *args, **kwargs)
+
+    with patch.object(Path, "read_text", observed_read):
+        result = await _handle_project_health(
+            active_project=project, metadata={"limit": 5}, helper=helper, context=None,
+        )
+
+    claims = result["organization_digest"]["status_sections"]["artifact_claims"]
+    expected_paths = sorted(
+        str(path) for path in research_paths
+        if index_state != "indexed" or path not in indexed_paths
+    )
+    assert result["ok"] is True
+    assert claims["details"]["unregistered_active_docs"] == expected_paths
+    assert [item["path"] for item in claims["details"]["registration_drift"]] == expected_paths
+    assert len(expected_paths) == (400 if index_state == "indexed" else 1200)
+    # Baseline hashes cover every field and list order, including full findings
+    # beyond metadata.limit. Only the disposable root path is normalized.
+    serialized = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    canonical = serialized.replace(str(root), "/fixture")
+    expected_hashes = {
+        "indexed": "3b3dd2d18cd0121f2f77acc8bcd24958f6c1652f845b6e05d2f133b772b89a27",
+        "unindexed": "1706e3c2eb5417fcb8b01e887656531c7993cae06b9c3379e561ff36d0f3f745",
+        "missing": "fe07eb4b542eb6104b86be59478703e95362b65bb6ca7ba0011d2b2fe359a151",
+        "unreadable": "1706e3c2eb5417fcb8b01e887656531c7993cae06b9c3379e561ff36d0f3f745",
+    }
+    assert hashlib.sha256(canonical.encode("utf-8")).hexdigest() == expected_hashes[index_state]
+    # Discovery also reads INDEX.md once; membership must add at most one read.
+    assert index_reads <= (0 if index_state == "missing" else 2)
+
+    # A later call must observe changed/new/recovered content, never a cached
+    # prior success, absence or read failure from another request.
+    index_path.write_text(f"# Research index\n{research_paths[0].name}\n", encoding="utf-8")
+    refreshed = await _handle_project_health(
+        active_project=project, metadata={"limit": 5}, helper=helper, context=None,
+    )
+    refreshed_details = refreshed["organization_digest"]["status_sections"]["artifact_claims"]["details"]
+    assert refreshed_details["unregistered_active_docs"] == sorted(str(path) for path in research_paths[1:])
+    assert [item["path"] for item in refreshed_details["registration_drift"]] == sorted(str(path) for path in research_paths[1:])
 
 
 def _project_payload(project_root: Path, slug: str) -> dict:

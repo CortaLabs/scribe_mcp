@@ -1319,7 +1319,11 @@ async def _handle_project_health(
             return False
         return relative.parts == ("research", "INDEX.md")
 
+    research_index_path = docs_dir / "research" / "INDEX.md"
+    research_index_text: Optional[str] = None
+
     def _is_indexed_research_doc(path_value: str) -> bool:
+        nonlocal research_index_text
         candidate = Path(path_value).expanduser()
         if candidate.name == "INDEX.md":
             return False
@@ -1329,20 +1333,22 @@ async def _handle_project_health(
             return False
         if not relative.parts or relative.parts[0] != "research":
             return False
-        index_path = docs_dir / "research" / "INDEX.md"
-        if not index_path.exists():
-            return False
-        try:
-            index_text = index_path.read_text(encoding="utf-8")
-        except OSError:
-            return False
-        return candidate.name in index_text or relative.as_posix() in index_text
+        if research_index_text is None:
+            # Snapshot once per request, including missing/unreadable indexes.
+            research_index_text = ""
+            if research_index_path.exists():
+                try:
+                    research_index_text = research_index_path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+        return candidate.name in research_index_text or relative.as_posix() in research_index_text
 
+    registered_path_set = set(registered_doc_paths.values())
     unregistered_active_docs = sorted(
         path_value
         for path_value in active_doc_set
         if path_value
-        and path_value not in set(registered_doc_paths.values())
+        and path_value not in registered_path_set
         and not _is_system_managed_index(path_value)
         and not _is_indexed_research_doc(path_value)
     )
