@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.42 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.43 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.43 checkpoint keeps document-quality scans responsive during slow Git and filesystem work for both single and bulk checks, while awaiting the same results and errors.
 
 The 3.3.42 checkpoint restores the changelog end-to-end test using an isolated persisted session and the real request router.
 

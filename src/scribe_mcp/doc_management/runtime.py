@@ -1835,7 +1835,8 @@ async def _handle_quality_check(
     runtime_warnings: list[str] = []
     bulk_options = _quality_bulk_options(requested_name)
     if bulk_options is not None:
-        return helper.apply_context_payload(_build_bulk_quality_response(bulk_options, runtime_warnings), context)
+        response = await asyncio.to_thread(_build_bulk_quality_response, bulk_options, runtime_warnings)
+        return helper.apply_context_payload(response, context)
 
     explicit_md_path = _resolve_explicit_markdown_path(requested_name)
     preserve_scope_name = False
@@ -1985,7 +1986,8 @@ async def _handle_quality_check(
     elif not preserve_scope_name:
         target_name = _canonical_doc_key(target_name or Path(path_str).stem)
     mode_info = resolve_quality_mode(metadata=metadata, project_root=Path(str(active_project.get("root") or "")).resolve())
-    response = _build_document_quality_payload(
+    response = await asyncio.to_thread(
+        _build_document_quality_payload,
         target_name=target_name,
         path=Path(path_str),
         mode_info=mode_info,

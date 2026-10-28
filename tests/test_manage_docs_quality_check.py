@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
+import subprocess
+import threading
 
 import pytest
 
 from scribe_mcp.doc_management import runtime as runtime_shared
+from scribe_mcp.doc_management import version_context
+from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
+from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
 from test_manage_docs_create_doc import _call_manage_docs, _isolated_server
 
@@ -737,3 +744,117 @@ async def test_quality_check_and_alias_preserve_legacy_top_level_keys(tmp_path: 
 
     for payload in (primary, alias):
         assert legacy_keys.issubset(payload.keys())
+
+
+async def _call_registered_quality_handler(project, doc_name, metadata, test_agent):
+    async def unexpected_append(**kwargs):
+        pytest.fail("A registered quality scan must not write to the audit store")
+
+    return await runtime_shared._handle_quality_check(
+        active_project=project,
+        doc_name=doc_name,
+        doc_category=None,
+        metadata=metadata,
+        project_registry=None,
+        append_entry=unexpected_append,
+        logger=logging.getLogger(__name__),
+        server_module=None,
+        execution_context=None,
+        agent_id=test_agent,
+        helper=LoggingToolMixin(),
+        context=LoggingContext(
+            tool_name="manage_docs", project=project, recent_projects=[],
+            state_snapshot={}, reminders=[], agent_id=test_agent,
+        ),
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bulk", [False, True], ids=["single", "bulk"])
+async def test_quality_handler_keeps_event_loop_responsive_during_real_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, test_agent: str, bulk: bool,
+) -> None:
+    repo = tmp_path / "quality_git_repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "pyproject.toml").write_text('[project]\nversion = "2.0.0"\n', encoding="utf-8")
+    changelog = repo / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n## Prior release\n"
+        "- `entry_id`: 20260512:prior\n- `entry_status`: accepted\n"
+        "- `title`: Prior\n- `summary`: Prior summary\n"
+        "- `evidence_refs`:\n  - tests/prior.py\n"
+        "- `observed_context`:\n  - `value`: 1.0.0\n  - `source`: pyproject\n",
+        encoding="utf-8",
+    )
+    arch = repo / "ARCHITECTURE_GUIDE.md"
+    arch.write_text("---\nstatus: complete\n---\n[fill this section]\n", encoding="utf-8")
+    project = {
+        "name": "Q", "root": str(repo),
+        "docs": {"CHANGELOG": str(changelog), "ARCHITECTURE_GUIDE": str(arch)},
+    }
+    metadata = {"quality": {"mode": "release_gate"}}
+    if bulk:
+        metadata["quality"]["bulk"] = {"doc_names": ["CHANGELOG", "ARCHITECTURE_GUIDE", "missing"]}
+    doc_name = "*" if bulk else "CHANGELOG"
+    expected = await _call_registered_quality_handler(project, doc_name, metadata, test_agent)
+    assert {"SCF_CHANGELOG_CURRENT_VERSION_MISSING", "SCF_RESEARCH_CONTEXT_DRIFT"}.issubset(
+        {warning["code"] for warning in expected["warnings"]}
+    )
+    if bulk:
+        assert expected["runtime_warnings"]
+        assert [doc["doc_name"] for doc in expected["documents"]] == ["CHANGELOG", "ARCHITECTURE_GUIDE"]
+
+    git_started = threading.Event()
+    release_git = threading.Event()
+    real_run_git = version_context._run_git
+    git_calls = []
+    released_while_git_pending = []
+
+    def controlled_real_git(repo_root, args):
+        git_calls.append((repo_root, args))
+        if len(git_calls) == 1:
+            git_started.set()
+            # Bound the wait so the unfixed inline handler fails without hanging.
+            released_while_git_pending.append(release_git.wait(timeout=1.0))
+        return real_run_git(repo_root, args)
+
+    monkeypatch.setattr(version_context, "_run_git", controlled_real_git)
+    handler = asyncio.create_task(_call_registered_quality_handler(project, doc_name, metadata, test_agent))
+
+    async def independent_checkpoint():
+        assert await asyncio.to_thread(git_started.wait, 5.0), "Real Git scan was never reached"
+        pending = not handler.done()
+        release_git.set()
+        return pending
+
+    checkpoint = asyncio.create_task(independent_checkpoint())
+    try:
+        actual, checkpoint_saw_pending = await asyncio.gather(handler, checkpoint)
+    finally:
+        release_git.set()
+        await asyncio.gather(handler, checkpoint, return_exceptions=True)
+
+    assert actual == expected  # Full warnings, summaries, ordering and bulk errors survive.
+    assert git_calls and all(root == repo for root, _args in git_calls)
+    assert checkpoint_saw_pending, "Quality handler blocked the independent event-loop task"
+    assert released_while_git_pending == [True], "Event loop could not release the pending real Git scan"
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bulk", [False, True], ids=["single", "bulk"])
+async def test_quality_handler_awaits_and_propagates_scan_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, test_agent: str, bulk: bool,
+) -> None:
+    doc = tmp_path / "ARCHITECTURE_GUIDE.md"
+    doc.write_text("# Architecture\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(tmp_path), "docs": {"ARCHITECTURE_GUIDE": str(doc)}}
+
+    def fail_scan(**kwargs):
+        raise OSError("quality scan read failed")
+
+    monkeypatch.setattr(runtime_shared, "collect_managed_doc_quality_warnings", fail_scan)
+    with pytest.raises(OSError, match="quality scan read failed"):
+        await _call_registered_quality_handler(project, "*" if bulk else "ARCHITECTURE_GUIDE", {}, test_agent)

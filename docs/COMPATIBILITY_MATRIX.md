@@ -1,7 +1,7 @@
 # Compatibility Matrix
 
 Updated: **2026-10-27**
-Release framing: **3.3.42 development candidate; latest MCP SDK and protocol**
+Release framing: **3.3.43 development candidate; latest MCP SDK and protocol**
 
 ## Development status
 
@@ -9,7 +9,7 @@ The 3.x support policy targets MCP protocol `2026-07-28` with the latest SDK, cu
 
 The current candidate carries the reviewed 2.15.34 maintenance fixes for project bindings, SQLite startup and cleanup, and atomic entry/metric writes. Current-protocol stdio and HTTP verification use SDK `2.3.0`.
 
-The current candidate is `scribe-mcp==3.3.42`. Binding-context, bounded default output, schema, background integration and live acceptance remain open. The pure preview/full projector is inactive; the 2 KiB default-response limit is not yet certified. Token counts are estimates, separate from exact UTF-8 byte counts. See [release status and checkpoint history](RELEASE_SURFACE.md) for verified changes and remaining gates. This candidate has not been published.
+The current candidate is `scribe-mcp==3.3.43`. Binding-context, bounded default output, schema, background integration and live acceptance remain open. The pure preview/full projector is inactive; the 2 KiB default-response limit is not yet certified. Token counts are estimates, separate from exact UTF-8 byte counts. See [release status and checkpoint history](RELEASE_SURFACE.md) for verified changes and remaining gates. This candidate has not been published.
 
 ## Historical migration baseline
 
@@ -28,7 +28,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, Atlas bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==3.3.42` (development candidate; publication pending)
+- **Core package version:** `scribe-mcp==3.3.43` (development candidate; publication pending)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Historical isolated candidate:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`; current release verification uses SDK `2.3.0`.
 - **Historical wire policy:** the earlier migration retained named legacy `mcp==1.26.0` / `2025-11-25`. The current 3.x policy above supersedes it and excludes that legacy path.
