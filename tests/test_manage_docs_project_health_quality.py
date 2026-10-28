@@ -18,6 +18,174 @@ pytestmark = pytest.mark.regression
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["read_text", "stat"])
+async def test_project_health_yields_during_real_discovery_io(tmp_path: Path, operation: str) -> None:
+    import asyncio
+    import threading
+    from scribe_mcp.doc_management import runtime
+
+    docs_dir = tmp_path / ".scribe" / "docs" / "dev_plans" / "sample"
+    research = docs_dir / "research"
+    research.mkdir(parents=True)
+    target = research / "RESEARCH_pending.md"
+    target.write_text("# Real research\n", encoding="utf-8")
+    project = {"name": "sample", "root": str(tmp_path), "docs_dir": str(docs_dir), "docs": {}}
+    entered, release = threading.Event(), threading.Event()
+    timed_out = []
+    observed_threads = []
+    loop_thread = threading.get_ident()
+    real_io = getattr(Path, operation)
+    real_quality = runtime.collect_managed_doc_quality_state
+    quality_threads, helper_threads = [], []
+
+    def observed_io(path, *args, **kwargs):
+        value = real_io(path, *args, **kwargs)
+        if path == target and not entered.is_set():
+            observed_threads.append(threading.get_ident())
+            entered.set()
+            # A bounded stand-in for a slow filesystem response, after real IO.
+            # Only an independent event-loop task can release it promptly.
+            timed_out.append(not release.wait(1.0))
+        return value
+
+    def observed_quality(active_project):
+        quality_threads.append(threading.get_ident())
+        return real_quality(active_project)
+
+    def apply_context(payload, context):
+        helper_threads.append(threading.get_ident())
+        return payload
+
+    async def independent_task():
+        while not entered.is_set():
+            await asyncio.sleep(0.001)
+        pending = not handler.done()
+        release.set()
+        return pending
+
+    helper = SimpleNamespace(apply_context_payload=apply_context)
+    with patch.object(Path, operation, observed_io), patch.object(runtime, "collect_managed_doc_quality_state", observed_quality):
+        handler = asyncio.create_task(runtime._handle_project_health(
+            active_project=project, metadata={"limit": 1}, helper=helper, context=None,
+        ))
+        ticker = asyncio.create_task(independent_task())
+        try:
+            result, progressed_while_pending = await asyncio.wait_for(asyncio.gather(handler, ticker), 5)
+        finally:
+            release.set()
+
+    assert progressed_while_pending is True
+    assert timed_out == [False]
+    assert observed_threads and observed_threads[0] != loop_thread
+    assert quality_threads == [loop_thread]
+    assert helper_threads == [loop_thread]
+    details = result["organization_digest"]["status_sections"]["artifact_claims"]["details"]
+    assert details["unregistered_active_docs"] == [str(target)]
+    assert [item["path"] for item in details["registration_drift"]] == [str(target)]
+
+
+@pytest.mark.asyncio
+async def test_project_health_concurrent_requests_keep_full_results_isolated(tmp_path: Path) -> None:
+    import asyncio
+    from scribe_mcp.doc_management.runtime import _handle_project_health
+
+    projects = []
+    for slug in ("alpha", "beta"):
+        root = tmp_path / slug
+        docs_dir = root / ".scribe" / "docs" / "dev_plans" / slug
+        research = docs_dir / "research"
+        research.mkdir(parents=True)
+        (research / f"RESEARCH_{slug}.md").write_text(f"# {slug}\n", encoding="utf-8")
+        projects.append({"name": slug, "root": str(root), "docs_dir": str(docs_dir), "docs": {}})
+    loop = asyncio.get_running_loop()
+
+    def apply_context(payload, context):
+        assert asyncio.get_running_loop() is loop
+        return {**payload, "context_marker": context}
+
+    helper = SimpleNamespace(apply_context_payload=apply_context)
+
+    async def run(project):
+        return await _handle_project_health(
+            active_project=project, metadata={"limit": 1}, helper=helper, context=project["name"],
+        )
+
+    expected = [await run(project) for project in projects]
+    results = await asyncio.gather(*(run(project) for project in projects))
+    assert results == expected
+    for result, project in zip(results, projects):
+        assert result["active_project"] == result["context_marker"] == project["name"]
+        details = result["organization_digest"]["status_sections"]["artifact_claims"]["details"]
+        assert details["unregistered_active_docs"] == [str(Path(project["docs_dir"]) / "research" / f"RESEARCH_{project['name']}.md")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["error", "cancel"])
+async def test_project_health_inventory_error_and_cancellation_do_not_finish_response(tmp_path: Path, outcome: str) -> None:
+    import asyncio
+    import threading
+    from scribe_mcp.doc_management import runtime
+
+    docs_dir = tmp_path / ".scribe" / "docs" / "dev_plans" / "sample"
+    research = docs_dir / "research"
+    research.mkdir(parents=True)
+    target = research / "RESEARCH_pending.md"
+    target.write_text("# Real research\n", encoding="utf-8")
+    project = {"name": "sample", "root": str(tmp_path), "docs_dir": str(docs_dir), "docs": {}}
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    real_read = Path.read_text
+    quality_calls, helper_calls = [], []
+    real_quality = runtime.collect_managed_doc_quality_state
+
+    def observed_read(path, *args, **kwargs):
+        value = real_read(path, *args, **kwargs)
+        if path == target:
+            if outcome == "error":
+                raise RuntimeError("controlled discovery error")
+            entered.set()
+            try:
+                if not release.wait(2):
+                    raise AssertionError("test did not release cancelled inventory")
+            finally:
+                finished.set()
+        return value
+
+    def observed_quality(active_project):
+        quality_calls.append(active_project)
+        return real_quality(active_project)
+
+    def apply_context(payload, context):
+        helper_calls.append(context)
+        return payload
+
+    helper = SimpleNamespace(apply_context_payload=apply_context)
+    with patch.object(Path, "read_text", observed_read), patch.object(runtime, "collect_managed_doc_quality_state", observed_quality):
+        handler = asyncio.create_task(runtime._handle_project_health(
+            active_project=project, metadata=None, helper=helper, context=None,
+        ))
+        try:
+            if outcome == "error":
+                with pytest.raises(RuntimeError, match="controlled discovery error"):
+                    await handler
+            else:
+                assert await asyncio.to_thread(entered.wait, 2)
+                handler.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await handler
+        finally:
+            release.set()
+            if outcome == "cancel":
+                assert await asyncio.to_thread(finished.wait, 2)
+
+    assert quality_calls == []
+    assert helper_calls == []
+    # A failed/cancelled request cannot poison a later inventory or response.
+    result = await runtime._handle_project_health(active_project=project, metadata=None, helper=helper, context="later")
+    assert result["ok"] is True
+    assert helper_calls == ["later"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("index_state", ["indexed", "unindexed", "missing", "unreadable"])
 async def test_project_health_bounds_index_reads_without_changing_full_output(
     tmp_path: Path, index_state: str,

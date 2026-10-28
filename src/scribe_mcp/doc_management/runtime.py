@@ -1163,25 +1163,30 @@ async def _handle_project_health(
         )
 
     limit = int((metadata or {}).get("limit", 20) or 20)
-    discovered = utils_shared.discover_scribe_source_documents(repo_root)
-    entries: list[Dict[str, Any]] = []
-    for doc in discovered:
-        try:
-            modified_at = doc.path.stat().st_mtime
-        except OSError:
-            modified_at = 0.0
-        entries.append(
-            {
-                "project_slug": doc.project_slug or "unscoped",
-                "path": str(doc.path),
-                "doc_type": doc.doc_type,
-                "source_family": doc.source_family,
-                "category": doc.category,
-                "case_id": doc.case_id,
-                "modified_at": modified_at,
-            }
-        )
+    def _collect_inventory() -> list[Dict[str, Any]]:
+        # Only filesystem inventory and worker-local values cross this boundary.
+        # Readiness caches, project state and response context stay on the loop.
+        discovered = utils_shared.discover_scribe_source_documents(repo_root)
+        inventory: list[Dict[str, Any]] = []
+        for doc in discovered:
+            try:
+                modified_at = doc.path.stat().st_mtime
+            except OSError:
+                modified_at = 0.0
+            inventory.append(
+                {
+                    "project_slug": doc.project_slug or "unscoped",
+                    "path": str(doc.path),
+                    "doc_type": doc.doc_type,
+                    "source_family": doc.source_family,
+                    "category": doc.category,
+                    "case_id": doc.case_id,
+                    "modified_at": modified_at,
+                }
+            )
+        return inventory
 
+    entries = await asyncio.to_thread(_collect_inventory)
     entries = _dedupe_health_entries(entries)
     active_slug = slugify_project_name(active_project.get("name", ""))
     grouped: Dict[str, list[Dict[str, Any]]] = {}

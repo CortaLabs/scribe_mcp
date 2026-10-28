@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.45 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.46 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.46 checkpoint moves project-health file inventory and stat work off the event loop, while keeping shared readiness state on the event loop.
 
 The 3.3.45 checkpoint reads a research index once per project-health request and reuses registered paths while preserving the full findings.
 
