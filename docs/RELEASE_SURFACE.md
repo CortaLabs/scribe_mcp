@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.58 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.59 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.59 checkpoint aligns the development test dependencies with the async fixture API used by the test suite.
 
 The 3.3.58 checkpoint handles timestamps whose offsets overflow the UTC date range during priority sorting, using the existing stable invalid-time fallback.
 
