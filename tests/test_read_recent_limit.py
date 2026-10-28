@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+from tempfile import TemporaryFile
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -279,33 +280,22 @@ if os.environ["SBR_RECENCY_SOURCE"] == "file":
 asyncio.run(server.main())
 '''
 
-_RECENCY_CLIENT_PROBE = r'''
-import asyncio, json, os, sys
-from importlib.metadata import version
-from mcp import StdioServerParameters
-from mcp.client.client import Client
-from mcp.client.stdio import stdio_client
-import scribe_mcp
-
-async def main():
-    params = StdioServerParameters(command=sys.executable,
-        args=["-c", os.environ["SBR_RECENCY_SERVER_PROBE"]],
-        env=dict(os.environ), cwd=os.environ["SBR_RECENCY_SOURCE_ROOT"])
-    async with Client(stdio_client(params), mode="auto") as client:
-        print(json.dumps({"sdk": version("mcp"), "origin": scribe_mcp.__file__}), flush=True)
-        while line := await asyncio.to_thread(sys.stdin.readline):
-            name, arguments = json.loads(line)
-            result = await client.call_tool(name, arguments)
-            assert not result.is_error, (name, result)
-            data = json.loads("\n".join(getattr(item, "text", "") for item in result.content))
-            print(json.dumps(data), flush=True)
-asyncio.run(main())
-'''
-
-
 @asynccontextmanager
 async def _genuine_recency_reader(tmp_path, sqlite_db_path, project_payload, agent, source):
+    # Run pytest with the selected SDK interpreter. Resolving venv symlinks
+    # would incorrectly equate environments with different installed packages.
+    sdk_python = os.environ.get("SBR_SDK_PYTHON", sys.executable)
+    assert Path(sdk_python).absolute() == Path(sys.executable).absolute(), (
+        "Run pytest with SBR_SDK_PYTHON; the recency client uses pytest's SDK",
+        sdk_python, sys.executable,
+    )
+    import scribe_mcp
+    from mcp import StdioServerParameters
+    from mcp.client.client import Client
+    import mcp.client.stdio as sdk_stdio
+
     source_root = Path(__file__).resolve().parents[1]
+    assert Path(scribe_mcp.__file__).resolve() == source_root / "src/scribe_mcp/__init__.py"
     repo = Path(project_payload["root"])
     (repo / ".git").mkdir()
     runtime = tmp_path / "sdk-runtime"
@@ -319,46 +309,48 @@ async def _genuine_recency_reader(tmp_path, sqlite_db_path, project_payload, age
         "SCRIBE_DB_PATH": str(sqlite_db_path), "SCRIBE_STATE_PATH": str(runtime / "state.json"),
         "SCRIBE_ROOT": str(runtime), "SCRIBE_REPO_ROOT": str(repo),
         "SCRIBE_TRUSTED_REPO_ROOTS": str(repo), "PYTHONPATH": str(source_root / "src"),
-        "SBR_RECENCY_SOURCE": source, "SBR_RECENCY_SOURCE_ROOT": str(source_root),
-        "SBR_RECENCY_SERVER_PROBE": _RECENCY_SERVER_PROBE,
+        "SBR_RECENCY_SOURCE": source,
     })
-    sdk_python = os.environ.get("SBR_SDK_PYTHON", sys.executable)
-    process = await asyncio.create_subprocess_exec(
-        sdk_python, "-c", _RECENCY_CLIENT_PROBE, cwd=source_root, env=env,
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    params = StdioServerParameters(
+        command=sdk_python, args=["-c", _RECENCY_SERVER_PROBE], env=env, cwd=source_root,
     )
-    stderr = asyncio.create_task(process.stderr.read())
+    processes = []
+    spawn = sdk_stdio._create_platform_compatible_process
 
-    async def response():
-        line = await asyncio.wait_for(process.stdout.readline(), timeout=45)
-        assert line, (await stderr).decode()
-        return json.loads(line)
+    async def observe_spawn(*args, **kwargs):
+        # Observe the real SDK-owned process solely to assert clean exit. The
+        # original SDK transport, spawn, session and shutdown all run unchanged.
+        process = await spawn(*args, **kwargs)
+        processes.append(process)
+        return process
 
-    async def call(name, arguments):
-        process.stdin.write((json.dumps([name, arguments]) + "\n").encode())
-        await process.stdin.drain()
-        return await response()
-
-    try:
-        origin = await response()
-        assert Path(origin["origin"]).resolve() == source_root / "src/scribe_mcp/__init__.py"
-        selected = await call("set_project", {"agent": agent, **project_payload, "format": "structured"})
-        assert selected.get("ok", True) is not False, selected
-
-        async def read_recent(**arguments):
-            return await call("read_recent", arguments)
-
-        yield read_recent
-    finally:
-        process.stdin.close()
+    with TemporaryFile(mode="w+", encoding="utf-8") as stderr, pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sdk_stdio, "_create_platform_compatible_process", observe_spawn)
         try:
-            await asyncio.wait_for(process.wait(), timeout=15)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-        errors = (await stderr).decode()
-        assert process.returncode == 0, errors
+            async with Client(
+                sdk_stdio.stdio_client(params, errlog=stderr),
+                mode="2026-07-28", read_timeout_seconds=45,
+            ) as client:
+                assert client.protocol_version == "2026-07-28"
+                async def call(name, arguments):
+                    result = await asyncio.wait_for(client.call_tool(name, arguments), timeout=45)
+                    assert not result.is_error, (name, result)
+                    return json.loads("\n".join(getattr(item, "text", "") for item in result.content))
+
+                selected = await call("set_project", {"agent": agent, **project_payload, "format": "structured"})
+                assert selected.get("ok", True) is not False, selected
+
+                async def read_recent(**arguments):
+                    return await call("read_recent", arguments)
+
+                yield read_recent
+        finally:
+            # SDK stdio bounds graceful wait and process-tree kill/reap. A
+            # missing exit or kill is a failure, never accepted as cleanup.
+            stderr.seek(0)
+            errors = stderr.read()
+            assert len(processes) == 1, errors
+            assert processes[0].returncode == 0, errors
 
 
 @pytest.mark.regression

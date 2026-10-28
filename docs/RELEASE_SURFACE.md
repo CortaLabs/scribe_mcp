@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.36 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.37 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.37 checkpoint removes a redundant client process from the recency test harness while retaining a fresh real MCP server and isolated session for each case. Tests use the current protocol explicitly.
 
 The 3.3.36 checkpoint isolates the managed-document test registry to each scenario database. The original test group and persisted registry checks remain intact while avoiding repeated SQLite lock timeouts.
 
