@@ -372,7 +372,8 @@ async def handle_edit_action(
             try:
                 project_name = project.get("name", "")
                 if project_name:
-                    project_registry.record_doc_update(
+                    await asyncio.to_thread(
+                        project_registry.record_doc_update,
                         project_name,
                         doc=doc_name,
                         action=action,

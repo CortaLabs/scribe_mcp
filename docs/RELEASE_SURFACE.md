@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.38 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.39 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.39 checkpoint keeps managed-document registry updates awaited while moving their blocking SQLite work off the event loop. Isolated contention tests cover both persisted updates and nonfatal lock failures.
 
 The 3.3.38 checkpoint pins the managed-document test client to the current MCP protocol rather than automatic negotiation.
 
