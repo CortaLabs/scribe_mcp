@@ -142,6 +142,64 @@ asyncio.run(main())
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def _assert_retired_sdk_handshake_rejected(source: Path, env: dict[str, str]) -> None:
+    """Handshake-only control; populated-state no-effects needs its separate matrix."""
+    probe = r'''
+import anyio, json, os, sys
+from pathlib import Path
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import MCPError
+from mcp.types import UNSUPPORTED_PROTOCOL_VERSION
+
+bootstrap = r"""
+import os, runpy, sys
+from pathlib import Path
+import scribe_mcp
+assert Path(scribe_mcp.__file__).resolve() == Path(os.environ['SBR_TEST_SOURCE']) / 'src/scribe_mcp/__init__.py'
+print('RETIRED_WIRE_SOURCE=' + scribe_mcp.__file__, file=sys.stderr, flush=True)
+runpy.run_module('scribe_mcp', run_name='__main__')
+"""
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=["-c", bootstrap], env=dict(os.environ))
+    client = Client(stdio_client(params), mode="legacy")
+    entered = False
+    rejected = []
+    with anyio.fail_after(60):
+        try:
+            async with client:
+                entered = True
+                raise AssertionError("retired handshake was accepted before tool dispatch")
+        except* MCPError as errors:
+            def leaves(error):
+                if isinstance(error, BaseExceptionGroup):
+                    for child in error.exceptions:
+                        yield from leaves(child)
+                else:
+                    yield error
+            for error in leaves(errors):
+                assert error.code == UNSUPPORTED_PROTOCOL_VERSION, error
+                assert error.message == "Unsupported protocol version", error
+                assert error.data["supported"] == ["2026-07-28"], error.data
+                assert error.data["requested"] != "2026-07-28", error.data
+                rejected.append(error.message)
+    assert rejected == ["Unsupported protocol version"], rejected
+    assert not entered, "legacy client reached the tool-capable context"
+    print(json.dumps({"rejected": rejected, "client_entered": entered}), flush=True)
+anyio.run(main)
+'''
+    result = subprocess.run(
+        [os.environ.get("SBR_SDK_PYTHON", sys.executable), "-c", probe],
+        cwd=source, env={**env, "SBR_TEST_SOURCE": str(source)},
+        capture_output=True, text=True, timeout=80,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '"client_entered": false' in result.stdout, result.stdout
+    assert result.stderr.count("RETIRED_WIRE_SOURCE=" + str(source / "src/scribe_mcp/__init__.py")) == 1
+
+
 @pytest.mark.regression
 @pytest.mark.storage
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
@@ -165,6 +223,9 @@ def test_real_sdk_heartbeats_preserve_binding_rows(tmp_path: Path, test_agent: s
         "SBR_TEST_REPO": str(repo), "SBR_TEST_CLOCK": str(runtime / "clock"),
         "SBR_TEST_CLOCK_SAMPLES": str(runtime / "clock_samples"),
     })
+    if mode == "legacy":
+        _assert_retired_sdk_handshake_rejected(source, env)
+        return
     probe = r'''
 import anyio, json, os, sqlite3, sys
 from pathlib import Path
@@ -558,6 +619,9 @@ def test_real_sdk_document_target_preserves_default(tmp_path: Path, test_agent: 
         "PYTHONPATH": str(source / "src"),
         "SBR_TEST_AGENT": test_agent, "SBR_TEST_MODE": mode, "SBR_TEST_SOURCE": str(source),
     })
+    if mode == "legacy":
+        _assert_retired_sdk_handshake_rejected(source, env)
+        return
     probe = r'''
 import anyio, json, os, sqlite3, sys
 from pathlib import Path
@@ -690,6 +754,9 @@ def test_real_sdk_first_bind_and_cross_repo_rebind(
     })
     if configured_default:
         env["SCRIBE_REPO_ROOT"] = str(repo_a)
+    if mode == "legacy":
+        _assert_retired_sdk_handshake_rejected(source, env)
+        return
     probe = r'''
 import anyio, json, os, sqlite3, sys
 from pathlib import Path
