@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-28**
-Applies to: **v3.3.66 development candidate; default projection, integration and fleet acceptance pending**
+Updated: **2026-10-29**
+Applies to: **v3.3.67 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.67 checkpoint removes repository-specific path abbreviation rules in favor of generic path handling.
 
 The 3.3.66 checkpoint applies the same bulk-output path shortening rules regardless of repository layout.
 
