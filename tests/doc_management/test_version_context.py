@@ -1,5 +1,8 @@
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from scribe_mcp.doc_management.version_context import resolve_observed_context, unknown_context
 
@@ -54,3 +57,18 @@ def test_git_commit_fallback_when_pyproject_missing(tmp_path: Path) -> None:
     assert context.value == "abc1234"
     assert context.commit == "abc1234"
     assert context.dirty is True
+
+
+@pytest.mark.regression
+def test_git_dirty_distinguishes_clean_dirty_and_unavailable(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+    def observed(root: Path) -> bool | None:
+        return resolve_observed_context(repo_root=root, manual_value="test").dirty
+
+    assert observed(repo) is False
+    (repo / "new.txt").write_text("untracked", encoding="utf-8")
+    assert observed(repo) is True
+    assert observed(tmp_path) is None

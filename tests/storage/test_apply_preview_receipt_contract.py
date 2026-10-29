@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from dataclasses import FrozenInstanceError, fields
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +12,12 @@ import pytest
 
 from scribe_mcp.storage.base import StorageBackend
 from scribe_mcp.storage.models import ApplyPreviewClaimResult, ApplyPreviewReceiptRecord
+from scribe_mcp.storage.postgres import PostgresStorage
+from fixtures.storage import (
+    apply_preview_receipt as _codec_receipt,
+    apply_preview_receipt_row as _row,
+    apply_preview_receipt_with_nested_json as _receipt_with_nested_json,
+)
 
 
 def _receipt(**overrides: object) -> ApplyPreviewReceiptRecord:
@@ -143,3 +150,54 @@ def test_storage_backend_receipt_methods_fail_closed_by_default() -> None:
             await StorageBackend.cleanup_apply_preview_receipts(backend)  # type: ignore[arg-type]
 
     asyncio.run(exercise())
+
+
+@pytest.mark.core
+@pytest.mark.storage
+@pytest.mark.regression
+@pytest.mark.parametrize("codec", ["text", "decoded"])
+@pytest.mark.parametrize("state", ["issued", "applied"])
+def test_receipt_json_codecs_preserve_strict_record_and_body_bytes(
+    codec: str, state: str,
+) -> None:
+    record = _receipt_with_nested_json(state=state)
+    row = _row(record)
+    fields = (
+        "normalized_intent_json", "target_binding_json", "precondition_json",
+        "predicted_after_json", "terminal_result_json",
+    )
+    for name in fields:
+        authored = getattr(record, name)
+        value = json.loads(authored) if authored is not None else None
+        if value is not None:
+            value = {key: value[key] for key in reversed(value)}
+        row[name] = (
+            json.dumps(value, ensure_ascii=False, indent=2, sort_keys=False)
+            if codec == "text" and authored is not None else value
+        )
+
+    persisted = PostgresStorage._apply_preview_receipt_from_row(row)
+
+    assert persisted == record
+    expected = json.loads(record.normalized_intent_json)["z"][1]["body"]
+    for name in fields:
+        encoded = getattr(persisted, name)
+        if encoded is not None:
+            assert json.loads(encoded)["z"][1]["body"].encode("utf-8") == expected.encode("utf-8")
+        else:
+            assert name == "terminal_result_json" and state == "issued"
+
+
+@pytest.mark.core
+@pytest.mark.storage
+@pytest.mark.regression
+@pytest.mark.parametrize("name", [
+    "normalized_intent_json", "target_binding_json", "precondition_json",
+    "predicted_after_json", "terminal_result_json",
+])
+def test_receipt_json_codec_rejects_malformed_text(name: str) -> None:
+    row = _row(_codec_receipt(state="applied", fence=1))
+    row[name] = "{broken"
+
+    with pytest.raises(ValueError):
+        PostgresStorage._apply_preview_receipt_from_row(row)

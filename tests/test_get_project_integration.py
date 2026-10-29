@@ -2,27 +2,24 @@
 """Integration tests for get_project context hydration."""
 
 from pathlib import Path
-from datetime import datetime, timezone
+from dataclasses import replace
 
 import pytest
+import pytest_asyncio
 import tempfile
 import shutil
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from scribe_mcp.tools.get_project import _read_recent_progress_entries, _gather_doc_info, get_project
 from scribe_mcp.shared.logging_utils import LoggingContext
-from scribe_mcp.storage.models import SessionBindingRecordV2
-
-
-def _binding(project_name: str = "demo") -> SessionBindingRecordV2:
-    return SessionBindingRecordV2(
-        caller_session_key_hash="ab" * 32,
-        project_key=f"{project_name}-key",
-        project_name=project_name,
-        canonical_repo_root=f"/tmp/{project_name}",
-        binding_generation=1,
-        updated_at=datetime.now(timezone.utc),
-    )
+from scribe_mcp import server
+from scribe_mcp.shared.execution_context import (
+    AgentAttributionV1, AuthorizationEvidenceV1, ResolvedProjectTargetV1,
+    RouterContextManager, build_resolved_request_context,
+)
+from scribe_mcp.state.agent_manager import AgentContextManager
+from scribe_mcp.state.manager import StateManager
+from scribe_mcp.storage.sqlite import SQLiteStorage
 
 
 @pytest.fixture
@@ -247,82 +244,101 @@ class TestGatherDocInfo:
         assert docs_info["progress"]["entries"] == 7
 
 
+
+
+async def verified_reader_context(storage, router, root, session_id, agent, project_name):
+    """Build typed test authority only from the current canonical stored binding."""
+    binding = await storage.get_session_project(session_id)
+    record = await storage.fetch_project(project_name, repo_root=str(root))
+    assert binding is not None and record is not None
+    assert binding.project_key == record.project_key
+    assert binding.canonical_repo_root == str(root)
+    context = await router.build_execution_context({
+        "repo_root": str(root), "session_id": session_id, "stable_session_id": session_id,
+        "transport_session_id": f"reader-test::actor={agent}", "mode": "project",
+        "intent": "reader-neighbor-regression",
+        "scope_provenance": {"repo_root": "verified", "stable_session_id": "verified"},
+        "trust_level": "verified", "session_binding": binding,
+    })
+    request = build_resolved_request_context(
+        caller_session_key=session_id,
+        resolved_target=ResolvedProjectTargetV1(
+            project_key=record.project_key, project_name=record.name,
+            canonical_repo_root=str(root), repository_id=record.repo_id,
+            resolution_source="caller_default", default_binding_generation=binding.binding_generation,
+        ),
+        agent_attribution=AgentAttributionV1(agent=agent, agent_id=agent),
+        correlation_id="reader-neighbor-test", operating_mode="project",
+        authorization_evidence=AuthorizationEvidenceV1(
+            source="server_verified", verified=True, scope_refs=(f"repo:{record.repo_id}",),
+        ),
+    )
+    return replace(context, resolved_request_context=request)
+
+
+@pytest_asyncio.fixture
+async def reader_environment(tmp_path, monkeypatch, test_agent):
+    """Real ephemeral canonical storage; each test explicitly installs its request context."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    log = root / "PROGRESS_LOG.md"
+    log.write_text("# Progress Log\n")
+    storage = SQLiteStorage(tmp_path / "reader.db")
+    manager = StateManager(path=tmp_path / "reader.db", storage_backend=storage)
+    router = RouterContextManager(storage_backend=storage)
+    try:
+        await storage.setup()
+        manager._backend_ready = True
+        record = await storage.upsert_project(
+            name="demo", repo_root=str(root), progress_log_path=str(log),
+        )
+        session_id = "current-reader-session"
+        await storage.upsert_session(session_id=session_id, repo_root=str(root), agent_id=test_agent)
+        await storage.set_session_project(session_id, "demo")
+        await storage.set_agent_project(
+            test_agent, "demo", expected_version=None, updated_by=test_agent, session_id=session_id,
+        )
+        context = await verified_reader_context(storage, router, root, session_id, test_agent, "demo")
+        monkeypatch.setattr(server, "storage_backend", storage)
+        monkeypatch.setattr(server, "state_manager", manager)
+        monkeypatch.setattr(server, "router_context_manager", router)
+        monkeypatch.setattr(server, "agent_context_manager", AgentContextManager(storage, manager))
+        monkeypatch.setattr(server, "agent_identity", None)
+        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", server)
+        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", server)
+
+        async def snapshot():
+            return (
+                await storage.fetch_project("demo", repo_root=str(root), project_key=record.project_key),
+                await storage.get_session_project(session_id),
+                await storage.get_agent_project(test_agent),
+                await storage.count_entries(record),
+                log.read_bytes(),
+            )
+
+        yield SimpleNamespace(
+            storage=storage, manager=manager, router=router, context=context,
+            root=root, record=record, session_id=session_id, agent=test_agent, snapshot=snapshot,
+        )
+    finally:
+        await storage.close()
+
+
 class TestGetProjectIntegration:
     """Integration tests for get_project with readable format."""
 
     @pytest.mark.asyncio
-    async def test_explicit_agent_selection_exposes_cas_version(
-        self, monkeypatch, tmp_path
-    ):
-        """The requested agent row, including its CAS version, is public truth."""
-        state_manager = AsyncMock()
-        state_manager.record_tool.return_value = {"tool": "get_project"}
-        state_manager.load.return_value = SimpleNamespace(
-            recent_projects=["heartbeat"], current_project="heartbeat"
-        )
-        fake_server = Mock()
-        fake_server.state_manager = state_manager
-        fake_server.get_agent_identity.return_value = None
-        fake_server.get_execution_context.return_value = None
-        fake_server.storage_backend = None
-        fake_server.get_agent_context_manager.return_value.get_current_project = AsyncMock(
-            return_value={
-                "agent_id": "sentinel",
-                "project_name": "heartbeat",
-                "version": 7,
-            }
-        )
-        context = LoggingContext(
-            tool_name="get_project",
-            project={
-                "name": "heartbeat",
-                "root": str(tmp_path),
-                "progress_log": "",
-                "version": 7,
-            },
-            recent_projects=["heartbeat"],
-            state_snapshot={},
-            reminders=[],
-            agent_id="sentinel",
-            resolution_source="agent_project",
-        )
-        prepare = AsyncMock(return_value=context)
-
-        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
-        monkeypatch.setattr(
-            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module",
-            fake_server,
-        )
-        monkeypatch.setattr(
-            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.prepare_context",
-            prepare,
-        )
-        monkeypatch.setattr(
-            "scribe_mcp.tools.get_project._GET_PROJECT_HELPER.apply_context_payload",
-            lambda payload, _context: payload,
-        )
-        monkeypatch.setattr(
-            "scribe_mcp.tools.get_project._compute_doc_status",
-            AsyncMock(return_value={}),
-        )
-        monkeypatch.setattr(
-            "scribe_mcp.tools.get_project._compute_log_counts",
-            AsyncMock(return_value={}),
-        )
-        monkeypatch.setattr(
-            "scribe_mcp.tools.get_project._read_recent_entries_from_db",
-            AsyncMock(return_value=[]),
-        )
-        monkeypatch.setattr(
-            "scribe_mcp.tools.get_project.detect_project_state",
-            lambda *_args, **_kwargs: ("ACTIVE", "ok"),
-        )
-
-        result = await get_project(agent="sentinel", format="structured")
-
-        assert result["project"]["version"] == 7
-        assert result["selection_version"] == 7
-        assert prepare.await_args.kwargs["agent_id"] == "sentinel"
+    @pytest.mark.regression
+    async def test_explicit_agent_selection_exposes_cas_version(self, reader_environment):
+        """A raw selection exposes CAS metadata without granting project authority."""
+        env = reader_environment
+        before = await env.snapshot()
+        selection = await env.storage.get_agent_project(env.agent)
+        result = await get_project(agent=env.agent, format="structured")
+        assert result["ok"] is False
+        assert "project" not in result
+        assert result["selection_version"] == selection["version"]
+        assert await env.snapshot() == before
 
     @pytest.mark.asyncio
     async def test_missing_explicit_agent_selection_keeps_cas_version(
@@ -405,252 +421,141 @@ class TestGetProjectIntegration:
         assert result["fallback_chain"] == []
 
     @pytest.mark.asyncio
-    async def test_explicit_recovery_mode_compat_active_project(self, monkeypatch):
-        """Compatibility recovery mode should opt into active-project fallback explicitly."""
-        state_manager = AsyncMock()
-        state_manager.record_tool.return_value = {"tool": "get_project"}
-        state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project=None)
-
-        fake_server = Mock()
-        fake_server.state_manager = state_manager
-        fake_server.get_agent_identity.return_value = None
-        fake_server.get_execution_context.return_value = None
-        fake_server.storage_backend = None
-
-        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
-        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
-        monkeypatch.setattr(
-            "scribe_mcp.tools.project_utils.load_active_project",
-            AsyncMock(
-                return_value=(
-                    {"name": "demo", "root": "/tmp/demo", "progress_log": "/tmp/demo/PROGRESS_LOG.md", "docs": {}},
-                    "demo",
-                    ["demo"],
-                )
-            ),
-        )
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_log_counts", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_progress_entries", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_entries_from_db", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project.detect_project_state", lambda *_args, **_kwargs: ("NEW", "ok"))
-
-        result = await get_project(format="structured", recovery_mode="compat_active_project")
-
-        assert result["ok"] is True
-        assert result["project"]["name"] == "demo"
-        assert result["resolution_source"] == "compat_active_project"
-        assert result["fallback_used"] is True
-        assert "compat_active_project" in result["fallback_chain"]
-        assert "recovery chain" in result["resolution_summary"].lower()
+    @pytest.mark.regression
+    async def test_explicit_recovery_mode_compat_active_project(self, reader_environment, monkeypatch):
+        """Compatibility hints cannot promote a stored label without request authority."""
+        env = reader_environment
+        env.manager._projects_cache = {"demo": {"name": "demo", "root": str(env.root)}}
+        env.manager._projects_cache_at = float("inf")
+        forbidden = AsyncMock(side_effect=AssertionError("Unverified recovery must not prepare a project"))
+        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.prepare_context", forbidden)
+        before = await env.snapshot()
+        result = await get_project(agent=env.agent, recovery_mode="compat_active_project")
+        assert result["ok"] is False
+        assert "project" not in result
+        assert result["resolution_source"] == "unresolved"
+        assert result["fallback_used"] is False
+        assert result["fallback_chain"] == []
+        assert result["compatibility_recovery"] == {
+            "requested": True, "mode": "compat_active_project",
+            "applied": False, "reason": "current_authority_unavailable",
+        }
+        forbidden.assert_not_awaited()
+        assert await env.snapshot() == before
 
     @pytest.mark.asyncio
-    async def test_structured_lookup_resolves_via_session_binding_without_bootstrap_fallback(self, monkeypatch):
-        """Ordinary structured lookup should resolve through session binding, not bootstrap app.state."""
-        state_manager = AsyncMock()
-        state_manager.record_tool.return_value = {"tool": "get_project"}
-        state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project="demo")
-
-        storage_backend = Mock()
-        storage_backend.get_session_project = AsyncMock(return_value=_binding())
-        storage_backend.fetch_project = AsyncMock(
-            return_value=SimpleNamespace(
-                name="demo",
-                repo_root="/tmp/demo",
-                progress_log_path="/tmp/demo/PROGRESS_LOG.md",
-                docs_json=None,
-            )
-        )
-        storage_backend.count_entries = AsyncMock(return_value=0)
-
-        fake_server = Mock()
-        fake_server.state_manager = state_manager
-        fake_server.get_agent_identity.return_value = None
-        fake_server.get_execution_context.return_value = SimpleNamespace(
-            mode="project",
-            stable_session_id="stable-session-001",
-            session_id="transport-session-001",
-        )
-        fake_server.storage_backend = storage_backend
-        fake_server.app = SimpleNamespace(state=SimpleNamespace(execution_context={"forbidden": True}))
-
-        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
-        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
-        monkeypatch.setattr(
-            "scribe_mcp.tools.project_utils.load_active_project",
-            AsyncMock(side_effect=AssertionError("compat fallback must not run in ordinary mode")),
-        )
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_log_counts", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_progress_entries", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_entries_from_db", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project.detect_project_state", lambda *_args, **_kwargs: ("NEW", "ok"))
-
-        result = await get_project(format="structured")
-
+    @pytest.mark.regression
+    async def test_structured_lookup_resolves_via_session_binding_without_bootstrap_fallback(
+        self, reader_environment, monkeypatch
+    ):
+        """Current typed request and real binding resolve the canonical record."""
+        env = reader_environment
+        before = await env.snapshot()
+        lookup = AsyncMock(wraps=env.storage.get_session_project)
+        monkeypatch.setattr(env.storage, "get_session_project", lookup)
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
         assert result["ok"] is True
-        assert result["project"]["name"] == "demo"
+        assert result["project"]["name"] == env.record.name
+        assert result["project"]["project_key"] == env.record.project_key
+        assert result["project"]["root"] == str(env.root)
         assert result["recent_projects"] == ["demo"]
         assert result["resolution_source"] == "session_binding"
         assert result["fallback_used"] is False
         assert result["fallback_chain"] == []
         assert "resolved via 'session_binding'" in result["resolution_summary"].lower()
-        assert result["state"] == "NEW"
-        storage_backend.get_session_project.assert_awaited_once_with("stable-session-001")
+        assert result["state"] == "EXISTING_LEGACY"
+        lookup.assert_any_await(env.session_id)
+        assert all(call.args == (env.session_id,) for call in lookup.await_args_list)
+        assert await env.snapshot() == before
 
     @pytest.mark.asyncio
-    async def test_structured_lookup_falls_back_to_transport_session_binding_when_stable_misses(self, monkeypatch):
-        """Project lookup should retry with transport-backed session id when stable session binding is empty."""
-        state_manager = AsyncMock()
-        state_manager.record_tool.return_value = {"tool": "get_project"}
-        state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project="demo")
+    @pytest.mark.regression
+    async def test_structured_lookup_requires_verified_canonical_session_after_stable_miss(
+        self, reader_environment
+    ):
+        """A stale stable hint cannot grant a fallback; verified canonical recovery succeeds."""
+        env = reader_environment
+        before = await env.snapshot()
+        stale = replace(env.context, stable_session_id="stable-session-missing")
+        token = env.router.set_current(stale)
+        try:
+            refused = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
+        assert refused["ok"] is False
+        assert "project" not in refused
+        assert refused["resolution_source"] == "unresolved"
+        assert refused["fallback_chain"] == []
+        assert await env.snapshot() == before
 
-        storage_backend = Mock()
-        storage_backend.get_session_project = AsyncMock(side_effect=[None, _binding()])
-        storage_backend.fetch_project = AsyncMock(
-            return_value=SimpleNamespace(
-                name="demo",
-                repo_root="/tmp/demo",
-                progress_log_path="/tmp/demo/PROGRESS_LOG.md",
-                docs_json=None,
-            )
-        )
-        storage_backend.count_entries = AsyncMock(return_value=0)
-
-        fake_server = Mock()
-        fake_server.state_manager = state_manager
-        fake_server.get_agent_identity.return_value = None
-        fake_server.get_execution_context.return_value = SimpleNamespace(
-            mode="project",
-            stable_session_id="stable-session-missing",
-            session_id="transport-session-bound",
-        )
-        fake_server.storage_backend = storage_backend
-        fake_server.app = SimpleNamespace(state=SimpleNamespace(execution_context={"forbidden": True}))
-
-        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
-        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
-        monkeypatch.setattr(
-            "scribe_mcp.tools.project_utils.load_active_project",
-            AsyncMock(side_effect=AssertionError("compat fallback must not run in ordinary mode")),
-        )
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_log_counts", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_progress_entries", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_entries_from_db", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project.detect_project_state", lambda *_args, **_kwargs: ("NEW", "ok"))
-
-        result = await get_project(format="structured")
-
+        # The runtime-owned recovery must establish the current canonical key.
+        # Supplying the fixture's existing verified context does not mutate a binding.
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, format="structured")
+        finally:
+            env.router.reset(token)
         assert result["ok"] is True
-        assert result["project"]["name"] == "demo"
+        assert result["project"]["project_key"] == env.record.project_key
+        assert result["project"]["root"] == str(env.root)
         assert result["resolution_source"] == "session_binding"
         assert result["fallback_used"] is False
         assert result["fallback_chain"] == []
-        assert "resolved via 'session_binding'" in result["resolution_summary"].lower()
-        assert result["state"] == "NEW"
-        assert storage_backend.get_session_project.await_count == 2
-        storage_backend.get_session_project.assert_any_await("stable-session-missing")
-        storage_backend.get_session_project.assert_any_await("transport-session-bound")
+        assert result["state"] == "EXISTING_LEGACY"
+        assert await env.snapshot() == before
 
     @pytest.mark.asyncio
-    async def test_structured_lookup_recovery_mode_does_not_mark_fallback_when_session_binding_resolves(self, monkeypatch):
-        """Compatibility mode metadata should stay truthful when session binding already resolved the project."""
-        state_manager = AsyncMock()
-        state_manager.record_tool.return_value = {"tool": "get_project"}
-        state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project="demo")
-
-        storage_backend = Mock()
-        storage_backend.get_session_project = AsyncMock(return_value=_binding())
-        storage_backend.fetch_project = AsyncMock(
-            return_value=SimpleNamespace(
-                name="demo",
-                repo_root="/tmp/demo",
-                progress_log_path="/tmp/demo/PROGRESS_LOG.md",
-                docs_json=None,
-            )
-        )
-        storage_backend.count_entries = AsyncMock(return_value=0)
-
-        fake_server = Mock()
-        fake_server.state_manager = state_manager
-        fake_server.get_agent_identity.return_value = None
-        fake_server.get_execution_context.return_value = SimpleNamespace(
-            mode="project",
-            stable_session_id="stable-session-001",
-            session_id="transport-session-001",
-        )
-        fake_server.storage_backend = storage_backend
-        fake_server.app = SimpleNamespace(state=SimpleNamespace(execution_context={"forbidden": True}))
-
-        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
-        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
-        monkeypatch.setattr(
-            "scribe_mcp.tools.project_utils.load_active_project",
-            AsyncMock(side_effect=AssertionError("compat fallback must not run when session binding resolves")),
-        )
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_log_counts", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_progress_entries", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_entries_from_db", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project.detect_project_state", lambda *_args, **_kwargs: ("NEW", "ok"))
-
-        result = await get_project(format="structured", recovery_mode="compat_active_project")
-
+    @pytest.mark.regression
+    async def test_structured_lookup_recovery_mode_does_not_mark_fallback_when_session_binding_resolves(
+        self, reader_environment
+    ):
+        """Verified binding resolution keeps compatibility metadata truthful."""
+        env = reader_environment
+        before = await env.snapshot()
+        token = env.router.set_current(env.context)
+        try:
+            result = await get_project(agent=env.agent, recovery_mode="compat_active_project")
+        finally:
+            env.router.reset(token)
         assert result["ok"] is True
-        assert result["project"]["name"] == "demo"
+        assert result["project"]["project_key"] == env.record.project_key
+        assert result["project"]["root"] == str(env.root)
         assert result["resolution_source"] == "session_binding"
+        assert result["fallback_used"] is False
+        assert result["fallback_chain"] == []
+        assert result["compatibility_recovery"] == {
+            "requested": True, "mode": "compat_active_project",
+            "applied": False, "reason": "session_authority_present",
+        }
+        assert await env.snapshot() == before
+
+    @pytest.mark.asyncio
+    @pytest.mark.regression
+    async def test_readable_lookup_includes_resolution_metadata_and_recovery_chain(
+        self, reader_environment, monkeypatch
+    ):
+        """Readable compatibility requests also refuse unverified enrichment."""
+        env = reader_environment
+        reads = AsyncMock(side_effect=AssertionError("Unverified reads must not enrich a project"))
+        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_progress_entries", reads)
+        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_entries_from_db", reads)
+        before = await env.snapshot()
+        result = await get_project(agent=env.agent, format="readable", recovery_mode="compat_active_project")
+        assert result["ok"] is False
+        assert "project" not in result
+        assert "recent_entries" not in result
+        assert result["resolution_source"] == "unresolved"
         assert result["fallback_used"] is False
         assert result["fallback_chain"] == []
         assert result["compatibility_recovery"]["requested"] is True
         assert result["compatibility_recovery"]["applied"] is False
-        assert result["compatibility_recovery"]["reason"] == "session_authority_present"
-
-    @pytest.mark.asyncio
-    async def test_readable_lookup_includes_resolution_metadata_and_recovery_chain(self, monkeypatch):
-        """Readable lookup in explicit recovery mode should expose resolution metadata truthfully."""
-        state_manager = AsyncMock()
-        state_manager.record_tool.return_value = {"tool": "get_project"}
-        state_manager.load.return_value = SimpleNamespace(recent_projects=["demo"], current_project=None)
-
-        fake_server = Mock()
-        fake_server.state_manager = state_manager
-        fake_server.get_agent_identity.return_value = None
-        fake_server.get_execution_context.return_value = None
-        fake_server.storage_backend = None
-
-        monkeypatch.setattr("scribe_mcp.tools.get_project.server_module", fake_server)
-        monkeypatch.setattr("scribe_mcp.tools.get_project._GET_PROJECT_HELPER.server_module", fake_server)
-        monkeypatch.setattr(
-            "scribe_mcp.tools.project_utils.load_active_project",
-            AsyncMock(
-                return_value=(
-                    {"name": "demo", "root": "/tmp/demo", "progress_log": "/tmp/demo/PROGRESS_LOG.md", "docs": {}},
-                    "demo",
-                    ["demo"],
-                )
-            ),
-        )
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_doc_status", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._compute_log_counts", AsyncMock(return_value={}))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_progress_entries", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._read_recent_entries_from_db", AsyncMock(return_value=[]))
-        monkeypatch.setattr("scribe_mcp.tools.get_project._format_readable_sitrep", AsyncMock(return_value="SITREP"))
-        monkeypatch.setattr("scribe_mcp.tools.get_project.detect_project_state", lambda *_args, **_kwargs: ("NEW", "ok"))
-        monkeypatch.setattr(
-            "scribe_mcp.utils.response.default_formatter.finalize_tool_response",
-            AsyncMock(side_effect=lambda payload, **_kwargs: payload),
-        )
-
-        result = await get_project(format="readable", recovery_mode="compat_active_project")
-
-        assert result["ok"] is True
-        assert result["project"]["name"] == "demo"
-        assert result["resolution_source"] == "compat_active_project"
-        assert result["fallback_used"] is True
-        assert "compat_active_project" in result["fallback_chain"]
-        assert "recovery chain" in result["resolution_summary"].lower()
-        assert result["readable_content"] == "SITREP"
+        assert result["compatibility_recovery"]["reason"] == "current_authority_unavailable"
+        reads.assert_not_awaited()
+        assert await env.snapshot() == before
 
 
 if __name__ == "__main__":

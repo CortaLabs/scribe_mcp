@@ -265,5 +265,8 @@ def test_manage_docs_schema_exposes_anchor_digest_without_removing_patch_hash() 
 
     module = importlib.import_module("scribe_mcp.tools.manage_docs")
     properties = module._MANAGE_DOCS_INPUT_SCHEMA["properties"]
-    assert properties["patch_source_hash"] == {"type": "string"}
+    patch_hash = properties["patch_source_hash"]
+    assert patch_hash["type"] == "string"
+    assert "document body" in patch_hash["description"]
+    assert "excluding YAML frontmatter" in patch_hash["description"]
     assert properties["expected_anchor_sha256"] == {"type": "string"}

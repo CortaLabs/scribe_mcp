@@ -1,60 +1,24 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+import asyncio
+import json
+import logging
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
+import subprocess
+import threading
 
 import pytest
 
-from scribe_mcp import server as server_module
 from scribe_mcp.doc_management import runtime as runtime_shared
+from scribe_mcp.doc_management import version_context
+from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
 from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
-from scribe_mcp.tools.manage_docs import manage_docs
-
-
-@contextmanager
-def _isolated_server(state_manager: StateManager, *, project_root: Path, session_id: str):
-    originals = {"state_manager": server_module.state_manager, "storage_backend": server_module.storage_backend}
-    from scribe_mcp.tools import manage_docs as manage_docs_module
-    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
-    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
-    orig_agent_id = getattr(server_module, "get_agent_identity", None)
-    server_module.state_manager = state_manager
-    server_module.storage_backend = getattr(state_manager, "_storage_backend", None)
-    server_module.get_execution_context = lambda: SimpleNamespace(mode="project", session_id=session_id, stable_session_id=session_id)
-    server_module.get_agent_identity = lambda: None
-
-    from scribe_mcp.config.repo_config import RepoConfig
-    fake_config = RepoConfig(repo_slug="test", repo_root=project_root)
-    try:
-        async def _prepare_context_stub(**kwargs):
-            state = await state_manager.load()
-            current_project = state.get_project(state.current_project) if state.current_project else None
-            return LoggingContext(tool_name="manage_docs", project=current_project, recent_projects=list(getattr(state, "recent_projects", []) or []), state_snapshot={}, reminders=[], resolution_source="session_binding")
-
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-        with patch("scribe_mcp.config.repo_config.get_current_repo_config", return_value=(project_root, fake_config)):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        if orig_exec_ctx is not None:
-            server_module.get_execution_context = orig_exec_ctx
-        if orig_agent_id is not None:
-            server_module.get_agent_identity = orig_agent_id
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
-
-
-async def _seed_runtime_session(state_manager: StateManager, session_id: str, repo_root: str) -> None:
-    backend = getattr(state_manager, "_storage_backend", None)
-    if backend and hasattr(backend, "upsert_session"):
-        await backend.upsert_session(session_id=session_id, transport_session_id=session_id, repo_root=repo_root, mode="project")
+from test_manage_docs_create_doc import _call_manage_docs, _isolated_server
 
 
 @pytest.mark.asyncio
-async def test_quality_check_returns_structured_quality_proof(tmp_path: Path) -> None:
+async def test_quality_check_returns_structured_quality_proof(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -63,11 +27,13 @@ async def test_quality_check_returns_structured_quality_proof(tmp_path: Path) ->
     project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-check-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-check-session"):
-        result = await manage_docs(action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
 
     assert result["ok"] is True
     assert result["quality_status"] in {"warn", "fail"}
@@ -97,7 +63,7 @@ async def test_quality_check_returns_structured_quality_proof(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_quality_check_returns_agent_triage_groups_and_actions(tmp_path: Path) -> None:
+async def test_quality_check_returns_agent_triage_groups_and_actions(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_agent_triage_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -118,11 +84,13 @@ TODO: add implementation evidence
     project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-agent-triage-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-agent-triage-session"):
-        result = await manage_docs(action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
 
     summary = result["summary"]
     assert summary["warning_counts_by_code"]["SCF_PLACEHOLDER_BRACKET"] == 1
@@ -170,7 +138,7 @@ TODO: add implementation evidence
 
 
 @pytest.mark.asyncio
-async def test_quality_check_clean_doc_passes(tmp_path: Path) -> None:
+async def test_quality_check_clean_doc_passes(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -179,11 +147,13 @@ async def test_quality_check_clean_doc_passes(tmp_path: Path) -> None:
     project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-pass-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-pass-session"):
-        result = await manage_docs(action="quality_check", doc="PHASE_PLAN", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc="PHASE_PLAN", dry_run=True)
 
     assert result["ok"] is True
     assert result["quality_status"] == "pass"
@@ -191,7 +161,7 @@ async def test_quality_check_clean_doc_passes(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_quality_check_bulk_project_returns_atlas_aggregate_payload(tmp_path: Path) -> None:
+async def test_quality_check_bulk_project_returns_atlas_aggregate_payload(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_bulk_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -213,12 +183,14 @@ async def test_quality_check_bulk_project_returns_atlas_aggregate_payload(tmp_pa
     }
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-bulk-session", project["root"])
 
     metadata = {"quality": {"bulk": {"scope": "project", "include_clean": True, "max_agent_actions": 3}}}
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-bulk-session"):
-        result = await manage_docs(action="quality_check", metadata=metadata, dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", metadata=metadata, dry_run=True)
 
     assert result["ok"] is True
     assert result["quality_status"] == "fail"
@@ -247,7 +219,7 @@ async def test_quality_check_bulk_project_returns_atlas_aggregate_payload(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_quality_check_bulk_doc_list_supports_compact_atlas_mode(tmp_path: Path) -> None:
+async def test_quality_check_bulk_doc_list_supports_compact_atlas_mode(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_bulk_compact_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -262,8 +234,8 @@ async def test_quality_check_bulk_doc_list_supports_compact_atlas_mode(tmp_path:
     }
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-bulk-compact-session", project["root"])
 
     metadata = {
         "quality": {
@@ -275,8 +247,10 @@ async def test_quality_check_bulk_doc_list_supports_compact_atlas_mode(tmp_path:
             }
         }
     }
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-bulk-compact-session"):
-        result = await manage_docs(action="quality_check", metadata=metadata, dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", metadata=metadata, dry_run=True)
 
     assert result["ok"] is True
     assert result["scope"]["type"] == "bulk"
@@ -295,7 +269,7 @@ async def test_quality_check_bulk_doc_list_supports_compact_atlas_mode(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_quality_handoff_check_blocks_when_scaffold_blockers_exist(tmp_path: Path) -> None:
+async def test_quality_handoff_check_blocks_when_scaffold_blockers_exist(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_handoff_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -304,11 +278,13 @@ async def test_quality_handoff_check_blocks_when_scaffold_blockers_exist(tmp_pat
     project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-handoff-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-handoff-session"):
-        result = await manage_docs(action="quality_handoff_check", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_handoff_check", dry_run=True)
 
     assert result["ok"] is False
     assert result["blocked"] is True
@@ -323,7 +299,7 @@ async def test_quality_handoff_check_blocks_when_scaffold_blockers_exist(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_quality_check_detects_failed_write_residue_blocker(tmp_path: Path) -> None:
+async def test_quality_check_detects_failed_write_residue_blocker(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_residue_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -332,18 +308,20 @@ async def test_quality_check_detects_failed_write_residue_blocker(tmp_path: Path
     project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-residue-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-residue-session"):
-        result = await manage_docs(action="quality_check", doc="PHASE_PLAN", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc="PHASE_PLAN", dry_run=True)
 
     codes = {w.get("code") for w in result.get("warnings", [])}
     assert "SCF_FAILED_WRITE_RESIDUE" in codes
 
 
 @pytest.mark.asyncio
-async def test_quality_check_respects_metadata_quality_overrides(tmp_path: Path) -> None:
+async def test_quality_check_respects_metadata_quality_overrides(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -352,12 +330,14 @@ async def test_quality_check_respects_metadata_quality_overrides(tmp_path: Path)
     project = {"name": "Q", "root": str(project_root), "docs": {"CHECKLIST": str(checklist)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-override-session", project["root"])
 
     metadata = {"quality": {"severity_overrides": {"SCF_TODO_ONLY_SECTION": "low"}, "blocking_overrides": {"SCF_TODO_ONLY_SECTION": False}}}
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-override-session"):
-        result = await manage_docs(action="quality_check", doc_name="CHECKLIST", metadata=metadata, dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="CHECKLIST", metadata=metadata, dry_run=True)
 
     todo = [w for w in result["warnings"] if w.get("code") == "SCF_TODO_ONLY_SECTION"][0]
     assert todo["severity"] == "low"
@@ -366,7 +346,7 @@ async def test_quality_check_respects_metadata_quality_overrides(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_quality_check_resolves_registered_doc_aliases(tmp_path: Path) -> None:
+async def test_quality_check_resolves_registered_doc_aliases(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_alias"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -375,18 +355,20 @@ async def test_quality_check_resolves_registered_doc_aliases(tmp_path: Path) -> 
     project = {"name": "Q", "root": str(project_root), "docs": {"PACKAGE_5_1_VERIFICATION_CLOSEOUT": str(closeout)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-alias-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-alias-session"):
-        result = await manage_docs(action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT.md", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT.md", dry_run=True)
 
     assert result["ok"] is True
     assert result["scope"]["doc_name"] == "PACKAGE_5_1_VERIFICATION_CLOSEOUT"
 
 
 @pytest.mark.asyncio
-async def test_quality_check_auto_registers_package_doc_and_accepts_alias_forms(tmp_path: Path) -> None:
+async def test_quality_check_auto_registers_package_doc_and_accepts_alias_forms(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_bind"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -395,12 +377,14 @@ async def test_quality_check_auto_registers_package_doc_and_accepts_alias_forms(
     project = {"name": "Q", "root": str(project_root), "docs_dir": str(docs_dir), "docs": {}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-bind-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-bind-session"):
-        by_doc_name = await manage_docs(action="quality_check", doc_name="PACKAGE_5_1_LIVE_PROOF_DOC.md", dry_run=True)
-        by_doc = await manage_docs(action="quality_check", doc="PACKAGE_5_1_LIVE_PROOF_DOC", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        by_doc_name = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PACKAGE_5_1_LIVE_PROOF_DOC.md", dry_run=True)
+        by_doc = await _call_manage_docs(client, test_agent, action="quality_check", doc="PACKAGE_5_1_LIVE_PROOF_DOC", dry_run=True)
 
     assert by_doc_name["ok"] is True
     assert by_doc_name["scope"]["doc_name"].lower().removesuffix(".md") == "package_5_1_live_proof_doc"
@@ -408,8 +392,143 @@ async def test_quality_check_auto_registers_package_doc_and_accepts_alias_forms(
     assert by_doc["scope"]["doc_name"].lower().removesuffix(".md") == "package_5_1_live_proof_doc"
 
 
+@pytest.mark.regression
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize("reference", ["stem", "filename", "registered", "explicit", "unrelated", "fallback"])
 @pytest.mark.asyncio
-async def test_quality_check_derives_docs_dir_from_progress_log_when_missing(tmp_path: Path) -> None:
+async def test_quality_check_research_selection_preserves_target_precedence(
+    tmp_path: Path, test_agent: str, dry_run: bool, reference: str,
+) -> None:
+    project_root = tmp_path / "quality_precedence_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    research_dir = docs_dir / "research"
+    research_dir.mkdir(parents=True)
+    doc_name = "PACKAGE_PROOF" if reference == "unrelated" else "RESEARCH_PROOF"
+    top_level = docs_dir / f"{doc_name}.md"
+    canonical = research_dir / f"{doc_name}.md"
+    if reference == "fallback":
+        # Similar names must never stand in for the requested exact identity.
+        canonical = research_dir / f"{doc_name}_OTHER.md"
+    top_level.write_text("# Top-level proof\n", encoding="utf-8")
+    canonical.write_text("# Canonical research proof\n", encoding="utf-8")
+    before = {path: path.read_bytes() for path in (top_level, canonical)}
+    project = {
+        "name": "q", "root": str(project_root), "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
+        "docs": {doc_name: str(top_level)} if reference == "registered" else {},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    requested = doc_name + ".md" if reference == "filename" else doc_name
+    if reference == "explicit":
+        requested = str(top_level.relative_to(project_root))
+    expected = top_level if reference in {"explicit", "unrelated", "fallback"} else canonical
+
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(
+            client, test_agent, action="quality_check", doc_name=requested,
+            doc_category="" if reference in {"stem", "unrelated"} else "research",
+            dry_run=dry_run,
+        )
+        if expected == canonical:
+            # Registration must succeed through the real session-bound backend;
+            # failure fallback used to hide this exact alias-selection defect.
+            record = await state_manager._storage_backend.fetch_project(
+                project["name"], repo_root=str(project_root),
+            )
+
+    assert result["ok"] is True, result
+    assert result["scope"]["path"] == str(expected)
+    assert not any("registration failed" in warning or "pre-bind failed" in warning
+                   for warning in result["runtime_warnings"])
+    if expected == canonical:
+        assert record is not None
+        assert json.loads(record.docs_json)[doc_name.lower()] == str(canonical)
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+async def test_quality_check_research_refuses_foreign_path_with_active_binding(
+    tmp_path: Path, test_agent: str,
+) -> None:
+    project_root = tmp_path / "quality_bound_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True)
+    foreign_root = tmp_path / "foreign_repo"
+    foreign_root.mkdir()
+    foreign_doc = foreign_root / "RESEARCH_PROOF.md"
+    foreign_doc.write_text("# Foreign research\n", encoding="utf-8")
+    before = foreign_doc.read_bytes()
+    project = {
+        "name": "q", "root": str(project_root), "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"), "docs": {},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        record_before = await state_manager._storage_backend.fetch_project(
+            project["name"], repo_root=str(project_root),
+        )
+        result = await _call_manage_docs(
+            client, test_agent, action="quality_check", doc_name=str(foreign_doc),
+            doc_category="research", dry_run=True,
+        )
+        record_after = await state_manager._storage_backend.fetch_project(
+            project["name"], repo_root=str(project_root),
+        )
+
+    assert result["ok"] is False, result
+    assert record_before is not None and record_after is not None
+    assert record_after.docs_json == record_before.docs_json
+    assert foreign_doc.read_bytes() == before
+    assert list(foreign_root.iterdir()) == [foreign_doc]
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+async def test_quality_check_refuses_ambiguous_case_identity(
+    tmp_path: Path, test_agent: str,
+) -> None:
+    project_root = tmp_path / "quality_ambiguous_repo"
+    docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
+    docs_dir.mkdir(parents=True)
+    reports = []
+    for category in ("logic", "runtime"):
+        report = project_root / "docs" / "bugs" / category / "2026-01-01_duplicate" / "report.md"
+        report.parent.mkdir(parents=True)
+        report.write_text(
+            "---\ndoc_type: bug_report\ncase_id: BUG-DUP\nstatus: open\n"
+            f"category: {category}\n---\n# Duplicate identity\n",
+            encoding="utf-8",
+        )
+        reports.append(report)
+    before = {path: path.read_bytes() for path in reports}
+    project = {
+        "name": "q", "root": str(project_root), "docs_dir": str(docs_dir),
+        "progress_log": str(docs_dir / "PROGRESS_LOG.md"), "docs": {},
+    }
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(
+            client, test_agent, action="quality_check", doc_name="BUG-DUP", dry_run=True,
+        )
+
+    assert result["ok"] is False, result
+    assert {path: path.read_bytes() for path in reports} == before
+
+
+@pytest.mark.asyncio
+async def test_quality_check_derives_docs_dir_from_progress_log_when_missing(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_progress_derived"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -435,12 +554,14 @@ async def test_quality_check_derives_docs_dir_from_progress_log_when_missing(tmp
     }
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-progress-derive-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-progress-derive-session"):
-        by_name = await manage_docs(action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT", dry_run=True)
-        by_path_name = await manage_docs(action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT.md", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        by_name = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT", dry_run=True)
+        by_path_name = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT.md", dry_run=True)
 
     assert by_name["ok"] is True
     assert by_path_name["ok"] is True
@@ -450,6 +571,7 @@ async def test_quality_check_derives_docs_dir_from_progress_log_when_missing(tmp
 async def test_quality_check_uses_discovered_doc_when_auto_registration_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    test_agent: str,
 ) -> None:
     project_root = tmp_path / "quality_repo_registration_blocked"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
@@ -481,12 +603,14 @@ async def test_quality_check_uses_discovered_doc_when_auto_registration_fails(
     monkeypatch.setattr(runtime_shared, "register_document_path", _blocked_registration)
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-registration-blocked-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-registration-blocked-session"):
-        by_name = await manage_docs(action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT", dry_run=True)
-        by_md = await manage_docs(action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT.md", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        by_name = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT", dry_run=True)
+        by_md = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PACKAGE_5_1_VERIFICATION_CLOSEOUT.md", dry_run=True)
 
     for result in (by_name, by_md):
         assert result["ok"] is True
@@ -497,7 +621,7 @@ async def test_quality_check_uses_discovered_doc_when_auto_registration_fails(
 
 
 @pytest.mark.asyncio
-async def test_quality_check_resolves_case_id_before_dev_plan_auto_registration(tmp_path: Path) -> None:
+async def test_quality_check_resolves_case_id_before_dev_plan_auto_registration(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_case_report"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -527,11 +651,13 @@ async def test_quality_check_resolves_case_id_before_dev_plan_auto_registration(
         "docs": {"progress_log": str(progress_log)},
     }
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-case-report-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-case-report-session"):
-        result = await manage_docs(action="quality_check", doc_name=case_id)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name=case_id)
 
     assert result["ok"] is True, result
     assert result["scope"]["doc_name"] == case_id
@@ -539,7 +665,7 @@ async def test_quality_check_resolves_case_id_before_dev_plan_auto_registration(
 
 
 @pytest.mark.asyncio
-async def test_quality_check_changelog_does_not_require_current_version_coverage_in_local_default(tmp_path: Path) -> None:
+async def test_quality_check_changelog_does_not_require_current_version_coverage_in_local_default(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_changelog_release"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -565,11 +691,13 @@ async def test_quality_check_changelog_does_not_require_current_version_coverage
     project = {"name": "Q", "root": str(project_root), "docs": {"CHANGELOG": str(changelog)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-changelog-release-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-changelog-release-session"):
-        result = await manage_docs(action="quality_check", doc_name="CHANGELOG", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="CHANGELOG", dry_run=True)
 
     codes = {w.get("code") for w in result.get("warnings", [])}
     assert "SCF_CHANGELOG_CURRENT_VERSION_MISSING" not in codes
@@ -578,7 +706,7 @@ async def test_quality_check_changelog_does_not_require_current_version_coverage
 
 
 @pytest.mark.asyncio
-async def test_quality_check_explicit_release_mode_records_trigger(tmp_path: Path) -> None:
+async def test_quality_check_explicit_release_mode_records_trigger(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_release_mode"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -587,12 +715,14 @@ async def test_quality_check_explicit_release_mode_records_trigger(tmp_path: Pat
     project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-release-mode-session", project["root"])
 
     metadata = {"quality": {"mode": "release_gate", "release_trigger": "manual_release_intent"}}
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-release-mode-session"):
-        result = await manage_docs(action="quality_check", doc_name="PHASE_PLAN", metadata=metadata, dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PHASE_PLAN", metadata=metadata, dry_run=True)
 
     assert result["summary"]["mode"] == "release_gate"
     assert result["summary"]["release_trigger"] == "manual_release_intent"
@@ -601,7 +731,7 @@ async def test_quality_check_explicit_release_mode_records_trigger(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_quality_check_inferred_release_mode_emits_current_version_missing(tmp_path: Path) -> None:
+async def test_quality_check_inferred_release_mode_emits_current_version_missing(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_inferred_release_mode"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -627,12 +757,14 @@ async def test_quality_check_inferred_release_mode_emits_current_version_missing
     project = {"name": "Q", "root": str(project_root), "docs": {"CHANGELOG": str(changelog)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-inferred-release-mode-session", project["root"])
 
     metadata = {"quality": {"infer_release_gate": True, "release_trigger": "manual_release_intent"}}
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-inferred-release-mode-session"):
-        result = await manage_docs(action="quality_check", doc_name="CHANGELOG", metadata=metadata, dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="CHANGELOG", metadata=metadata, dry_run=True)
 
     codes = {w.get("code") for w in result.get("warnings", [])}
     assert result["summary"]["mode"] == "release_gate"
@@ -641,7 +773,7 @@ async def test_quality_check_inferred_release_mode_emits_current_version_missing
 
 
 @pytest.mark.asyncio
-async def test_quality_check_accepts_repo_relative_markdown_report_path(tmp_path: Path) -> None:
+async def test_quality_check_accepts_repo_relative_markdown_report_path(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_relative_path"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "active"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -654,11 +786,13 @@ async def test_quality_check_accepts_repo_relative_markdown_report_path(tmp_path
 
     project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-relative-path-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-relative-path-session"):
-        result = await manage_docs(action="quality_check", doc_name="docs/bugs/case_001/report.md", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="docs/bugs/case_001/report.md", dry_run=True)
 
     assert result["ok"] is True
     assert result["scope"]["path"] == str(report.resolve())
@@ -666,7 +800,7 @@ async def test_quality_check_accepts_repo_relative_markdown_report_path(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_quality_check_accepts_absolute_markdown_path_from_other_dev_plan_project(tmp_path: Path) -> None:
+async def test_quality_check_accepts_absolute_markdown_path_from_other_dev_plan_project(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_absolute_path"
     active_docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "active"
     active_docs_dir.mkdir(parents=True, exist_ok=True)
@@ -679,11 +813,13 @@ async def test_quality_check_accepts_absolute_markdown_path_from_other_dev_plan_
 
     project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(active_docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-absolute-path-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-absolute-path-session"):
-        result = await manage_docs(action="quality_check", doc_name=str(other_doc.resolve()), dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent, action="quality_check", doc_name=str(other_doc.resolve()), dry_run=True)
 
     assert result["ok"] is True
     assert result["scope"]["path"] == str(other_doc.resolve())
@@ -691,7 +827,7 @@ async def test_quality_check_accepts_absolute_markdown_path_from_other_dev_plan_
 
 
 @pytest.mark.asyncio
-async def test_quality_check_alias_route_matches_scaffold_quality_check(tmp_path: Path) -> None:
+async def test_quality_check_alias_route_matches_scaffold_quality_check(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_alias_route"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -700,18 +836,20 @@ async def test_quality_check_alias_route_matches_scaffold_quality_check(tmp_path
     project = {"name": "Q", "root": str(project_root), "docs": {"PHASE_PLAN": str(phase)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-alias-route-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-alias-route-session"):
-        primary = await manage_docs(action="quality_check", doc_name="PHASE_PLAN", dry_run=True)
-        alias = await manage_docs(action="scaffold_quality_check", doc_name="PHASE_PLAN", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        primary = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="PHASE_PLAN", dry_run=True)
+        alias = await _call_manage_docs(client, test_agent, action="scaffold_quality_check", doc_name="PHASE_PLAN", dry_run=True)
 
     assert primary == alias
 
 
 @pytest.mark.asyncio
-async def test_quality_check_and_alias_preserve_legacy_top_level_keys(tmp_path: Path) -> None:
+async def test_quality_check_and_alias_preserve_legacy_top_level_keys(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "quality_repo_schema_stability"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "q"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -720,8 +858,8 @@ async def test_quality_check_and_alias_preserve_legacy_top_level_keys(tmp_path: 
     project = {"name": "Q", "root": str(project_root), "docs": {"ARCHITECTURE_GUIDE": str(arch)}}
 
     state_manager = StateManager(path=tmp_path / "state.json")
+    project.setdefault("progress_log", str(docs_dir / "PROGRESS_LOG.md"))
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "quality-schema-session", project["root"])
 
     legacy_keys = {
         "ok",
@@ -734,9 +872,125 @@ async def test_quality_check_and_alias_preserve_legacy_top_level_keys(tmp_path: 
         "next_actions",
     }
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="quality-schema-session"):
-        primary = await manage_docs(action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
-        alias = await manage_docs(action="scaffold_quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        primary = await _call_manage_docs(client, test_agent, action="quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
+        alias = await _call_manage_docs(client, test_agent, action="scaffold_quality_check", doc_name="ARCHITECTURE_GUIDE", dry_run=True)
 
     for payload in (primary, alias):
         assert legacy_keys.issubset(payload.keys())
+
+
+async def _call_registered_quality_handler(project, doc_name, metadata, test_agent):
+    async def unexpected_append(**kwargs):
+        pytest.fail("A registered quality scan must not write to the audit store")
+
+    return await runtime_shared._handle_quality_check(
+        active_project=project,
+        doc_name=doc_name,
+        doc_category=None,
+        metadata=metadata,
+        project_registry=None,
+        append_entry=unexpected_append,
+        logger=logging.getLogger(__name__),
+        server_module=None,
+        execution_context=None,
+        agent_id=test_agent,
+        helper=LoggingToolMixin(),
+        context=LoggingContext(
+            tool_name="manage_docs", project=project, recent_projects=[],
+            state_snapshot={}, reminders=[], agent_id=test_agent,
+        ),
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bulk", [False, True], ids=["single", "bulk"])
+async def test_quality_handler_keeps_event_loop_responsive_during_real_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, test_agent: str, bulk: bool,
+) -> None:
+    repo = tmp_path / "quality_git_repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "pyproject.toml").write_text('[project]\nversion = "2.0.0"\n', encoding="utf-8")
+    changelog = repo / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n## Prior release\n"
+        "- `entry_id`: 20260512:prior\n- `entry_status`: accepted\n"
+        "- `title`: Prior\n- `summary`: Prior summary\n"
+        "- `evidence_refs`:\n  - tests/prior.py\n"
+        "- `observed_context`:\n  - `value`: 1.0.0\n  - `source`: pyproject\n",
+        encoding="utf-8",
+    )
+    arch = repo / "ARCHITECTURE_GUIDE.md"
+    arch.write_text("---\nstatus: complete\n---\n[fill this section]\n", encoding="utf-8")
+    project = {
+        "name": "Q", "root": str(repo),
+        "docs": {"CHANGELOG": str(changelog), "ARCHITECTURE_GUIDE": str(arch)},
+    }
+    metadata = {"quality": {"mode": "release_gate"}}
+    if bulk:
+        metadata["quality"]["bulk"] = {"doc_names": ["CHANGELOG", "ARCHITECTURE_GUIDE", "missing"]}
+    doc_name = "*" if bulk else "CHANGELOG"
+    expected = await _call_registered_quality_handler(project, doc_name, metadata, test_agent)
+    assert {"SCF_CHANGELOG_CURRENT_VERSION_MISSING", "SCF_RESEARCH_CONTEXT_DRIFT"}.issubset(
+        {warning["code"] for warning in expected["warnings"]}
+    )
+    if bulk:
+        assert expected["runtime_warnings"]
+        assert [doc["doc_name"] for doc in expected["documents"]] == ["CHANGELOG", "ARCHITECTURE_GUIDE"]
+
+    git_started = threading.Event()
+    release_git = threading.Event()
+    real_run_git = version_context._run_git
+    git_calls = []
+    released_while_git_pending = []
+
+    def controlled_real_git(repo_root, args):
+        git_calls.append((repo_root, args))
+        if len(git_calls) == 1:
+            git_started.set()
+            # Bound the wait so the unfixed inline handler fails without hanging.
+            released_while_git_pending.append(release_git.wait(timeout=1.0))
+        return real_run_git(repo_root, args)
+
+    monkeypatch.setattr(version_context, "_run_git", controlled_real_git)
+    handler = asyncio.create_task(_call_registered_quality_handler(project, doc_name, metadata, test_agent))
+
+    async def independent_checkpoint():
+        assert await asyncio.to_thread(git_started.wait, 5.0), "Real Git scan was never reached"
+        pending = not handler.done()
+        release_git.set()
+        return pending
+
+    checkpoint = asyncio.create_task(independent_checkpoint())
+    try:
+        actual, checkpoint_saw_pending = await asyncio.gather(handler, checkpoint)
+    finally:
+        release_git.set()
+        await asyncio.gather(handler, checkpoint, return_exceptions=True)
+
+    assert actual == expected  # Full warnings, summaries, ordering and bulk errors survive.
+    assert git_calls and all(root == repo for root, _args in git_calls)
+    assert checkpoint_saw_pending, "Quality handler blocked the independent event-loop task"
+    assert released_while_git_pending == [True], "Event loop could not release the pending real Git scan"
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bulk", [False, True], ids=["single", "bulk"])
+async def test_quality_handler_awaits_and_propagates_scan_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, test_agent: str, bulk: bool,
+) -> None:
+    doc = tmp_path / "ARCHITECTURE_GUIDE.md"
+    doc.write_text("# Architecture\n", encoding="utf-8")
+    project = {"name": "Q", "root": str(tmp_path), "docs": {"ARCHITECTURE_GUIDE": str(doc)}}
+
+    def fail_scan(**kwargs):
+        raise OSError("quality scan read failed")
+
+    monkeypatch.setattr(runtime_shared, "collect_managed_doc_quality_warnings", fail_scan)
+    with pytest.raises(OSError, match="quality scan read failed"):
+        await _call_registered_quality_handler(project, "*" if bulk else "ARCHITECTURE_GUIDE", {}, test_agent)

@@ -1559,6 +1559,16 @@ async def append_entry(
                         tool_name="append_entry",
                         suggestion=f"Invoke set_project with agent_id='{resolution_agent_id}' before appending entries"
                     )
+                else:
+                    # A lookup after parameter healing does not authorize an append.
+                    error_response = ErrorHandler.create_project_resolution_error(
+                        error=exc,
+                        tool_name="append_entry",
+                        suggestion=(
+                            "Project lookup after parameter healing does not authorize this append. "
+                            "Invoke set_project with the original agent identity before appending entries."
+                        ),
+                    )
                 error_response["debug_path"] = "project_resolution_failed_healed"
                 return error_response
             else:

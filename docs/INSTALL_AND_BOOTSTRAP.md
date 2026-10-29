@@ -1,7 +1,7 @@
 # Install and bootstrap
 
-Release line: `2.13.0`
-Updated: `2026-08-26`
+Release line: `3.x` development candidate
+Updated: `2026-10-28`
 
 This is the canonical onboarding guide for public users of `scribe-mcp`.
 
@@ -20,7 +20,7 @@ Choose the smallest path that matches what you are trying to do:
 | Local-only demo or single-user experiment | Explicit standalone SQLite |
 | Connect Scribe to Codex after local setup | Run `scribe install --commit --yes --project-codex` |
 | Use modern HTTP MCP on an approved internal deployment | Streamable HTTP at `/mcp`; internal-only remote/client posture for this release line |
-| Keep a known legacy client during migration | Explicit `mcp==1.26.0` compatibility through handshake stdio or `/sse` plus `/messages/` |
+| Connect an MCP client | Use the current protocol over stdio or approved Streamable HTTP |
 
 ## 1. Install the package
 
@@ -113,7 +113,7 @@ scribe-server
 
 That command uses modern stdio by default. MCP Python SDK v2 is the Python package/API contract (`mcp>=2.0.0,<3.0`); protocol `2026-07-28` is the separate modern wire default. For approved HTTP deployments, the modern endpoint is Streamable HTTP at `/mcp`.
 
-The only named legacy compatibility lane is `mcp==1.26.0` with protocol `2025-11-25`: handshake stdio, or HTTP+SSE at `/sse` with message posts to `/messages/`. It must be selected explicitly. Authentication, protocol, capability, timeout, transport, and malformed-request failures never trigger a silent downgrade.
+The 3.x policy excludes SDK 1.x and older MCP protocol revisions. Release verification targets the latest SDK and protocol; old compatibility-code removal and explicit old-request rejection remain release work. Authentication, protocol, capability, timeout, transport, and malformed-request failures never trigger a silent downgrade. See [the compatibility matrix](COMPATIBILITY_MATRIX.md).
 
 If you already manage environment variables another way, mirror the values from `.env` into your own secret/config system instead of sourcing the file directly.
 
@@ -219,10 +219,8 @@ When used internally:
 - `SCRIBE_REMOTE_URL` is the service root
 - mode detection probes `<root>/health`
 - modern Streamable HTTP is `<root>/mcp`
-- named legacy SSE is `<root>/sse`, with message posts to `<root>/messages/`
 - `SCRIBE_TRANSPORT_AUTH_TOKEN` is an **operator-root credential**, not scoped multi-user authorization
-- `/mcp`, `/sse`, and `/messages/` require the same Origin and bearer-auth policy; only `/health` is anonymous
-- legacy HTTP continuity is supported only by the current single-worker, sticky-process model
+- `/mcp` requires Origin validation and bearer authentication; only `/health` is anonymous
 
 Example internal-only client environment:
 
@@ -234,8 +232,6 @@ export SCRIBE_REMOTE_AUTH_TOKEN="replace-with-token"
 ```
 
 Rollback is source-owned: restore the previous dependency, adapter, and default protocol/transport policy from version control, then rerun compatibility and Origin/auth verification. Do not implement rollback by interpreting a modern failure as a legacy request.
-
-Retire the `mcp==1.26.0` / `2025-11-25` lane and `/sse` plus `/messages/` only after protected telemetry shows no legacy use for the agreed observation window, supported clients have migrated to modern stdio or `/mcp`, parity and security checks pass, and the source policy plus release documentation are updated together.
 
 ## 8. What to read next
 

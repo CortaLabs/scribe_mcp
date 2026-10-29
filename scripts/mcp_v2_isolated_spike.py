@@ -9,11 +9,13 @@ import importlib.metadata
 import json
 import os
 import runpy
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -23,7 +25,7 @@ REDACTIONS = (
     "mcpv2-secret-canary-9f2aa89e",
 )
 
-LEGACY_PROTOCOL = "2025-11-25"
+HISTORICAL_PROTOCOL = "2025-11-25"
 
 AGGREGATE_TESTS = (
     "tests/migration/mcp_v2/test_compatibility_matrix.py",
@@ -46,6 +48,19 @@ def _redact(value: str) -> str:
     return value
 
 
+def _assert_secret_free(evidence: Any) -> None:
+    """Reject raw log/receipt leaks without echoing their secret contents."""
+    serialized = json.dumps(evidence, sort_keys=True)
+    if any(secret in serialized for secret in REDACTIONS):
+        raise ValueError("T16_SECRET_EVIDENCE_LEAK")
+
+
+def _aggregate_junit_evidence(path: Path) -> str | None:
+    evidence = path.read_text() if path.is_file() else None
+    _assert_secret_free({"aggregate_junit": evidence})
+    return evidence
+
+
 def _run(
     args: Sequence[str],
     *,
@@ -54,33 +69,45 @@ def _run(
     timeout: int = 600,
 ) -> dict[str, Any]:
     started = time.monotonic()
+    process = subprocess.Popen(list(args), cwd=cwd, env=env, text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=True)
+    timed_out = False
+    stdout = stderr = ""
     try:
-        completed = subprocess.run(
-            list(args),
-            cwd=cwd,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-        )
-        return {
-            "command": [str(item) for item in args],
-            "returncode": completed.returncode,
-            "duration_seconds": round(time.monotonic() - started, 3),
-            "stdout_tail": _redact(completed.stdout[-12000:]),
-            "stderr_tail": _redact(completed.stderr[-12000:]),
-            "passed": completed.returncode == 0,
-        }
-    except subprocess.TimeoutExpired as exc:
-        return {
-            "command": [str(item) for item in args],
-            "returncode": None,
-            "duration_seconds": round(time.monotonic() - started, 3),
-            "stdout_tail": _redact(str(exc.stdout or "")[-12000:]),
-            "stderr_tail": _redact(str(exc.stderr or "")[-12000:]),
-            "passed": False,
-            "timed_out": True,
-        }
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+    finally:
+        for sig, budget in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                pass
+            try:
+                stdout, stderr = process.communicate(timeout=budget)
+            except subprocess.TimeoutExpired:
+                continue
+            # Also kill orphaned descendants after the leader has exited.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            break
+        process.wait(timeout=5)
+    stdout, stderr = _redact(stdout), _redact(stderr)
+    return {
+        "command": [str(item) for item in args],
+        "returncode": process.returncode,
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "stdout": stdout, "stderr": stderr,
+        "stdout_sha256": hashlib.sha256(stdout.encode()).hexdigest(),
+        "stderr_sha256": hashlib.sha256(stderr.encode()).hexdigest(),
+        "stdout_tail": stdout[-12000:], "stderr_tail": stderr[-12000:],
+        "passed": process.returncode == 0 and not timed_out,
+        "timed_out": timed_out,
+    }
 
 
 def _distribution_receipt(python: Path, names: Sequence[str], repo_root: Path) -> dict[str, Any]:
@@ -195,7 +222,7 @@ def _rollback_receipt(repo_root: Path) -> dict[str, Any]:
             else None
         ),
         "prior_adapter_absent": prior_adapter.returncode != 0,
-        "explicit_legacy_revision_preserved": (
+        "historical_legacy_revision_preserved": (
             'legacy_revisions: tuple[str, ...] = ("2025-11-25",)' in current_adapter
         ),
         "disproven_legacy_readback_absent": all(
@@ -204,6 +231,8 @@ def _rollback_receipt(repo_root: Path) -> dict[str, Any]:
         "ratified_legacy_readback_present": all(
             "2025-11-25" in content for content in readback.values()
         ),
+        "historical_revision": HISTORICAL_PROTOCOL,
+        "current_modern_only": 'legacy_enabled: bool = False' in current_adapter,
         "shadow_restore_only": True,
         "source_mutated": False,
         "modern_failure_reclassified_as_legacy": False,
@@ -222,11 +251,62 @@ print(json.dumps(sorted({ep.name: ep.value for ep in dist.entry_points if ep.gro
     return dict(json.loads(completed.stdout))
 
 
-def _matrix_rows(repo_root: Path) -> dict[str, dict[str, str]]:
+def _matrix_rows(repo_root: Path, outcomes: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:
     namespace = runpy.run_path(str(repo_root / "tests/migration/mcp_v2/test_compatibility_matrix.py"))
+    return namespace["matrix_rows"](outcomes or {})
+
+
+def _junit_outcomes(path: Path) -> dict[str, str]:
+    """Consume every exact collected node, including parameter discriminants."""
+    if not path.is_file():
+        return {}
+    outcomes: dict[str, str] = {}
+    for case in ET.parse(path).iter("testcase"):
+        parts = case.get("classname", "").split(".")
+        module_end = next((i for i, part in enumerate(parts) if part.startswith("Test")), len(parts))
+        node = "/".join(parts[:module_end]) + ".py::"
+        node += "::".join((*parts[module_end:], case.get("name", "")))
+        status = "BLOCK" if any(case.find(tag) is not None for tag in ("failure", "error", "skipped")) else "PASS"
+        outcomes[node] = "BLOCK" if outcomes.get(node) == "BLOCK" or status == "BLOCK" else "PASS"
+    return outcomes
+
+
+def _junit_fingerprints(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    fingerprints = [json.loads(prop.get("value", "{}"))
+                    for prop in ET.parse(path).iter("property")
+                    if prop.get("name") == "phase_report"]
+    return sorted(fingerprints, key=lambda item: (item["nodeid"], item["phase"]))
+
+
+def _phase_coverage_ok(outcomes: dict[str, str], fingerprints: list[dict[str, Any]]) -> bool:
+    """Require one passing setup/call/teardown record for every exact node."""
+    phases = {"setup", "call", "teardown"}
+    if not outcomes or any(value != "PASS" for value in outcomes.values()):
+        return False
+    if len(fingerprints) != 3 * len(outcomes):
+        return False
+    seen: set[tuple[str, str]] = set()
+    for item in fingerprints:
+        if not isinstance(item, dict):
+            return False
+        node, phase = item.get("nodeid"), item.get("phase")
+        if node not in outcomes or phase not in phases or item.get("outcome") != "passed":
+            return False
+        key = (node, phase)
+        if key in seen:
+            return False
+        seen.add(key)
+    return seen == {(node, phase) for node in outcomes for phase in phases}
+
+
+def _install_commands(uv: str, candidate_root: Path, repo_root: Path, candidate: str) -> dict[str, list[str]]:
     return {
-        row: {"status": status, "evidence": evidence}
-        for row, (status, evidence) in namespace["MATRIX_EVIDENCE"].items()
+        "candidate_venv": [uv, "venv", "--python", "3.11", str(candidate_root)],
+        "candidate_install": [uv, "pip", "install", "--python", str(candidate_root / "bin/python"),
+                              f"{repo_root}[dev]", f"mcp=={candidate}", "mcp-types==2.3.0",
+                              "httpx2==2.5.0", "build"],
     }
 
 
@@ -234,10 +314,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--candidate", required=True)
-    parser.add_argument("--legacy", required=True)
+    parser.add_argument("--legacy", help="retired; refused before process or temporary state")
     parser.add_argument("--protocol", required=True)
     parser.add_argument("--json", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.legacy is not None:
+        parser.error("--legacy is retired; obsolete wire traffic is denial evidence only")
+    if args.candidate != "2.3.0" or args.protocol != "2026-07-28":
+        parser.error("this receipt requires candidate 2.3.0 and protocol 2026-07-28")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -249,9 +334,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "repo_root": str(repo_root),
         "requested": {
             "candidate_sdk": args.candidate,
-            "legacy_sdk": args.legacy,
             "modern_protocol": args.protocol,
-            "legacy_protocol": LEGACY_PROTOCOL,
+            "historical_protocol": HISTORICAL_PROTOCOL,
         },
         "active_environment": {
             "executable": sys.executable,
@@ -270,50 +354,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     temp_root = Path(tempfile.mkdtemp(prefix="scribe-mcp-v2-isolated-"))
     candidate_root = temp_root / "candidate"
-    legacy_root = temp_root / "legacy"
     dist_root = temp_root / "dist"
     dist_root.mkdir()
     child_pids_before: set[int] = set()
     cleanup_errors: list[str] = []
     try:
-        receipt["commands"]["candidate_venv"] = _run(
-            [uv, "venv", "--python", "3.11", str(candidate_root)], cwd=repo_root
-        )
+        for name, command in _install_commands(uv, candidate_root, repo_root, args.candidate).items():
+            receipt["commands"][name] = _run(command, cwd=repo_root)
         candidate_python = candidate_root / "bin/python"
-        receipt["commands"]["candidate_install"] = _run(
-            [
-                uv,
-                "pip",
-                "install",
-                "--python",
-                str(candidate_python),
-                f"{repo_root}[dev]",
-                f"mcp=={args.candidate}",
-                "mcp-types==2.0.0",
-                "httpx2==2.5.0",
-                "build",
-            ],
-            cwd=repo_root,
-        )
-        receipt["commands"]["legacy_venv"] = _run(
-            [uv, "venv", "--python", "3.11", str(legacy_root)], cwd=repo_root
-        )
-        legacy_python = legacy_root / "bin/python"
-        receipt["commands"]["legacy_install"] = _run(
-            [uv, "pip", "install", "--python", str(legacy_python), f"mcp=={args.legacy}"],
-            cwd=repo_root,
-        )
 
         setup_ok = all(
             receipt["commands"][name]["passed"]
-            for name in ("candidate_venv", "candidate_install", "legacy_venv", "legacy_install")
+            for name in ("candidate_venv", "candidate_install")
         )
         if setup_ok:
             receipt["packages"] = {
                 "candidate": _distribution_receipt(
                     candidate_python, ("scribe-mcp", "mcp", "mcp-types", "httpx2"), repo_root
                 ),
-                "legacy": _distribution_receipt(legacy_python, ("mcp",), repo_root),
             }
             candidate_prefix = Path(receipt["packages"]["candidate"]["prefix"]).resolve()
             active_prefix = Path(receipt["active_environment"]["prefix"]).resolve()
@@ -329,24 +387,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             receipt["entry_points"] = _entry_point_receipt(candidate_python, repo_root)
 
-            test_env = os.environ.copy()
+            test_env = {key: value for key, value in os.environ.items()
+                        if key in {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT"}}
             test_env.update(
                 {
                     "MCPV2_CANDIDATE_PYTHON": str(candidate_python),
-                    "MCPV2_LEGACY_PYTHON": str(legacy_python),
                     "MCPV2_ISOLATED_INSTALL": "1",
                     "SCRIBE_DISABLE_DOTENV": "1",
+                    "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+                    "PYTHONDONTWRITEBYTECODE": "1",
                     "SCRIBE_MODE": "standalone",
                     "SCRIBE_STORAGE_BACKEND": "sqlite",
                 }
             )
             test_env.pop("PYTHONPATH", None)
+            test_env.pop("MCPV2_LEGACY_PYTHON", None)
+            junit_path = temp_root / "aggregate.xml"
             receipt["commands"]["aggregate_pytest"] = _run(
-                [str(candidate_python), "-m", "pytest", "-q", *AGGREGATE_TESTS],
+                [str(candidate_python), "-m", "pytest", "-q", f"--junitxml={junit_path}", *AGGREGATE_TESTS],
                 cwd=repo_root,
                 env=test_env,
                 timeout=900,
             )
+            receipt["node_outcomes"] = _junit_outcomes(junit_path)
+            receipt["node_phase_fingerprints"] = _junit_fingerprints(junit_path)
+            receipt["aggregate_junit"] = _aggregate_junit_evidence(junit_path)
+            receipt["matrix"] = _matrix_rows(repo_root, receipt["node_outcomes"])
             receipt["commands"]["build"] = _run(
                 [str(candidate_python), "-m", "build", "--outdir", str(dist_root)],
                 cwd=repo_root,
@@ -372,7 +438,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         receipt["cleanup"] = {
             "passed": not temp_root.exists() and not cleanup_errors,
             "temporary_root_removed": not temp_root.exists(),
-            "listener_proof": "pre-v2 SSE test rebinds its exact ephemeral port after process termination",
+            "listener_proof": "current and retired-path tests unconditionally rebind their exact ephemeral port",
             "errors": cleanup_errors,
             "tracked_child_pids_before": sorted(child_pids_before),
         }
@@ -380,15 +446,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     requested_versions_ok = (
         receipt.get("packages", {}).get("candidate", {}).get("packages", {}).get("mcp", {}).get("version")
         == args.candidate
-        and receipt.get("packages", {}).get("legacy", {}).get("packages", {}).get("mcp", {}).get("version")
-        == args.legacy
         and args.protocol == "2026-07-28"
     )
     package_receipts = [
         *receipt.get("packages", {}).get("candidate", {}).get("packages", {}).values(),
-        *receipt.get("packages", {}).get("legacy", {}).get("packages", {}).values(),
     ]
-    package_provenance_ok = len(package_receipts) == 5 and all(
+    package_provenance_ok = len(package_receipts) == 4 and all(
         isinstance(item.get("origin"), str)
         and len(item.get("installed_tree_sha256", "")) == 64
         and item.get("hashed_files", 0) > 0
@@ -399,12 +462,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         separation.get("candidate_prefix_differs") is True
         and separation.get("candidate_origin_outside_active_prefix") is True
     )
-    matrix_ok = all(row["status"] in {"PASS", "N/A"} for row in receipt["matrix"].values())
+    required_matrix_nodes = {
+        node for row in receipt["matrix"].values() for node in row.get("nodes", ())
+    }
+    matrix_ok = (
+        set(receipt["matrix"]) == {f"T{number:02d}" for number in range(1, 21)}
+        and bool(required_matrix_nodes)
+        and all(row["status"] in {"PASS", "N/A"} for row in receipt["matrix"].values())
+        and all(receipt.get("node_outcomes", {}).get(node) == "PASS" for node in required_matrix_nodes)
+    )
     required_commands = {
         "candidate_venv",
         "candidate_install",
-        "legacy_venv",
-        "legacy_install",
         "pip_check",
         "aggregate_pytest",
         "build",
@@ -430,7 +499,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         and rollback.get("dependency_shadow_restored") is True
         and rollback.get("prior_default_transport") == "stdio"
         and rollback.get("prior_adapter_absent") is True
-        and rollback.get("explicit_legacy_revision_preserved") is True
+        and rollback.get("historical_legacy_revision_preserved") is True
+        and rollback.get("current_modern_only") is True
         and rollback.get("disproven_legacy_readback_absent") is True
         and rollback.get("ratified_legacy_readback_present") is True
         and rollback.get("shadow_restore_only") is True
@@ -443,6 +513,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "package_provenance": package_provenance_ok,
         "active_environment_separation": active_environment_separation_ok,
         "matrix": matrix_ok,
+        "node_phase_fingerprints": _phase_coverage_ok(
+            receipt.get("node_outcomes", {}), receipt.get("node_phase_fingerprints", [])),
         "commands": commands_ok,
         "entry_points": entry_points_ok,
         "build_artifacts": build_artifacts_ok,
@@ -454,6 +526,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "PASS" if all(receipt["gates"].values()) else "BLOCK"
     )
     receipt["passed"] = receipt["verdict"] == "PASS"
+    _assert_secret_free(receipt)
     if args.json:
         print(json.dumps(receipt, sort_keys=True))
     else:

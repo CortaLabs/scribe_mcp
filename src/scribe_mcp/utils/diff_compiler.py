@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from difflib import unified_diff
 
+from scribe_mcp.doc_management.quality.scopes import markdown_lines
+
 
 def compile_unified_diff(
     before: str,
@@ -15,8 +17,8 @@ def compile_unified_diff(
     """Return a valid unified diff for the provided before/after text."""
     return "\n".join(
         unified_diff(
-            before.splitlines(),
-            after.splitlines(),
+            [line.rstrip("\r\n") for line in markdown_lines(before)],
+            [line.rstrip("\r\n") for line in markdown_lines(after)],
             fromfile=fromfile,
             tofile=tofile,
             lineterm="",

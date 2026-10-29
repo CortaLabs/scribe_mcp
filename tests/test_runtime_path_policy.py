@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from scribe_mcp.cli.session_store import CliSessionState, save_session_state
+from scribe_mcp.cli.session_store import CliSessionState, save_session_state, scoped_session_state_path
 from scribe_mcp.config.paths import (
     cli_session_dir,
     cli_session_state_path,
@@ -49,8 +49,9 @@ def test_cli_session_state_writes_under_repo_local_cli_namespace(
 
     session_path = save_session_state(state)
 
-    assert session_path == cli_session_state_path("release/profile")
-    assert session_path == tmp_path / ".scribe" / "cli" / "release_profile.json"
+    assert session_path == scoped_session_state_path("release/profile", tmp_path, "Tester")
+    assert session_path.parent == tmp_path / ".scribe" / "cli"
+    assert cli_session_state_path("release/profile") == tmp_path / ".scribe" / "cli" / "release_profile.json"
     assert not (tmp_path / "state").exists()
     assert json.loads(session_path.read_text(encoding="utf-8"))["session_name"] == "release/profile"
 

@@ -104,7 +104,14 @@ def _build_manage_docs_input_schema() -> Dict[str, Any]:
             "section": {"type": "string"},
             "content": {"type": "string"},
             "patch": {"type": "string"},
-            "patch_source_hash": {"type": "string"},
+            "patch_source_hash": {
+                "type": "string",
+                "description": (
+                    "SHA-256 of the document body, excluding YAML frontmatter. "
+                    "Reuse extra.patch_source_hash from an apply_patch dry run; "
+                    "read_file hashes the whole file instead."
+                ),
+            },
             "expected_anchor_sha256": {"type": "string"},
             "edit": {"type": "object"},
             "patch_mode": {"type": "string"},
@@ -210,7 +217,10 @@ async def manage_docs(
       follow with `replace_section`).
     - `replace_section` — populate a scaffold section by anchor ID.
     - `apply_patch` — context-anchored surgical edit (preferred for existing content;
-      survives line drift where `replace_range` does not).
+      survives line drift where `replace_range` does not). Its optional
+      `patch_source_hash` checks the document body without YAML frontmatter;
+      reuse `extra.patch_source_hash` from a fresh dry run. The whole-file hash
+      returned by `read_file` is not this body precondition.
     - `replace_range` — replace an explicit line span (line numbers; auto-adjusts
       file-relative numbers to body-relative).
     - `replace_text` — find/replace via `metadata.find` (+`metadata.replace`,

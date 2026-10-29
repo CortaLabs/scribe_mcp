@@ -407,8 +407,12 @@ async def test_replace_text_literal_scoped_inline_anchor_targets_anchor_line(tmp
 
 
 @pytest.mark.asyncio
-async def test_replace_text_scoped_block_ignores_inline_anchor_markers(tmp_path: Path) -> None:
+@pytest.mark.regression
+async def test_replace_text_scoped_block_ignores_inline_anchor_markers(
+    tmp_path: Path, test_agent: str,
+) -> None:
     project = await _setup_project(tmp_path)
+    project["defaults"]["agent"] = test_agent
     checklist_path = Path(project["docs"]["checklist"])
     checklist_path.write_text(
         "# Checklist\n"
@@ -445,6 +449,120 @@ async def test_replace_text_scoped_block_ignores_inline_anchor_markers(tmp_path:
     updated = checklist_path.read_text(encoding="utf-8")
     assert "Ship API (done)" in updated
     assert "- [ ] Later" in updated
+    assert parse_frontmatter(updated).body == (
+        "# Checklist\n"
+        "<!-- ID: phase_0 -->\n"
+        "- [ ] Ship docs <!-- ID: p4_documents -->\n"
+        "- [ ] Ship API (done)\n"
+        "<!-- ID: phase_1 -->\n"
+        "- [ ] Later\n"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize("match_mode", ["literal", "regex", "prefix"])
+@pytest.mark.parametrize("fence", ["```", "````", "~~~", "~~~~"])
+async def test_replace_text_block_scope_preserves_fences_and_neighbor_sections(
+    tmp_path: Path, test_agent: str, match_mode: str, fence: str,
+) -> None:
+    project = await _setup_project(tmp_path)
+    project["defaults"]["agent"] = test_agent
+    checklist_path = Path(project["docs"]["checklist"])
+    before = "# Checklist\n<!-- ID: earlier -->\n- [ ] Ship API\n## Phase 0\n"
+    nested = (
+        f"{fence[0] * 3}\n<!-- ID: example -->\n"
+        if len(fence) > 3 else ""
+    )
+    fenced = (
+        f"{fence}markdown\n"
+        "<!-- ID: phase_0 -->\n"
+        "<!-- ID: phase_1 -->\n"
+        "## Example heading\n"
+        + nested  # A shorter delimiter stays inside the longer fence.
+        + f"{fence}\n"
+    )
+    target = (
+        "<!-- ID: phase_0 -->\n"
+        "- [ ] Ship docs <!-- ID: documents -->\n"
+        + fenced
+        + "- [ ] Ship API\n"
+    )
+    after = "\n---\n\n## Phase 1\n<!-- ID: phase_1 -->\n- [ ] Ship API\n"
+    checklist_path.write_text(before + target + after, encoding="utf-8")
+
+    change = await apply_doc_change(
+        project, doc="checklist", action="replace_text", section=None,
+        content=None, patch=None, patch_source_hash=None, start_line=None,
+        end_line=None, template=None, dry_run=False,
+        metadata={
+            "find": "- [ ] Ship API" if match_mode != "regex" else r"- \[ \] Ship API",
+            "replace": "- [x] Ship API", "match_mode": match_mode,
+            "replace_all": True, "scope": "section:phase_0",
+        },
+    )
+
+    assert change.success, change.error_message
+    expected = before + target.replace("- [ ] Ship API", "- [x] Ship API") + after
+    assert parse_frontmatter(checklist_path.read_text(encoding="utf-8")).body == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("body", "scope", "error"),
+    [
+        (
+            "<!-- ID: phase_0 -->\n- [ ] docs <!-- ID: item -->\n"
+            "<!-- ID: phase_1 -->\nShip API\n",
+            "phase_0", "REPLACE_TEXT_NO_MATCH",
+        ),
+        (
+            "- [ ] docs <!-- ID: item -->\nShip API\n",
+            "item", "REPLACE_TEXT_NO_MATCH",
+        ),
+        (
+            "<!-- ID: phase_0 -->\nShip API\n"
+            "<!-- ID: phase_0 -->\nShip API\n",
+            "phase_0", "SECTION_ANCHOR_AMBIGUOUS",
+        ),
+        (
+            "<!-- ID: phase_0 -->\nShip API\n"
+            "- [ ] duplicate <!-- ID: phase_0 -->\n",
+            "phase_0", "SECTION_ANCHOR_AMBIGUOUS",
+        ),
+        (
+            "````markdown\n<!-- ID: phase_0 -->\n```\nShip API\n````\n",
+            "phase_0", "SECTION_ANCHOR_MISSING",
+        ),
+        (
+            "~~~~markdown\n<!-- ID: phase_0 -->\n~~~\nShip API\n~~~~\n",
+            "phase_0", "SECTION_ANCHOR_MISSING",
+        ),
+    ],
+)
+async def test_replace_text_scoped_anchor_rejections_leave_document_unchanged(
+    tmp_path: Path, test_agent: str, body: str, scope: str, error: str,
+) -> None:
+    project = await _setup_project(tmp_path)
+    project["defaults"]["agent"] = test_agent
+    checklist_path = Path(project["docs"]["checklist"])
+    checklist_path.write_text(body, encoding="utf-8")
+    original = checklist_path.read_bytes()
+
+    change = await apply_doc_change(
+        project, doc="checklist", action="replace_text", section=None,
+        content=None, patch=None, patch_source_hash=None, start_line=None,
+        end_line=None, template=None, dry_run=False,
+        metadata={
+            "find": "Ship API", "replace": "Ship API (done)",
+            "match_mode": "literal", "replace_all": True, "scope": f"section:{scope}",
+        },
+    )
+
+    assert not change.success
+    assert error in change.error_message
+    assert checklist_path.read_bytes() == original
 
 
 @pytest.mark.asyncio

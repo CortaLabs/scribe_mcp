@@ -12,7 +12,7 @@ The supported story is intentionally narrow:
 
 - [Supported deployment postures](#supported-deployment-postures)
 - [Quick start: authenticated local container](#quick-start-authenticated-local-container)
-- [Paired compose overlay](#paired-compose-overlay)
+- [Composable deployment overlay](#composable-deployment-overlay)
 - [Client connection example](#client-connection-example)
 - [Files in this directory](#files-in-this-directory)
 - [Related docs](#related-docs)
@@ -73,26 +73,28 @@ curl http://127.0.0.1:8200/health
 
 `SCRIBE_TRANSPORT_AUTH_TOKEN` is the server-side auth setting here. The initial public release excludes remote/client mode (`SCRIBE_RELEASE_PROFILE=public` in release artifacts), so release docs do not publish a remote client bootstrap path.
 
-## Paired compose overlay
+## Composable deployment overlay
 
-When you need a paired deployment with `council_mcp`, compose the two overlays from
-the roots of your local checkouts:
+The overlay can be validated independently:
 
 ```bash
-docker compose \
-  -f /path/to/council_mcp/deploy/docker-compose.yaml \
-  -f /path/to/scribe_mcp/deploy/docker-compose.scribe.yaml \
-  up -d
+docker compose -f deploy/docker-compose.scribe.yaml config
 ```
 
-This keeps the same frozen contract:
+For a deployment, combine it with your infrastructure Compose file. That file
+must provide a healthy `postgres` service and the configured object-store service;
+the overlay's PostgreSQL stub supports configuration validation only. Provision
+the declared secrets before starting services. Scribe is internal to the shared
+`backend` network and exposes no host ports in this overlay.
 
-- `council_mcp` consumes the installed-package `scribe-server` contract
+The deployment contract remains:
+
+- local integrations use the installed-package `scribe-server` CLI contract
 - local/core remains the default story
 - authenticated SSE server transport is optional
 - casual public internet exposure is unsupported
 
-Use the matching `council_mcp` release docs from that checkout for paired deployment details.
+Use your infrastructure's deployment instructions for service readiness and secret provisioning.
 
 ## Client connection example
 
