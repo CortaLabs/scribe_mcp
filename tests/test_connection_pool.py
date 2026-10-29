@@ -419,6 +419,165 @@ class TestConnectionPoolShutdown:
 class TestConnectionPoolThreadSafety:
     """Tests for thread safety."""
 
+    @pytest.mark.storage
+    @pytest.mark.core
+    @pytest.mark.regression
+    def test_concurrent_fresh_database_initialization(self, tmp_path):
+        """All startup connections must survive the initial WAL transition."""
+        for round_number in range(100):
+            pool = SQLiteConnectionPool(
+                tmp_path / f"fresh-{round_number}.db", min_size=0, max_size=5
+            )
+            start = threading.Barrier(5)
+            acquired = threading.Barrier(5)
+            errors = []
+            connections = []
+
+            def worker():
+                try:
+                    start.wait(timeout=5)
+                    with pool.connection() as conn:
+                        connections.append(conn)
+                        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+                        # Keep every handle checked out until all five exist.
+                        acquired.wait(timeout=5)
+                        assert conn.execute("SELECT 1").fetchone()[0] == 1
+                except Exception as exc:
+                    errors.append(exc)
+                    acquired.abort()
+
+            threads = [threading.Thread(target=worker) for _ in range(5)]
+            try:
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=10)
+                assert not any(thread.is_alive() for thread in threads)
+                assert not errors, (round_number, errors)
+                assert len({id(conn) for conn in connections}) == 5
+                assert pool.active == 0
+                assert pool.size == 5
+            finally:
+                pool.close_all()
+
+    @pytest.mark.storage
+    @pytest.mark.core
+    @pytest.mark.regression
+    def test_locked_initialization_closes_unpublished_connection(self, tmp_path, monkeypatch):
+        """A genuine external SQLite lock must fail cleanly without retries."""
+        db_path = tmp_path / "locked.db"
+        connect = sqlite3.connect
+        created = []
+
+        def observed_connect(*args, **kwargs):
+            conn = connect(*args, **kwargs)
+            created.append(conn)
+            return conn
+
+        blocker = connect(db_path)
+        blocker.execute("BEGIN EXCLUSIVE")
+        monkeypatch.setattr(sqlite3, "connect", observed_connect)
+        pool = SQLiteConnectionPool(db_path, min_size=0, max_size=1, busy_timeout_ms=0)
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                pool.acquire()
+            assert len(created) == 1
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                created[0].execute("SELECT 1")
+            assert pool.active == 0
+            assert pool.size == 0
+            blocker.rollback()
+            with pool.connection() as conn:
+                assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+                assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 0
+                assert conn.execute("SELECT 1").fetchone()[0] == 1
+        finally:
+            blocker.close()
+            pool.close_all()
+
+    @pytest.mark.storage
+    @pytest.mark.core
+    @pytest.mark.regression
+    @pytest.mark.parametrize("timeout", [0, 0.05])
+    def test_queued_initialization_observes_acquire_timeout(self, tmp_path, monkeypatch, timeout):
+        """A queued creator can time out while real SQLite setup is gated."""
+        setup_started = threading.Event()
+        allow_setup = threading.Event()
+        queued_done = threading.Event()
+        release_done = threading.Event()
+        gate_setup = False
+        errors = []
+        outcomes = []
+        connect = sqlite3.connect
+
+        class GatedConnection(sqlite3.Connection):
+            def execute(self, sql, *args, **kwargs):
+                if gate_setup and sql.startswith("PRAGMA journal_mode ="):
+                    setup_started.set()
+                    if not allow_setup.wait(timeout=5):
+                        raise TimeoutError("test setup gate was not released")
+                return super().execute(sql, *args, **kwargs)
+
+        def observed_connect(*args, **kwargs):
+            return connect(*args, factory=GatedConnection, **kwargs)
+
+        monkeypatch.setattr(sqlite3, "connect", observed_connect)
+        pool = SQLiteConnectionPool(tmp_path / "queued.db", min_size=0, max_size=3)
+        leased = pool.acquire()
+        gate_setup = True
+
+        def initialize():
+            try:
+                with pool.connection() as conn:
+                    assert conn.execute("SELECT 1").fetchone()[0] == 1
+            except Exception as exc:
+                errors.append(exc)
+
+        def acquire_queued():
+            try:
+                with pool.connection(timeout=timeout):
+                    outcomes.append("acquired")
+            except TimeoutError:
+                outcomes.append("timed out")
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                queued_done.set()
+
+        def release_leased():
+            pool.release(leased)
+            release_done.set()
+
+        initializer = threading.Thread(target=initialize)
+        queued = threading.Thread(target=acquire_queued)
+        releaser = threading.Thread(target=release_leased)
+        try:
+            initializer.start()
+            assert setup_started.wait(timeout=1)
+            queued.start()
+            # This is a watchdog, not a sleep: setup stays gated throughout.
+            assert queued_done.wait(timeout=1), "queued creator ignored acquire timeout"
+            assert outcomes == ["timed out"]
+            assert not errors
+            assert pool.active == 2  # One caller plus one initializing handle.
+            releaser.start()
+            assert release_done.wait(timeout=1), "setup blocked connection release"
+            assert pool.active == 1
+            with pool.connection(timeout=0) as conn:
+                assert conn is leased
+                assert conn.execute("SELECT 1").fetchone()[0] == 1
+        finally:
+            allow_setup.set()
+            for thread in (initializer, queued, releaser):
+                if thread.ident is not None:
+                    thread.join(timeout=5)
+            if not release_done.is_set():
+                pool.release(leased)
+            pool.close_all()
+        assert not any(thread.is_alive() for thread in (initializer, queued, releaser))
+        assert not errors
+        assert pool.active == 0
+
     def test_concurrent_acquire_release(self, tmp_path):
         """Test concurrent acquire/release from multiple threads."""
         db_path = tmp_path / "test.db"

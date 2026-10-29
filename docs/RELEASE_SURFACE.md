@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-29**
-Applies to: **v3.3.67 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.68 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.68 checkpoint serializes SQLite pool connection setup while preserving queued acquisition timeouts and closing handles after setup failures.
 
 The 3.3.67 checkpoint removes repository-specific path abbreviation rules in favor of generic path handling.
 
