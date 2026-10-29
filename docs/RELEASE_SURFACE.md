@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-28**
-Applies to: **v3.3.65 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.66 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.66 checkpoint applies the same bulk-output path shortening rules regardless of repository layout.
 
 The 3.3.65 checkpoint uses generic path-mapping examples in public documentation.
 
