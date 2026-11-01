@@ -242,7 +242,7 @@ def map_client_root(
 
     Args:
         client_path: The repo root path as sent by the client.
-        user: Explicit user identity (e.g. from Council's ``_scribe_user``).
+        user: Explicit user identity supplied by the caller.
               Falls back to ``SCRIBE_USER`` env var, then ``"default"``.
 
     Returns ``(effective_path, original_client_path_or_None)``.
@@ -258,7 +258,7 @@ def map_client_root(
 
     Where ``user`` is resolved from the ``user`` parameter, ``SCRIBE_USER``
     env var, or ``"default"``.  ``parent/repo_name`` are the last two
-    components of the client path (e.g. ``MCP_SPINE/council_mcp``).
+    components of the client path (e.g. ``projects/example_repo``).
     """
     # 1. Explicit multi-repo map (semicolon-separated "client=server" pairs)
     path_map_raw = os.environ.get("SCRIBE_PATH_MAP")
@@ -289,7 +289,7 @@ def map_client_root(
             # Resolve user identity: explicit param > env var > default
             effective_user = user or os.environ.get("SCRIBE_USER") or "default"
 
-            # Repo scope from last two path components (e.g. MCP_SPINE/council_mcp)
+            # Repo scope from last two path components (e.g. projects/example_repo)
             parts = Path(client_path).parts
             if len(parts) >= 2:
                 repo_scope = Path(parts[-2]) / parts[-1]

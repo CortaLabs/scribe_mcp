@@ -6,15 +6,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp import server as server_module
 from scribe_mcp.shared.session_scope import ResolvedScope
-from scribe_mcp.tools.project_utils import (
-    load_active_project,
-    load_project_config,
-)
 
 
 async def get_agent_project_data(agent_id: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     """
-    Get project data for an agent using AgentContextManager as primary source.
+    Get the current verified session project and advisory recent labels.
 
     Args:
         agent_id: Agent identifier
@@ -22,74 +18,27 @@ async def get_agent_project_data(agent_id: str) -> Tuple[Optional[Dict[str, Any]
     Returns:
         Tuple of (project_data, recent_projects)
     """
-    agent_manager = server_module.get_agent_context_manager()
-
-    if not agent_manager:
-        # Fallback to legacy behavior
-        project, _, recent = await load_active_project(server_module.state_manager)
-        return project, list(recent)
-
     try:
-        # Get agent's current project from AgentContextManager
-        agent_project = await agent_manager.get_current_project(agent_id)
-
-        if agent_project and agent_project.get("project_name"):
-            project_name = agent_project["project_name"]
-
-            # Try to get project data from storage backend
-            storage = server_module.storage_backend
-            if storage:
-                try:
-                    # Get project from database
-                    db_project = await storage.get_project(project_name)
-                    if db_project:
-                        # Convert database project to project data format
-                        project_data = {
-                            "name": db_project.get("name", project_name),
-                            "root": db_project.get("repo_root", ""),
-                            "progress_log": db_project.get("progress_log_path", ""),
-                            "version": agent_project.get("version", 1),
-                            "updated_by": agent_project.get("updated_by", agent_id),
-                            "session_id": agent_project.get("session_id"),
-                        }
-
-                        # Get recent projects from agent's history
-                        recent_projects = [project_name]
-
-                        # Add other projects from recent_projects list
-                        try:
-                            state = await server_module.state_manager.load()
-                            for proj_name in state.recent_projects:
-                                if proj_name != project_name and proj_name not in recent_projects:
-                                    recent_projects.append(proj_name)
-                        except Exception:
-                            pass
-
-                        return project_data, recent_projects
-                except Exception:
-                    pass
-
-            # Fallback: attempt to load from state or config instead of /tmp defaults
-            fallback_project = await _project_from_state_or_config(project_name)
-            if fallback_project:
-                project_data = dict(fallback_project)
-                project_data.setdefault("version", agent_project.get("version", 1))
-                project_data.setdefault("updated_by", agent_project.get("updated_by", agent_id))
-                project_data.setdefault("session_id", agent_project.get("session_id"))
-                recent_projects = await _recent_projects_snapshot(project_name)
-                return project_data, recent_projects
-
-            # No trusted project info available
-            return None, []
-
-        else:
-            # Agent has no project set
-            return None, []
-
+        project = await server_module.state_manager._get_verified_project()
+        try:
+            state = await server_module.state_manager.load()
+            recent = list(state.recent_projects)
+        except Exception:
+            recent = []
+        if not project:
+            return None, recent
+        try:
+            agent_manager = server_module.get_agent_context_manager()
+            selection = await agent_manager.get_current_project(agent_id) if agent_manager else None
+        except Exception:
+            selection = None
+        if isinstance(selection, dict) and selection.get("project_name") == project["name"]:
+            # The label row contributes CAS metadata only, never its stored session.
+            project["version"] = selection.get("version", 1)
+            project["updated_by"] = selection.get("updated_by", agent_id)
+        return project, [project["name"], *[name for name in recent if name != project["name"]]]
     except Exception:
-        # Fallback to legacy behavior on any error
-        project, _, recent = await load_active_project(server_module.state_manager)
-        return project, list(recent)
+        return None, []
 
 
 async def ensure_agent_session(
@@ -201,31 +150,3 @@ def resolve_authoritative_write_scope(
         "scope_resolution_source": getattr(resolved_scope, "resolution_source", None)
         or ("execution_context" if context else "none"),
     }
-
-async def _project_from_state_or_config(project_name: str) -> Optional[Dict[str, Any]]:
-    """Load project definition from JSON state or config files."""
-    try:
-        state = await server_module.state_manager.load()
-        state_project = state.projects.get(project_name)
-        if state_project:
-            return dict(state_project)
-    except Exception:
-        pass
-
-    config_project = load_project_config(project_name, allow_fallback=False)
-    if config_project:
-        return dict(config_project)
-    return None
-
-
-async def _recent_projects_snapshot(current_name: str) -> List[str]:
-    """Return ordered list of recent projects with current name first."""
-    snapshot = [current_name]
-    try:
-        state = await server_module.state_manager.load()
-        for proj_name in state.recent_projects:
-            if proj_name not in snapshot:
-                snapshot.append(proj_name)
-    except Exception:
-        pass
-    return snapshot

@@ -33,14 +33,14 @@ def abbreviate_path(
         Abbreviated path string appropriate for the verbosity level
 
     Examples:
-        >>> abbreviate_path("/home/user/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md", verbosity=0)
+        >>> abbreviate_path("/home/user/projects/sample_repo/.scribe/docs/project/PROGRESS_LOG.md", verbosity=0)
         'PROGRESS_LOG.md'
 
-        >>> abbreviate_path("/home/user/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md", verbosity=1)
+        >>> abbreviate_path("/home/user/projects/sample_repo/.scribe/docs/project/PROGRESS_LOG.md", verbosity=1)
         '.scribe/docs/project/PROGRESS_LOG.md'
 
-        >>> abbreviate_path("/home/user/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md", verbosity=2)
-        '/home/user/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md'
+        >>> abbreviate_path("/home/user/projects/sample_repo/.scribe/docs/project/PROGRESS_LOG.md", verbosity=2)
+        '/home/user/projects/sample_repo/.scribe/docs/project/PROGRESS_LOG.md'
 
         >>> abbreviate_path("/home/user/project/src/main.py", context_root="/home/user/project", verbosity=1)
         'src/main.py'
@@ -71,7 +71,7 @@ def abbreviate_path(
             pass
 
     # Smart context detection for verbosity 1
-    # Common patterns to abbreviate from:
+    # Generic context patterns to abbreviate from:
     path_str = str(path_obj)
 
     # Pattern 1: Look for .scribe directory and show from there
@@ -79,22 +79,12 @@ def abbreviate_path(
         scribe_idx = path_str.find("/.scribe/")
         return path_str[scribe_idx + 1:]  # Include .scribe in output
 
-    # Pattern 2: Look for scribe_mcp directory and show from there
-    if "/scribe_mcp/" in path_str:
-        scribe_mcp_idx = path_str.find("/scribe_mcp/")
-        return path_str[scribe_mcp_idx + len("/scribe_mcp/"):]
-
-    # Pattern 3: Look for MCP_SPINE directory and show from there
-    if "/MCP_SPINE/" in path_str:
-        mcp_spine_idx = path_str.find("/MCP_SPINE/")
-        return path_str[mcp_spine_idx + len("/MCP_SPINE/"):]
-
-    # Pattern 4: Look for projects directory and show from there
+    # Pattern 2: Look for projects directory and show from there
     if "/projects/" in path_str:
         projects_idx = path_str.find("/projects/")
         return path_str[projects_idx + len("/projects/"):]
 
-    # Pattern 5: Look for home directory and show from ~ equivalent
+    # Pattern 3: Look for home directory and show from ~ equivalent
     try:
         home = Path.home()
         if path_obj.is_relative_to(home):

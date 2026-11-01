@@ -838,19 +838,32 @@ def _scan_repository_imports(repo_root: Path, max_files: int = 500) -> Dict[str,
     files_skipped = 0
 
     try:
-        # Find all .py files recursively
+        # Prune excluded subtrees before entering them. Preserve rglob's order:
+        # matching entries first, then each non-symlink directory depth first.
+        # Keep directory entries ending in .py as candidates too, so they still
+        # consume the same file limit and reach the existing read-error path.
         all_py_files = []
-        for py_file in repo_root.rglob('*.py'):
-            # Check if file is in an excluded directory
-            if any(excluded_dir in py_file.parts for excluded_dir in excluded_dirs):
+        directories = [] if excluded_dirs.intersection(repo_root.parts) else [repo_root]
+        while directories:
+            directory = directories.pop()
+            try:
+                with os.scandir(directory) as iterator:
+                    entries = [entry for entry in iterator if entry.name not in excluded_dirs]
+            except PermissionError:
                 continue
-
-            all_py_files.append(py_file)
-
-            # Early termination check
-            if len(all_py_files) >= max_files:
+            for entry in entries:
+                if fnmatch(entry.name, '*.py'):
+                    all_py_files.append(directory / entry.name)
+                    if len(all_py_files) >= max_files:
+                        break
+            if all_py_files and len(all_py_files) >= max_files:
                 logging.warning(f"Repository scan hit max_files limit ({max_files}). Stopping early.")
                 break
+            children = []
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    children.append(directory / entry.name)
+            directories.extend(reversed(children))
 
         # Process each Python file
         for py_file in all_py_files:
@@ -1407,10 +1420,20 @@ def _extract_imports(
         }
     """
     import ast
+    from collections import deque
 
     imports = []
+    nodes = deque([tree])
+    statement_containers = (ast.stmt, ast.ExceptHandler, ast.match_case)
 
-    for node in ast.walk(tree):
+    while nodes:
+        node = nodes.popleft()
+        # Only statement suites can contain imports, including except handlers
+        # and match cases. Expressions, aliases, and arguments cannot.
+        # Keep breadth-first order (and max_imports behavior) without walking
+        # large literals, annotations, calls, or other unrelated expressions.
+        nodes.extend(child for child in ast.iter_child_nodes(node)
+                     if isinstance(child, statement_containers))
         # Handle: import module_name, import module_name as alias
         if isinstance(node, ast.Import):
             for alias in node.names:

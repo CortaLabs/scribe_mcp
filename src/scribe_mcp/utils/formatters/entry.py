@@ -701,8 +701,6 @@ class EntryFormatter(BaseFormatter):
             for path in paths:
                 # Shorten path for display
                 display_path = path
-                if '/MCP_SPINE/scribe_mcp/' in display_path:
-                    display_path = '...' + display_path.split('/MCP_SPINE/scribe_mcp/', 1)[1]
                 if len(display_path) > box_width - 8:
                     display_path = display_path[-(box_width - 11):].strip('/')
                     display_path = '...' + display_path

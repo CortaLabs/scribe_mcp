@@ -247,6 +247,12 @@ Safe exact-string replacement with dry-run support.
 
 Use this when the environment, config, or runtime posture looks suspicious.
 
+The 3.0.0 development candidate defaults reconciliation inventory collection to deferred. A normal call keeps Doctor's runtime, authority, case, timing, plugin, and configuration diagnostics while returning `runtime.physical_logical_reconciliation: null` and a `runtime.physical_logical_reconciliation_collection` state of `not_collected` with reason `not_requested`. This means the inventory was not collected; it does not mean that the inventory is empty.
+
+Use `scribe_doctor(agent="...")` for the default diagnostics, or pass `reconciliation="deferred"` explicitly. Call `scribe_doctor(agent="...", reconciliation="full")` when you need the complete existing physical/logical reconciliation report. Full mode retains the v1 report and ordered items. A returned report records that the existing builder returned; it does not certify that every backend or file source was available, since the builder retains its existing availability fallbacks. Uncaught failures and cancellation still propagate.
+
+This breaking default change is part of the 3.0.0 candidate and is not part of the 2.15.x maintenance line. Consumers that require the report must pass `reconciliation="full"` on the major line. Consumers supporting both older and newer releases should use their pinned tool schema to select behavior rather than retrying arbitrary failures as a legacy-version guess.
+
 #### Reminder and drift governance
 
 Scribe can track more than "did someone append a log line." The runtime also computes project and doc-health signals such as:

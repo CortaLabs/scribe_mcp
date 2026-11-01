@@ -912,3 +912,62 @@ async def test_caller_transport_cannot_promote_sibling_binding_root(tmp_path, mo
         assert all(context.session_binding != sibling_binding for context in observed)
     finally:
         await storage.close()
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "action", "caller_project", "expected_project"),
+    [
+        ("manage_docs", "apply_preview", None, None),
+        ("manage_docs", "apply_preview", "bound-project", "bound-project"),
+        ("manage_docs", "append", None, "bound-project"),
+        ("capture_tool", "apply_preview", None, "bound-project"),
+    ],
+)
+async def test_receipt_only_dispatch_preserves_project_intent(
+    tmp_path: Path,
+    test_agent: str,
+    tool_name: str,
+    action: str,
+    caller_project: str | None,
+    expected_project: str | None,
+) -> None:
+    """Observe argument projection only; no receipt or document apply is simulated."""
+    repo_root = (tmp_path / "receipt-repo").resolve()
+    repo_root.mkdir()
+    storage = _CanonicalKeyBindingStorage(
+        repo_root=repo_root, project_name="bound-project", bound_key="bound-session",
+    )
+    router = RouterContextManager(storage_backend=storage)
+    observed = []
+
+    def capture_tool(agent: str, action: str, metadata: dict, project: str | None = None) -> None:
+        observed.append((agent, action, metadata, project, router.get_current()))
+
+    arguments = {"agent": test_agent, "action": action, "metadata": {}}
+    if caller_project is not None:
+        arguments["project"] = caller_project
+    original_arguments = dict(arguments)
+    await _execute_from_server_context(
+        router, session_id="bound-session",
+        name=tool_name, arguments=arguments,
+        kwargs={"context": {"mode": "project", "session_id": "bound-session"}},
+        registry={tool_name: capture_tool}, app=SimpleNamespace(request_context=None),
+        storage_backend=storage, settings=SimpleNamespace(project_root=tmp_path / "server"),
+        state_manager=_NoopStateManager(), router_context_manager=router,
+        sentinel_only=set(), sentinel_allowed={tool_name},
+        log_scope_violation_cb=lambda *_args, **_kwargs: None,
+    )
+
+    assert len(observed) == 1
+    agent, received_action, metadata, project, context = observed[0]
+    assert (agent, received_action, metadata) == (test_agent, action, {})
+    assert project == expected_project
+    assert arguments == original_arguments
+    assert context.session_binding is storage.binding
+    assert context.session_binding.project_name == "bound-project"
+    assert context.session_binding.canonical_repo_root == str(repo_root)
+    assert context.authoritative_session_key == "bound-session"
+    assert storage.queried_keys == ["bound-session"]

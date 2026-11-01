@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from scribe_mcp import server as server_module
 from scribe_mcp.doc_management.special_indexes import update_research_index
 from scribe_mcp.doc_management.scaffold_quality import (
     DEFAULT_WARNING_POLICIES,
@@ -16,9 +13,8 @@ from scribe_mcp.doc_management.scaffold_quality import (
 )
 from scribe_mcp.doc_management.special_create import _normalize_research_doc_name, handle_special_document_creation
 from scribe_mcp.doc_management.runtime import _handle_rehome_doc
-from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
-from scribe_mcp.tools.manage_docs import manage_docs
+from test_manage_docs_create_doc import _call_manage_docs, _isolated_server
 
 
 class _Helper:
@@ -35,55 +31,6 @@ class _ProjectRegistry:
     @staticmethod
     def record_doc_update(**_kwargs):
         return None
-
-
-@contextmanager
-def _isolated_manage_docs_server(state_manager: StateManager, *, project_root: Path, session_id: str):
-    from scribe_mcp.tools import manage_docs as manage_docs_module
-    from scribe_mcp.config.repo_config import RepoConfig
-
-    originals = {
-        "state_manager": server_module.state_manager,
-        "storage_backend": server_module.storage_backend,
-        "prepare_context": manage_docs_module._MANAGE_DOCS_HELPER.prepare_context,
-        "get_execution_context": getattr(server_module, "get_execution_context", None),
-        "get_agent_identity": getattr(server_module, "get_agent_identity", None),
-    }
-    fake_config = RepoConfig(repo_slug="test", repo_root=project_root)
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-    server_module.get_execution_context = lambda: SimpleNamespace(
-        mode="project",
-        session_id=session_id,
-        stable_session_id=session_id,
-        transport_session_id=session_id,
-    )
-    server_module.get_agent_identity = lambda: None
-
-    async def _prepare_context_stub(**_kwargs):
-        state = await state_manager.load()
-        current_project = state.get_project(state.current_project) if state.current_project else None
-        return LoggingContext(
-            tool_name="manage_docs",
-            project=current_project,
-            recent_projects=list(getattr(state, "recent_projects", []) or []),
-            state_snapshot={},
-            reminders=[],
-            resolution_source="session_binding",
-        )
-
-    manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-    try:
-        with patch("scribe_mcp.config.repo_config.get_current_repo_config", return_value=(project_root, fake_config)):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = originals["prepare_context"]
-        if originals["get_execution_context"] is not None:
-            server_module.get_execution_context = originals["get_execution_context"]
-        if originals["get_agent_identity"] is not None:
-            server_module.get_agent_identity = originals["get_agent_identity"]
 
 
 @pytest.mark.asyncio
@@ -307,7 +254,7 @@ def test_research_hygiene_warns_for_noncanonical_locations(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_managed_research_edit_refreshes_index_and_returns_path_metadata(tmp_path: Path) -> None:
+async def test_managed_research_edit_refreshes_index_and_returns_path_metadata(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "edit_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
     research_dir = docs_dir / "research"
@@ -329,13 +276,14 @@ async def test_managed_research_edit_refreshes_index_and_returns_path_metadata(t
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_manage_docs_server(state_manager, project_root=project_root, session_id="edit-session"):
-        result = await manage_docs(
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="replace_text",
             doc_name="research_edit",
             metadata={"find": "Original evidence.", "replace": "Expanded evidence with a longer proof line.", "match_mode": "literal"},
             dry_run=False,
-            agent="test_agent",
         )
 
     assert result["ok"] is True, result
@@ -348,7 +296,7 @@ async def test_managed_research_edit_refreshes_index_and_returns_path_metadata(t
 
 
 @pytest.mark.asyncio
-async def test_managed_research_frontmatter_update_refreshes_index(tmp_path: Path) -> None:
+async def test_managed_research_frontmatter_update_refreshes_index(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "frontmatter_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
     research_dir = docs_dir / "research"
@@ -373,13 +321,14 @@ async def test_managed_research_frontmatter_update_refreshes_index(tmp_path: Pat
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_manage_docs_server(state_manager, project_root=project_root, session_id="frontmatter-session"):
-        result = await manage_docs(
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="frontmatter_update",
             doc_name="research_frontmatter",
             metadata={"summary": "A much longer summary that changes displayed file metadata size."},
             dry_run=False,
-            agent="test_agent",
         )
 
     assert result["ok"] is True, result
@@ -409,7 +358,7 @@ async def test_research_index_refresh_removes_stale_invalid_backup(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_quality_check_recovers_research_doc_after_registry_stale_rename(tmp_path: Path) -> None:
+async def test_quality_check_recovers_research_doc_after_registry_stale_rename(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "qc_recovery_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
     research_dir = docs_dir / "research"
@@ -435,13 +384,14 @@ async def test_quality_check_recovers_research_doc_after_registry_stale_rename(t
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_manage_docs_server(state_manager, project_root=project_root, session_id="qc-recovery-session"):
-        result = await manage_docs(
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="quality_check",
             doc_name="RESEARCH_W3_DATASET_FOUNDRY_CONSUMER_SOURCE_REFRESH",
             doc_category="research",
             dry_run=True,
-            agent="test_agent",
         )
 
     assert result["ok"] is True, result
@@ -451,7 +401,7 @@ async def test_quality_check_recovers_research_doc_after_registry_stale_rename(t
 
 @pytest.mark.asyncio
 async def test_quality_check_research_prefers_canonical_research_dir_over_top_level_fallback(
-    tmp_path: Path,
+    tmp_path: Path, test_agent: str,
 ) -> None:
     project_root = tmp_path / "qc_precedence_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "agent_ux"
@@ -476,13 +426,14 @@ async def test_quality_check_research_prefers_canonical_research_dir_over_top_le
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_manage_docs_server(state_manager, project_root=project_root, session_id="qc-precedence-session"):
-        result = await manage_docs(
+    async with _isolated_server(
+        state_manager, project_root=project_root, project_name=project["name"], agent=test_agent,
+    ) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="quality_check",
             doc_name=doc_name,
             doc_category="research",
             dry_run=True,
-            agent="test_agent",
         )
 
     assert result["ok"] is True, result

@@ -109,7 +109,7 @@ def _read_pyproject_version(pyproject_path: Path | None) -> str | None:
 
 
 def _maybe_git_commit(repo_root: Path | None) -> str | None:
-    return _run_git(repo_root, ["rev-parse", "--short", "HEAD"])
+    return _run_git(repo_root, ["rev-parse", "--short", "HEAD"]) or None
 
 
 
@@ -136,4 +136,4 @@ def _run_git(repo_root: Path | None, args: list[str]) -> str | None:
         return None
     if result.returncode != 0:
         return None
-    return result.stdout.strip() or None
+    return result.stdout.strip()

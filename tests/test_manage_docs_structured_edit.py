@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
 
-from scribe_mcp.doc_management.manager import apply_doc_change
+from scribe_mcp.doc_management.manager import (
+    DocumentOperationError,
+    _apply_unified_patch,
+    _apply_unified_patch_smart,
+    _normalize_headers_text,
+    _replace_block_text,
+    apply_doc_change,
+)
 from scribe_mcp.utils.frontmatter import parse_frontmatter
+from scribe_mcp.utils.diff_compiler import compile_unified_diff
 
 
 async def _setup_project(tmp_path: Path) -> dict:
@@ -328,3 +337,127 @@ async def test_normalize_headers_invalid_doc_fails(tmp_path: Path) -> None:
     assert not result.success
     error_message = result.error_message or ""
     assert "DOC_NOT_FOUND" in error_message
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["normalize_headers", "replace_block"])
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029"], ids=["U2028", "U2029"])
+@pytest.mark.parametrize("fence", ["```", "~~~"], ids=["backtick", "tilde"])
+async def test_structured_edits_preserve_unicode_literal_bytes(
+    tmp_path: Path, operation: str, separator: str, fence: str, test_agent: str
+) -> None:
+    project = await _setup_project(tmp_path)
+    project["defaults"]["agent"] = test_agent
+    architecture_path = Path(project["docs"]["architecture"])
+    literal = (
+        f"{fence}text\nalpha{separator}beta{separator}## Literal header\n"
+        f"\\{fence}\n**Target:** fenced anchor\n{fence}\n"
+    )
+    old_block = "**Target:** Old summary\nOld detail"
+    new_block = f"**Target:** New{separator}summary\nNew detail"
+    original = (
+        f"# Title\nBefore untouched{separator}neighbor\n\n{literal}\n"
+        f"{old_block}\n\nAfter untouched{separator}neighbor\n"
+    )
+    architecture_path.write_bytes(original.encode("utf-8"))
+    expected = (
+        original.replace("# Title", "# 1 Title", 1)
+        if operation == "normalize_headers"
+        else original.replace(old_block, new_block, 1)
+    )
+
+    change = await apply_doc_change(
+        project,
+        doc="architecture",
+        action="normalize_headers" if operation == "normalize_headers" else "apply_patch",
+        section=None,
+        content=None,
+        patch=None,
+        patch_source_hash=None,
+        edit=(
+            {"type": "replace_block", "anchor": "**Target:**", "new_content": new_block}
+            if operation == "replace_block"
+            else None
+        ),
+        start_line=None,
+        end_line=None,
+        template=None,
+        metadata={},
+        dry_run=False,
+    )
+
+    assert change.success, change.error_message
+    updated_bytes = architecture_path.read_bytes()
+    literal_bytes = literal.encode("utf-8")
+    assert literal_bytes in updated_bytes
+    assert hashlib.sha256(updated_bytes).hexdigest() == hashlib.sha256(
+        expected.encode("utf-8")
+    ).hexdigest()
+    assert updated_bytes == expected.encode("utf-8")
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("original", "expected"),
+    [
+        ("", ""),
+        ("\n", "\n"),
+        ("# Title", "# 1 Title"),
+        ("# Title\n", "# 1 Title\n"),
+        ("# Title\r\nbody\r\n", "# 1 Title\nbody\n"),
+        ("# Title\rbody\r", "# 1 Title\nbody"),
+    ],
+)
+def test_normalize_headers_preserves_newline_conventions(
+    original: str, expected: str, test_agent: str
+) -> None:
+    assert _normalize_headers_text(original) == expected
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n", "\r"])
+@pytest.mark.parametrize("replacement", ["", "Target: new\r\nNew detail\r\n"])
+def test_replace_block_preserves_newline_and_empty_replacement_semantics(
+    ending: str, replacement: str, test_agent: str
+) -> None:
+    original = "Target: old\r\nOld detail\r\n\r\nAfter" + ending
+    expected = "\nAfter" if not replacement else "Target: new\nNew detail\n\nAfter"
+    assert _replace_block_text(original, "Target:", replacement) == expected
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("original", "anchor", "error"),
+    [
+        ("", "", "STRUCTURED_EDIT_ANCHOR_REQUIRED"),
+        ("", "Target:", "STRUCTURED_EDIT_ANCHOR_NOT_FOUND"),
+        ("```\nTarget: hidden\n", "Target:", "STRUCTURED_EDIT_ANCHOR_NOT_FOUND"),
+        ("Target: one\n\nTarget: two", "Target:", "STRUCTURED_EDIT_ANCHOR_AMBIGUOUS"),
+    ],
+)
+def test_replace_block_preserves_anchor_errors(
+    original: str, anchor: str, error: str, test_agent: str
+) -> None:
+    with pytest.raises(DocumentOperationError, match=error):
+        _replace_block_text(original, anchor, "replacement")
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029"], ids=["U2028", "U2029"])
+@pytest.mark.parametrize("smart", [False, True], ids=["strict", "smart"])
+def test_compiled_structured_diff_preserves_unicode_context_and_additions(
+    separator: str, smart: bool, test_agent: str
+) -> None:
+    before = f"```text\nalpha{separator}beta\n```\nTarget: old\n"
+    after = before.replace("Target: old", f"Target: new{separator}value")
+    patch = compile_unified_diff(before, after)
+    apply_patch = _apply_unified_patch_smart if smart else _apply_unified_patch
+    updated, hunks, *_ = apply_patch(before, patch)
+    assert hunks == 1
+    assert updated.encode("utf-8") == after.encode("utf-8")

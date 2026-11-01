@@ -1,76 +1,98 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
+import json
+import os
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
+import sys
 
+import anyio
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
 import pytest
 
-from scribe_mcp import server as server_module
-from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
-from scribe_mcp.tools.manage_docs import manage_docs
 
 
-@contextmanager
-def _isolated_server(state_manager: StateManager, *, project_root: Path):
-    originals = {
-        "state_manager": server_module.state_manager,
-        "storage_backend": server_module.storage_backend,
-    }
-    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
-    orig_agent_id = getattr(server_module, "get_agent_identity", None)
-    from scribe_mcp.tools import manage_docs as manage_docs_module
+@asynccontextmanager
+async def _isolated_server(
+    state_manager: StateManager, *, project_root: Path, project_name: str, agent: str
+):
+    """Use one disposable stdio server and its real caller binding per scenario."""
+    source = Path(__file__).resolve().parents[1]
+    (project_root / ".git").mkdir(exist_ok=True)
+    runtime = state_manager._storage_backend._path.parent / "intent-runtime"
+    runtime.mkdir(exist_ok=True)
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key != "DATABASE_URL"}
+    if "SCRIBE_RELEASE_PROFILE" in os.environ:
+        env["SCRIBE_RELEASE_PROFILE"] = os.environ["SCRIBE_RELEASE_PROFILE"]
+    env.update({
+        "SCRIBE_DISABLE_DOTENV": "1", "SCRIBE_LOAD_REPO_DOTENV": "0",
+        "SCRIBE_MODE": "standalone", "SCRIBE_STORAGE_BACKEND": "sqlite",
+        "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(state_manager._storage_backend._path),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"), "SCRIBE_ROOT": str(runtime),
+        "SCRIBE_REPO_ROOT": str(project_root), "SCRIBE_TRUSTED_REPO_ROOTS": str(project_root),
+        "PYTHONPATH": str(source / "src"),
+    })
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"],
+                                   env=env, cwd=str(source))
+    with anyio.fail_after(60):
+        async with Client(stdio_client(params), mode="auto") as client:
+            selected = await client.call_tool("set_project", {
+                "agent": agent, "name": project_name, "root": str(project_root),
+                "format": "structured",
+            })
+            selected_data = selected.structured_content
+            if not isinstance(selected_data, dict):
+                selected_data = json.loads("\n".join(
+                    getattr(item, "text", "") for item in selected.content))
+            if selected.is_error or selected_data.get("ok", True) is False:
+                raise AssertionError(f"Real caller binding setup failed: {selected}")
+            doctor = await client.call_tool("scribe_doctor", {"agent": agent})
+            doctor_data = doctor.structured_content
+            if not isinstance(doctor_data, dict):
+                doctor_data = json.loads("\n".join(
+                    getattr(item, "text", "") for item in doctor.content))
+            authority = doctor_data["runtime"]["repo_authority"]
+            binding = await state_manager._storage_backend.get_session_project(
+                authority["authoritative_session_key"])
+            assert binding is not None
+            assert binding.project_name == project_name
+            assert binding.canonical_repo_root == str(project_root.resolve())
+            yield client
 
-    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
 
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-    server_module.get_execution_context = lambda: SimpleNamespace(
-        mode="project",
-        session_id="intent-test-session",
-        stable_session_id="intent-test-session",
-    )
-    server_module.get_agent_identity = lambda: None
+async def _call_manage_docs(client: Client, agent: str, **arguments) -> dict:
+    result = await client.call_tool("manage_docs", {"agent": agent, **arguments})
+    if isinstance(result.structured_content, dict):
+        return result.structured_content
+    return json.loads("\n".join(getattr(item, "text", "") for item in result.content))
 
-    from scribe_mcp.config.repo_config import RepoConfig
 
-    fake_config = RepoConfig(repo_slug="test", repo_root=project_root)
-
-    try:
-        async def _prepare_context_stub(**kwargs):
-            state = await state_manager.load()
-            current_name = state.current_project
-            if not current_name and getattr(state, "recent_projects", None):
-                current_name = state.recent_projects[0]
-            if not current_name and getattr(state, "projects", None):
-                current_name = next(iter(state.projects.keys()))
-            current_project = state.get_project(current_name) if current_name else None
-            state_snapshot = kwargs.get("state_snapshot")
-            return LoggingContext(
-                tool_name="manage_docs",
-                project=current_project,
-                recent_projects=list(getattr(state, "recent_projects", []) or []),
-                state_snapshot=state_snapshot if isinstance(state_snapshot, dict) else {},
-                reminders=[],
-            )
-
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-        with patch(
-            "scribe_mcp.config.repo_config.get_current_repo_config",
-            return_value=(project_root, fake_config),
-        ):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        if orig_exec_ctx is not None:
-            server_module.get_execution_context = orig_exec_ctx
-        if orig_agent_id is not None:
-            server_module.get_agent_identity = orig_agent_id
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
+async def _read_persisted_project(state_manager: StateManager, client: Client, agent: str) -> dict:
+    """Observe the bound project's persisted metadata without selecting a target."""
+    doctor = await client.call_tool("scribe_doctor", {"agent": agent})
+    payload = doctor.structured_content
+    if not isinstance(payload, dict):
+        payload = json.loads("\n".join(getattr(item, "text", "") for item in doctor.content))
+    authority = payload["runtime"]["repo_authority"]
+    backend = state_manager._storage_backend
+    binding = await backend.get_session_project(authority["authoritative_session_key"])
+    assert binding is not None
+    assert binding.project_name == authority["project_name"]
+    assert binding.project_key == authority["project_key"]
+    assert binding.canonical_repo_root == authority["repo_root"]
+    record = await backend.fetch_project(binding.project_name,
+        repo_root=binding.canonical_repo_root, project_key=binding.project_key)
+    assert record is not None
+    assert record.name == binding.project_name
+    assert record.project_key == binding.project_key
+    assert str(Path(record.repo_root).resolve()) == binding.canonical_repo_root
+    return state_manager._record_to_project_dict(record)
 
 
 async def _setup_project(tmp_path: Path) -> dict:
@@ -101,13 +123,14 @@ async def _setup_project(tmp_path: Path) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_create_custom_returns_governed_scaffold_intent(tmp_path: Path) -> None:
+async def test_create_custom_returns_governed_scaffold_intent(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=Path(project["root"])):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="custom_doc",
             metadata={
@@ -134,13 +157,14 @@ async def test_create_custom_returns_governed_scaffold_intent(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_create_special_doc_returns_contentful_intent(tmp_path: Path) -> None:
+async def test_create_special_doc_returns_contentful_intent(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=Path(project["root"])):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="RESEARCH_INTENT_CONTENTFUL",
             metadata={
@@ -161,7 +185,7 @@ async def test_create_special_doc_returns_contentful_intent(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_create_register_existing_returns_empty_registered_intent(tmp_path: Path) -> None:
+async def test_create_register_existing_returns_empty_registered_intent(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     docs_dir = Path(project["docs_dir"])
     existing = docs_dir / "existing_doc.md"
@@ -170,8 +194,9 @@ async def test_create_register_existing_returns_empty_registered_intent(tmp_path
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=Path(project["root"])):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="existing_doc",
             metadata={
@@ -190,13 +215,14 @@ async def test_create_register_existing_returns_empty_registered_intent(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_create_special_doc_dry_run_includes_editable_sections(tmp_path: Path) -> None:
+async def test_create_special_doc_dry_run_includes_editable_sections(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=Path(project["root"])):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="RESEARCH_INTENT_DRY_RUN",
             metadata={
@@ -216,18 +242,18 @@ async def test_create_special_doc_dry_run_includes_editable_sections(tmp_path: P
 
 @pytest.mark.asyncio
 @pytest.mark.regression
-async def test_create_review_dry_run_avoids_reserved_mcp_content_shape_and_side_effects(tmp_path: Path) -> None:
+async def test_create_review_dry_run_avoids_reserved_mcp_content_shape_and_side_effects(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
-    original_docs = dict(project["docs"])
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=Path(project["root"])):
-        server_module.storage_backend = getattr(state_manager, "_storage_backend", None)
-        host_result = await server_module.app.call_tool(
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
+        original_docs = dict((await _read_persisted_project(state_manager, client, test_agent))["docs"])
+        host_result = await client.call_tool(
             "manage_docs",
             {
-                "agent": "test-agent",
+                "agent": test_agent,
                 "action": "create",
                 "doc": "REVIEW_CI_RUNNER_01",
                 "project": project["name"],
@@ -239,6 +265,7 @@ async def test_create_review_dry_run_avoids_reserved_mcp_content_shape_and_side_
                 "dry_run": True,
             },
         )
+        persisted_project = await _read_persisted_project(state_manager, client, test_agent)
 
     assert isinstance(host_result.content, Sequence)
     assert not isinstance(host_result.content, (str, bytes))
@@ -251,8 +278,6 @@ async def test_create_review_dry_run_avoids_reserved_mcp_content_shape_and_side_
     assert result["preview"]
     assert not Path(result["path"]).exists()
 
-    persisted_state = await state_manager.load()
-    persisted_project = persisted_state.get_project(project["name"])
     assert persisted_project is not None
     assert persisted_project["docs"] == original_docs
     assert "REVIEW_CI_RUNNER_01" not in persisted_project["docs"]

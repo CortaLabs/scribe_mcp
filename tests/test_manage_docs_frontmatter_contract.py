@@ -51,6 +51,7 @@ async def test_fenced_patch_bytes_survive_section_and_frontmatter_writes(
         "diff --git a/example.txt b/example.txt\n"
         "--- a/example.txt\n+++ b/example.txt\n@@ -1,4 +1,4 @@\n"
         " context café  \t\n \n\t \t\n-old\n+new  \t\n"
+        " literal alpha\u2028beta\u2029gamma  \t\n"
     )
     if len(fence) > 3:
         # A shorter same-marker fence is literal content inside the outer one.
@@ -109,6 +110,59 @@ async def test_fenced_patch_bytes_survive_section_and_frontmatter_writes(
         action: (len(expected), expected_sha, expected)
         for action in ("replace_section", "frontmatter_update")
     }
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fence", ["```", "~~~", "````", "~~~~"])
+async def test_unicode_literal_bytes_survive_real_mcp_writes(
+    tmp_path: Path, test_agent: str, fence: str,
+) -> None:
+    from scribe_mcp.state import StateManager
+    from test_manage_docs_create_intent import (
+        _call_manage_docs, _isolated_server, _read_persisted_project,
+    )
+
+    project = await _setup_project(tmp_path)
+    state_manager = StateManager(path=tmp_path / "state.json")
+    await state_manager.set_current_project(project["name"], project)
+    neighbor = "\n<!-- ID: after -->\nKeep this section\n"
+    payload = (
+        " alpha\u2028beta\u2029gamma  \t\n"
+        f" not a closer\u2028{fence}\n"
+        "<!-- ID: fake -->\n whitespace\u2029 \t\n"
+    )
+    if len(fence) > 3:
+        payload += fence[:3] + "\n nested literal  \t\n"
+    literal = (fence + "text\n" + payload + fence + "\n").encode("utf-8")
+    content = "Prose before  \t\n" + literal.decode("utf-8") + "Prose after  \t\n"
+    digest = hashlib.sha256(literal).hexdigest()
+    async with _isolated_server(state_manager, project_root=Path(project["root"]),
+                                project_name=project["name"], agent=test_agent) as client:
+        bound_project = await _read_persisted_project(state_manager, client, test_agent)
+        path = Path(bound_project["docs"]["architecture"])
+        path.write_text("---\ntags: [initial]\n---\n# Title\n\n<!-- ID: artifact -->\nold\n" + neighbor, encoding="utf-8")
+        for action in ("replace_section", "frontmatter_update"):
+            before = parse_frontmatter(path.read_bytes().decode("utf-8"))
+            body_arguments = {"section": "artifact", "content": content} if action == "replace_section" else {}
+            result = await _call_manage_docs(
+                client, test_agent, action=action, doc="architecture",
+                metadata={"frontmatter": {"tags": [action]}}, dry_run=False,
+                **body_arguments,
+            )
+            assert result["ok"] is True, result
+            written = path.read_bytes()
+            parsed = parse_frontmatter(written.decode("utf-8"))
+            assert literal in written
+            actual = written[written.index(literal):][:len(literal)]
+            assert len(actual) == len(literal)
+            assert hashlib.sha256(actual).hexdigest() == digest
+            assert written.endswith(neighbor.encode("utf-8"))
+            assert b"Prose before\n" in written and b"Prose after\n" in written
+            assert parsed.frontmatter_data["tags"] == [action]
+            assert parsed.frontmatter_data["edit_trace"]["last_action"] == action
+            if action == "frontmatter_update":
+                assert parsed.body == before.body
 
 
 def test_special_create_persists_complete_non_exportable_policy_by_default(

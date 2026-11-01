@@ -1,81 +1,118 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, asynccontextmanager
+from dataclasses import replace
+from importlib import import_module
+import json
+import os
+import sqlite3
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import anyio
+from mcp.client.client import Client
 
 from scribe_mcp.doc_management.manager import apply_doc_change
 from scribe_mcp.doc_management.utils import classify_scribe_source_document
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.doc_management.special_create import _normalize_stage
-from scribe_mcp.shared.logging_utils import LoggingContext
+from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.shared.project_registry import ProjectRegistry
 from scribe_mcp.state import StateManager
 from scribe_mcp.tools.manage_docs import manage_docs
 from scribe_mcp import server as server_module
 from scribe_mcp.config.repo_config import RepoConfig, resolve_create_doc_type_config
+from test_manage_docs_create_intent import _read_persisted_project
 
 
-@contextmanager
-def _isolated_server(state_manager, project_root=None):
-    """Monkey-patch server module for isolated test execution."""
-    originals = {
-        "state_manager": server_module.state_manager,
-        "storage_backend": server_module.storage_backend,
-    }
-    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
-    orig_agent_id = getattr(server_module, "get_agent_identity", None)
-    from scribe_mcp.tools import manage_docs as manage_docs_module
-    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
+def _planning_registries():
+    modules = [import_module(f"scribe_mcp.tools.{name}") for name in
+               ("set_project", "generate_doc_templates", "manage_docs", "append_entry")]
+    doctor = import_module("scribe_mcp.tools.doctor")
+    return [module._PROJECT_REGISTRY for module in modules] + [
+        doctor.get_runtime_project_registry()]
 
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-    server_module.get_execution_context = lambda: SimpleNamespace(
-        mode="project",
-        session_id="test-session",
-        stable_session_id="test-session",
-    )
-    server_module.get_agent_identity = lambda: None
 
-    fake_root = Path(project_root).resolve() if project_root else Path("/tmp")
-    from scribe_mcp.config.repo_config import RepoConfig
+@pytest.fixture(autouse=True)
+def _assert_disposable_registries():
+    expected = Path(os.environ["SCRIBE_DB_PATH"]).resolve()
+    assert expected.parent.name.startswith("scribe-tests-state-")
+    for facade in _planning_registries():
+        assert facade.available
+        assert facade._registry._db_path.resolve() == expected
 
-    fake_config = RepoConfig(repo_slug="test", repo_root=fake_root)
 
-    try:
-        async def _prepare_context_stub(**kwargs):
-            state = await state_manager.load()
-            current_name = state.current_project
-            if not current_name and getattr(state, "recent_projects", None):
-                current_name = state.recent_projects[0]
-            if not current_name and getattr(state, "projects", None):
-                current_name = next(iter(state.projects.keys()))
-            current_project = state.get_project(current_name) if current_name else None
-            state_snapshot = kwargs.get("state_snapshot")
-            return LoggingContext(
-                tool_name=str(kwargs.get("tool_name") or "manage_docs"),
-                project=current_project,
-                recent_projects=list(getattr(state, "recent_projects", []) or []),
-                state_snapshot=state_snapshot if isinstance(state_snapshot, dict) else {},
-                reminders=[],
-            )
+@asynccontextmanager
+async def _isolated_server(state_manager, *, project_root, project_name, agent,
+                           storage_backend=None, additional_agents=()):
+    """Use the SDK's native memory transport so dependency faults stay local."""
+    root = Path(project_root).resolve()
+    (root / ".git").mkdir(exist_ok=True)
+    backend = state_manager._storage_backend
+    seeded = await backend.fetch_project(project_name, repo_root=str(root))
+    assert seeded is not None
+    assert seeded.name == project_name
+    assert Path(seeded.repo_root).resolve() == root
+    runtime_settings = replace(server_module.settings,
+        default_repo_root=root, trusted_repo_roots=(root,))
+    with ExitStack() as registry_paths, patch.multiple(
+        server_module, state_manager=state_manager, storage_backend=backend,
+        router_context_manager=RouterContextManager(storage_backend=backend),
+        settings=runtime_settings, get_agent_identity=lambda: None,
+    ):
+        # Cached registries are real SQLite clients too. Keep every one on the
+        # scenario DB; the process-wide registry can be locked by another case.
+        registries = {id(facade._registry): facade._registry
+                      for facade in _planning_registries()}
+        for registry in registries.values():
+            registry_paths.enter_context(patch.object(registry, "_db_path", backend._path))
+        assert all(facade._registry._db_path.resolve() == backend._path.resolve()
+                   for facade in _planning_registries())
+        with anyio.fail_after(60):
+            async with Client(server_module.app, mode="2026-07-28") as client:
+                for caller in (agent, *additional_agents):
+                    selected = await client.call_tool("set_project", {
+                        "agent": caller, "name": project_name, "root": str(root),
+                        "progress_log": seeded.progress_log_path,
+                        "format": "structured",
+                    })
+                    selected_data = _tool_payload(selected)
+                    assert not selected.is_error, selected
+                    assert selected_data.get("ok", True) is not False, selected_data
+                # set_project scaffolds defaults; retain the existing scenario's
+                # persisted document inventory without selecting another default.
+                selected_record = await backend.fetch_project(project_name,
+                    repo_root=str(root), project_key=seeded.project_key)
+                assert selected_record is not None
+                assert selected_record.project_key == seeded.project_key
+                await backend.update_project_docs(project_name, seeded.docs_json,
+                    repo_root=str(root))
+                authority = _tool_payload(await client.call_tool(
+                    "scribe_doctor", {"agent": agent}))["runtime"]["repo_authority"]
+                binding = await backend.get_session_project(authority["authoritative_session_key"])
+                assert binding is not None
+                assert binding.project_name == project_name
+                assert binding.project_key == seeded.project_key
+                assert binding.canonical_repo_root == str(root)
+                # Template telemetry must persist beside the scenario's binding,
+                # rather than silently timing out against another test's DB.
+                registry_info = ProjectRegistry(backend._path).get_project(project_name)
+                assert registry_info is not None
+                assert registry_info.meta["docs"]["update_count"] > 0
+                if storage_backend is not None:
+                    server_module.storage_backend = storage_backend
+                yield client
 
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-        with patch(
-            "scribe_mcp.config.repo_config.get_current_repo_config",
-            return_value=(fake_root, fake_config),
-        ):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        if orig_exec_ctx is not None:
-            server_module.get_execution_context = orig_exec_ctx
-        if orig_agent_id is not None:
-            server_module.get_agent_identity = orig_agent_id
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
+
+def _tool_payload(result):
+    if isinstance(result.structured_content, dict):
+        return result.structured_content
+    return json.loads("\n".join(getattr(item, "text", "") for item in result.content))
+
+
+async def _call_manage_docs(client, caller, **arguments):
+    return _tool_payload(await client.call_tool("manage_docs", {"agent": caller, **arguments}))
 
 
 async def _setup_project(tmp_path: Path) -> dict:
@@ -101,20 +138,6 @@ async def _setup_project(tmp_path: Path) -> dict:
         },
         "defaults": {"agent": "QA Bot"},
     }
-
-
-async def _seed_runtime_session(
-    state_manager: StateManager,
-    project_root: str,
-    session_id: str = "test-session",
-) -> None:
-    backend = getattr(state_manager, "_storage_backend", None)
-    if backend and hasattr(backend, "upsert_session"):
-        await backend.upsert_session(
-            session_id=session_id,
-            repo_root=project_root,
-            mode="project",
-        )
 
 
 @pytest.mark.asyncio
@@ -188,21 +211,21 @@ async def test_create_doc_strips_trailing_whitespace_from_body(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_create_doc_normalizes_top_level_workflow_metadata(tmp_path: Path) -> None:
+async def test_create_doc_normalizes_top_level_workflow_metadata(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     target_dir = Path(project["docs_dir"]) / "custom"
     target_dir.mkdir(parents=True, exist_ok=True)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     class _AmbientIdentity:
         async def get_or_create_agent_id(self) -> str:
             return "agent-ambient-runtime"
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent, additional_agents=("GeneratedRuntimeAgent",)) as client:
         server_module.get_agent_identity = lambda: _AmbientIdentity()
-        result = await manage_docs(
+        result = await _call_manage_docs(client, test_agent,
             agent="GeneratedRuntimeAgent",
             action="create",
             doc_name="workflow_doc",
@@ -275,16 +298,16 @@ async def test_create_doc_allows_empty_body(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_replace_section_cross_session_succeeds_when_review_report_registration_degraded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, test_agent: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = await _setup_project(tmp_path)
     state_path = tmp_path / "state_cross_session.db"
     state_manager = StateManager(path=state_path)
     await state_manager.set_current_project(project["name"], project, agent_id="test")
-    await _seed_runtime_session(state_manager, project["root"], session_id="test-session")
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        create_result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        create_result = await _call_manage_docs(client, test_agent,
             agent="test-agent",
             action="create",
             metadata={"doc_type": "review", "stage": "phase_4_2"},
@@ -294,10 +317,9 @@ async def test_replace_section_cross_session_succeeds_when_review_report_registr
         assert created_path.exists()
         created_doc_name = str(create_result["doc_name"])
         before_text = created_path.read_text(encoding="utf-8")
+        persisted = await _read_persisted_project(state_manager, client, test_agent)
 
     # Simulate a new session with stale/missing custom-doc registry mapping.
-    state_reloaded = await state_manager.load()
-    persisted = dict(state_reloaded.get_project(project["name"]) or project)
     persisted_docs = dict(persisted.get("docs", {}) or {})
     persisted_docs.pop(created_doc_name, None)
     persisted_docs.pop("review", None)
@@ -311,8 +333,9 @@ async def test_replace_section_cross_session_succeeds_when_review_report_registr
     monkeypatch.setattr(runtime_shared, "register_document_path", _blocked_register)
     monkeypatch.setattr(runtime_shared.utils_shared, "resolve_custom_doc_path", lambda **_kwargs: created_path)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        replace_result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        replace_result = await _call_manage_docs(client, test_agent,
             agent="test-agent",
             action="replace_section",
             doc_name=created_doc_name,
@@ -328,19 +351,19 @@ async def test_replace_section_cross_session_succeeds_when_review_report_registr
         assert after_text != before_text
         assert "Cross-session review recovery content." in after_text
 @pytest.mark.asyncio
-async def test_create_doc_registry_warning(tmp_path: Path) -> None:
+async def test_create_doc_registry_warning(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     async def _fail_update_metadata(*args, **kwargs):
         raise RuntimeError("boom")
 
     state_manager.update_project_metadata = _fail_update_metadata  # type: ignore[assignment]
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="custom_doc",
             metadata={
@@ -361,19 +384,22 @@ async def test_create_doc_registry_warning(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_doc_returns_registration_status_when_docs_json_update_misses(tmp_path: Path) -> None:
+async def test_create_doc_returns_registration_status_when_docs_json_update_misses(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     class MissingRowStorage:
+        def __getattr__(self, name):
+            return getattr(state_manager._storage_backend, name)
+
         async def update_project_docs(self, *_args, **_kwargs):
             return False
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
         server_module.storage_backend = MissingRowStorage()
-        result = await manage_docs(
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="custom_doc",
             metadata={
@@ -396,14 +422,14 @@ async def test_create_doc_returns_registration_status_when_docs_json_update_miss
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Path) -> None:
+async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="custom_doc",
             metadata={
@@ -419,8 +445,7 @@ async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Pa
         assert result.get("editable_sections")
         assert result.get("section_source") in {"anchors", "headings"}
 
-        state = await state_manager.load()
-        stored_project = state.get_project(project["name"])
+        stored_project = await _read_persisted_project(state_manager, client, test_agent)
         assert stored_project is not None
         assert "dry_run_note" not in (stored_project.get("docs") or {})
 
@@ -436,14 +461,14 @@ async def test_manage_docs_create_doc_dry_run_does_not_register_doc(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path) -> None:
+async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="custom_doc",
             metadata={
@@ -460,14 +485,14 @@ async def test_manage_docs_create_doc_preserves_newlines(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_spec_routes_to_generic_create_doc(tmp_path: Path) -> None:
+async def test_manage_docs_create_spec_routes_to_generic_create_doc(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="spec_doc",
             metadata={
@@ -491,8 +516,7 @@ async def test_manage_docs_create_spec_routes_to_generic_create_doc(tmp_path: Pa
         assert classification is not None
         assert classification.doc_type == "spec"
 
-        state = await state_manager.load()
-        stored_project = state.get_project(project["name"])
+        stored_project = await _read_persisted_project(state_manager, client, test_agent)
         assert stored_project is not None
         assert stored_project.get("docs", {}).get("SPEC_MANAGE_DOCS_REGISTRATION") == str(created_path)
 
@@ -539,16 +563,32 @@ async def test_create_custom_doc_respects_doc_name_parameter(tmp_path: Path) -> 
     ],
 )
 async def test_manage_docs_deprecated_create_aliases_fail_hard(
-    tmp_path: Path,
+    tmp_path: Path, test_agent: str,
     action: str,
 ) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        root = Path(project["root"])
+        files_before = {path.relative_to(root): path.read_bytes()
+                        for path in root.rglob("*") if path.is_file()}
+        with sqlite3.connect(state_manager._storage_backend._path) as connection:
+            storage_before = tuple(connection.iterdump())
+        refused = await client.call_tool("manage_docs", {
+            "agent": test_agent, "action": action, "doc": "legacy_alias_doc",
+            "content": "# Legacy Alias\n\nBody content.",
+            "metadata": {"category": "router"}, "dry_run": False,
+        })
+        assert refused.is_error is True
+        refusal_text = "\n".join(getattr(item, "text", "") for item in refused.content)
+        assert "action" in refusal_text.lower(), refusal_text
+        assert "schema" in refusal_text.lower(), refusal_text
+
         result = await manage_docs(
+            agent=test_agent,
             action=action,
             doc="legacy_alias_doc",
             content="# Legacy Alias\n\nBody content.",
@@ -560,6 +600,10 @@ async def test_manage_docs_deprecated_create_aliases_fail_hard(
         allowed = result.get("allowed_actions") or result.get("extra", {}).get("allowed_actions", [])
         assert "create" in allowed
         assert action not in allowed
+        assert {path.relative_to(root): path.read_bytes()
+                for path in root.rglob("*") if path.is_file()} == files_before
+        with sqlite3.connect(state_manager._storage_backend._path) as connection:
+            assert tuple(connection.iterdump()) == storage_before
 
 
 def test_normalize_stage_prevents_unknown_filename_leakage() -> None:
@@ -603,15 +647,15 @@ async def test_create_doc_with_md_suffix_does_not_double_append(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_create_review_report_allows_followup_replace_section_with_same_session_binding(tmp_path: Path) -> None:
+async def test_create_review_report_allows_followup_replace_section_with_same_session_binding(tmp_path: Path, test_agent: str) -> None:
     """Regression: review report create + replace_section should succeed in one bound runtime session."""
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        create_result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        create_result = await _call_manage_docs(client, test_agent,
             action="create",
             metadata={
                 "doc_type": "review",
@@ -623,7 +667,7 @@ async def test_create_review_report_allows_followup_replace_section_with_same_se
         review_doc_name = str(create_result.get("doc_name") or "")
         assert review_doc_name
 
-        replace_result = await manage_docs(
+        replace_result = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc_name=review_doc_name,
             section="executive_summary",
@@ -634,11 +678,10 @@ async def test_create_review_report_allows_followup_replace_section_with_same_se
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_uses_repo_config_doc_type_alias_and_transparency(tmp_path: Path) -> None:
+async def test_manage_docs_create_uses_repo_config_doc_type_alias_and_transparency(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     repo_config_dir = Path(project["root"]) / ".scribe" / "config"
     repo_config_dir.mkdir(parents=True, exist_ok=True)
@@ -649,8 +692,9 @@ async def test_manage_docs_create_uses_repo_config_doc_type_alias_and_transparen
         encoding="utf-8",
     )
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="incident_note",
             metadata={
@@ -672,17 +716,17 @@ async def test_manage_docs_create_uses_repo_config_doc_type_alias_and_transparen
 @pytest.mark.regression
 @pytest.mark.parametrize("doc_type", ["bug", "security"])
 async def test_special_case_create_honors_safe_target_dir_and_caller_name(
-    tmp_path: Path, doc_type: str
+    tmp_path: Path, test_agent: str, doc_type: str
 ) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / f"{doc_type}-state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
     target_dir = Path(project["docs_dir"]) / "governed"
     doc_name = f"{doc_type.upper()}_CALLER_NAMED"
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc=doc_name,
             target_dir=str(target_dir),
@@ -702,20 +746,41 @@ async def test_special_case_create_honors_safe_target_dir_and_caller_name(
     assert not (Path(project["root"]) / "docs" / f"{doc_type}s").exists()
 
 
+@pytest.mark.regression
+@pytest.mark.parametrize("doc_type", ["bug", "security"])
+def test_report_template_preserves_long_healed_narrative(
+    tmp_path: Path, doc_type: str
+) -> None:
+    from scribe_mcp.doc_management.healing import normalize_metadata_with_healing
+    from scribe_mcp.template_engine.engine import Jinja2TemplateEngine
+
+    narrative = ("Observed café | value < threshold → 確認\n" * 30
+                 + "```diff\n context line\n+replacement\n```\nEND_OF_REPORT")
+
+    metadata, _, _ = normalize_metadata_with_healing({
+        "summary_long": narrative, "actual_behavior": narrative,
+    })
+    engine = Jinja2TemplateEngine(project_root=tmp_path, project_name="Report tests")
+    rendered = engine.render_template(
+        f"documents/{doc_type.upper()}_REPORT_TEMPLATE.md", metadata=metadata,
+    )
+    assert rendered.count(narrative) == 2
+
+
 @pytest.mark.asyncio
 @pytest.mark.regression
 async def test_special_case_create_rejects_escaping_or_ambiguous_target_before_mutation(
-    tmp_path: Path,
+    tmp_path: Path, test_agent: str,
 ) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "rejected-target-state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
     root = Path(project["root"])
-    docs_before = dict(project["docs"])
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        escaped = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        docs_before = dict((await _read_persisted_project(state_manager, client, test_agent))["docs"])
+        escaped = await _call_manage_docs(client, test_agent,
             action="create",
             doc="SEC_ESCAPE",
             target_dir=str(tmp_path / "outside"),
@@ -726,7 +791,7 @@ async def test_special_case_create_rejects_escaping_or_ambiguous_target_before_m
             },
             dry_run=False,
         )
-        ambiguous = await manage_docs(
+        ambiguous = await _call_manage_docs(client, test_agent,
             action="create",
             doc="BUG_AMBIGUOUS",
             target_dir=str(Path(project["docs_dir"]) / "one"),
@@ -738,6 +803,7 @@ async def test_special_case_create_rejects_escaping_or_ambiguous_target_before_m
             },
             dry_run=False,
         )
+        rebound = await _read_persisted_project(state_manager, client, test_agent)
 
     assert escaped["ok"] is False
     assert ambiguous["ok"] is False
@@ -746,17 +812,15 @@ async def test_special_case_create_rejects_escaping_or_ambiguous_target_before_m
     assert not (Path(project["docs_dir"]) / "two").exists()
     assert not (root / "docs" / "bugs").exists()
     assert not (root / "docs" / "security").exists()
-    rebound = (await state_manager.load()).get_project(project["name"])
     assert rebound is not None
     assert rebound["docs"] == docs_before
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_reserved_alias_config_fails_closed_with_warning(tmp_path: Path) -> None:
+async def test_manage_docs_create_reserved_alias_config_fails_closed_with_warning(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     repo_config_dir = Path(project["root"]) / ".scribe" / "config"
     repo_config_dir.mkdir(parents=True, exist_ok=True)
@@ -768,8 +832,9 @@ async def test_manage_docs_create_reserved_alias_config_fails_closed_with_warnin
         encoding="utf-8",
     )
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="incident_note",
             metadata={"doc_type": "incident", "doc_name": "INCIDENT_002"},
@@ -782,11 +847,10 @@ async def test_manage_docs_create_reserved_alias_config_fails_closed_with_warnin
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_custom_template_from_top_level_doc_types(tmp_path: Path) -> None:
+async def test_manage_docs_create_custom_template_from_top_level_doc_types(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     repo_config_dir = Path(project["root"]) / ".scribe" / "config"
     repo_config_dir.mkdir(parents=True, exist_ok=True)
@@ -797,8 +861,9 @@ async def test_manage_docs_create_custom_template_from_top_level_doc_types(tmp_p
         encoding="utf-8",
     )
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="incident_from_template",
             metadata={"doc_type": "incident", "doc_name": "INCIDENT_TEMPLATE_001"},
@@ -815,11 +880,10 @@ async def test_manage_docs_create_custom_template_from_top_level_doc_types(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_template_missing_fails_closed(tmp_path: Path) -> None:
+async def test_manage_docs_create_template_missing_fails_closed(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     repo_config_dir = Path(project["root"]) / ".scribe" / "config"
     repo_config_dir.mkdir(parents=True, exist_ok=True)
@@ -830,8 +894,9 @@ async def test_manage_docs_create_template_missing_fails_closed(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="incident_missing_template",
             metadata={"doc_type": "incident", "doc_name": "INCIDENT_TEMPLATE_404"},
@@ -852,11 +917,10 @@ async def test_manage_docs_create_template_missing_fails_closed(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_alias_legacy_fallback_config_source(tmp_path: Path) -> None:
+async def test_manage_docs_create_alias_legacy_fallback_config_source(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     repo_config_dir = Path(project["root"]) / ".scribe" / "config"
     repo_config_dir.mkdir(parents=True, exist_ok=True)
@@ -868,8 +932,9 @@ async def test_manage_docs_create_alias_legacy_fallback_config_source(tmp_path: 
         encoding="utf-8",
     )
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="incident_note_legacy",
             metadata={
@@ -885,25 +950,28 @@ async def test_manage_docs_create_alias_legacy_fallback_config_source(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_special_bug_create_returns_registration_status_when_docs_json_update_misses(tmp_path: Path) -> None:
+async def test_special_bug_create_returns_registration_status_when_docs_json_update_misses(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     class MissingRowStorage:
+        def __getattr__(self, name):
+            return getattr(state_manager._storage_backend, name)
+
         async def update_project_docs(self, *_args, **_kwargs):
             return False
 
-        async def fetch_project(self, *_args, **_kwargs):
-            return SimpleNamespace(docs_json="{}")
+        async def fetch_project(self, *args, **kwargs):
+            return await state_manager._storage_backend.fetch_project(*args, **kwargs)
 
         async def upsert_case_registry_record(self, **_kwargs):
             return None
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
         server_module.storage_backend = MissingRowStorage()
-        result = await manage_docs(
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="bug_note",
             metadata={
@@ -928,11 +996,10 @@ async def test_special_bug_create_returns_registration_status_when_docs_json_upd
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_create_template_legacy_fallback_config_source(tmp_path: Path) -> None:
+async def test_manage_docs_create_template_legacy_fallback_config_source(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
     repo_config_dir = Path(project["root"]) / ".scribe" / "config"
     repo_config_dir.mkdir(parents=True, exist_ok=True)
@@ -944,8 +1011,9 @@ async def test_manage_docs_create_template_legacy_fallback_config_source(tmp_pat
         encoding="utf-8",
     )
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="create",
             doc="incident_template_legacy",
             metadata={"doc_type": "incident", "doc_name": "INCIDENT_LEGACY_TEMPLATE_001"},
@@ -963,14 +1031,14 @@ def test_create_doc_type_config_includes_canonical_semantic_aliases(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_canonical_doc_type_persists_through_create_and_frontmatter_update(tmp_path: Path) -> None:
+async def test_canonical_doc_type_persists_through_create_and_frontmatter_update(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, project["root"])
 
-    with _isolated_server(state_manager, project_root=project["root"]):
-        created = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project["root"],
+                                project_name=project["name"], agent=test_agent) as client:
+        created = await _call_manage_docs(client, test_agent,
             action="create",
             doc="phase_plan",
             metadata={
@@ -982,7 +1050,7 @@ async def test_canonical_doc_type_persists_through_create_and_frontmatter_update
         )
         assert created["ok"] is True
 
-        updated = await manage_docs(
+        updated = await _call_manage_docs(client, test_agent,
             action="frontmatter_update",
             doc="PHASE_PLAN_CANONICAL_PERSIST_001",
             metadata={"frontmatter": {"intended_doc_type": "review"}},

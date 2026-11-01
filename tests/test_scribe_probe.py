@@ -1,9 +1,78 @@
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import asyncpg
 import pytest
 
 from scribe_mcp.scripts import scribe_probe
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_probe_import_preserves_caller_environment(configured: bool, tmp_path: Path) -> None:
+    environment = os.environ.copy()
+    expected = {
+        "SCRIBE_ROOT": str(tmp_path / "caller-root") if configured else None,
+        "SCRIBE_STATE_PATH": str(tmp_path / "caller-state.json") if configured else None,
+    }
+    for key, value in expected.items():
+        if value is None:
+            environment.pop(key, None)
+        else:
+            environment[key] = value
+    environment["PYTHONPATH"] = str(Path(scribe_probe.__file__).resolve().parents[2])
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json, os; from scribe_mcp.scripts import scribe_probe; "
+            "print(json.dumps({'values': {key: os.environ.get(key) for key in "
+            "('SCRIBE_ROOT', 'SCRIBE_STATE_PATH')}, 'origin': scribe_probe.__file__}))",
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    observed = json.loads(result.stdout)
+    assert Path(observed["origin"]).resolve() == Path(scribe_probe.__file__).resolve()
+    assert observed["values"] == expected
+
+
+def test_probe_cli_defaults_reach_runtime_configuration() -> None:
+    environment = os.environ.copy()
+    for key in ("SCRIBE_ROOT", "SCRIBE_STATE_PATH"):
+        environment.pop(key, None)
+    environment["PYTHONPATH"] = str(Path(scribe_probe.__file__).resolve().parents[2])
+    environment["SCRIBE_DISABLE_DOTENV"] = "1"
+    script = """import asyncio, os
+from pathlib import Path
+from scribe_mcp.scripts import scribe_probe
+async def bind(args):
+    from scribe_mcp.config.settings import settings
+    assert settings.default_state_path == Path(os.environ['SCRIBE_STATE_PATH'])
+    return None
+async def noop():
+    pass
+scribe_probe._bind_probe_execution_context = bind
+scribe_probe._reset_probe_execution_context = lambda token: None
+scribe_probe._drain_probe_background_tasks = noop
+scribe_probe._close_probe_storage_backend = noop
+asyncio.run(scribe_probe.main(['--tools', '', '--json-output']))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_registry_sanity_probe_reports_readiness_drift_conflict(monkeypatch) -> None:
@@ -32,7 +101,7 @@ def test_registry_sanity_probe_reports_readiness_drift_conflict(monkeypatch) -> 
         def list_projects(self, limit=None):  # noqa: ARG002
             return [project]
 
-    monkeypatch.setattr(scribe_probe, "ProjectRegistry", lambda: _Registry())
+    monkeypatch.setattr("scribe_mcp.shared.project_registry.ProjectRegistry", lambda: _Registry())
     result = scribe_probe._registry_sanity_probe()
 
     assert result["ok"] is True
@@ -64,7 +133,7 @@ def test_registry_sanity_probe_honors_project_scope(monkeypatch) -> None:
         def list_projects(self, limit=None):  # noqa: ARG002
             return [project_a, project_b]
 
-    monkeypatch.setattr(scribe_probe, "ProjectRegistry", lambda: _Registry())
+    monkeypatch.setattr("scribe_mcp.shared.project_registry.ProjectRegistry", lambda: _Registry())
     result = scribe_probe._registry_sanity_probe(project="project_b")
 
     assert result["ok"] is True
@@ -147,14 +216,30 @@ async def test_json_output_serializes_multi_tool_non_dict_results(monkeypatch, c
 
 
 @pytest.mark.asyncio
-async def test_probe_drains_background_tasks_before_exit(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("configured", [False, True])
+async def test_probe_drains_background_tasks_before_exit(
+    monkeypatch, capsys, tmp_path: Path, configured: bool
+) -> None:
     events: list[str] = []
+    expected_root = str(tmp_path / "caller-root") if configured else str(scribe_probe.REPO_ROOT)
+    expected_state = (
+        str(tmp_path / "caller-state.json")
+        if configured
+        else str(scribe_probe.REPO_ROOT / "tmp_state_probe.json")
+    )
+    for key, value in (("SCRIBE_ROOT", expected_root), ("SCRIBE_STATE_PATH", expected_state)):
+        if configured:
+            monkeypatch.setenv(key, value)
+        else:
+            monkeypatch.delenv(key, raising=False)
 
     async def fake_run_tool(name: str, payload: dict[str, object]) -> dict[str, object]:  # noqa: ARG001
         events.append(f"tool:{name}")
         return {"ok": True}
 
     async def fake_bind(args: scribe_probe.ProbeArgs) -> str:  # noqa: ARG001
+        assert os.environ["SCRIBE_ROOT"] == expected_root
+        assert os.environ["SCRIBE_STATE_PATH"] == expected_state
         events.append("bind")
         return "token"
 

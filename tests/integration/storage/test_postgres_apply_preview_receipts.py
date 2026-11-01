@@ -9,7 +9,6 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,6 +17,14 @@ import asyncpg
 
 from scribe_mcp.storage.models import ApplyPreviewReceiptRecord
 from scribe_mcp.storage.postgres import PostgresStorage
+from fixtures.storage import (
+    apply_preview_receipt as _receipt,
+    apply_preview_receipt_row as _row,
+    apply_preview_receipt_with_nested_json as _receipt_with_nested_json,
+)
+
+
+pytestmark = pytest.mark.storage
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -53,62 +60,20 @@ async def live_postgres_storage():
             await conn.close()
 
 
-def _receipt(*, state: str = "issued", fence: int = 0) -> ApplyPreviewReceiptRecord:
-    now = datetime.now(timezone.utc)
-    terminal = state in {"applied", "failed_terminal"}
-    return ApplyPreviewReceiptRecord(
-        token_sha256="a" * 64,
-        receipt_version=1,
-        state=state,  # type: ignore[arg-type]
-        principal_id="principal-1",
-        session_id="session-1",
-        run_id="run-1",
-        project_key="project-1",
-        repo_id="repo-1",
-        action="replace_section",
-        normalized_intent_json='{"action":"replace_section"}',
-        target_binding_json='{"doc":"ARCHITECTURE_GUIDE"}',
-        precondition_json='{"sha256":"before"}',
-        predicted_after_json='{"sha256":"after"}',
-        issued_at=now,
-        expires_at=now + timedelta(minutes=10),
-        fence=fence,
-        apply_lease_expires_at=(now + timedelta(seconds=60))
-        if state == "applying"
-        else None,
-        terminal_result_code="APPLY_RECEIPT_APPLIED" if terminal else None,
-        terminal_result_json='{"ok":true}' if terminal else None,
-        terminal_at=now if terminal else None,
-        audit_correlation_id="audit-1",
-        updated_at=now,
-    )
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize("state", ["issued", "applied"])
+async def test_live_receipt_json_roundtrip_preserves_strict_record(
+    live_postgres_storage: PostgresStorage, state: str,
+) -> None:
+    record = _receipt_with_nested_json(state=state)
 
+    persisted = await live_postgres_storage.issue_apply_preview_receipt(record)
+    fetched = await live_postgres_storage.fetch_apply_preview_receipt(record.token_sha256)
 
-def _row(record: ApplyPreviewReceiptRecord) -> dict[str, Any]:
-    return {
-        "token_sha256": record.token_sha256,
-        "receipt_version": record.receipt_version,
-        "state": record.state,
-        "principal_id": record.principal_id,
-        "session_id": record.session_id,
-        "run_id": record.run_id,
-        "project_key": record.project_key,
-        "repo_id": record.repo_id,
-        "action": record.action,
-        "normalized_intent_json": {"action": "replace_section"},
-        "target_binding_json": {"doc": "ARCHITECTURE_GUIDE"},
-        "precondition_json": {"sha256": "before"},
-        "predicted_after_json": {"sha256": "after"},
-        "issued_at": record.issued_at,
-        "expires_at": record.expires_at,
-        "fence": record.fence,
-        "apply_lease_expires_at": record.apply_lease_expires_at,
-        "terminal_result_code": record.terminal_result_code,
-        "terminal_result_json": {"ok": True} if record.terminal_result_json else None,
-        "terminal_at": record.terminal_at,
-        "audit_correlation_id": record.audit_correlation_id,
-        "updated_at": record.updated_at,
-    }
+    assert persisted == record
+    assert fetched == record
 
 
 def _table_definition(sql: str) -> str:
@@ -270,6 +235,7 @@ async def test_claim_rejects_non_positive_lease_without_query() -> None:
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+@pytest.mark.regression
 async def test_live_migration_is_idempotent_and_schema_scoped(
     live_postgres_storage,
 ) -> None:
@@ -317,6 +283,7 @@ async def test_live_migration_is_idempotent_and_schema_scoped(
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+@pytest.mark.regression
 async def test_live_concurrent_claim_recovery_replay_and_cleanup(
     live_postgres_storage,
 ) -> None:

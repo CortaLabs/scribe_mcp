@@ -266,6 +266,19 @@ class SQLiteInternals:
             conn = self.pool.acquire()
             try:
                 return fn(conn)
+            except BaseException:
+                # Constraint/statement failures can leave the transaction open.
+                # Roll back before reuse so an idle pooled handle cannot retain
+                # a writer lock or commit a failed batch on a later operation.
+                try:
+                    conn.rollback()
+                except BaseException:
+                    logger.warning("Failed to roll back pooled SQLite connection", exc_info=True)
+                    try:
+                        conn.close()  # Pool validation will discard this handle.
+                    except BaseException:
+                        logger.warning("Failed to close pooled SQLite connection", exc_info=True)
+                raise
             finally:
                 self.pool.release(conn)
 

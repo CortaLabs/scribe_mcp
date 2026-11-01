@@ -1,6 +1,13 @@
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
-from scribe_mcp.doc_management.scaffold_quality import collect_managed_doc_quality_warnings
+import pytest
+
+from scribe_mcp.doc_management.scaffold_quality import (
+    _research_context_drift_warnings,
+    collect_managed_doc_quality_warnings,
+)
 
 
 def _changelog_with_context(value: str, source: str = "pyproject") -> str:
@@ -82,3 +89,18 @@ def test_context_drift_suppressed_when_stored_source_differs_from_current_resolv
         metadata={"quality": {"mode": "release_gate"}},
     )
     assert all(w.get("code") != "SCF_RESEARCH_CONTEXT_DRIFT" for w in warnings)
+
+
+@pytest.mark.regression
+def test_context_drift_reuses_one_current_git_observation(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "2.0.0"\n', encoding="utf-8")
+    text = "\n".join(
+        _changelog_with_context("1.0.0").replace("20260512:test", f"20260512:test-{index}")
+        for index in range(5)
+    )
+    with patch("scribe_mcp.doc_management.version_context.subprocess.run", wraps=subprocess.run) as git:
+        warnings = _research_context_drift_warnings(text=text, project={"root": str(tmp_path)})
+    assert len(warnings) == 5
+    assert all(warning["code"] == "SCF_RESEARCH_CONTEXT_DRIFT" for warning in warnings)
+    assert git.call_count == 2  # one commit lookup and one status lookup

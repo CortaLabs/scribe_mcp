@@ -1,14 +1,13 @@
-"""SSE transport entry point for Scribe MCP server.
+"""Streamable HTTP entry point for the Scribe MCP server.
 
-Wraps the existing MCP Server instance (``app``) with an SSE transport
-using ``mcp.server.sse.SseServerTransport`` and exposes it via a
-Starlette ASGI application served by uvicorn.
+The retained ``sse`` CLI alias serves the MCP Server instance through the
+SDK's Streamable HTTP transport at ``/mcp`` and exposes it through a Starlette
+ASGI application served by uvicorn.
 
 Endpoints
 ---------
 - ``/health``                        -- JSON health check for Docker HEALTHCHECK
-- ``/sse``                           -- SSE stream (MCP client connects here)
-- ``/messages/``                     -- POST target for MCP client messages
+- ``/mcp``                           -- MCP Streamable HTTP endpoint
 - ``/api/v1/backend/{operation}``    -- Proxy a single StorageBackend operation (POST)
 - ``/api/v1/batch``                  -- Execute multiple StorageBackend operations (POST)
 - ``/api/v1/tools/invoke``           -- Invoke a registered tool through server pipeline (POST)
@@ -39,13 +38,21 @@ import secrets
 import time
 from typing import Any
 
-from mcp.server.sse import SseServerTransport
-from mcp.server.streamable_http import TransportSecuritySettings
+from mcp.server.streamable_http import (
+    TransportSecuritySettings,
+    check_accept_headers,
+)
+from mcp.shared.inbound import (
+    ERROR_CODE_HTTP_STATUS,
+    classify_inbound_request,
+    find_duplicated_routing_header,
+)
+from mcp.types import JSONRPCRequest
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Mount, Route
+from starlette.routing import Route
 import uvicorn
 
 import scribe_mcp.server as server_module
@@ -69,10 +76,6 @@ logger = logging.getLogger(__name__)
 _server_start_time: float | None = None
 _AUTH_EXEMPT_PATHS: frozenset[str] = frozenset({"/health"})
 _MODERN_PATH = "/mcp"
-_LEGACY_ENDPOINTS: frozenset[str] = frozenset({"/sse", "/messages", "/messages/"})
-DOWNGRADE_REASONS: frozenset[str] = frozenset(
-    {"explicit_legacy_mode", "recognized_legacy_endpoint"}
-)
 _APPLICATION_HANDLE_HEADER = "scribe-application-handle"
 _INGRESS_PRINCIPAL_SECRET = secrets.token_bytes(32)
 
@@ -242,48 +245,45 @@ def _request_json_payload(request: Request, raw_body: bytes) -> tuple[Any | None
 def _protocol_rejection(
     request: Request,
     payload: Any | None,
-    *,
-    legacy_enabled: bool,
-) -> JSONResponse | None:
-    path = request.url.path
-    modern_path = path.rstrip("/") == _MODERN_PATH
-    if not modern_path and path not in _LEGACY_ENDPOINTS:
+) -> Response | None:
+    if request.url.path != _MODERN_PATH or request.method != "POST":
         return None
-    revision_values = request.headers.getlist("mcp-protocol-version")
-    if len(revision_values) > 1 or any("," in item for item in revision_values):
-        if modern_path:
-            return _typed_mcp_rejection(
-                request,
-                payload,
-                status_code=400,
-                error_type="HeaderMismatch",
-                message="MCP-Protocol-Version must appear at most once",
-                reason_code="duplicate_protocol_header",
-                jsonrpc_code=-32020,
-            )
-        return _typed_ingress_response(
+    raw_headers = [
+        (name.decode("latin-1"), value.decode("latin-1"))
+        for name, value in request.scope.get("headers", ())
+    ]
+    duplicate = find_duplicated_routing_header(raw_headers)
+    if duplicate is not None:
+        return _typed_mcp_rejection(
+            request,
+            payload,
             status_code=400,
             error_type="HeaderMismatch",
-            message="MCP-Protocol-Version must appear at most once",
-            reason_code="duplicate_protocol_header",
+            message=f"{duplicate} must appear at most once",
+            reason_code="duplicate_routing_header",
+            jsonrpc_code=-32020,
         )
-    header_revision = revision_values[0].strip() if revision_values else None
-    body_revision = None
-    if isinstance(payload, dict) and payload.get("method") == "initialize":
-        params = payload.get("params")
-        if isinstance(params, dict):
-            candidate = params.get("protocolVersion")
-            body_revision = candidate.strip() if isinstance(candidate, str) else None
 
-    policy = MCPCompatibilityPolicy(legacy_enabled=legacy_enabled)
-    expected = (
-        policy.default_revision
-        if modern_path
-        else policy.legacy_revisions[0]
-    )
-    supplied = [item for item in (header_revision, body_revision) if item is not None]
-    if header_revision and body_revision and header_revision != body_revision:
-        if modern_path:
+    protocol_header = request.headers.get("mcp-protocol-version")
+    if protocol_header is None:
+        return _typed_mcp_rejection(
+            request,
+            payload,
+            status_code=400,
+            error_type="HeaderMismatch",
+            message="MCP-Protocol-Version is required",
+            reason_code="missing_protocol_version_header",
+            jsonrpc_code=-32020,
+        )
+
+    if not isinstance(payload, dict):
+        return None
+
+    method = payload.get("method")
+    if method == "initialize":
+        params = payload.get("params")
+        body_revision = params.get("protocolVersion") if isinstance(params, dict) else None
+        if isinstance(body_revision, str) and protocol_header != body_revision:
             return _typed_mcp_rejection(
                 request,
                 payload,
@@ -293,38 +293,77 @@ def _protocol_rejection(
                 reason_code="protocol_header_body_mismatch",
                 jsonrpc_code=-32020,
             )
-        return _typed_ingress_response(
-            status_code=400,
-            error_type="HeaderMismatch",
-            message="MCP protocol header and initialize body disagree",
-            reason_code="protocol_header_body_mismatch",
-        )
-    if path in _LEGACY_ENDPOINTS and not legacy_enabled:
-        return _typed_ingress_response(
-            status_code=410,
-            error_type="LegacyTransportDisabled",
-            message="Legacy HTTP compatibility is disabled",
-            reason_code="legacy_transport_disabled",
-        )
-    if any(revision != expected for revision in supplied):
-        if modern_path:
+        supported = MCPCompatibilityPolicy().default_revision
+        if protocol_header != supported or (
+            isinstance(body_revision, str) and body_revision != supported
+        ):
             return _typed_mcp_rejection(
                 request,
                 payload,
                 status_code=400,
                 error_type="UnsupportedProtocolVersion",
-                message=f"Unsupported protocol revision for {path}",
+                message="Unsupported protocol revision for /mcp",
                 reason_code="unsupported_protocol_revision",
                 jsonrpc_code=-32022,
-                data={"supported": [policy.default_revision]},
+                data={"supported": [supported]},
             )
-        return _typed_ingress_response(
+        return _typed_mcp_rejection(
+            request,
+            payload,
             status_code=400,
-            error_type="UnsupportedProtocolVersion",
-            message=f"Unsupported protocol revision for {path}",
-            reason_code="unsupported_protocol_revision",
+            error_type="InvalidRequest",
+            message="initialize is not supported on stateless HTTP",
+            reason_code="initialize_not_supported",
+            jsonrpc_code=-32600,
         )
-    return None
+
+    if "id" not in payload:
+        classification = classify_inbound_request(
+            payload,
+            headers={key.lower(): value for key, value in request.headers.items()},
+            supported_modern_versions=(MCPCompatibilityPolicy().default_revision,),
+        )
+        if hasattr(classification, "code"):
+            return Response(
+                status_code=ERROR_CODE_HTTP_STATUS.get(classification.code, 400)
+            )
+        return None
+
+    try:
+        JSONRPCRequest.model_validate(payload)
+    except (TypeError, ValueError):
+        # Leave JSON-RPC shape errors to the SDK route, without creating an
+        # application identity for a request it will reject.
+        return None
+
+    classification = classify_inbound_request(
+        payload,
+        headers={key.lower(): value for key, value in request.headers.items()},
+        supported_modern_versions=(MCPCompatibilityPolicy().default_revision,),
+    )
+    if not hasattr(classification, "code"):
+        return None
+
+    status_code = ERROR_CODE_HTTP_STATUS.get(classification.code, 400)
+    error_types = {
+        -32020: ("HeaderMismatch", "protocol_header_body_mismatch"),
+        -32022: ("UnsupportedProtocolVersion", "unsupported_protocol_revision"),
+        -32602: ("InvalidParams", "invalid_request_params"),
+    }
+    error_type, reason_code = error_types.get(
+        classification.code,
+        ("InvalidRequest", "invalid_request"),
+    )
+    return _typed_mcp_rejection(
+        request,
+        payload,
+        status_code=status_code,
+        error_type=error_type,
+        message=classification.message,
+        reason_code=reason_code,
+        jsonrpc_code=classification.code,
+        data=classification.data if isinstance(classification.data, dict) else None,
+    )
 
 
 def _request_principal(expected_auth_token: str) -> str:
@@ -344,7 +383,6 @@ class TransportAuthMiddleware(BaseHTTPMiddleware):
         self._allowed_origins = frozenset(settings.transport_allowed_origins)
         self._max_request_bytes = settings.transport_max_request_bytes
         self._request_timeout_seconds = settings.transport_request_timeout_seconds
-        self._legacy_enabled = settings.transport_legacy_enabled
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -394,6 +432,9 @@ class TransportAuthMiddleware(BaseHTTPMiddleware):
         if shutdown_phase != "running":
             return _shutdown_phase_response(shutdown_phase)
 
+        if path in {"/sse", "/messages", "/messages/"}:
+            return Response(status_code=404)
+
         content_length = request.headers.get("content-length")
         if content_length:
             try:
@@ -420,14 +461,29 @@ class TransportAuthMiddleware(BaseHTTPMiddleware):
         protocol_rejection = _protocol_rejection(
             request,
             payload,
-            legacy_enabled=self._legacy_enabled,
         )
         if protocol_rejection is not None:
             return protocol_rejection
 
-        is_legacy = path in _LEGACY_ENDPOINTS
-        era = ProtocolEra.LEGACY if is_legacy else ProtocolEra.MODERN
-        transport = "http-sse" if is_legacy else "streamable-http"
+        if path == _MODERN_PATH and request.method != "POST":
+            return Response(status_code=405, headers={"Allow": "POST"})
+
+        if path == _MODERN_PATH and request.method == "POST":
+            has_json, has_sse = check_accept_headers(request)
+            if not has_json or not has_sse:
+                return Response(status_code=406)
+            if not isinstance(payload, dict) or "id" not in payload:
+                return await call_next(request)
+            try:
+                JSONRPCRequest.model_validate(payload)
+            except (TypeError, ValueError):
+                return await call_next(request)
+
+        if path != _MODERN_PATH and not path.startswith("/api/v1/"):
+            return await call_next(request)
+
+        era = ProtocolEra.MODERN
+        transport = "streamable-http"
         supplied_handle = request.headers.get(_APPLICATION_HANDLE_HEADER)
         method = payload.get("method") if isinstance(payload, dict) else None
         params = payload.get("params") if isinstance(payload, dict) else None
@@ -439,7 +495,7 @@ class TransportAuthMiddleware(BaseHTTPMiddleware):
             and _tool_is_local_operator_only(tool_name)
         ):
             return _local_operator_tool_blocked_response(tool_name)
-        requires_handle = path.rstrip("/") == _MODERN_PATH and method == "tools/call"
+        requires_handle = path == _MODERN_PATH and method == "tools/call"
         if requires_handle and not supplied_handle:
             return _typed_ingress_response(
                 status_code=401,
@@ -488,18 +544,15 @@ class TransportAuthMiddleware(BaseHTTPMiddleware):
                 )
             if identity.application_handle and supplied_handle is None:
                 response.headers[_APPLICATION_HANDLE_HEADER] = identity.application_handle
-            downgrade_reason = "recognized_legacy_endpoint" if is_legacy else None
             logger.info(
-                "HTTP ingress accepted route=%s era=%s downgrade_reason=%s",
+                "HTTP ingress accepted route=%s era=%s",
                 path,
                 era.value,
-                downgrade_reason,
                 extra={
                     "event_type": "http_ingress",
                     "service": "scribe_mcp",
                     "route": path,
                     "summary": "authenticated MCP ingress accepted",
-                    "downgrade_reason": downgrade_reason,
                 },
             )
             return response
@@ -1061,40 +1114,18 @@ async def health_check(request: Request) -> JSONResponse:
 
 def _build_starlette_app(
     *,
-    sse_transport: SseServerTransport,
     expected_auth_token: str,
 ) -> Starlette:
     runtime_settings = Settings.load()
     modern_starlette_app = app.streamable_http_app(
         streamable_http_path=_MODERN_PATH,
-        json_response=True,
+        json_response=False,
         stateless_http=True,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=False,
         ),
         max_request_body_size=runtime_settings.transport_max_request_bytes,
     )
-    modern_route = next(
-        route
-        for route in modern_starlette_app.routes
-        if getattr(route, "path", None) == _MODERN_PATH
-    )
-    # ``SseServerTransport.connect_sse`` manages the SSE response stream
-    # directly through the ASGI ``send`` callable (accessed via the
-    # semi-private ``request._send``). After the connection closes we return an
-    # empty ``Response`` so Starlette's ``request_response`` wrapper does not
-    # raise ``TypeError`` when the handler returns ``None``.
-    async def handle_sse(request: Request) -> Response:
-        async with sse_transport.connect_sse(
-            request.scope, request.receive, request._send,
-        ) as (read_stream, write_stream):
-            await app._lowlevel_server.run(
-                read_stream,
-                write_stream,
-                app._lowlevel_server.create_initialization_options(),
-            )
-        return Response()
-
     @asynccontextmanager
     async def lifespan(_: Starlette):
         async with modern_starlette_app.router.lifespan_context(modern_starlette_app):
@@ -1104,16 +1135,15 @@ def _build_starlette_app(
                 await _shutdown()
 
     starlette_app = Starlette(
-        routes=[
-            Route("/health", health_check),
-            modern_route,
-            Route("/sse", handle_sse),
-            Mount("/messages/", app=sse_transport.handle_post_message),
+        routes=[Route("/health", health_check), *modern_starlette_app.routes],
+        lifespan=lifespan,
+    )
+    starlette_app.routes.extend(
+        [
             Route("/api/v1/backend/{operation}", handle_backend_operation, methods=["POST"]),
             Route("/api/v1/batch", handle_batch, methods=["POST"]),
             Route("/api/v1/tools/invoke", handle_tool_invoke, methods=["POST"]),
-        ],
-        lifespan=lifespan,
+        ]
     )
     starlette_app.add_middleware(
         TransportAuthMiddleware,
@@ -1128,7 +1158,7 @@ async def run_sse(
     port: int | None = None,
     auth_token: str | None = None,
 ) -> None:
-    """Run the MCP server over SSE transport.
+    """Run the MCP server over Streamable HTTP transport.
 
     Parameters
     ----------
@@ -1138,15 +1168,14 @@ async def run_sse(
     port:
         TCP port to listen on. Defaults to the configured transport port.
     auth_token:
-        Application-layer token required for ``/sse``, ``/messages/``, and
-        ``/api/v1/*``. Defaults to ``SCRIBE_TRANSPORT_AUTH_TOKEN``.
+        Application-layer token required for ``/mcp`` and ``/api/v1/*``.
+        Defaults to ``SCRIBE_TRANSPORT_AUTH_TOKEN``.
 
     The function performs the following steps:
 
     1. Calls ``_startup()`` to initialise storage, background tasks, etc.
        (same initialisation path as stdio mode in ``server.py``).
-    2. Creates an ``SseServerTransport`` instance for ``/messages/``.
-    3. Builds a Starlette ASGI application with health, SSE, and message
+    2. Builds a Starlette ASGI application with health and Streamable HTTP
        routes.
     4. Runs the application via uvicorn until interrupted.
     """
@@ -1160,19 +1189,13 @@ async def run_sse(
     _server_start_time = time.time()
 
     logger.info(
-        "Scribe MCP SSE transport starting on %s:%d (network_exposed=%s)",
+        "Scribe MCP Streamable HTTP transport starting on %s:%d (network_exposed=%s); /mcp is the MCP endpoint",
         policy.bind_host,
         policy.port,
         policy.network_exposed,
     )
 
-    # Create SSE transport -- ``/messages/`` is the path where clients POST
-    # their MCP messages.
-    sse_transport = SseServerTransport("/messages/")
-
-    # Build the Starlette application -----------------------------------
     starlette_app = _build_starlette_app(
-        sse_transport=sse_transport,
         expected_auth_token=resolved_auth_token,
     )
 

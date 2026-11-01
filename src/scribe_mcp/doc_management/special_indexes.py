@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable
@@ -35,8 +36,22 @@ async def _persist_index(
     doc_dir: Path,
     repo_root: Path | None,
 ) -> None:
-    _ = preflight_shared.write_index_with_policy(index_path, content, doc_dir)
-    _sync_root = repo_root or _infer_repo_root(index_path)
+    write_task = asyncio.create_task(
+        asyncio.to_thread(preflight_shared.write_index_with_policy, index_path, content, doc_dir)
+    )
+    try:
+        await asyncio.shield(write_task)
+    except asyncio.CancelledError:
+        # Threads cannot be cancelled. Keep the caller's document lock held until
+        # the policy write finishes, even if cancellation is requested again.
+        while not write_task.done():
+            try:
+                await asyncio.shield(write_task)
+            except asyncio.CancelledError:
+                continue
+        write_task.result()
+        raise
+    _sync_root = repo_root or await asyncio.to_thread(_infer_repo_root, index_path)
     if _sync_root:
         try:
             from scribe_mcp.object_store import sync_file_to_store
@@ -46,7 +61,8 @@ async def _persist_index(
             pass
 
 
-async def update_research_index(research_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+def _build_research_index(research_dir: Path) -> str:
+    """Scan and render together so no filesystem iterator escapes the worker."""
     index_path = research_dir / "INDEX.md"
 
     research_docs = []
@@ -65,7 +81,7 @@ async def update_research_index(research_dir: Path, agent_id: str, repo_root: Pa
 
     content = f"""# Research Documents Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains research documents generated during the development process.
 
@@ -92,23 +108,27 @@ This directory contains research documents generated during the development proc
 
 *This index is automatically updated when research documents are created or modified.*"""
 
+    return content
+
+
+async def update_research_index(research_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    content = await asyncio.to_thread(_build_research_index, research_dir)
     await _persist_index(
-        index_path=index_path,
+        index_path=research_dir / "INDEX.md",
         content=content,
         doc_dir=research_dir,
         repo_root=repo_root,
     )
 
 
-async def _update_case_report_index(
+def _build_case_report_index(
     reports_dir: Path,
-    agent_id: str,
     *,
     heading: str,
     singular_label: str,
-    repo_root: Path | None = None,
     exclude_paths: Iterable[Path] = (),
-) -> None:
+) -> str:
+    """Resolve exclusions, scan, and render entirely on the filesystem worker."""
     index_path = reports_dir / "INDEX.md"
     excluded = {Path(path).expanduser().resolve() for path in exclude_paths}
 
@@ -133,7 +153,7 @@ async def _update_case_report_index(
 
     content = f"""# {heading} Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains {heading.lower()} generated during development and testing.
 
@@ -176,14 +196,33 @@ This directory contains {heading.lower()} generated during development and testi
 
 - **Index Location:** `{index_path}`
 - **Total Categories:** {len(categories)}
-- **Last Scan:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+- **Last Scan:** {_current_timestamp()}
 
 ---
 
 *This index is automatically updated when {heading.lower()} are created or modified.*"""
 
+    return content
+
+
+async def _update_case_report_index(
+    reports_dir: Path,
+    agent_id: str,
+    *,
+    heading: str,
+    singular_label: str,
+    repo_root: Path | None = None,
+    exclude_paths: Iterable[Path] = (),
+) -> None:
+    content = await asyncio.to_thread(
+        _build_case_report_index,
+        reports_dir,
+        heading=heading,
+        singular_label=singular_label,
+        exclude_paths=exclude_paths,
+    )
     await _persist_index(
-        index_path=index_path,
+        index_path=reports_dir / "INDEX.md",
         content=content,
         doc_dir=reports_dir,
         repo_root=repo_root,
@@ -274,7 +313,8 @@ async def refresh_case_indexes_for_rehome(
     return refreshed
 
 
-async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+def _build_review_index(docs_dir: Path) -> str:
+    """Keep filesystem discovery and rendering inside one worker thread."""
     index_path = docs_dir / "REVIEW_INDEX.md"
 
     review_reports = []
@@ -295,7 +335,7 @@ async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | N
 
     content = f"""# Review Reports Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains review reports generated during the development quality assurance process.
 
@@ -338,21 +378,27 @@ This directory contains review reports generated during the development quality 
 
 - **Index Location:** `{index_path}`
 - **Total Stages:** {len(stages)}
-- **Last Scan:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+- **Last Scan:** {_current_timestamp()}
 
 ---
 
 *This index is automatically updated when review reports are created or modified.*"""
 
+    return content
+
+
+async def update_review_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    content = await asyncio.to_thread(_build_review_index, docs_dir)
     await _persist_index(
-        index_path=index_path,
+        index_path=docs_dir / "REVIEW_INDEX.md",
         content=content,
         doc_dir=docs_dir,
         repo_root=repo_root,
     )
 
 
-async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+def _build_agent_card_index(docs_dir: Path) -> str:
+    """Keep filesystem discovery and rendering inside one worker thread."""
     index_path = docs_dir / "AGENT_CARDS_INDEX.md"
 
     agent_cards = []
@@ -375,7 +421,7 @@ async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path
 
     content = f"""# Agent Report Cards Index
 
-*Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}*
+*Last Updated: {_current_timestamp()}*
 
 This directory contains agent performance evaluation reports generated during the development process.
 
@@ -422,14 +468,19 @@ This directory contains agent performance evaluation reports generated during th
 
 - **Index Location:** `{index_path}`
 - **Total Agents:** {len(agents)}
-- **Last Scan:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+- **Last Scan:** {_current_timestamp()}
 
 ---
 
 *This index is automatically updated when agent report cards are created or modified.*"""
 
+    return content
+
+
+async def update_agent_card_index(docs_dir: Path, agent_id: str, repo_root: Path | None = None) -> None:
+    content = await asyncio.to_thread(_build_agent_card_index, docs_dir)
     await _persist_index(
-        index_path=index_path,
+        index_path=docs_dir / "AGENT_CARDS_INDEX.md",
         content=content,
         doc_dir=docs_dir,
         repo_root=repo_root,
@@ -531,7 +582,7 @@ async def render_review_report_template(
         final_decision = prepared_metadata.get("final_decision", overall_decision)
         return f"""# Review Report: {stage.replace('_', ' ').title()} Stage
 
-**Review Date:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+**Review Date:** {_current_timestamp()}
 **Reviewer:** {agent_id}
 **Project:** {project.get('name')}
 **Stage:** {stage}
@@ -591,7 +642,7 @@ async def render_agent_report_card_template(
         return f"""# Agent Performance Report Card
 
 **Agent:** {agent_name}
-**Review Date:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+**Review Date:** {_current_timestamp()}
 **Reviewer:** {agent_id}
 **Project:** {project.get('name')}
 **Stage:** {stage}

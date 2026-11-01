@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import subprocess
 import sys
 import threading
 
 import pytest
 
 from scribe_mcp.storage.sqlite.internals import SQLiteInternals
+from scribe_mcp.storage.pool import SQLiteConnectionPool
 
 
 class BootstrapAbort(BaseException):
@@ -418,6 +420,175 @@ def test_lock_retry_retries_then_succeeds(monkeypatch, tmp_path):
     result = internals._with_lock_retry(_flaky, query="INSERT INTO t VALUES (1)", is_write=True)
     assert result == 42
     assert attempts["count"] == 3
+
+
+@pytest.mark.storage
+@pytest.mark.regression
+@pytest.mark.parametrize("cleanup", ["rollback", "rollback_denied", "close_error", "close_abort"])
+def test_pooled_baseexception_cleanup_preserves_error_and_writer_access(
+    tmp_path, monkeypatch, cleanup,
+):
+    """Real transaction cleanup completes before release, even if rollback is denied."""
+    events = []
+    connections = []
+    connect = sqlite3.connect
+    close_failure = {
+        "close_error": RuntimeError("secondary close failure"),
+        "close_abort": BootstrapAbort("secondary close abort"),
+    }.get(cleanup)
+
+    class ObservedConnection(sqlite3.Connection):
+        fail_close = False
+
+        def close(self):
+            super().close()
+            events.append("close")
+            # A close error can be reported after the driver released the handle.
+            if self.fail_close:
+                self.fail_close = False
+                raise close_failure
+
+    def observed_connect(*args, **kwargs):
+        kwargs["factory"] = ObservedConnection
+        conn = connect(*args, **kwargs)
+        connections.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", observed_connect)
+    internals = SQLiteInternals(tmp_path / "abort_cleanup.db")
+    pool = SQLiteConnectionPool(internals.db_path, min_size=1, max_size=1)
+    internals.pool = pool
+    release = pool.release
+    released_states = []
+
+    def observed_release(conn):
+        events.append("release")
+        try:
+            released_states.append(conn.in_transaction)
+        except sqlite3.ProgrammingError:
+            released_states.append("closed")
+        release(conn)
+
+    try:
+        internals.execute_sync("CREATE TABLE sample (id INTEGER PRIMARY KEY)", ())
+        original_conn = connections[0]
+        monkeypatch.setattr(pool, "release", observed_release)
+        primary = BootstrapAbort("original pooled operation aborted")
+
+        def authorize(action, arg1, arg2, database, origin):
+            if action == sqlite3.SQLITE_TRANSACTION and arg1 == "ROLLBACK":
+                events.append("rollback")
+                if cleanup != "rollback":
+                    return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        def failed_operation(conn):
+            assert conn is original_conn
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("INSERT INTO sample VALUES (1)")
+            assert conn.in_transaction
+            conn.set_authorizer(authorize)
+            conn.fail_close = close_failure is not None
+            raise primary
+
+        events.clear()
+        with pytest.raises(BootstrapAbort) as caught:
+            internals._run_with_connection(failed_operation)
+        assert caught.value is primary
+        assert events[0] == "rollback"
+        assert pool.active == 0
+        if cleanup == "rollback":
+            assert events == ["rollback", "release"]
+            assert released_states == [False]
+            assert pool.size == 1
+        else:
+            assert events == ["rollback", "close", "release", "close"]
+            assert released_states == ["closed"]
+            assert pool.size == 0
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                original_conn.execute("SELECT 1")
+
+        # The original pool stays alive while an independent process commits.
+        child = subprocess.run(
+            [sys.executable, "-c", """
+import sqlite3, sys
+connection = sqlite3.connect(sys.argv[1], timeout=0.2)
+try:
+    connection.execute('INSERT INTO sample VALUES (2)')
+    connection.commit()
+    assert connection.execute('SELECT id FROM sample').fetchall() == [(2,)]
+finally:
+    connection.close()
+""", str(internals.db_path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert child.returncode == 0, child.stdout + child.stderr
+        replacement = pool.acquire()
+        try:
+            assert not replacement.in_transaction
+            assert (replacement is original_conn) == (cleanup == "rollback")
+        finally:
+            pool.release(replacement)
+        internals.execute_sync("INSERT INTO sample VALUES (3)", ())
+        with connect(internals.db_path) as observer:
+            assert observer.execute("SELECT id FROM sample ORDER BY id").fetchall() == [(2,), (3,)]
+    finally:
+        pool.close_all()
+
+
+@pytest.mark.storage
+@pytest.mark.regression
+@pytest.mark.parametrize("operation", ["execute", "execute_many", "fetchone", "fetchall"])
+def test_failed_pooled_write_releases_lock_for_another_process(tmp_path, operation):
+    """A rejected write must not strand a transaction in a live server's pool."""
+    internals = SQLiteInternals(tmp_path / "process_contention.db")
+    internals.pool = SQLiteConnectionPool(internals.db_path, min_size=1, max_size=1)
+    try:
+        internals.execute_sync("CREATE TABLE parent (id INTEGER PRIMARY KEY)", ())
+        internals.execute_sync(
+            "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))", ()
+        )
+        internals.execute_sync("INSERT INTO parent VALUES (1)", ())
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+            if operation == "execute_many":
+                internals.execute_many_sync([
+                    "INSERT INTO child VALUES (1, 1)",
+                    "INSERT INTO child VALUES (2, 999)",
+                ])
+            else:
+                query = "INSERT INTO child VALUES (2, 999)"
+                if operation in {"fetchone", "fetchall"}:
+                    query += " RETURNING id"
+                getattr(internals, operation + "_sync")(query, ())
+
+        # Keep the original pool alive while an independent OS process commits.
+        # Its short wait detects a retained writer, rather than waiting for teardown.
+        result = subprocess.run(
+            [sys.executable, "-c", """
+import sqlite3, sys
+connection = sqlite3.connect(sys.argv[1], timeout=0.2)
+try:
+    connection.execute('INSERT INTO parent VALUES (2)')
+    connection.commit()
+finally:
+    connection.close()
+""", str(internals.db_path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        conn = internals.pool.acquire()
+        try:
+            assert not conn.in_transaction
+        finally:
+            internals.pool.release(conn)
+        assert internals.fetchall_sync("SELECT id FROM child", ()) == []
+        assert [row[0] for row in internals.fetchall_sync("SELECT id FROM parent ORDER BY id", ())] == [1, 2]
+        # The failed operation did not poison subsequent use of this same pool.
+        internals.execute_sync("INSERT INTO child VALUES (3, 2)", ())
+        with sqlite3.connect(internals.db_path) as observer:
+            assert observer.execute("SELECT id FROM child").fetchall() == [(3,)]
+    finally:
+        internals.pool.close_all()
 
 
 @pytest.mark.asyncio

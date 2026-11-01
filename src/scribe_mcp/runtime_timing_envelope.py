@@ -1,8 +1,145 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence
+import math
+import time
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence, TypedDict
 
 from scribe_mcp.progress_log_parser import Entry
+
+
+CALL_TIMING_PHASES_V2: tuple[str, ...] = (
+    "ingress_decode",
+    "session_binding_read",
+    "project_record_read",
+    "target_resolution",
+    "mode_resolution",
+    "tool_body",
+    "authority_and_validation",
+    "authoritative_durability",
+    "receipt_commit",
+    "hooks",
+    "response_format",
+    "audit_append",
+    "egress_serialize",
+    "unaccounted",
+)
+
+_MEASURED_CALL_TIMING_PHASES = CALL_TIMING_PHASES_V2[:-1]
+_CALL_TIMING_PHASES_SET = frozenset(_MEASURED_CALL_TIMING_PHASES)
+
+
+class CallTimingEnvelopeV2(TypedDict):
+    schema_version: Literal["call-timing-envelope.v2"]
+    correlation_id: str
+    phases_ms: dict[str, float]
+    total_ms: float
+    accounted_ratio: float
+    slow_stages: list[str]
+    tripwire_exceeded: bool
+
+
+def _validate_correlation_id(correlation_id: str) -> str:
+    if not isinstance(correlation_id, str) or not correlation_id.strip():
+        raise ValueError("correlation_id must be a nonblank string")
+    return correlation_id
+
+
+def _validate_duration(value: float, *, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a finite nonnegative number")
+    normalized = float(value)
+    if not math.isfinite(normalized) or normalized < 0:
+        raise ValueError(f"{name} must be a finite nonnegative number")
+    return normalized
+
+
+def _validated_call_phases(phases_ms: Mapping[str, float]) -> dict[str, float]:
+    if not isinstance(phases_ms, Mapping):
+        raise ValueError("phases_ms must be a mapping")
+    normalized: dict[str, float] = {}
+    for phase, duration in phases_ms.items():
+        if not isinstance(phase, str) or phase not in _CALL_TIMING_PHASES_SET:
+            raise ValueError(f"unknown or derived timing phase: {phase!r}")
+        normalized[phase] = _validate_duration(duration, name=f"phases_ms[{phase!r}]")
+    return normalized
+
+
+def build_call_timing_envelope_v2(
+    *, correlation_id: str, phases_ms: Mapping[str, float], total_ms: float
+) -> CallTimingEnvelopeV2:
+    correlation_id = _validate_correlation_id(correlation_id)
+    total = _validate_duration(total_ms, name="total_ms")
+    measured = _validated_call_phases(phases_ms)
+    accounted_ms = sum(measured.values())
+    unaccounted_ms = max(total - accounted_ms, 0.0)
+    phases = {
+        phase: (unaccounted_ms if phase == "unaccounted" else measured.get(phase, 0.0))
+        for phase in CALL_TIMING_PHASES_V2
+    }
+    slow_stages = [
+        phase for phase in _MEASURED_CALL_TIMING_PHASES if phases[phase] > 100.0
+    ]
+    return {
+        "schema_version": "call-timing-envelope.v2",
+        "correlation_id": correlation_id,
+        "phases_ms": phases,
+        "total_ms": total,
+        "accounted_ratio": min(accounted_ms / total, 1.0) if total else 1.0,
+        "slow_stages": slow_stages,
+        "tripwire_exceeded": bool(slow_stages) or total > 500.0,
+    }
+
+
+class CallTimingRecorderV2:
+    def __init__(
+        self,
+        *,
+        correlation_id: str,
+        started_perf_counter: float,
+        seed_phases_ms: Mapping[str, float] | None = None,
+    ) -> None:
+        self._correlation_id = _validate_correlation_id(correlation_id)
+        self._started_perf_counter = _validate_duration(
+            started_perf_counter, name="started_perf_counter"
+        )
+        self._phases_ms = _validated_call_phases(seed_phases_ms or {})
+
+    @classmethod
+    def start(
+        cls,
+        *,
+        correlation_id: str,
+        started_perf_counter: float | None = None,
+        seed_phases_ms: Mapping[str, float] | None = None,
+    ) -> CallTimingRecorderV2:
+        started = time.perf_counter() if started_perf_counter is None else started_perf_counter
+        return cls(
+            correlation_id=correlation_id,
+            started_perf_counter=started,
+            seed_phases_ms=seed_phases_ms,
+        )
+
+    def record_phase(self, phase: str, duration_ms: float) -> None:
+        if not isinstance(phase, str) or phase not in _CALL_TIMING_PHASES_SET:
+            raise ValueError(f"unknown or derived timing phase: {phase!r}")
+        duration = _validate_duration(duration_ms, name=f"duration_ms[{phase!r}]")
+        aggregate = _validate_duration(
+            self._phases_ms.get(phase, 0.0) + duration,
+            name=f"phases_ms[{phase!r}]",
+        )
+        self._phases_ms[phase] = aggregate
+
+    def finalize(self, *, total_ms: float | None = None) -> CallTimingEnvelopeV2:
+        total = (
+            (time.perf_counter() - self._started_perf_counter) * 1000.0
+            if total_ms is None
+            else total_ms
+        )
+        return build_call_timing_envelope_v2(
+            correlation_id=self._correlation_id,
+            phases_ms=self._phases_ms,
+            total_ms=total,
+        )
 
 DEFAULT_RUNTIME_EFFICIENCY_BUDGETS: Dict[str, Dict[str, float]] = {
     "cold_start_ms": {"warn": 5800.0, "fail": 7000.0},

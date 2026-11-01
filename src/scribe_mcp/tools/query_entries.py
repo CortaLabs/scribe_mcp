@@ -16,7 +16,7 @@ from scribe_mcp.tools.project_utils import load_project_config
 from scribe_mcp.utils.config_manager import ConfigManager, validate_enum_value, validate_range, BulletproofFallbackManager
 from scribe_mcp.utils.logs import parse_log_line, read_all_lines
 from scribe_mcp.utils.search import message_matches
-from scribe_mcp.utils.time import coerce_range_boundary
+from scribe_mcp.utils.time import coerce_range_boundary, parse_utc
 from scribe_mcp.utils.response import default_formatter
 from scribe_mcp.utils.estimator import PaginationCalculator
 from scribe_mcp.utils.error_handler import ErrorHandler, ExceptionHealer
@@ -675,7 +675,12 @@ async def _execute_search_with_fallbacks(
                                 backend_emojis.append(emoji_char)
                         backend_emojis = backend_emojis or None
 
-                        python_filters_active = _has_python_only_filters(search_params)
+                        # Priority ordering also needs the whole matched set before
+                        # pagination; the backend only orders by recency.
+                        python_filters_active = (
+                            _has_python_only_filters(search_params)
+                            or search_params.get("priority_sort", False)
+                        )
 
                         truncated = False
                         if not python_filters_active:
@@ -773,14 +778,7 @@ async def _execute_search_with_fallbacks(
 
                             # Apply priority sorting if requested
                             if search_params.get("priority_sort", False):
-                                from scribe_mcp.shared.log_enums import get_priority_sort_key
-                                filtered_entries.sort(
-                                    key=lambda e: (
-                                        get_priority_sort_key(e.get("meta", {}).get("priority", "medium")),
-                                        e.get("ts_iso", "")
-                                    ),
-                                    reverse=False
-                                )
+                                _sort_entries_by_priority(filtered_entries)
 
                             page_entries, pagination_info = _paginate_filtered(
                                 filtered_entries, search_params
@@ -1016,14 +1014,7 @@ async def _execute_search_with_fallbacks(
 
             # Apply priority sorting if requested
             if search_params.get("priority_sort", False):
-                from scribe_mcp.shared.log_enums import get_priority_sort_key
-                filtered_entries.sort(
-                    key=lambda e: (
-                        get_priority_sort_key(e.get("meta", {}).get("priority", "medium")),
-                        e.get("ts_iso", "")
-                    ),
-                    reverse=False  # Lower priority numbers first (critical=0), timestamp DESC maintained
-                )
+                _sort_entries_by_priority(filtered_entries)
 
             # Apply pagination with error handling. P4.2: use the SAME unified
             # contract as the DB path (page/page_size window, limit total cap,
@@ -1770,6 +1761,22 @@ def _entry_passes_python_filters(
             return False
 
     return True
+
+
+def _sort_entries_by_priority(entries: List[Dict[str, Any]]) -> None:
+    """Order DB and parsed-file entries by priority, then newest valid time."""
+    from scribe_mcp.shared.log_enums import get_priority_sort_key
+
+    def timestamp_key(entry: Dict[str, Any]) -> Tuple[bool, datetime]:
+        try:
+            timestamp = parse_utc(entry.get("ts_iso") or entry.get("ts") or "")
+        except OverflowError:
+            timestamp = None
+        return (timestamp is not None, timestamp or datetime.min.replace(tzinfo=timezone.utc))
+
+    # Stable passes preserve source order for ties and keep invalid times last.
+    entries.sort(key=timestamp_key, reverse=True)
+    entries.sort(key=lambda entry: get_priority_sort_key(entry.get("meta", {}).get("priority", "medium")))
 
 
 def _has_python_only_filters(search_params: Dict[str, Any]) -> bool:

@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -28,6 +29,8 @@ from scribe_mcp.doc_management.rehome_transaction import (
     recover_rehome_transaction,
 )
 from scribe_mcp.shared.logging_utils import LoggingContext
+from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.shared.tool_runtime import execute_tool_call
 from scribe_mcp.state import StateManager
 from scribe_mcp.state.agent_manager import AgentContextManager
 from scribe_mcp.storage.sqlite import SQLiteStorage
@@ -35,6 +38,124 @@ from scribe_mcp.tools.manage_docs import manage_docs
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.regression]
+
+
+@pytest.mark.parametrize(
+    "projection",
+    [
+        "matching", "supplied_key", "different_target", "wrong_root", "wrong_name",
+        "wrong_caller", "sibling_binding", "missing_binding", "dict_binding",
+        "unresolved", "resolved_root", "resolved_name", "claimed_root",
+        "claimed_name", "untyped_context",
+    ],
+)
+async def test_receipt_scope_projects_only_matching_canonical_binding(
+    tmp_path: Path, test_agent: str, projection: str,
+) -> None:
+    """Data projection from real SQLite/router producers, not MCP authorization proof."""
+    project, _architecture = _project(tmp_path)
+    root = str(project["root"])
+    storage = SQLiteStorage(tmp_path / "projection.sqlite3")
+    await storage.setup()
+    try:
+        await storage.upsert_project(
+            name=str(project["name"]), repo_root=root,
+            progress_log_path=str(project["progress_log"]),
+        )
+        record = await storage.fetch_project(str(project["name"]), repo_root=root)
+        router = RouterContextManager(storage_backend=storage)
+        session_key = "projection-session"
+        await storage.upsert_session(
+            session_id=session_key,
+            transport_session_id=f"process:{router._process_instance_id}::actor={test_agent}",
+            repo_root=root, mode="project",
+        )
+        await storage.upsert_agent_session(test_agent, session_key, {"source": "projection-regression"})
+        await storage.set_session_project(session_key, str(project["name"]))
+        binding = await storage.get_session_project(session_key)
+        observed = []
+
+        def capture_projection(**_arguments):
+            observed.append(router.get_current())
+
+        await execute_tool_call(
+            name="capture_projection", arguments={"agent": test_agent}, kwargs={},
+            registry={"capture_projection": capture_projection},
+            app=SimpleNamespace(request_context=None), storage_backend=storage,
+            settings=SimpleNamespace(project_root=Path(root)),
+            state_manager=StateManager(tmp_path / "projection-state.json", storage_backend=storage),
+            router_context_manager=router, sentinel_only=set(),
+            sentinel_allowed={"capture_projection"}, log_scope_violation_cb=lambda *_a, **_k: None,
+        )
+        assert len(observed) == 1
+        context = observed[0]
+        assert context.session_binding == binding
+        assert binding.project_key == record.project_key != project["name"]
+        assert context.resolved_scope.project_name == record.name
+        active_project = {"name": record.name, "root": record.repo_root}
+        expected_key = record.name
+        if projection == "matching":
+            expected_key = record.project_key
+        elif projection in {"supplied_key", "different_target"}:
+            active_project["project_key"] = record.project_key
+            if projection == "different_target":
+                await storage.upsert_project(
+                    name="explicit_target", repo_root=root,
+                    progress_log_path=str(project["progress_log"]),
+                )
+                target = await storage.fetch_project("explicit_target", repo_root=root)
+                active_project.update(name=target.name, project_key=target.project_key)
+            expected_key = active_project["project_key"]
+        elif projection == "wrong_root":
+            active_project["root"] = str(tmp_path / "other-root")
+        elif projection == "wrong_name":
+            active_project["name"] = expected_key = "other_project"
+        elif projection in {"wrong_caller", "sibling_binding"}:
+            await storage.upsert_session(
+                session_id="sibling-session", transport_session_id="sibling-transport",
+                repo_root=root, mode="project",
+            )
+            await storage.set_session_project("sibling-session", str(project["name"]))
+            sibling = await storage.get_session_project("sibling-session")
+            if projection == "wrong_caller":
+                context = replace(context, session_id="sibling-session", stable_session_id="sibling-session",
+                                  authoritative_session_key="sibling-session", resolved_scope=replace(
+                                      context.resolved_scope, authoritative_session_key="sibling-session"))
+            else:
+                context = replace(context, session_binding=sibling)
+        elif projection == "missing_binding":
+            context = replace(context, session_binding=None)
+        elif projection == "dict_binding":
+            context = replace(context, session_binding=dict(binding.__dict__))
+        elif projection == "unresolved":
+            context = replace(context, resolved_scope=None)
+        elif projection in {"resolved_root", "resolved_name", "claimed_root", "claimed_name"}:
+            scope = context.resolved_scope
+            if projection == "resolved_root":
+                scope = replace(scope, repo_root=str(tmp_path / "other-root"))
+            elif projection == "resolved_name":
+                scope = replace(scope, project_name="other_project")
+            else:
+                field = "repo_root" if projection == "claimed_root" else "project_name"
+                scope = replace(scope, provenance=replace(scope.provenance, **{field: "claimed"}))
+            context = replace(context, resolved_scope=scope)
+        elif projection == "untyped_context":
+            context = SimpleNamespace(**context.__dict__)
+
+        before = dict(active_project)
+        scope = runtime._receipt_scope(
+            active_project=active_project, execution_context=context, agent_id=test_agent,
+        )
+        assert scope["project_key"] == expected_key
+        assert scope["principal_id"] == test_agent
+        expected_session = "sibling-session" if projection == "wrong_caller" else session_key
+        assert scope["session_id"] == scope["run_id"] == expected_session
+        assert scope["repo_root"] == str(Path(active_project["root"]).resolve())
+        assert scope["repo_id"] == hashlib.sha256(scope["repo_root"].encode()).hexdigest()
+        assert active_project == before
+        assert await storage.get_session_project(session_key) == binding
+    finally:
+        await storage.close()
 
 
 def _project(tmp_path: Path) -> tuple[dict[str, object], Path]:
@@ -418,6 +539,29 @@ async def test_public_rehome_receipt_applies_immutable_binding_once_and_replays(
         assert target.read_text(encoding="utf-8") == "# Architecture\n\nbefore-value\n"
     finally:
         await storage.close()
+
+
+@pytest.mark.parametrize("docs_dir", [None, "different-docs"])
+async def test_rehome_metadata_projection_does_not_relax_authority_digest(
+    tmp_path: Path, docs_dir: str | None,
+) -> None:
+    """Data-level guard: missing or changed metadata still classifies as OTHER."""
+    project, source = _project(tmp_path)
+    target = Path(str(project["docs_dir"])) / "archive" / source.name
+    binding = capture_rehome_binding(
+        source_project=project, target_project=project,
+        source_doc_keys=("architecture",), target_doc_key="architecture",
+        source_path=source, target_path=target, move=True, overwrite=False,
+    )
+    before = source.read_bytes()
+    assert runtime.classify_rehome_transaction_state(
+        binding, source_project=project, target_project=project,
+    ) == "BEFORE"
+    drifted = {**project, "docs_dir": str(tmp_path / docs_dir) if docs_dir else None}
+    assert runtime.classify_rehome_transaction_state(
+        binding, source_project=drifted, target_project=project,
+    ) == "OTHER"
+    assert source.read_bytes() == before and not target.exists()
 
 
 async def test_public_rehome_receipt_rejects_registry_and_index_drift_before_mutation(

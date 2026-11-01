@@ -9,6 +9,8 @@ identical behavior and proper edge case handling.
 import pytest
 import tempfile
 import math
+import hashlib
+import socket
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -29,6 +31,35 @@ from scribe_mcp.utils.estimator import (
 )
 import scribe_mcp.utils.tokens as token_utils
 from scribe_mcp.utils.tokens import TokenEstimator as MetricsTokenEstimator, TokenMetrics
+
+
+@pytest.fixture
+def isolated_tiktoken(monkeypatch, tmp_path):
+    """Exercise the installed tokenizer without network or shared cache writes."""
+    import requests
+    import tiktoken
+    import tiktoken.registry
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "tokenizer" / "cl100k_base.tiktoken"
+    try:
+        data = fixture.read_bytes()
+    except FileNotFoundError:
+        pytest.fail(f"required tokenizer test fixture is missing: {fixture}")
+    assert len(data) == 1681126, "invalid cl100k_base test fixture size"
+    assert hashlib.sha256(data).hexdigest() == (
+        "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+    ), "invalid cl100k_base test fixture SHA-256"
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path / "token-cache"))
+    monkeypatch.setenv("DATA_GYM_CACHE_DIR", str(tmp_path / "token-cache"))
+    monkeypatch.setattr(tiktoken.registry, "ENCODINGS", {})
+    monkeypatch.setattr(token_utils, "TIKTOKEN_AVAILABLE", None)
+
+    def deny_network(*args, **kwargs):
+        pytest.fail("token retry tests must never open a network connection")
+
+    monkeypatch.setattr(socket.socket, "connect", deny_network)
+    monkeypatch.setattr(socket, "create_connection", deny_network)
+    return tiktoken, requests, data
 
 
 class TestEntryCountEstimate:
@@ -552,6 +583,76 @@ class TestTokenEstimator:
         assert estimator.estimate_tokens("three four") == 2
         assert estimator.encoder is encoder
         assert calls == {"import": 1, "model": 1}
+
+    @pytest.mark.regression
+    @pytest.mark.parametrize("model", ["gpt-4", "unknown-model"])
+    @pytest.mark.parametrize("failure", ["connection", "unexpected"])
+    def test_exact_initialization_failure_never_becomes_cheap_success(
+        self, monkeypatch, isolated_tiktoken, model, failure
+    ):
+        _, requests, _ = isolated_tiktoken
+        attempts = []
+        error_type = requests.ConnectionError if failure == "connection" else ValueError
+
+        def fail_get(url):
+            attempts.append(url)
+            raise error_type("token data unavailable")
+
+        monkeypatch.setattr(requests, "get", fail_get)
+        estimator = MetricsTokenEstimator(model=model)
+        for _ in range(2):
+            with pytest.raises(error_type, match="token data unavailable"):
+                estimator.estimate_tokens("alpha beta gamma", exact=True)
+
+        assert len(attempts) == 2
+        assert estimator.encoder is None
+        assert estimator.estimate_tokens("alpha beta gamma", exact=False) == 4
+
+    @pytest.mark.regression
+    @pytest.mark.integration
+    @pytest.mark.parametrize("model", ["gpt-4", "unknown-model"])
+    def test_exact_initialization_recovers_with_genuine_cached_encoder(
+        self, monkeypatch, isolated_tiktoken, model
+    ):
+        # The bundled test data exercises native recovery; it does not prove
+        # that a fresh installation can provision an offline tokenizer.
+        tiktoken, requests, data = isolated_tiktoken
+        url = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+        assert hashlib.sha256(data).hexdigest() == (
+            "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+        )
+        attempts = []
+
+        def transient_get(request_url):
+            assert request_url == url
+            attempts.append(request_url)
+            if len(attempts) == 1:
+                raise requests.ConnectionError("transient token data failure")
+            response = requests.Response()
+            response.status_code = 200
+            response._content = data
+            return response
+
+        monkeypatch.setattr(requests, "get", transient_get)
+        estimator = MetricsTokenEstimator(model=model)
+        text = "alpha beta gamma"
+        with pytest.raises(requests.ConnectionError, match="transient token data failure"):
+            estimator.estimate_tokens(text, exact=True)
+
+        # Competing recovery calls must all use the same real encoder.
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(estimator.estimate_tokens, [text] * 16))
+        encoder = estimator.encoder
+        assert isinstance(encoder, tiktoken.Encoding)
+        assert encoder is tiktoken.get_encoding("cl100k_base")
+        assert results == [len(encoder.encode(text))] * 16
+        assert results[0] != estimator.estimate_tokens(text, exact=False)
+        payload = {"text": "café 漢字 😀"}
+        assert estimator.estimate_tokens(payload, exact=True) == len(
+            encoder.encode(token_utils.json.dumps(payload, ensure_ascii=False))
+        )
+        assert estimator.encoder is encoder
+        assert attempts == [url, url]
 
     def test_exact_estimation_preserves_unknown_model_and_import_fallbacks(
         self, monkeypatch

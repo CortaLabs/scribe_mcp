@@ -17,9 +17,10 @@ from scribe_mcp.cli.session_store import (
     CliSessionState,
     build_scoped_reuse_key,
     load_session_state,
+    reset_session_state,
     save_session_state,
+    scoped_session_state_path,
 )
-from scribe_mcp.config.paths import cli_session_state_path
 from scribe_mcp.storage.affected_row_referential_inventory import (
     mutation_rejected_report,
     storage_backend_unavailable_report,
@@ -495,6 +496,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Repository root or any path inside the target repository.",
     )
     reset_parser.add_argument("--name", default="default", help="Session name")
+    reset_parser.add_argument("--agent", default=None, help="Agent identity override")
 
     return parser
 
@@ -877,16 +879,17 @@ def _run_session_command(args: argparse.Namespace) -> int:
     repo_root = _discover_repo_root(args.repo_root)
     _prepare_environment(repo_root)
 
+    agent = _resolve_agent(getattr(args, "agent", None))
     if args.session_action == "reset":
-        session_path = cli_session_state_path(args.name)
-        if session_path.exists():
-            session_path.unlink()
-            print(f"Removed session state: {session_path}")
+        removed = reset_session_state(args.name, repo_root, agent)
+        if removed:
+            for session_path in removed:
+                print(f"Removed session state: {session_path}")
         else:
+            session_path = scoped_session_state_path(args.name, repo_root, agent)
             print(f"Session state not found: {session_path}")
         return 0
 
-    agent = _resolve_agent(getattr(args, "agent", None))
     session_state = load_session_state(args.name, repo_root, agent)
     _json_print(session_state.to_dict(), pretty=True)
     return 0

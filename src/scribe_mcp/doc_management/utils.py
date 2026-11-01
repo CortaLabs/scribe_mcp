@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from scribe_mcp.config.repo_config import RepoDiscovery, resolve_create_doc_type_config
-from scribe_mcp.doc_management.quality.scopes import HeuristicFenceScopeProvider
+from scribe_mcp.doc_management.quality.scopes import HeuristicFenceScopeProvider, markdown_lines
 from scribe_mcp.utils.frontmatter import parse_frontmatter
 from scribe_mcp.utils.time import format_utc
 
@@ -132,8 +132,8 @@ def strip_trailing_whitespace_lines(content: str) -> str:
         for line_no in range(scope.start_line, scope.end_line + 1)
     }
     normalized = "\n".join(
-        line if line_no in fenced_lines else line.rstrip(" \t")
-        for line_no, line in enumerate(content.splitlines(), start=1)
+        line.rstrip("\r\n") if line_no in fenced_lines else line.rstrip("\r\n").rstrip(" \t")
+        for line_no, line in enumerate(markdown_lines(content), start=1)
     )
     if content.endswith(("\n", "\r")):
         normalized += "\n"

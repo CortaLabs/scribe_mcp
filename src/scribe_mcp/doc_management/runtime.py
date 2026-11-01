@@ -58,12 +58,15 @@ from scribe_mcp.doc_management.actions import query as query_actions
 from scribe_mcp.doc_management.actions import search as search_actions
 from scribe_mcp.doc_management.actions import status as status_actions
 from scribe_mcp.shared.base_logging_tool import LoggingToolMixin
+from scribe_mcp.shared.execution_context import ExecutionContext
 from scribe_mcp.shared.logging_utils import (
     LoggingContext,
     ProjectResolutionError,
     build_resolution_metadata,
 )
 from scribe_mcp.shared.write_barrier import assert_writes_allowed
+from scribe_mcp.shared.session_scope import ResolvedScope
+from scribe_mcp.storage.models import SessionBindingRecordV2
 from scribe_mcp.tools.agent_project_utils import resolve_authoritative_write_scope
 from scribe_mcp.utils.files import async_atomic_write
 from scribe_mcp.utils.slug import slugify_project_name, normalize_project_input
@@ -361,6 +364,27 @@ def _receipt_scope(
         active_project.get("project_key") or active_project.get("name") or ""
     ).strip()
     repo_root = str(Path(str(active_project.get("root") or "")).expanduser().resolve())
+    # Explicit-project logging metadata may omit the persisted key. Preserve
+    # the request's canonical snapshot only for the same caller and target;
+    # a default binding must never replace an explicit target's identity.
+    if not active_project.get("project_key") and isinstance(execution_context, ExecutionContext):
+        binding = execution_context.session_binding
+        resolved = execution_context.resolved_scope
+        if (
+            isinstance(binding, SessionBindingRecordV2)
+            and isinstance(resolved, ResolvedScope)
+            and session_id
+            and binding.caller_session_key_hash == hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+            and active_project.get("name") == binding.project_name == resolved.project_name
+            and active_project.get("root")
+            and repo_root == str(Path(binding.canonical_repo_root).expanduser().resolve())
+            and repo_root == str(Path(execution_context.repo_root).expanduser().resolve())
+            and resolved.repo_root
+            and repo_root == str(Path(resolved.repo_root).expanduser().resolve())
+            and resolved.provenance.repo_root == "verified"
+            and resolved.provenance.project_name == "verified"
+        ):
+            project_key = binding.project_key
     repo_id = str(active_project.get("repo_id") or "").strip()
     if not repo_id and repo_root:
         repo_id = hashlib.sha256(repo_root.encode("utf-8")).hexdigest()
@@ -1139,25 +1163,30 @@ async def _handle_project_health(
         )
 
     limit = int((metadata or {}).get("limit", 20) or 20)
-    discovered = utils_shared.discover_scribe_source_documents(repo_root)
-    entries: list[Dict[str, Any]] = []
-    for doc in discovered:
-        try:
-            modified_at = doc.path.stat().st_mtime
-        except OSError:
-            modified_at = 0.0
-        entries.append(
-            {
-                "project_slug": doc.project_slug or "unscoped",
-                "path": str(doc.path),
-                "doc_type": doc.doc_type,
-                "source_family": doc.source_family,
-                "category": doc.category,
-                "case_id": doc.case_id,
-                "modified_at": modified_at,
-            }
-        )
+    def _collect_inventory() -> list[Dict[str, Any]]:
+        # Only filesystem inventory and worker-local values cross this boundary.
+        # Readiness caches, project state and response context stay on the loop.
+        discovered = utils_shared.discover_scribe_source_documents(repo_root)
+        inventory: list[Dict[str, Any]] = []
+        for doc in discovered:
+            try:
+                modified_at = doc.path.stat().st_mtime
+            except OSError:
+                modified_at = 0.0
+            inventory.append(
+                {
+                    "project_slug": doc.project_slug or "unscoped",
+                    "path": str(doc.path),
+                    "doc_type": doc.doc_type,
+                    "source_family": doc.source_family,
+                    "category": doc.category,
+                    "case_id": doc.case_id,
+                    "modified_at": modified_at,
+                }
+            )
+        return inventory
 
+    entries = await asyncio.to_thread(_collect_inventory)
     entries = _dedupe_health_entries(entries)
     active_slug = slugify_project_name(active_project.get("name", ""))
     grouped: Dict[str, list[Dict[str, Any]]] = {}
@@ -1295,7 +1324,11 @@ async def _handle_project_health(
             return False
         return relative.parts == ("research", "INDEX.md")
 
+    research_index_path = docs_dir / "research" / "INDEX.md"
+    research_index_text: Optional[str] = None
+
     def _is_indexed_research_doc(path_value: str) -> bool:
+        nonlocal research_index_text
         candidate = Path(path_value).expanduser()
         if candidate.name == "INDEX.md":
             return False
@@ -1305,20 +1338,22 @@ async def _handle_project_health(
             return False
         if not relative.parts or relative.parts[0] != "research":
             return False
-        index_path = docs_dir / "research" / "INDEX.md"
-        if not index_path.exists():
-            return False
-        try:
-            index_text = index_path.read_text(encoding="utf-8")
-        except OSError:
-            return False
-        return candidate.name in index_text or relative.as_posix() in index_text
+        if research_index_text is None:
+            # Snapshot once per request, including missing/unreadable indexes.
+            research_index_text = ""
+            if research_index_path.exists():
+                try:
+                    research_index_text = research_index_path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+        return candidate.name in research_index_text or relative.as_posix() in research_index_text
 
+    registered_path_set = set(registered_doc_paths.values())
     unregistered_active_docs = sorted(
         path_value
         for path_value in active_doc_set
         if path_value
-        and path_value not in set(registered_doc_paths.values())
+        and path_value not in registered_path_set
         and not _is_system_managed_index(path_value)
         and not _is_indexed_research_doc(path_value)
     )
@@ -1811,7 +1846,8 @@ async def _handle_quality_check(
     runtime_warnings: list[str] = []
     bulk_options = _quality_bulk_options(requested_name)
     if bulk_options is not None:
-        return helper.apply_context_payload(_build_bulk_quality_response(bulk_options, runtime_warnings), context)
+        response = await asyncio.to_thread(_build_bulk_quality_response, bulk_options, runtime_warnings)
+        return helper.apply_context_payload(response, context)
 
     explicit_md_path = _resolve_explicit_markdown_path(requested_name)
     preserve_scope_name = False
@@ -1836,6 +1872,13 @@ async def _handle_quality_check(
         )
         if resolved_research and resolved_research.exists():
             candidate_key = _canonical_doc_key(requested_stem)
+            # Keep the registered spelling only when it names the canonical
+            # file; an alias to the top-level fallback must not win selection.
+            scope_name = (
+                target_name
+                if preserve_scope_name and Path(path_str).resolve() == resolved_research.resolve()
+                else candidate_key
+            )
             try:
                 await register_document_path(
                     active_project,
@@ -1849,11 +1892,13 @@ async def _handle_quality_check(
                     agent_id=agent_id,
                 )
                 docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
-                target_name = resolve_registered_doc_key(active_project, requested_name) or candidate_key
-                path_str = docs.get(target_name) or str(resolved_research)
+                # A differently cased alias may still point at the generic
+                # top-level fallback. Use the canonical binding just registered.
+                target_name = scope_name
+                path_str = docs.get(candidate_key) or str(resolved_research)
             except Exception as exc:
                 logger.warning("quality_check research pre-bind failed for '%s': %s", requested_name, exc)
-                target_name = candidate_key
+                target_name = scope_name
                 path_str = str(resolved_research)
                 runtime_warnings.append(
                     f"quality_check used discovered research document '{requested_name}' at "
@@ -1934,8 +1979,8 @@ async def _handle_quality_check(
                         agent_id=agent_id,
                     )
                     docs = active_project.get("docs") if isinstance(active_project.get("docs"), dict) else {}
-                    target_name = resolve_registered_doc_key(active_project, requested_name) or candidate_key
-                    path_str = docs.get(target_name) or str(resolved_research)
+                    target_name = candidate_key
+                    path_str = docs.get(candidate_key) or str(resolved_research)
                 except Exception as exc:
                     logger.warning("quality_check research re-bind failed for '%s': %s", requested_name, exc)
                     target_name = candidate_key
@@ -1961,7 +2006,8 @@ async def _handle_quality_check(
     elif not preserve_scope_name:
         target_name = _canonical_doc_key(target_name or Path(path_str).stem)
     mode_info = resolve_quality_mode(metadata=metadata, project_root=Path(str(active_project.get("root") or "")).resolve())
-    response = _build_document_quality_payload(
+    response = await asyncio.to_thread(
+        _build_document_quality_payload,
         target_name=target_name,
         path=Path(path_str),
         mode_info=mode_info,
@@ -3377,7 +3423,9 @@ async def handle_manage_docs_request(
             dry_run=False,
             doc_name=retained.pop("doc_name", None),
             target_dir=retained.pop("target_dir", None),
-            project=None,
+            # Re-resolve full source metadata through the normal context owner;
+            # the apply request's session projection can omit docs_dir.
+            project=rehome_binding.source_project if rehome_binding is not None else None,
             state_snapshot=state_snapshot,
             helper=helper,
             context=context,

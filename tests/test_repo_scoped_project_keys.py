@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import pytest
 from pathlib import Path
 
+from test_get_project_integration import verified_reader_context
+from scribe_mcp import server
+from scribe_mcp.shared.execution_context import RouterContextManager
 from scribe_mcp.state.manager import StateManager
 from scribe_mcp.storage.models import compute_project_key, compute_repo_id, normalize_repo_root
 from scribe_mcp.storage.sqlite import SQLiteStorage
@@ -81,7 +85,11 @@ def test_same_name_in_two_repos_persists_as_two_records(tmp_path: Path) -> None:
         conn.row_factory = sqlite3.Row
 
         async def _initialise() -> None:
-            return None
+            bootstrap = SQLiteStorage(db_path)
+            try:
+                await bootstrap.setup()
+            finally:
+                await bootstrap.close()
 
         async def _execute(query: str, params: tuple[object, ...]) -> None:
             conn.execute(query, params)
@@ -212,36 +220,49 @@ def test_sqlite_migration_deconflicts_legacy_canonical_alias_duplicates(tmp_path
     asyncio.run(_run())
 
 
-def test_state_binding_and_project_fetch_share_project_key(tmp_path: Path) -> None:
+@pytest.mark.regression
+def test_state_binding_and_project_fetch_share_project_key(tmp_path: Path, monkeypatch, test_agent) -> None:
+    """Raw binding identity persists while operational state requires current authority."""
     db_path = tmp_path / "state_scope.db"
-
     async def _run() -> None:
         storage = SQLiteStorage(db_path)
-        manager = StateManager(storage_backend=storage)
-        repo_root = str(tmp_path / "repo_main")
-
+        manager = StateManager(path=db_path, storage_backend=storage)
+        router = RouterContextManager(storage_backend=storage)
+        monkeypatch.setattr(server, "router_context_manager", router)
+        repo_root = tmp_path / "repo_main"
+        repo_root.mkdir()
         try:
+            await storage.setup()
+            await storage.upsert_session(
+                session_id="session-1", repo_root=str(repo_root), agent_id=test_agent,
+            )
             await manager.set_session_mode("session-1", "project")
             state = await manager.set_current_project(
                 "converged_project",
-                {
-                    "name": "converged_project",
-                    "root": repo_root,
-                    "progress_log": str(Path(repo_root) / "PROGRESS_LOG.md"),
-                },
+                {"name": "converged_project", "root": str(repo_root),
+                 "progress_log": str(repo_root / "PROGRESS_LOG.md")},
                 session_id="session-1",
             )
-
-            binding = state.get_session_project("session-1")
-            assert binding is not None
-            assert binding.get("project_key")
-
-            storage_record = await storage.fetch_project("converged_project")
-            assert storage_record is not None
-            assert binding["project_key"] == storage_record.project_key
+            assert state.current_project is None
+            record = await storage.fetch_project("converged_project", repo_root=str(repo_root))
+            binding = await storage.get_session_project("session-1")
+            assert record is not None and binding is not None
+            assert binding.project_key == record.project_key
+            assert binding.canonical_repo_root == str(repo_root)
+            context = await verified_reader_context(
+                storage, router, repo_root, "session-1", test_agent, record.name,
+            )
+            token = router.set_current(context)
+            try:
+                verified = await manager.load()
+                assert verified.current_project == record.name
+                assert verified.get_session_project("session-1")["project_key"] == record.project_key
+                assert verified.get_project(record.name)["root"] == str(repo_root)
+            finally:
+                router.reset(token)
+            assert await storage.get_session_project("session-1") == binding
         finally:
             await storage.close()
-
     asyncio.run(_run())
 
 

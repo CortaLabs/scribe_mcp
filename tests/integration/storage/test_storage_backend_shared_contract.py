@@ -310,7 +310,7 @@ async def test_agent_project_context_flow(backend, tmp_path):
     assert snapshot["project_name"] == project.name
 
 
-async def test_session_transport_mode_project_and_scoped_reuse_contract(backend, tmp_path):
+async def test_session_transport_mode_project_and_scoped_reuse_contract(backend, tmp_path, test_agent):
     storage, _ = backend
     transport_session_id = f"transport-{uuid.uuid4().hex[:8]}"
     stable_session_id = f"stable-{uuid.uuid4().hex[:8]}"
@@ -321,14 +321,15 @@ async def test_session_transport_mode_project_and_scoped_reuse_contract(backend,
         repo_root=str(tmp_path),
         mode="project",
     )
-    await storage.upsert_project(
+    project_record = await storage.upsert_project(
         name=project_name,
         repo_root=str(tmp_path),
         progress_log_path=str(tmp_path / "PROGRESS_LOG.md"),
     )
-    await storage.upsert_agent_session("session-owner", stable_session_id, {"source": "transport-contract"})
+    await storage.upsert_agent_session(test_agent, stable_session_id, {"source": "transport-contract"})
     await storage.set_session_mode(stable_session_id, "project")
-    await storage.set_session_project(stable_session_id, project_name)
+    selected = await storage.set_session_project(stable_session_id, project_record.project_key)
+    assert isinstance(selected, SessionBindingRecordV2)
 
     looked_up = await storage.get_session_by_transport(transport_session_id)
     assert looked_up is not None
@@ -338,28 +339,29 @@ async def test_session_transport_mode_project_and_scoped_reuse_contract(backend,
     binding = await storage.get_session_project(stable_session_id)
     assert isinstance(binding, SessionBindingRecordV2)
     assert binding.project_name == project_name
-    assert binding.project_key
+    assert binding.project_key == project_record.project_key
     assert binding.canonical_repo_root == str(tmp_path.resolve())
     assert binding.caller_session_key_hash == hashlib.sha256(stable_session_id.encode()).hexdigest()
     assert binding.binding_generation == 1
     assert binding.updated_at.tzinfo is not None
     assert await storage.get_session_project(stable_session_id) == binding
-    await storage.set_session_project(stable_session_id, None)
+    assert selected == binding
+    assert await storage.clear_session_project(stable_session_id, expected_generation=1) is None
     assert await storage.get_session_project(stable_session_id) is None
 
     identity = f"id-{uuid.uuid4().hex[:8]}"
     first = await storage.get_or_create_agent_session(
         identity_key=identity,
-        agent_name="agent",
-        agent_key="agent",
+        agent_name=test_agent,
+        agent_key=test_agent,
         repo_root=str(tmp_path),
         mode="project",
         scope_key="scope-a",
     )
     second = await storage.get_or_create_agent_session(
         identity_key=identity,
-        agent_name="agent",
-        agent_key="agent",
+        agent_name=test_agent,
+        agent_key=test_agent,
         repo_root=str(tmp_path),
         mode="project",
         scope_key="scope-a",
@@ -367,14 +369,14 @@ async def test_session_transport_mode_project_and_scoped_reuse_contract(backend,
     assert first == second
 
     agent_session = f"agent-{uuid.uuid4().hex[:8]}"
-    await storage.upsert_agent_session("agent-lifecycle", agent_session, {"source": "contract"})
+    await storage.upsert_agent_session(test_agent, agent_session, {"source": "contract"})
     await storage.heartbeat_session(agent_session)
     await storage.end_session(agent_session)
 
     expired = await storage.get_or_create_agent_session(
         identity_key=f"expired-{uuid.uuid4().hex[:8]}",
-        agent_name="agent",
-        agent_key="agent",
+        agent_name=test_agent,
+        agent_key=test_agent,
         repo_root=str(tmp_path),
         mode="project",
         scope_key="scope-expired",

@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from scribe_mcp.tools.read_recent import _supplement_sparse_db_rows_from_progress_log
+from scribe_mcp.tools.read_recent import _apply_line_filters
 
 
 # ---------------------------------------------------------------------------
@@ -220,3 +221,92 @@ async def test_limit_one_returns_exactly_one_row() -> None:
         )
     # If the result is a string (readable format) we can't count entries
     # easily, but the test at minimum must not raise an exception.
+
+
+@pytest.mark.regression
+def test_file_priority_ties_use_full_time_and_stable_invalid_fallback(test_agent):
+    """Use the actual parser, including canonical UTC and offset ISO times."""
+    def line(timestamp, message, priority="high"):
+        return (f"[ℹ️] [{timestamp}] [Agent: {test_agent}] [Project: test_project] "
+                f"{message} | priority={priority}")
+
+    lines = [
+        line("bad-time", "invalid first"),
+        line("2026-01-01 00:00:00 UTC", "older"),
+        line("2026-12-31T12:00:00.000002Z", "newer fraction"),
+        line("2026-12-31T14:00:00.000001+02:00", "older fraction"),
+        line("2026-12-31T12:00:00.000002+00:00", "equal time stable"),
+        line(" ", "missing time"),
+        line("also-bad", "invalid second"),
+        line("2020-01-01 00:00:00 UTC", "critical first", "critical"),
+        line("2030-01-01 00:00:00 UTC", "low last", "low"),
+    ]
+    assert _apply_line_filters(lines, {}) == lines
+    assert _apply_line_filters(lines, {"priority_sort": False}) == lines
+    expected = [lines[i] for i in [7, 2, 4, 3, 1, 0, 5, 6, 8]]
+    assert _apply_line_filters(lines, {"priority_sort": True}) == expected
+    assert _apply_line_filters(lines, {"priority_sort": True}) == expected
+    assert _apply_line_filters(["malformed log without timestamp"], {"priority_sort": True}) == []
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+@pytest.mark.parametrize("priority_sort", [False, True, None])
+@pytest.mark.parametrize("db_authoritative", [False, True])
+async def test_real_file_supplement_selects_newest_equal_priority_before_limit(
+    tmp_path, priority_sort, db_authoritative, test_agent,
+):
+    project = _make_project(tmp_path)
+    path = Path(project["progress_log"])
+    path.write_text(
+        f"[ℹ️] [2026-01-01 00:00:00 UTC] [Agent: {test_agent}] [Project: test_project] older | priority=high\n"
+        f"[ℹ️] [2026-12-31 23:59:59 UTC] [Agent: {test_agent}] [Project: test_project] newer | priority=high\n",
+        encoding="utf-8",
+    )
+    before = path.read_bytes()
+    filters = {} if priority_sort is None else {"priority_sort": priority_sort}
+    result = await _supplement_sparse_db_rows_from_progress_log(
+        project=project, rows=[], page=1, page_size=1, filters=filters,
+        db_authoritative=db_authoritative,
+    )
+    assert len(result) == 1
+    assert result[0]["message"] == ("newer" if priority_sort else "older")
+    assert result[0]["meta"] == {"priority": "high"}
+    assert path.read_bytes() == before
+    # Both hard gates preserve the input list and never introduce file records.
+    rows = [_make_row("authoritative DB entry")]
+    assert await _supplement_sparse_db_rows_from_progress_log(
+        project=project, rows=rows, page=1, page_size=2, filters=filters,
+        db_authoritative=True,
+    ) is rows
+    empty = []
+    assert await _supplement_sparse_db_rows_from_progress_log(
+        project=project, rows=empty, page=2, page_size=1, filters=filters,
+        db_authoritative=db_authoritative,
+    ) is empty
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("timestamp", [
+    "0001-01-01T00:00:00+23:59",
+    "9999-12-31T23:59:59-23:59",
+])
+def test_file_priority_sort_treats_utc_overflow_as_invalid(timestamp, test_agent):
+    def line(time, message, priority="high"):
+        return (f"[ℹ️] [{time}] [Agent: {test_agent}] [Project: test_project] "
+                f"{message} | priority={priority}")
+
+    lines = [
+        line(timestamp, "out of UTC range"),
+        line("bad-time", "malformed"),
+        line("0001-01-01T00:00:00Z", "valid minimum"),
+        line("9999-12-31T23:59:59.999999Z", "valid maximum"),
+        line("2026-01-01T02:00:00+02:00", "older valid offset"),
+        line("2026-01-01T00:00:01Z", "newer valid UTC"),
+        line(timestamp, "critical invalid", "critical"),
+    ]
+    assert _apply_line_filters(lines, {}) == lines
+    assert _apply_line_filters(lines, {"priority_sort": False}) == lines
+    expected = [lines[i] for i in [6, 3, 5, 4, 2, 0, 1]]
+    assert _apply_line_filters(lines, {"priority_sort": True}) == expected
+    assert _apply_line_filters(lines, {"priority_sort": True}) == expected

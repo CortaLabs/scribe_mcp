@@ -113,8 +113,10 @@ class TokenEstimator:
             except ImportError:
                 TIKTOKEN_AVAILABLE = False
                 self.encoder = None
-            finally:
-                self._encoder_initialized = True
+
+            # Cache only a completed initialization or the supported import fallback.
+            # Unexpected failures must propagate and leave later exact calls retryable.
+            self._encoder_initialized = True
 
         return self.encoder
 

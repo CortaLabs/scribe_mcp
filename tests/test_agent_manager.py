@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from datetime import timedelta
 import pytest
+import pytest_asyncio
 
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.state.manager import StateManager
@@ -19,137 +20,146 @@ from scribe_mcp.state.agent_manager import (
 from scribe_mcp.state import agent_manager as agent_manager_module
 
 
-@pytest.mark.asyncio
-async def test_agent_context_manager():
-    """Test basic AgentContextManager functionality."""
-    print("🧪 Testing AgentContextManager...")
-
+@pytest_asyncio.fixture
+async def agent_context():
+    """Keep both managers on one disposable, real SQLite backend."""
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        db_path = temp_path / "test.db"
-        state_path = temp_path / "state.json"
-
-        # Initialize storage and state manager
-        storage = SQLiteStorage(db_path)
-        await storage.setup()
-
-        state_manager = StateManager(state_path)
-
-        # Create agent context manager
-        manager = AgentContextManager(storage, state_manager)
-
-        # Test 1: Start session
-        print("  ✓ Starting session for AgentA...")
-        session_id = await manager.start_session("AgentA", {"test": True})
-        print(f"    Session ID: {session_id}")
-
-        # Test 2: Set current project
-        print("  ✓ Setting current project...")
-
-        # First create a project to reference
-        project = await storage.upsert_project(
-            name="TestProject",
-            repo_root="/tmp/test",
-            progress_log_path="/tmp/test/log.md"
-        )
-
-        result = await manager.set_current_project("AgentA", "TestProject", session_id)
-        print(f"    Project set: {result['project_name']} (version {result['version']})")
-
-        # Test 3: Get current project
-        print("  ✓ Getting current project...")
-        current = await manager.get_current_project("AgentA")
-        print(f"    Current project: {current['project_name'] if current else None}")
-
-        # Test 4: Session validation
-        print("  ✓ Testing session validation...")
+        storage = SQLiteStorage(temp_path / "test.db")
         try:
-            await manager.set_current_project("AgentA", "OtherProject", "invalid-session")
-            print("    ❌ Should have failed with invalid session")
-        except SessionLeaseExpired:
-            print("    ✓ Correctly rejected invalid session")
-
-        # Test 5: Concurrent operations
-        print("  ✓ Testing concurrent operations...")
-
-        # Start session for AgentB
-        session_b = await manager.start_session("AgentB")
-
-        # Create projects first
-        project_a = await storage.upsert_project(
-            name="ProjectA",
-            repo_root="/tmp/project_a",
-            progress_log_path="/tmp/project_a/log.md"
-        )
-        project_b = await storage.upsert_project(
-            name="ProjectB",
-            repo_root="/tmp/project_b",
-            progress_log_path="/tmp/project_b/log.md"
-        )
-
-        # Set different projects for different agents
-        await manager.set_current_project("AgentA", "ProjectA", session_id)
-        await manager.set_current_project("AgentB", "ProjectB", session_b)
-
-        # Verify isolation
-        project_a = await manager.get_current_project("AgentA")
-        project_b = await manager.get_current_project("AgentB")
-
-        if project_a["project_name"] == "ProjectA" and project_b["project_name"] == "ProjectB":
-            print("    ✓ Agent isolation working correctly")
-        else:
-            print("    ❌ Agent isolation failed")
-
-        # Test 6: Session heartbeat
-        print("  ✓ Testing session heartbeat...")
-        await manager.heartbeat_session(session_id)
-        print("    ✓ Session heartbeat successful")
-
-        # Test 7: End session
-        print("  ✓ Testing session end...")
-        await manager.end_session("AgentA", session_id)
-
-        try:
-            await manager.set_current_project("AgentA", "NewProject", session_id)
-            print("    ❌ Should have failed with expired session")
-        except SessionLeaseExpired:
-            print("    ✓ Correctly rejected expired session")
-
-        # Cleanup
-        await storage.close()
-
-    print("✅ AgentContextManager tests completed successfully!")
+            await storage.setup()
+            state_manager = StateManager(temp_path / "state.json", storage_backend=storage)
+            manager = AgentContextManager(storage, state_manager)
+            for name in ("TestProject", "ProjectA", "ProjectB"):
+                repo_root = temp_path / name
+                repo_root.mkdir()
+                progress_log = repo_root / "PROGRESS_LOG.md"
+                progress_log.touch()
+                await storage.upsert_project(
+                    name=name, repo_root=str(repo_root), progress_log_path=str(progress_log)
+                )
+            yield manager
+        finally:
+            await storage.close()
+            assert storage._pool is None
+    assert not temp_path.exists()
 
 
 @pytest.mark.asyncio
-async def test_session_cleanup():
-    """Test session cleanup functionality."""
-    print("🧪 Testing session cleanup...")
+@pytest.mark.regression
+async def test_agent_context_manager(agent_context, test_agent, monkeypatch):
+    """Assert the original session, project, isolation and heartbeat journey."""
+    manager = agent_context
+    storage = manager.storage
+    agent_a, agent_b = test_agent, f"{test_agent}:client-b"
+    now = agent_manager_module.utcnow()
+    monkeypatch.setattr(agent_manager_module, "utcnow", lambda: now)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        db_path = temp_path / "test.db"
-        state_path = temp_path / "state.json"
+    session_id = await manager.start_session(agent_a, metadata={"test": True})
+    assert isinstance(session_id, str) and session_id
+    assert manager._session_leases[agent_a] == (
+        session_id, now + timedelta(minutes=manager._session_ttl_minutes)
+    )
 
-        storage = SQLiteStorage(db_path)
-        await storage.setup()
-        state_manager = StateManager(state_path)
-        manager = AgentContextManager(storage, state_manager)
+    result = await manager.set_current_project(agent_a, "TestProject", session_id)
+    assert result["project_name"] == "TestProject"
+    assert result["version"] == 1
+    assert result["session_id"] == session_id
+    assert result["agent_id"] == result["updated_by"] == agent_a
+    current = await manager.get_current_project(agent_a)
+    assert current is not None
+    assert current == result
 
-        # Start sessions
-        session1 = await manager.start_session("TestAgent1")
-        session2 = await manager.start_session("TestAgent2")
+    with pytest.raises(SessionLeaseExpired, match="Session ID mismatch") as invalid:
+        await manager.set_current_project(agent_a, "OtherProject", "invalid-session")
+    assert invalid.value.reason == STALE_SESSION_REASON_MISMATCH
+    assert await manager.get_current_project(agent_a) == current
 
-        # Manually expire sessions by setting short TTL
-        manager._session_ttl_minutes = -1  # Expire immediately
+    session_b = await manager.start_session(agent_b)
+    assert session_b != session_id
+    results = await asyncio.gather(
+        manager.set_current_project(agent_a, "ProjectA", session_id),
+        manager.set_current_project(agent_b, "ProjectB", session_b),
+    )
+    project_a, project_b = await asyncio.gather(
+        manager.get_current_project(agent_a), manager.get_current_project(agent_b)
+    )
+    assert project_a is not None and project_b is not None
+    assert project_a["project_name"] == "ProjectA"
+    assert project_b["project_name"] == "ProjectB"
+    assert project_a["session_id"] == session_id
+    assert project_b["session_id"] == session_b
+    assert project_a["updated_by"] == agent_a
+    assert project_b["updated_by"] == agent_b
+    assert project_a["version"] == 2 and project_b["version"] == 1
+    assert results == [project_a, project_b]
 
-        # Run cleanup
-        cleaned = await manager.cleanup_expired_sessions()
-        print(f"  ✓ Cleaned up {cleaned} expired sessions")
+    # Age an input timestamp, then observe the real SQLite heartbeat write.
+    await storage._execute(
+        "UPDATE agent_sessions SET last_active_at = ? WHERE session_id = ?;",
+        ("2000-01-01 00:00:00", session_id),
+    )
+    lease_b = manager._session_leases[agent_b]
+    now += timedelta(minutes=1)
+    await manager.heartbeat_session(session_id)
+    heartbeat = await storage._fetchone(
+        "SELECT last_active_at, expires_at FROM agent_sessions WHERE session_id = ?;",
+        (session_id,),
+    )
+    assert heartbeat["last_active_at"] != "2000-01-01 00:00:00"
+    assert heartbeat["expires_at"] is None
+    assert manager._session_leases[agent_a] == (
+        session_id, now + timedelta(minutes=manager._session_ttl_minutes)
+    )
+    assert manager._session_leases[agent_b] == lease_b
 
-        await storage.close()
+    await manager.end_session(agent_a, session_id)
+    assert agent_a not in manager._session_leases
+    ended = await storage._fetchone(
+        "SELECT expires_at FROM agent_sessions WHERE session_id = ?;", (session_id,)
+    )
+    assert ended["expires_at"] is not None
+    with pytest.raises(SessionLeaseExpired, match="No active session") as expired:
+        await manager.set_current_project(agent_a, "NewProject", session_id)
+    assert expired.value.reason == STALE_SESSION_REASON_NO_ACTIVE
+    assert await manager.get_current_project(agent_b) == project_b
 
-    print("✅ Session cleanup tests completed successfully!")
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_session_cleanup(agent_context, test_agent, monkeypatch):
+    """Expire two real leases while preserving a fresh independent client."""
+    manager = agent_context
+    now = agent_manager_module.utcnow()
+    monkeypatch.setattr(agent_manager_module, "utcnow", lambda: now)
+    agents = (test_agent, f"{test_agent}:client-b")
+    sessions = [await manager.start_session(agent) for agent in agents]
+    assert sessions[0] != sessions[1]
+    assert await manager.cleanup_expired_sessions() == 0
+
+    ttl = timedelta(minutes=manager._session_ttl_minutes)
+    now += ttl / 2
+    active_agent = f"{test_agent}:active-client"
+    active_session = await manager.start_session(active_agent)
+    active_lease = manager._session_leases[active_agent]
+    now += ttl / 2 + timedelta(seconds=1)
+
+    cleaned = await manager.cleanup_expired_sessions()
+    assert cleaned == 2
+    assert manager._session_leases == {active_agent: active_lease}
+    for agent, session_id in zip(agents, sessions):
+        ended = await manager.storage._fetchone(
+            "SELECT expires_at FROM agent_sessions WHERE session_id = ?;", (session_id,)
+        )
+        assert ended["expires_at"] is not None
+        with pytest.raises(SessionLeaseExpired, match="No active session"):
+            await manager.set_current_project(agent, "TestProject", session_id)
+    active = await manager.storage._fetchone(
+        "SELECT expires_at FROM agent_sessions WHERE session_id = ?;", (active_session,)
+    )
+    assert active["expires_at"] is None
+    await manager._validate_session_lease(active_agent, active_session)
+    assert await manager.cleanup_expired_sessions() == 0
 
 
 @pytest.mark.asyncio
@@ -388,16 +398,10 @@ async def test_session_lease_error_taxonomy_exposes_typed_reasons(tmp_path: Path
     await storage.close()
 
 
-async def main():
-    """Run all tests."""
-    print("🚀 Starting AgentContextManager tests...\n")
-
-    await test_agent_context_manager()
-    print()
-    await test_session_cleanup()
-
-    print("\n🎉 All tests passed!")
+def main():
+    """Run the same pytest journeys and fixtures, preserving its exit status."""
+    return pytest.main(["-q", "-n0", str(Path(__file__).resolve())])
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())

@@ -84,10 +84,15 @@ def _log(msg: str) -> None:
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
     """Run a command, streaming nothing; return stdout. Raise on non-zero."""
+    child_env = dict(os.environ if env is None else env)
+    # Development launchers may inject source paths. Every clean-room child
+    # must resolve its own installed interpreter and package instead.
+    child_env.pop("PYTHONPATH", None)
+    child_env.pop("PYTHONHOME", None)
     proc = subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
-        env=env,
+        env=child_env,
         capture_output=True,
         text=True,
     )

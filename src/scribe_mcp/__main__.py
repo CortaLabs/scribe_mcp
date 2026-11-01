@@ -15,6 +15,7 @@ import asyncio
 import os
 from collections.abc import Sequence
 
+from scribe_mcp import __version__
 from scribe_mcp.config.settings import Settings
 
 
@@ -26,7 +27,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version="scribe-mcp 2.15.34",
+        version=f"scribe-mcp {__version__}",
     )
     parser.add_argument(
         "--transport",

@@ -1,82 +1,79 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+import asyncio
+from contextlib import asynccontextmanager
+import json
+import os
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
+import sqlite3
+import sys
 
 import pytest
-
-from scribe_mcp import server as server_module
-from scribe_mcp.shared.logging_utils import LoggingContext
-from scribe_mcp.state import StateManager
-from scribe_mcp.tools import manage_docs as manage_docs_module
-from scribe_mcp.tools.manage_docs import manage_docs
+from mcp import Client, StdioServerParameters
 
 
-@contextmanager
-def _isolated_server(state_manager, project_root=None):
-    """Monkey-patch server module for isolated test execution.
+pytestmark = pytest.mark.regression
 
-    Neutralizes execution context and agent identity so project resolution
-    falls through to the legacy StateManager path.  Also patches repo-scoping
-    so that a tmp_path-based project root is not rejected for being outside
-    the real repository.
-    """
-    originals = {
-        "state_manager": server_module.state_manager,
-        "storage_backend": server_module.storage_backend,
-    }
-    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
-    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
-    orig_agent_id = getattr(server_module, "get_agent_identity", None)
 
-    server_module.state_manager = state_manager
-    server_module.storage_backend = None
-    server_module.get_execution_context = lambda: SimpleNamespace(
-        mode="project",
-        session_id="checklist-test-session",
-        stable_session_id="checklist-test-session",
-    )
-    server_module.get_agent_identity = lambda: None
+@asynccontextmanager
+async def _isolated_server(project: dict, agent: str):
+    """Bind a real stdio session to a disposable project and SQLite database."""
+    source = Path(__file__).resolve().parents[1]
+    root = Path(project["root"])
+    runtime = root.parent / "runtime"
+    runtime.mkdir()
+    database = runtime / "scribe.sqlite3"
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("SCRIBE_") and key not in {"DATABASE_URL", "REPO_ROOT"}}
+    env.update({
+        "SCRIBE_RELEASE_PROFILE": "internal", "SCRIBE_DISABLE_DOTENV": "1",
+        "SCRIBE_LOAD_REPO_DOTENV": "0", "SCRIBE_MODE": "standalone",
+        "SCRIBE_STORAGE_BACKEND": "sqlite", "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_DB_PATH": str(database), "SCRIBE_ROOT": str(runtime),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"),
+        "SCRIBE_PROJECT_ROOT": str(root), "SCRIBE_DEV_PLANS_BASE": ".scribe/docs/dev_plans",
+        "PYTHONPATH": str(source / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+    })
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"],
+                                   env=env, cwd=str(root))
+    async with asyncio.timeout(60):
+        async with Client(params, mode="2026-07-28", cache=None) as client:
+            await client.session.send_discover("2026-07-28")
 
-    # Patch repo-scoping to accept the test project root.
-    fake_root = Path(project_root).resolve() if project_root else Path("/tmp")
-    from scribe_mcp.config.repo_config import RepoConfig
+            async def call(tool_name: str, **arguments) -> dict:
+                response = await client.call_tool(tool_name, {"agent": agent, **arguments})
+                assert not response.is_error, response
+                body = response.model_dump(mode="json", by_alias=True)["structuredContent"]
+                assert isinstance(body, dict), response
+                return body
 
-    fake_config = RepoConfig(repo_slug="test", repo_root=fake_root)
+            bound = await call("set_project", name=project["name"], root=str(root), format="structured")
+            assert bound["ok"] is True, bound
+            assert Path(bound["project"]["docs_dir"]) == Path(project["docs_dir"])
+            with sqlite3.connect(database) as connection:
+                row = connection.execute(
+                    "SELECT docs_json FROM scribe_projects WHERE name = ?", (project["name"],)
+                ).fetchone()
+                assert row is not None
+                assert json.loads(row[0])["checklist"] == project["docs"]["checklist"]
+                bindings = connection.execute(
+                    "SELECT project_name FROM session_projects"
+                ).fetchall()
+                assert bindings and all(row[0] == project["name"] for row in bindings)
 
-    try:
-        async def _prepare_context_stub(**kwargs):
-            state = await state_manager.load()
-            current_project = state.get_project(state.current_project) if state.current_project else None
-            return LoggingContext(
-                tool_name="manage_docs",
-                project=current_project,
-                recent_projects=list(getattr(state, "recent_projects", []) or []),
-                state_snapshot={},
-                reminders=[],
-                resolution_source="session_binding",
-            )
+            async def manage_docs(**arguments) -> dict:
+                return await call("manage_docs", **arguments)
 
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-        with patch(
-            "scribe_mcp.config.repo_config.get_current_repo_config",
-            return_value=(fake_root, fake_config),
-        ):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        if orig_exec_ctx is not None:
-            server_module.get_execution_context = orig_exec_ctx
-        if orig_agent_id is not None:
-            server_module.get_agent_identity = orig_agent_id
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
+            before = {key: Path(project["docs"][key]).read_bytes()
+                      for key in ("architecture", "phase_plan", "checklist")}
+            yield manage_docs
+            assert all(Path(project["docs"][key]).read_bytes() == value
+                       for key, value in before.items())
 
 
 async def _setup_project(tmp_path: Path) -> dict:
     project_root = tmp_path / "checklist_repo"
+    (project_root / ".git").mkdir(parents=True)
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "test_project"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -98,7 +95,7 @@ async def _setup_project(tmp_path: Path) -> dict:
     (docs_dir / "PROGRESS_LOG.md").write_text("# Log\n", encoding="utf-8")
 
     return {
-        "name": "Checklist Project",
+        "name": "test_project",
         "root": str(project_root),
         "docs_dir": str(docs_dir),
         "progress_log": str(docs_dir / "PROGRESS_LOG.md"),
@@ -113,12 +110,10 @@ async def _setup_project(tmp_path: Path) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_list_checklist_items_filters_exact_match(tmp_path: Path) -> None:
+async def test_list_checklist_items_filters_exact_match(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
-    state_manager = StateManager(path=tmp_path / "state.json")
-    await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(project, test_agent) as manage_docs:
         result = await manage_docs(
             action="list_checklist_items",
             doc="checklist",
@@ -134,12 +129,10 @@ async def test_list_checklist_items_filters_exact_match(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_checklist_items_case_insensitive(tmp_path: Path) -> None:
+async def test_list_checklist_items_case_insensitive(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
-    state_manager = StateManager(path=tmp_path / "state.json")
-    await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(project, test_agent) as manage_docs:
         result = await manage_docs(
             action="list_checklist_items",
             doc="checklist",
@@ -153,12 +146,10 @@ async def test_list_checklist_items_case_insensitive(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_checklist_items_accepts_doc_alias_case_variants(tmp_path: Path) -> None:
+async def test_list_checklist_items_accepts_doc_alias_case_variants(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
-    state_manager = StateManager(path=tmp_path / "state.json")
-    await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(project, test_agent) as manage_docs:
         result = await manage_docs(
             action="list_checklist_items",
             doc="CHECKLIST",
@@ -172,12 +163,10 @@ async def test_list_checklist_items_accepts_doc_alias_case_variants(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_list_checklist_items_requires_match(tmp_path: Path) -> None:
+async def test_list_checklist_items_requires_match(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
-    state_manager = StateManager(path=tmp_path / "state.json")
-    await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(project, test_agent) as manage_docs:
         result = await manage_docs(
             action="list_checklist_items",
             doc="checklist",
@@ -189,7 +178,7 @@ async def test_list_checklist_items_requires_match(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_checklist_items_body_line_offset(tmp_path: Path) -> None:
+async def test_list_checklist_items_body_line_offset(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     checklist_path = Path(project["docs"]["checklist"])
     checklist_path.write_text(
@@ -209,10 +198,8 @@ async def test_list_checklist_items_body_line_offset(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    state_manager = StateManager(path=tmp_path / "state.json")
-    await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(project, test_agent) as manage_docs:
         result = await manage_docs(
             action="list_checklist_items",
             doc="checklist",
@@ -227,12 +214,10 @@ async def test_list_checklist_items_body_line_offset(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_status_update_frontmatter_intent_returns_exact_mismatch_code(tmp_path: Path) -> None:
+async def test_status_update_frontmatter_intent_returns_exact_mismatch_code(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
-    state_manager = StateManager(path=tmp_path / "state.json")
-    await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(project, test_agent) as manage_docs:
         result = await manage_docs(
             action="status_update",
             doc="architecture",
@@ -248,7 +233,7 @@ async def test_status_update_frontmatter_intent_returns_exact_mismatch_code(tmp_
 
 
 @pytest.mark.asyncio
-async def test_status_update_targets_lowercase_inline_item_id(tmp_path: Path) -> None:
+async def test_status_update_targets_lowercase_inline_item_id(tmp_path: Path, test_agent: str) -> None:
     project = await _setup_project(tmp_path)
     checklist_path = Path(project["docs"]["checklist"])
     checklist_path.write_text(
@@ -262,10 +247,8 @@ async def test_status_update_targets_lowercase_inline_item_id(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
-    state_manager = StateManager(path=tmp_path / "state.json")
-    await state_manager.set_current_project(project["name"], project)
 
-    with _isolated_server(state_manager, project_root=project["root"]):
+    async with _isolated_server(project, test_agent) as manage_docs:
         result = await manage_docs(
             action="status_update",
             doc="checklist",

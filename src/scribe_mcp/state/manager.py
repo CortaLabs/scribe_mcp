@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -13,8 +14,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from scribe_mcp.config.settings import settings
 from scribe_mcp.storage import create_storage_backend
+from scribe_mcp.storage.models import SessionBindingRecordV2, normalize_repo_root
 from scribe_mcp.storage.sqlite import SQLiteStorage
 from scribe_mcp.shared.session_scope import ResolvedScope
+from scribe_mcp.shared.execution_context import ProjectTargetV1, ResolvedRequestContextV1
+from scribe_mcp.shared.session_utils import get_canonical_session_key
 from scribe_mcp.utils.slug import normalize_project_input
 from scribe_mcp.utils.time import utcnow
 
@@ -137,6 +141,146 @@ class StateManager:
         """Read state snapshot from database and compatibility caches."""
         async with self._lock:
             return await self._load_locked()
+
+    async def resolve_registered_project(
+        self,
+        *,
+        project_key: str | None = None,
+        project: str | None = None,
+        repo_root: str | None = None,
+    ) -> tuple[dict[str, Any] | None, tuple[dict[str, str], ...]]:
+        """Resolve a persisted project without consulting or mutating runtime state.
+
+        Explicit selectors are evaluated against the backend's registered
+        projects on every call. In particular, this deliberately bypasses the
+        process project cache and does not run legacy migration or update recent,
+        session, or global project state.
+        """
+        target = ProjectTargetV1(
+            project_key=project_key,
+            project=project,
+            repo_root=repo_root,
+        )
+        project_key = target.project_key
+        project = target.project
+        repo_root = target.repo_root
+        if project_key is None and project is None:
+            return None, ()
+
+        await self._ensure_backend_ready()
+        records = await self._storage_backend.list_projects()
+        project_records = [
+            record for record in records
+            if getattr(record, "name", None) and getattr(record, "repo_root", None)
+        ]
+
+        selected: List[Any]
+        if project_key:
+            selected = [
+                record for record in project_records
+                if getattr(record, "project_key", None) == project_key
+            ]
+            if project and any(getattr(record, "name", None) != project for record in selected):
+                return None, self._project_resolution_candidates(selected)
+            if repo_root:
+                canonical_root = normalize_repo_root(repo_root)
+                if any(
+                    normalize_repo_root(str(record.repo_root)) != canonical_root
+                    for record in selected
+                ):
+                    return None, self._project_resolution_candidates(selected)
+        elif repo_root:
+            canonical_root = normalize_repo_root(repo_root)
+            named_records = [
+                record for record in project_records
+                if getattr(record, "name", None) == project
+            ]
+            selected = [
+                record for record in named_records
+                if normalize_repo_root(str(record.repo_root)) == canonical_root
+            ]
+            if not selected and named_records:
+                return None, self._project_resolution_candidates(named_records)
+        else:
+            selected = [
+                record for record in project_records
+                if getattr(record, "name", None) == project
+            ]
+
+        candidates = self._project_resolution_candidates(selected)
+        if len(selected) != 1:
+            return None, candidates
+        return self._record_to_project_dict(selected[0]), ()
+
+    @staticmethod
+    def _project_resolution_candidates(records: List[Any]) -> Tuple[Dict[str, str], ...]:
+        candidates = []
+        for record in records:
+            candidates.append(
+                {
+                    "project_key": str(getattr(record, "project_key", "") or ""),
+                    "project_name": str(getattr(record, "name", "") or ""),
+                    "canonical_repo_root": normalize_repo_root(str(record.repo_root)),
+                }
+            )
+        return tuple(
+            sorted(
+                candidates,
+                key=lambda item: (
+                    item["canonical_repo_root"],
+                    item["project_name"],
+                    item["project_key"],
+                ),
+            )
+        )
+
+    async def accept_session_binding(
+        self,
+        *,
+        caller_session_key: str,
+        record: SessionBindingRecordV2,
+        project_data: dict[str, Any],
+    ) -> State:
+        """Project a verified persisted binding into this manager's local cache."""
+        expected_hash = hashlib.sha256(caller_session_key.encode("utf-8")).hexdigest()
+        canonical_root = normalize_repo_root(record.canonical_repo_root)
+        if (
+            record.caller_session_key_hash != expected_hash
+            or project_data.get("project_key") != record.project_key
+            or project_data.get("name") != record.project_name
+            or not project_data.get("root")
+            or normalize_repo_root(str(project_data["root"])) != canonical_root
+        ):
+            raise ValueError("session binding does not match the verified caller and registered project")
+
+        projection = dict(project_data)
+        projection.update(
+            project_key=record.project_key,
+            name=record.project_name,
+            root=canonical_root,
+            binding_generation=record.binding_generation,
+            caller_session_key_hash=record.caller_session_key_hash,
+        )
+        async with self._lock:
+            self._session_projects_cache[caller_session_key] = projection
+            projects = {
+                name: dict(payload)
+                for name, payload in self._projects_cache.items()
+            }
+            activity = self._activity_cache
+            return State(
+                current_project=record.project_name,
+                projects=projects,
+                recent_projects=list(self._recent_projects_cache),
+                session_projects={caller_session_key: dict(projection)},
+                session_modes=dict(self._session_modes_cache),
+                recent_tools=_normalise_tool_history(activity.get("recent_tools", [])),
+                last_activity_at=activity.get("last_activity_at"),
+                session_started_at=activity.get("session_started_at"),
+                last_updated_by=self._agent_state_cache.get("last_agent_id"),
+                operation_timestamp=utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                agent_state=dict(self._agent_state_cache),
+            )
 
     async def persist(self, state: State) -> None:
         """Persist cache-compatible state fields into database-backed storage.
@@ -403,52 +547,79 @@ class StateManager:
             logger.warning("Legacy state migration failed: %s", exc)
 
     async def _load_projects(self) -> Dict[str, Dict[str, Any]]:
-        now = time.monotonic()
-        if (
-            self._projects_cache
-            and (now - self._projects_cache_at) < _PROJECT_CACHE_TTL_SECONDS
-        ):
-            projects = {name: dict(payload) for name, payload in self._projects_cache.items()}
-        else:
-            projects = {}
-            if not hasattr(self._storage_backend, "list_projects"):
-                return projects
-
-            try:
-                repo_root_filter: Optional[str] = None
-                try:
-                    from scribe_mcp import server as server_module
-
-                    if hasattr(server_module, "get_execution_context"):
-                        exec_context = server_module.get_execution_context()
-                        if exec_context and getattr(exec_context, "repo_root", None):
-                            repo_root_filter = str(
-                                Path(str(exec_context.repo_root)).expanduser().resolve()
-                            )
-                except Exception:
-                    repo_root_filter = None
-
-                if not repo_root_filter or not hasattr(self._storage_backend, "list_projects_by_repo"):
-                    return projects
-                records = await self._storage_backend.list_projects_by_repo(repo_root_filter)
-            except Exception as exc:
-                logger.warning("Failed to load projects from backend: %s", exc)
-                return projects
-
+        # Label-keyed caches are advisory, never a source of repository authority.
+        project = await self._get_verified_project()
+        if not project:
+            return {}
+        projects = {}
+        try:
+            records = await self._storage_backend.list_projects_by_repo(project["root"])
             for record in records:
-                project_data = self._record_to_project_dict(record)
-                projects[record.name] = project_data
-
-            self._projects_cache = {name: dict(payload) for name, payload in projects.items()}
-            self._projects_cache_at = now
-
-        for name, payload in self._session_projects_cache.items():
-            _ = name
-            project_name = self._resolve_project_name(payload)
-            if project_name and project_name not in projects:
-                projects[project_name] = dict(payload)
-
+                if str(Path(record.repo_root).resolve()) == project["root"]:
+                    projects[record.name] = self._record_to_project_dict(record)
+        except Exception:
+            pass
+        projects[project["name"]] = project
         return projects
+
+    async def _get_verified_project(
+        self, *, request_target: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Read a canonical project under the current immutable request authority.
+
+        Recheck the stored binding even on warm reads. Neither a remembered
+        selection nor an execution-context root can authorize another project.
+        This deliberately does not call load(), which already holds the lock.
+        """
+        try:
+            from scribe_mcp import server as server_module
+
+            context = server_module.get_execution_context()
+            request = getattr(context, "resolved_request_context", None)
+            if not isinstance(request, ResolvedRequestContextV1):
+                return None
+            if not request.authorization_evidence.verified:
+                return None
+            session_id = get_canonical_session_key(context)
+            if not session_id:
+                return None
+            binding = await self._storage_backend.get_session_project(session_id)
+            if (
+                not binding
+                or binding.caller_session_key_hash != request.caller_session_key_hash
+                or binding.binding_generation != request.default_binding_generation
+            ):
+                return None
+            target = request.resolved_target
+            if target.resolution_source == "caller_default" and (
+                target.project_key != binding.project_key
+                or target.project_name != binding.project_name
+                or target.canonical_repo_root != binding.canonical_repo_root
+            ):
+                return None
+            name = target.project_name if request_target else binding.project_name
+            key = target.project_key if request_target else binding.project_key
+            root = target.canonical_repo_root if request_target else binding.canonical_repo_root
+            record = await self._storage_backend.fetch_project(
+                name, repo_root=root, project_key=key,
+            )
+            if (
+                not record
+                or record.name != name
+                or record.project_key != key
+                or str(Path(record.repo_root).resolve()) != root
+                or (request_target and record.repo_id != target.repository_id)
+            ):
+                return None
+            project = self._record_to_project_dict(record)
+            project.update(
+                binding_generation=binding.binding_generation,
+                caller_session_key_hash=binding.caller_session_key_hash,
+                session_id=session_id,
+            )
+            return project
+        except Exception:
+            return None
 
     async def _resolve_current_project(
         self,
@@ -458,71 +629,11 @@ class StateManager:
         session_projects: Dict[str, Dict[str, Any]] = {}
         current_project: Optional[str] = None
 
-        # Check in-memory cache first — avoids a DB round-trip on every tool
-        # call for the common case where the session binding is already known.
-        if session_id and session_id in self._session_projects_cache:
-            cached = self._session_projects_cache[session_id]
-            project_name = self._resolve_project_name(cached)
-            if project_name:
-                current_project = project_name
-                session_projects[session_id] = dict(cached)
-
-        # Cache miss: ask the storage backend and populate the cache so
-        # subsequent calls within the same process lifetime skip the DB.
-        if not current_project and session_id and hasattr(self._storage_backend, "get_session_project"):
-            try:
-                binding = await self._storage_backend.get_session_project(session_id)
-            except Exception:
-                binding = None
-
-            if binding:
-                project_name = binding.project_name
-                current_project = project_name
-                project_data = dict(projects.get(project_name) or {"name": project_name})
-                project_data.update(
-                    project_key=binding.project_key,
-                    binding_generation=binding.binding_generation,
-                    caller_session_key_hash=binding.caller_session_key_hash,
-                    root=binding.canonical_repo_root,
-                )
-                session_projects[session_id] = project_data
-                # Populate cache so future loads skip the DB round-trip
-                self._session_projects_cache[session_id] = project_data
-
-        if not current_project and not session_id and hasattr(self._storage_backend, "get_agent_project"):
-            # Prefer the CALLING actor's own current-project pointer, recovered
-            # from the actor-scoped transport id. Only a truly actor-less reader
-            # (single-actor / legacy) falls back to the shared global row, which
-            # is otherwise last-writer-wins across concurrent lanes in one repo.
-            actor_id = self._resolve_actor_id_from_context()
-            project_name = None
-
-            if actor_id and actor_id != _GLOBAL_AGENT_ID:
-                try:
-                    actor_project = await self._storage_backend.get_agent_project(actor_id)
-                except Exception:
-                    actor_project = None
-                if isinstance(actor_project, dict):
-                    # The actor's own pointer is authoritative regardless of
-                    # which session wrote it — no global-session guard needed.
-                    project_name = self._resolve_project_name(
-                        {"name": actor_project.get("project_name")}
-                    )
-
-            if not project_name and not actor_id:
-                try:
-                    global_project = await self._storage_backend.get_agent_project(_GLOBAL_AGENT_ID)
-                except Exception:
-                    global_project = None
-                if isinstance(global_project, dict):
-                    global_session_id = global_project.get("session_id")
-                    if global_session_id in {None, "", "__global__"}:
-                        project_name = self._resolve_project_name(
-                            {"name": global_project.get("project_name")}
-                        )
-
-            if project_name:
-                current_project = project_name
+        project = await self._get_verified_project()
+        if project and session_id == project["session_id"]:
+            current_project = project["name"]
+            projects[current_project] = dict(project)
+            session_projects[session_id] = dict(project)
 
         return current_project, session_projects
 

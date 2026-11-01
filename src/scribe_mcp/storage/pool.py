@@ -144,6 +144,10 @@ class SQLiteConnectionPool:
         # Lock protects _pool and _active_count
         self._lock = threading.Lock()
 
+        # Serialize fresh WAL initialization through the condition wait loop,
+        # so queued creators observe acquire timeouts and can reuse releases.
+        self._creating_connection = False
+
         # Condition for blocking when pool is exhausted
         self._not_full = threading.Condition(self._lock)
 
@@ -173,12 +177,20 @@ class SQLiteConnectionPool:
             timeout=self._timeout_seconds,
             check_same_thread=False,
         )
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms};")
-        conn.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE};")
-        conn.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS};")
-        conn.execute(f"PRAGMA temp_store = {SQLITE_TEMP_STORE};")
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms};")
+            conn.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE};")
+            conn.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS};")
+            conn.execute(f"PRAGMA temp_store = {SQLITE_TEMP_STORE};")
+        except Exception:
+            # An unpublished handle must not retain a lock after failure.
+            try:
+                conn.close()
+            except sqlite3.Error:
+                logger.debug("Failed to close connection after setup failure", exc_info=True)
+            raise
 
         logger.debug("Created new connection for pool")
         return conn
@@ -256,7 +268,8 @@ class SQLiteConnectionPool:
                             pass
 
                 # Pool is empty - can we create a new connection?
-                if self._total_connections() < self._max_size:
+                if self._total_connections() < self._max_size and not self._creating_connection:
+                    self._creating_connection = True
                     self._active_count += 1
                     # Release lock while creating connection
                     self._lock.release()
@@ -274,8 +287,11 @@ class SQLiteConnectionPool:
                         raise
                     finally:
                         self._lock.acquire()
+                        self._creating_connection = False
+                        # Setup completion/failure lets waiters create or reuse.
+                        self._not_full.notify_all()
 
-                # At max_size, must wait for a connection to be released
+                # At capacity or another setup in progress: wait under deadline.
                 if timeout == 0:
                     raise TimeoutError("No connection available (non-blocking)")
 
@@ -286,7 +302,7 @@ class SQLiteConnectionPool:
                     if remaining <= 0:
                         raise TimeoutError("Timed out waiting for connection")
 
-                logger.debug("Pool exhausted, waiting for connection release")
+                logger.debug("Waiting for connection release or setup completion")
                 notified = self._not_full.wait(remaining)
 
                 if self._closed:

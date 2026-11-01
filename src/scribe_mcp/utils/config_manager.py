@@ -544,6 +544,47 @@ class TokenBudgetManager:
         else:
             return self.estimate_tokens(str(response_data))
 
+    def measure_response_envelope(self, response_data: Any) -> int:
+        """Return the compact JSON UTF-8 byte size of a complete response.
+
+        SDK response models are first converted with their public alias-aware
+        dump API so the measured payload matches the delivered field names and
+        omits absent optional fields. Plain JSON-compatible values are measured
+        directly. Non-finite or non-JSON values are rejected instead of being
+        silently stringified or normalized.
+        """
+        model_dump = getattr(response_data, "model_dump", None)
+        if callable(model_dump):
+            response_data = model_dump(by_alias=True, exclude_none=True)
+        else:
+            legacy_dump = getattr(response_data, "dict", None)
+            if callable(legacy_dump):
+                response_data = legacy_dump(by_alias=True, exclude_none=True)
+
+        try:
+            serialized = json.dumps(
+                response_data,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+            raise ValueError(
+                "Response envelope must contain finite JSON-serializable values"
+            ) from exc
+        return len(serialized.encode("utf-8"))
+
+    def _set_whole_response_token_count(self, response: Dict[str, Any]) -> int:
+        """Set token_count to the heuristic count of the returned response."""
+        token_count = 0
+        while True:
+            response["token_count"] = token_count
+            measured = self.estimate_response_tokens(response)
+            if measured <= token_count:
+                return token_count
+            token_count = measured
+
     def truncate_response_to_budget(
         self,
         response_data: Any,
@@ -692,12 +733,13 @@ class TokenBudgetManager:
         # Make a copy to avoid modifying original
         managed_response = response.copy()
 
-        # Check if response needs truncation
+        # Count the complete output, including the accounting fields themselves.
+        managed_response["token_count"] = 0
+        managed_response["token_limit"] = token_limit
         current_tokens = self.estimate_response_tokens(managed_response)
 
         if current_tokens <= token_limit:
-            managed_response["token_count"] = current_tokens
-            managed_response["token_limit"] = token_limit
+            self._set_whole_response_token_count(managed_response)
             return managed_response
 
         # Apply truncation to main result if present
@@ -712,9 +754,12 @@ class TokenBudgetManager:
             # Add warning if truncation occurred
             if items_removed > 0:
                 from .error_handler import HealingErrorHandler
-                return HealingErrorHandler.create_token_budget_response(
+                managed_response = HealingErrorHandler.create_token_budget_response(
                     managed_response, token_limit, final_tokens, items_removed
                 )
+                self._set_whole_response_token_count(managed_response)
+                return managed_response
+            self._set_whole_response_token_count(managed_response)
         else:
             # Truncate entire response
             truncated_response, final_tokens, items_removed = self.truncate_response_to_budget(
@@ -723,6 +768,7 @@ class TokenBudgetManager:
             managed_response = truncated_response if isinstance(truncated_response, dict) else {
                 "result": truncated_response
             }
+            self._set_whole_response_token_count(managed_response)
 
         return managed_response
 

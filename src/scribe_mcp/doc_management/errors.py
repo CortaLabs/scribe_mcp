@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import difflib
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Optional, Sequence
+
+from scribe_mcp.doc_management.quality.scopes import create_scope_provider
 
 _ANCHOR_PATTERN = re.compile(r"<!--\s*ID:\s*([^>]+?)\s*-->")
 
@@ -42,11 +44,37 @@ def find_near_misses(
     return difflib.get_close_matches(target, list(candidates), n=limit, cutoff=cutoff)
 
 
+def iter_unfenced_lines(text: str) -> Iterator[tuple[int, int, str]]:
+    """Yield line number, absolute offset and raw text outside fenced artifacts.
+
+    Reuse the quality engine's Markdown scopes so editing and discovery agree
+    on fence type, delimiter length, and unterminated fences.
+    """
+    fences = sorted(
+        (scope.start_offset, scope.end_offset)
+        for scope in create_scope_provider().collect_scopes(text)
+        if scope.kind == "fenced_code"
+    )
+    offset = 0
+    fence_index = 0
+    for line_no, line in enumerate(text.splitlines(keepends=True), start=1):
+        while fence_index < len(fences) and fences[fence_index][1] <= offset:
+            fence_index += 1
+        if fence_index == len(fences) or offset < fences[fence_index][0]:
+            yield line_no, offset, line
+        offset += len(line)
+
+
+def document_anchor_matches(text: str) -> Iterator[re.Match[str]]:
+    """Resolve real markers with absolute offsets, leaving fenced bytes opaque."""
+    for _, offset, line in iter_unfenced_lines(text):
+        yield from _ANCHOR_PATTERN.finditer(text, offset, offset + len(line))
+
+
 def document_anchor_ids(text: str) -> List[str]:
-    """All section anchor ids present in a document body (substring scan,
-    matching the edit path's resolution semantics)."""
+    """Distinct section IDs outside fenced code, in document order."""
     seen: List[str] = []
-    for match in _ANCHOR_PATTERN.finditer(text):
+    for match in document_anchor_matches(text):
         section_id = match.group(1).strip()
         if section_id and section_id not in seen:
             seen.append(section_id)

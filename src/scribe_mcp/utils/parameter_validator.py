@@ -560,11 +560,17 @@ class BulletproofParameterCorrector:
 
                 # Correct value
                 if isinstance(value, str):
-                    # Payload keys carry exact document text (edit payloads and
-                    # exact-match targets). Sanitizing them corrupts matching
+                    # Payload keys carry exact document text (edit payloads,
+                    # report narratives, and exact-match targets). Sanitizing
+                    # them corrupts matching
                     # (newlines flattened, <>| rewritten, 500-char truncation)
                     # and can silently write corrupted replacement text.
-                    preserve_keys = {"body", "snippet", "content", "find", "replace"}
+                    preserve_keys = {
+                        "body", "snippet", "content", "find", "replace",
+                        "summary_long", "symptoms", "actual_behavior",
+                        "expected_behavior", "root_cause", "immediate_actions",
+                        "customer_impact",
+                    }
                     if key in preserve_keys:
                         value = value
                     else:

@@ -1,67 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 from types import SimpleNamespace
-import types
 from typing import Any, Dict, Optional
 
 import pytest
 
-os.environ["SCRIBE_MODE"] = "standalone"
-os.environ["SCRIBE_STORAGE_BACKEND"] = "sqlite"
-
-if "httpx" not in sys.modules:
-    sys.modules["httpx"] = types.SimpleNamespace(
-        AsyncClient=object,
-        ConnectError=Exception,
-        TimeoutException=Exception,
-    )
-
-if "mcp" not in sys.modules:
-    mcp_module = types.ModuleType("mcp")
-    mcp_server_module = types.ModuleType("mcp.server")
-    mcp_types_module = types.ModuleType("mcp.types")
-
-    class _ServerStub:
-        def __init__(self, _name: str) -> None:
-            self.state = SimpleNamespace()
-
-        def tool(self, _func=None, **_kwargs: Any):
-            def _decorator(func):
-                return func
-
-            return _decorator
-
-    mcp_server_module.Server = _ServerStub
-    mcp_server_module.stdio = SimpleNamespace(stdio_server=lambda: None)
-    mcp_module.server = mcp_server_module
-    mcp_module.types = mcp_types_module
-    sys.modules["mcp"] = mcp_module
-    sys.modules["mcp.server"] = mcp_server_module
-    sys.modules["mcp.types"] = mcp_types_module
-
-if "scribe_mcp.server" not in sys.modules:
-    server_stub = types.ModuleType("scribe_mcp.server")
-
-    class _AppStub:
-        def tool(self, _func=None, **_kwargs: Any):
-            def _decorator(func):
-                return func
-
-            return _decorator
-
-    class _ImportStateManager:
-        async def record_tool(self, tool_name: str) -> Dict[str, Any]:
-            return {"tool": tool_name}
-
-    server_stub.app = _AppStub()
-    server_stub.state_manager = _ImportStateManager()
-    server_stub.get_execution_context = lambda: None
-    server_stub.get_agent_identity = lambda: None
-    sys.modules["scribe_mcp.server"] = server_stub
-
+# Use the real SDK/server at collection; test doubles below are scoped by
+# monkeypatch so neighboring append tests keep the real server module.
 import scribe_mcp.tools.append_entry as append_entry_tool
 
 

@@ -1,18 +1,18 @@
 # Deploying Scribe MCP
 
-This guide describes the supported public deployment posture for the v2.5 release docs.
+This guide describes the deployment target for the current 3.x development candidate.
 
 The supported story is intentionally narrow:
 
 - local/core is the default
-- authenticated SSE server deployment is optional
+- authenticated Streamable HTTP server deployment is optional
 - casual public internet exposure is unsupported
 
 ## Table of contents
 
 - [Supported deployment postures](#supported-deployment-postures)
 - [Quick start: authenticated local container](#quick-start-authenticated-local-container)
-- [Paired compose overlay](#paired-compose-overlay)
+- [Composable deployment overlay](#composable-deployment-overlay)
 - [Client connection example](#client-connection-example)
 - [Files in this directory](#files-in-this-directory)
 - [Related docs](#related-docs)
@@ -22,12 +22,12 @@ The supported story is intentionally narrow:
 | Posture | Status | Notes |
 | --- | --- | --- |
 | Local/core stdio or loopback-local usage | **Default / supported** | Primary public posture. |
-| Managed private-mesh or Tailscale-style SSE deployment | **Supported optional posture** | Auth is required for server transport access. |
+| Managed private-mesh or Tailscale-style Streamable HTTP deployment | **Supported optional posture** | Auth is required for server transport access. |
 | Casual public internet exposure | **Unsupported** | Not a supported public recipe. |
 
 If you bind broadly inside a container, keep the host exposure narrow and the auth boundary explicit.
 
-### Canonical env/auth names (v2.5)
+### Canonical environment and authentication names
 
 Use these names in public docs and examples:
 
@@ -73,36 +73,42 @@ curl http://127.0.0.1:8200/health
 
 `SCRIBE_TRANSPORT_AUTH_TOKEN` is the server-side auth setting here. The initial public release excludes remote/client mode (`SCRIBE_RELEASE_PROFILE=public` in release artifacts), so release docs do not publish a remote client bootstrap path.
 
-## Paired compose overlay
+The retained `sse` launch selector starts the current Streamable HTTP server at
+`/mcp`. It does not enable the retired SSE endpoint. Use a client that supports
+the current MCP protocol; see the [compatibility matrix](../docs/COMPATIBILITY_MATRIX.md).
 
-When you need a paired deployment with `council_mcp`, compose the two overlays from
-the roots of your local checkouts:
+## Composable deployment overlay
+
+The overlay can be validated independently:
 
 ```bash
-docker compose \
-  -f /path/to/council_mcp/deploy/docker-compose.yaml \
-  -f /path/to/scribe_mcp/deploy/docker-compose.scribe.yaml \
-  up -d
+docker compose -f deploy/docker-compose.scribe.yaml config
 ```
 
-This keeps the same frozen contract:
+For a deployment, combine it with your infrastructure Compose file. That file
+must provide a healthy `postgres` service and the configured object-store service;
+the overlay's PostgreSQL stub supports configuration validation only. Provision
+the declared secrets before starting services. Scribe is internal to the shared
+`backend` network and exposes no host ports in this overlay.
 
-- `council_mcp` consumes the installed-package `scribe-server` contract
+The deployment contract remains:
+
+- local integrations use the installed-package `scribe-server` CLI contract
 - local/core remains the default story
-- authenticated SSE server transport is optional
+- authenticated Streamable HTTP server transport is optional
 - casual public internet exposure is unsupported
 
-Use the matching `council_mcp` release docs from that checkout for paired deployment details.
+Use your infrastructure's deployment instructions for service readiness and secret provisioning.
 
 ## Client connection example
 
-Minimal authenticated SSE client configuration:
+Minimal authenticated Streamable HTTP client configuration:
 
 ```json
 {
   "mcpServers": {
     "scribe": {
-      "url": "http://127.0.0.1:8200/sse",
+      "url": "http://127.0.0.1:8200/mcp",
       "headers": {
         "Authorization": "Bearer ${SCRIBE_REMOTE_AUTH_TOKEN}"
       }

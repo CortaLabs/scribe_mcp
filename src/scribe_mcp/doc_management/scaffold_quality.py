@@ -493,6 +493,7 @@ def collect_managed_doc_quality_warnings(
 
 def _research_context_drift_warnings(*, text: str, project: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
+    current = None
     for entry in accepted_entries(parse_changelog_entries(text)):
         observed = entry.observed_context or {}
         source = str(observed.get("source") or "").strip()
@@ -501,9 +502,9 @@ def _research_context_drift_warnings(*, text: str, project: Optional[Mapping[str
             continue
         if source not in {"manual", "pyproject", "git_commit", "git_tag"}:
             continue
-        repo_root = Path(str((project or {}).get("root") or ".")).resolve()
-        pyproject_path = repo_root / "pyproject.toml"
-        current = resolve_observed_context(repo_root=repo_root, pyproject_path=pyproject_path)
+        if current is None:
+            repo_root = Path(str((project or {}).get("root") or ".")).resolve()
+            current = resolve_observed_context(repo_root=repo_root, pyproject_path=repo_root / "pyproject.toml")
         if current.source != source:
             continue
         if current.value == value:

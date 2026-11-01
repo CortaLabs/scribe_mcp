@@ -6,75 +6,79 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 
 from scribe_mcp import server as server_module
-from scribe_mcp.shared.logging_utils import LoggingContext
+from scribe_mcp.shared.execution_context import RouterContextManager
+from scribe_mcp.shared.tool_runtime import execute_tool_call
 from scribe_mcp.state import StateManager
-from scribe_mcp.tools.manage_docs import manage_docs
+from scribe_mcp.storage.sqlite import SQLiteStorage
+from scribe_mcp.tools.manage_docs import manage_docs as manage_docs_tool
+
+
+@pytest_asyncio.fixture
+async def _changelog_storage(sqlite_db_path: Path):
+    storage = SQLiteStorage(sqlite_db_path)
+    await storage.setup()
+    try:
+        yield storage
+    finally:
+        await storage.close()
 
 
 @contextmanager
-def _isolated_server(state_manager: StateManager, *, project_root: Path, session_id: str):
-    originals = {
-        "state_manager": server_module.state_manager,
-        "storage_backend": server_module.storage_backend,
-    }
-    from scribe_mcp.tools import manage_docs as manage_docs_module
-
-    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
-    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
-    orig_agent_id = getattr(server_module, "get_agent_identity", None)
-
-    server_module.state_manager = state_manager
-    server_module.storage_backend = getattr(state_manager, "_storage_backend", None)
-    server_module.get_execution_context = lambda: SimpleNamespace(
-        mode="project", session_id=session_id, stable_session_id=session_id
-    )
-    server_module.get_agent_identity = lambda: None
-
+def _isolated_server(
+    state_manager: StateManager, *, project_root: Path,
+    router: RouterContextManager, test_agent: str,
+):
+    """Run every operation through real request resolution against isolated storage."""
     from scribe_mcp.config.repo_config import RepoConfig
 
-    fake_config = RepoConfig(repo_slug="test", repo_root=project_root)
-    try:
+    storage = state_manager._storage_backend
 
-        async def _prepare_context_stub(**_kwargs):
-            state = await state_manager.load()
-            current_project = state.get_project(state.current_project) if state.current_project else None
-            return LoggingContext(
-                tool_name="manage_docs",
-                project=current_project,
-                recent_projects=list(getattr(state, "recent_projects", []) or []),
-                state_snapshot={},
-                reminders=[],
-                resolution_source="session_binding",
-            )
-
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-        with patch("scribe_mcp.config.repo_config.get_current_repo_config", return_value=(project_root, fake_config)):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
-        if orig_exec_ctx is not None:
-            server_module.get_execution_context = orig_exec_ctx
-        if orig_agent_id is not None:
-            server_module.get_agent_identity = orig_agent_id
-
-
-async def _seed_runtime_session(state_manager: StateManager, session_id: str, repo_root: str) -> None:
-    backend = getattr(state_manager, "_storage_backend", None)
-    if backend and hasattr(backend, "upsert_session"):
-        await backend.upsert_session(
-            session_id=session_id,
-            transport_session_id=session_id,
-            repo_root=repo_root,
-            mode="project",
+    async def manage_docs(**arguments):
+        return await execute_tool_call(
+            name="manage_docs", arguments={"agent": test_agent, **arguments}, kwargs={},
+            registry={"manage_docs": manage_docs_tool},
+            app=SimpleNamespace(request_context=None), storage_backend=storage,
+            settings=SimpleNamespace(project_root=project_root), state_manager=state_manager,
+            router_context_manager=router, sentinel_only=set(), sentinel_allowed=set(),
+            log_scope_violation_cb=lambda *_args, **_kwargs: None,
         )
+
+    config = RepoConfig(repo_slug="test", repo_root=project_root)
+    with (
+        patch.object(server_module, "state_manager", state_manager),
+        patch.object(server_module, "storage_backend", storage),
+        patch.object(server_module, "router_context_manager", router),
+        patch.object(server_module, "get_agent_identity", return_value=None),
+        patch("scribe_mcp.config.repo_config.get_current_repo_config", return_value=(project_root, config)),
+    ):
+        yield manage_docs
+
+
+async def _seed_runtime_session(
+    storage: SQLiteStorage, router: RouterContextManager, *,
+    project_name: str, repo_root: str, test_agent: str,
+) -> None:
+    session_id = "changelog-e2e-session"
+    await storage.upsert_session(
+        session_id=session_id,
+        transport_session_id=f"process:{router._process_instance_id}::actor={test_agent}",
+        repo_root=repo_root, mode="project",
+    )
+    await storage.upsert_agent_session(test_agent, session_id, {"source": "changelog-e2e"})
+    await storage.set_session_project(session_id, project_name)
+    binding = await storage.get_session_project(session_id)
+    assert binding is not None
+    assert binding.project_name == project_name
 
 
 @pytest.mark.asyncio
-async def test_changelog_end_to_end_scaffold_preview_apply_and_trust_paths(tmp_path: Path) -> None:
+@pytest.mark.regression
+async def test_changelog_end_to_end_scaffold_preview_apply_and_trust_paths(
+    tmp_path: Path, _changelog_storage: SQLiteStorage, test_agent: str,
+) -> None:
     project_root = tmp_path / "e2e_repo"
     docs_dir = project_root / ".scribe" / "docs" / "dev_plans" / "phase_4_2"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -101,13 +105,21 @@ async def test_changelog_end_to_end_scaffold_preview_apply_and_trust_paths(tmp_p
         },
     }
 
-    state_manager = StateManager(path=tmp_path / "state.json")
+    storage = _changelog_storage
+    state_manager = StateManager(path=tmp_path / "state.json", storage_backend=storage)
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "changelog-e2e-session", project["root"])
+    router = RouterContextManager(storage_backend=storage)
+    await _seed_runtime_session(
+        storage, router, project_name=project["name"], repo_root=project["root"],
+        test_agent=test_agent,
+    )
 
-    with _isolated_server(state_manager, project_root=project_root, session_id="changelog-e2e-session"):
+    with _isolated_server(
+        state_manager, project_root=project_root, router=router, test_agent=test_agent,
+    ) as manage_docs:
         create_result = await manage_docs(action="create", doc="CHANGELOG", content="# Project Changelog\n", dry_run=False)
         assert create_result["ok"] is True
+        assert create_result["project_name"] == project["name"]
 
         changelog_path = Path(create_result["path"])
         assert changelog_path.exists()

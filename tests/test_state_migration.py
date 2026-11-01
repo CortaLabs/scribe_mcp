@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from test_get_project_integration import verified_reader_context
+from scribe_mcp import server
+from scribe_mcp.shared.execution_context import RouterContextManager
 from scribe_mcp.state.manager import StateManager
 from scribe_mcp.state.migration import migrate_legacy_state_file
 from scribe_mcp.storage.sqlite import SQLiteStorage
@@ -102,23 +105,45 @@ async def test_migrate_legacy_state_file_is_idempotent_when_source_missing(tmp_p
     assert second.migrated is False
 
 
-async def test_state_manager_uses_injected_storage_backend(tmp_path: Path) -> None:
+@pytest.mark.regression
+async def test_state_manager_uses_injected_storage_backend(tmp_path: Path, monkeypatch, test_agent) -> None:
+    """A raw write persists through injection; only a verified read selects it."""
     injected_db = tmp_path / "injected.db"
     fallback_db = tmp_path / "state.db"
-
     backend = SQLiteStorage(injected_db)
-    await backend.setup()
-
     manager = StateManager(path=tmp_path / "state.json", storage_backend=backend)
-    state = await manager.set_current_project(
-        "proj_backend",
-        {
-            "name": "proj_backend",
-            "root": str(tmp_path),
-            "progress_log": str(tmp_path / "PROGRESS_LOG.md"),
-        },
-    )
-
-    assert state.current_project == "proj_backend"
-    assert await backend.fetch_project("proj_backend") is not None
-    assert not fallback_db.exists()
+    router = RouterContextManager(storage_backend=backend)
+    monkeypatch.setattr(server, "router_context_manager", router)
+    try:
+        await backend.setup()
+        state = await manager.set_current_project(
+            "proj_backend", {"name": "proj_backend", "root": str(tmp_path),
+                             "progress_log": str(tmp_path / "PROGRESS_LOG.md")},
+        )
+        assert state.current_project is None
+        record = await backend.fetch_project("proj_backend", repo_root=str(tmp_path))
+        assert record is not None
+        assert record.project_key
+        assert record.repo_root == str(tmp_path)
+        assert injected_db.exists()
+        assert not fallback_db.exists()
+        session_id = "injected-reader"
+        await backend.upsert_session(session_id=session_id, repo_root=str(tmp_path), agent_id=test_agent)
+        await backend.set_session_project(session_id, record.name)
+        binding = await backend.get_session_project(session_id)
+        context = await verified_reader_context(
+            backend, router, tmp_path, session_id, test_agent, record.name,
+        )
+        token = router.set_current(context)
+        try:
+            verified = await manager.load()
+            assert verified.current_project == record.name
+            assert verified.get_project(record.name)["project_key"] == record.project_key
+            assert verified.get_session_project(session_id)["root"] == str(tmp_path)
+        finally:
+            router.reset(token)
+        assert await backend.get_session_project(session_id) == binding
+        assert await backend.fetch_project(record.name, project_key=record.project_key) == record
+        assert not fallback_db.exists()
+    finally:
+        await backend.close()

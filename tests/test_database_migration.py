@@ -797,7 +797,7 @@ def test_migration_007_keeps_the_legacy_postgres_binding_writer_working(
             await storage.set_session_project("s-new", "normal")
             await storage.set_session_project("s-normal", "ghost")
             await storage.set_session_project("s-zero", "normal")
-            assert await storage.get_session_project("s-normal") == "ghost"
+            assert await storage.get_session_project("s-normal") is None
         finally:
             await storage.close()
 

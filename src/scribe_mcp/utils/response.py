@@ -144,6 +144,14 @@ class ResponseFormatter:
         """
         return self._token_estimator.estimate_tokens(data)
 
+    def measure_response_envelope(self, response_data: Any) -> int:
+        """Delegate exact response-byte measurement to TokenBudgetManager."""
+        # Keep this import local: config_manager owns the serializer and does
+        # not depend on response formatting or the dispatcher.
+        from .config_manager import TokenBudgetManager
+
+        return TokenBudgetManager().measure_response_envelope(response_data)
+
     def format_entry(self, entry: Dict[str, Any], compact: bool = False,
                     fields: Optional[List[str]] = None,
                     include_metadata: bool = True) -> Dict[str, Any]:

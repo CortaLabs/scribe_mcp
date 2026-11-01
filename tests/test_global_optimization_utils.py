@@ -6,6 +6,7 @@ Tests abbreviate_path, format_compact_json, format_header, and add_tip functions
 """
 
 import json
+import pytest
 
 from scribe_mcp.utils.path_utils import abbreviate_path
 from scribe_mcp.utils.response import format_compact_json, format_header, add_tip
@@ -28,21 +29,23 @@ class TestAbbreviatePath:
 
     def test_verbosity_1_with_scribe_directory(self):
         """Verbosity 1 should abbreviate from .scribe directory."""
-        path = "/tmp/projects/MCP_SPINE/scribe_mcp/.scribe/docs/project/PROGRESS_LOG.md"
+        path = "/tmp/projects/sample_repo/.scribe/docs/project/PROGRESS_LOG.md"
         result = abbreviate_path(path, verbosity=1)
         assert result == ".scribe/docs/project/PROGRESS_LOG.md"
 
-    def test_verbosity_1_with_scribe_mcp_directory(self):
-        """Verbosity 1 should abbreviate from scribe_mcp directory."""
-        path = "/tmp/projects/MCP_SPINE/scribe_mcp/tools/append_entry.py"
-        result = abbreviate_path(path, verbosity=1)
-        assert result == "tools/append_entry.py"
+    @pytest.mark.regression
+    def test_private_repository_names_do_not_abbreviate_unrelated_paths(self):
+        """Private repository names should not act as implicit context roots."""
+        for path in (
+            "/var/work/MCP_SPINE/other_mcp/file.py",
+            "/var/work/scribe_mcp/file.py",
+        ):
+            assert abbreviate_path(path, verbosity=1) == path
 
-    def test_verbosity_1_with_mcp_spine_directory(self):
-        """Verbosity 1 should abbreviate from MCP_SPINE directory."""
-        path = "/tmp/projects/MCP_SPINE/other_mcp/file.py"
-        result = abbreviate_path(path, verbosity=1)
-        assert result == "other_mcp/file.py"
+    def test_verbosity_1_uses_generic_projects_root(self):
+        """Verbosity 1 should retain its generic projects-directory fallback."""
+        path = "/var/work/projects/sample_project/src/main.py"
+        assert abbreviate_path(path, verbosity=1) == "sample_project/src/main.py"
 
     def test_verbosity_1_with_context_root(self):
         """Verbosity 1 with explicit context_root should make path relative to it."""

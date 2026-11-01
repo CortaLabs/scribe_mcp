@@ -109,7 +109,7 @@ def _json_text(value: Any) -> Optional[str]:
     if value is None:
         return None
     if isinstance(value, str):
-        return value
+        value = json.loads(value)
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
@@ -639,9 +639,74 @@ class PostgresStorage(StorageBackend):
         if not project:
             return False
 
-        await self._execute("DELETE FROM agent_projects WHERE project_name = $1;", project.name)
-        tag = await self._execute("DELETE FROM scribe_projects WHERE name = $1;", project.name)
-        return _command_count(tag) > 0
+        schema = self._schema_name  # Validated by PostgresPoolConfig.
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # A row lock cannot exclude a newly inserted same-name project.
+                # Serialize project writes, then recheck the lookup's canonical
+                # identity against a fresh READ COMMITTED statement snapshot.
+                await conn.execute(
+                    f'LOCK TABLE "{schema}".scribe_projects IN SHARE ROW EXCLUSIVE MODE;'
+                )
+                deleted = await conn.fetchrow(
+                    f"""
+                    DELETE FROM "{schema}".scribe_projects
+                    WHERE id = $1 AND project_key = $2 AND name = $3 AND repo_root = $4
+                      AND (SELECT COUNT(*) FROM "{schema}".scribe_projects WHERE name = $3) = 1
+                    RETURNING id, project_key, name, repo_root;
+                    """,
+                    project.id, project.project_key, project.name, project.repo_root,
+                )
+                if deleted is None:
+                    return False
+
+                inconsistent_binding = await conn.fetchval(
+                    f"""
+                    SELECT EXISTS(SELECT 1 FROM "{schema}".session_projects
+                                  WHERE project_name = $1 AND project_key IS NOT NULL
+                                    AND project_key <> $2);
+                    """,
+                    deleted["name"], deleted["project_key"],
+                )
+                if inconsistent_binding:
+                    raise ConflictError("Refusing project deletion with an inconsistent session binding")
+
+                sibling_exists = await conn.fetchval(
+                    f'SELECT EXISTS(SELECT 1 FROM "{schema}".scribe_projects WHERE name = $1);',
+                    deleted["name"],
+                )
+                # UPDATE invokes the existing classifier and advances each
+                # changed binding's generation exactly once. Never clear an
+                # unrelated non-NULL key merely because its label matches.
+                await conn.execute(
+                    f"""
+                    UPDATE "{schema}".session_projects
+                    SET project_name = CASE WHEN $3::boolean THEN project_name ELSE NULL END,
+                        updated_at = NOW()
+                    WHERE project_name = $1
+                      AND (project_key = $2 OR (NOT $3::boolean AND project_key IS NULL));
+                    """,
+                    deleted["name"], deleted["project_key"], sibling_exists,
+                )
+                await conn.execute(
+                    f"""
+                    UPDATE "{schema}".agent_projects AS a
+                    SET project_name = NULL, version = a.version + 1, updated_at = NOW()
+                    WHERE a.project_name = $1
+                      AND (NOT $3::boolean OR EXISTS (
+                          SELECT 1 FROM "{schema}".scribe_sessions AS s
+                          WHERE s.session_id = a.session_id AND s.repo_root = $2
+                      ));
+                    """,
+                    deleted["name"], deleted["repo_root"], sibling_exists,
+                )
+                if not sibling_exists:
+                    await conn.execute(
+                        f'DELETE FROM "{schema}".agent_recent_projects WHERE project_name = $1;',
+                        deleted["name"],
+                    )
+                return True
 
     async def update_project_docs(
         self,

@@ -23,12 +23,6 @@ from scribe_mcp.config.paths import repo_root
 
 REPO_ROOT = repo_root()
 
-# Keep Scribe paths predictable for probes (no writes to ~/.scribe unless requested).
-os.environ.setdefault("SCRIBE_ROOT", str(REPO_ROOT))
-os.environ.setdefault("SCRIBE_STATE_PATH", str(REPO_ROOT / "tmp_state_probe.json"))
-
-from scribe_mcp.shared.project_registry import ProjectRegistry
-
 
 # Optional rich formatting
 try:
@@ -50,6 +44,8 @@ HOOK_LABELS = {"hook_excluded", "hook_included", "hook_state_unknown"}
 
 def _registry_sanity_probe(limit: Optional[int] = None, project: Optional[str] = None) -> Dict[str, Any]:
     """Lightweight registry health check using ProjectRegistry (probe-only, not an MCP tool)."""
+    from scribe_mcp.shared.project_registry import ProjectRegistry
+
     registry = ProjectRegistry()
     projects = registry.list_projects(limit=limit or 200)
     if project:
@@ -920,6 +916,10 @@ def parse_args(argv: list[str]) -> ProbeArgs:
 
 async def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
+
+    # Probe defaults belong to explicit execution, not imports by other callers.
+    os.environ.setdefault("SCRIBE_ROOT", str(REPO_ROOT))
+    os.environ.setdefault("SCRIBE_STATE_PATH", str(REPO_ROOT / "tmp_state_probe.json"))
 
     restore_exception_handler = _install_probe_exception_handler()
     context_token = await _bind_probe_execution_context(args)

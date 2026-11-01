@@ -1187,7 +1187,9 @@ async def execute_tool_call(
 
     token = router_context_manager.set_current(exec_context)
 
-    if "project" not in call_arguments and "project_name" not in call_arguments:
+    # Receipt application uses the verified execution scope, not new project intent.
+    receipt_only = name == "manage_docs" and call_arguments.get("action") == "apply_preview"
+    if not receipt_only and "project" not in call_arguments and "project_name" not in call_arguments:
         cached_project = context_payload.get("project_name") if (
             (context_payload.get("scope_provenance") or {}).get("project_name") == "verified"
         ) else await router_context_manager.get_cached_project(exec_context.stable_session_id)

@@ -2,94 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
-from scribe_mcp import server as server_module
 from scribe_mcp.doc_management import special_indexes
-from scribe_mcp.shared.logging_utils import LoggingContext
 from scribe_mcp.state import StateManager
-from scribe_mcp.tools.manage_docs import manage_docs
-from scribe_mcp.tools.set_project import set_project
-
-
-@contextmanager
-def _isolated_server(
-    state_manager: StateManager,
-    *,
-    project_root: Path,
-    session_id: str = "cleanup-test-session",
-):
-    originals = {
-        "state_manager": server_module.state_manager,
-        "storage_backend": server_module.storage_backend,
-    }
-    orig_exec_ctx = getattr(server_module, "get_execution_context", None)
-    orig_agent_id = getattr(server_module, "get_agent_identity", None)
-    from scribe_mcp.tools import manage_docs as manage_docs_module
-
-    orig_prepare_context = manage_docs_module._MANAGE_DOCS_HELPER.prepare_context
-
-    server_module.state_manager = state_manager
-    server_module.storage_backend = getattr(state_manager, "_storage_backend", None)
-    server_module.get_execution_context = lambda: SimpleNamespace(
-        mode="project",
-        session_id=session_id,
-        stable_session_id=session_id,
-    )
-    server_module.get_agent_identity = lambda: None
-
-    from scribe_mcp.config.repo_config import RepoConfig
-
-    fake_config = RepoConfig(repo_slug="test", repo_root=project_root)
-
-    try:
-        async def _prepare_context_stub(**kwargs):
-            state = await state_manager.load()
-            explicit_project = kwargs.get("explicit_project")
-            current_name = str(explicit_project).strip() if explicit_project else state.current_project
-            if not current_name and getattr(state, "recent_projects", None):
-                current_name = state.recent_projects[0]
-            current_project = state.get_project(current_name) if current_name else None
-            state_snapshot = kwargs.get("state_snapshot")
-            return LoggingContext(
-                tool_name="manage_docs",
-                project=current_project,
-                recent_projects=list(getattr(state, "recent_projects", []) or []),
-                state_snapshot=state_snapshot if isinstance(state_snapshot, dict) else {},
-                reminders=[],
-                resolution_source="session_binding",
-            )
-
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = _prepare_context_stub
-        with patch(
-            "scribe_mcp.config.repo_config.get_current_repo_config",
-            return_value=(project_root, fake_config),
-        ):
-            yield
-    finally:
-        server_module.state_manager = originals["state_manager"]
-        server_module.storage_backend = originals["storage_backend"]
-        if orig_exec_ctx is not None:
-            server_module.get_execution_context = orig_exec_ctx
-        if orig_agent_id is not None:
-            server_module.get_agent_identity = orig_agent_id
-        manage_docs_module._MANAGE_DOCS_HELPER.prepare_context = orig_prepare_context
-
-
-async def _seed_runtime_session(state_manager: StateManager, session_id: str, repo_root: str) -> None:
-    backend = getattr(state_manager, "_storage_backend", None)
-    if backend and hasattr(backend, "upsert_session"):
-        await backend.upsert_session(
-            session_id=session_id,
-            transport_session_id=session_id,
-            repo_root=repo_root,
-            mode="project",
-        )
+from test_manage_docs_create_doc import _isolated_server, _call_manage_docs, _tool_payload
+from test_manage_docs_create_intent import _read_persisted_project
 
 
 def _project_payload(project_root: Path, slug: str, *, research_doc: str | None = None) -> dict:
@@ -126,7 +46,7 @@ def _project_payload(project_root: Path, slug: str, *, research_doc: str | None 
 
 
 @pytest.mark.asyncio
-async def test_project_health_surfaces_recent_cross_project_docs(tmp_path: Path) -> None:
+async def test_project_health_surfaces_recent_cross_project_docs(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo"
     active_project = _project_payload(project_root, "active_project")
     other_project = _project_payload(project_root, "other_project", research_doc="RESEARCH_DRIFTED")
@@ -134,10 +54,10 @@ async def test_project_health_surfaces_recent_cross_project_docs(tmp_path: Path)
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(other_project["name"], other_project)
     await state_manager.set_current_project(active_project["name"], active_project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", active_project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=active_project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="project_health",
             metadata={"limit": 10},
             dry_run=True,
@@ -162,7 +82,7 @@ async def test_project_health_surfaces_recent_cross_project_docs(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_project_health_archive_preview_classifies_legacy_docs_lane(tmp_path: Path) -> None:
+async def test_project_health_archive_preview_classifies_legacy_docs_lane(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_legacy"
     legacy_docs_dir = project_root / "docs" / "dev_plans" / "legacy_project"
     research_dir = legacy_docs_dir / "research"
@@ -182,10 +102,10 @@ async def test_project_health_archive_preview_classifies_legacy_docs_lane(tmp_pa
 
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(active_project["name"], active_project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", active_project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(action="project_health", metadata={"limit": 10}, dry_run=True)
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=active_project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,action="project_health", metadata={"limit": 10}, dry_run=True)
 
     status_sections = (result.get("organization_digest") or {}).get("status_sections") or {}
     assert (status_sections.get("dev_plan_roots") or {}).get("status") == "compatibility_present"
@@ -197,7 +117,7 @@ async def test_project_health_archive_preview_classifies_legacy_docs_lane(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_rehome_doc_moves_registered_research_doc_to_target_project(tmp_path: Path) -> None:
+async def test_rehome_doc_moves_registered_research_doc_to_target_project(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_rehome"
     source_project = _project_payload(project_root, "source_project", research_doc="RESEARCH_DRIFTED")
     target_project = _project_payload(project_root, "target_project")
@@ -206,10 +126,10 @@ async def test_rehome_doc_moves_registered_research_doc_to_target_project(tmp_pa
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(target_project["name"], target_project)
     await state_manager.set_current_project(source_project["name"], source_project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", source_project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=source_project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="rehome_doc",
             doc="RESEARCH_DRIFTED",
             metadata={"target_project": target_project["name"]},
@@ -242,13 +162,16 @@ async def test_rehome_doc_moves_registered_research_doc_to_target_project(tmp_pa
     assert isinstance(verification["readiness"]["readiness_blocker_count"], int)
     assert verification["index_freshness"]["index_freshness_reported_separately"] is True
 
-    cached_state = await state_manager.load()
-    cached_target_project = cached_state.get_project(target_project["name"])
+    assert target_record.name == target_project["name"]
+    assert str(Path(target_record.repo_root).resolve()) == project_root.resolve().as_posix()
+    assert target_record.project_key
+    cached_target_project = state_manager._record_to_project_dict(target_record)
     assert cached_target_project is not None
     assert cached_target_project["docs"]["RESEARCH_DRIFTED"] == str(target_path)
 
-    with _isolated_server(state_manager, project_root=project_root):
-        quality_result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=source_project["name"], agent=test_agent) as client:
+        quality_result = await _call_manage_docs(client, test_agent,
             action="quality_check",
             doc="RESEARCH_DRIFTED",
             project=target_project["name"],
@@ -261,7 +184,7 @@ async def test_rehome_doc_moves_registered_research_doc_to_target_project(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_rehome_doc_recovers_registered_repo_root_research_doc(tmp_path: Path) -> None:
+async def test_rehome_doc_recovers_registered_repo_root_research_doc(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_rehome_root_research"
     source_project = _project_payload(project_root, "source_project")
     target_project = _project_payload(project_root, "target_project")
@@ -274,10 +197,10 @@ async def test_rehome_doc_recovers_registered_repo_root_research_doc(tmp_path: P
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(target_project["name"], target_project)
     await state_manager.set_current_project(source_project["name"], source_project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", source_project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=source_project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="rehome_doc",
             doc="RESEARCH_DRIFTED",
             metadata={"target_project": target_project["name"]},
@@ -305,7 +228,7 @@ async def test_rehome_doc_recovers_registered_repo_root_research_doc(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_rehome_doc_registers_unowned_repo_root_research_doc_on_move(tmp_path: Path) -> None:
+async def test_rehome_doc_registers_unowned_repo_root_research_doc_on_move(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_rehome_unowned_root_research"
     active_project = _project_payload(project_root, "active_project")
     target_project = _project_payload(project_root, "target_project")
@@ -317,10 +240,10 @@ async def test_rehome_doc_registers_unowned_repo_root_research_doc_on_move(tmp_p
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(target_project["name"], target_project)
     await state_manager.set_current_project(active_project["name"], active_project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", active_project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=active_project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="rehome_doc",
             doc="research/RESEARCH_UNOWNED.md",
             metadata={"target_project": target_project["name"]},
@@ -346,7 +269,7 @@ async def test_rehome_doc_registers_unowned_repo_root_research_doc_on_move(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_path(tmp_path: Path) -> None:
+async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_path(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_rehome_same_project_research"
     project = _project_payload(project_root, "active_project")
     docs_dir = Path(project["docs_dir"])
@@ -356,10 +279,10 @@ async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_pa
 
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="rehome_doc",
             doc="RESEARCH_CHANGELOG_UX_AGENT_CONTRACT_MAAT",
             target_dir="research",
@@ -375,8 +298,9 @@ async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_pa
     assert not source_doc_path.exists()
     assert result["target_path"] != str(source_doc_path)
 
-    with _isolated_server(state_manager, project_root=project_root):
-        quality = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=project["name"], agent=test_agent) as client:
+        quality = await _call_manage_docs(client, test_agent,
             action="quality_check",
             doc="RESEARCH_CHANGELOG_UX_AGENT_CONTRACT_MAAT",
             project=project["name"],
@@ -391,17 +315,17 @@ async def test_rehome_doc_same_project_target_dir_research_moves_to_canonical_pa
 
 @pytest.mark.asyncio
 @pytest.mark.regression
-async def test_rehome_doc_same_project_nested_target_remains_canonical_after_rebind(tmp_path: Path) -> None:
+async def test_rehome_doc_same_project_nested_target_remains_canonical_after_rebind(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_rehome_same_project_review"
     project = _project_payload(project_root, "active_project")
     docs_dir = Path(project["docs_dir"])
 
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        created = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=project["name"], agent=test_agent) as client:
+        created = await _call_manage_docs(client, test_agent,
             action="create",
             doc="REVIEW_CI_RUNNER_01",
             metadata={
@@ -412,7 +336,7 @@ async def test_rehome_doc_same_project_nested_target_remains_canonical_after_reb
             dry_run=False,
         )
         source_path = Path(created["path"])
-        rehomed = await manage_docs(
+        rehomed = await _call_manage_docs(client, test_agent,
             action="rehome_doc",
             doc="REVIEW_CI_RUNNER_01",
             metadata={
@@ -423,13 +347,14 @@ async def test_rehome_doc_same_project_nested_target_remains_canonical_after_reb
             },
             dry_run=False,
         )
-        replaced = await manage_docs(
+        replaced = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc="REVIEW_CI_RUNNER_01",
             section="executive_summary",
             content="Nested review summary after rehome.",
             dry_run=False,
         )
+        rebound_project = await _read_persisted_project(state_manager, client, test_agent)
 
     target_path = docs_dir / "contracts" / "REVIEW_CI_RUNNER_01.md"
     assert created["ok"] is True, created
@@ -440,8 +365,6 @@ async def test_rehome_doc_same_project_nested_target_remains_canonical_after_reb
     assert target_path.exists()
     assert "Nested review summary after rehome." in target_path.read_text(encoding="utf-8")
 
-    cached_state = await state_manager.load()
-    rebound_project = cached_state.get_project(project["name"])
     assert rebound_project is not None
     assert rebound_project["docs"]["REVIEW_CI_RUNNER_01"] == str(target_path)
     assert str(source_path) not in rebound_project["docs"].values()
@@ -454,20 +377,21 @@ async def test_rehome_doc_same_project_nested_target_remains_canonical_after_reb
     assert persisted_docs["REVIEW_CI_RUNNER_01"] == str(target_path)
     assert str(source_path) not in persisted_docs.values()
 
-    with _isolated_server(state_manager, project_root=project_root):
-        rebound = await set_project(
-            agent="cleanup-test-agent",
-            name=project["name"],
-            root=str(project_root),
-            skip_validation=True,
-            format="structured",
-        )
-        rebound_quality = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=project["name"], agent=test_agent) as client:
+        rebound = _tool_payload(await client.call_tool("set_project", {
+            "agent": "cleanup-test-agent",
+            "name": project["name"],
+            "root": str(project_root),
+            "skip_validation": True,
+            "format": "structured",
+        }))
+        rebound_quality = await _call_manage_docs(client, test_agent,
             action="quality_check",
             doc="REVIEW_CI_RUNNER_01",
             dry_run=True,
         )
-        rebound_replaced = await manage_docs(
+        rebound_replaced = await _call_manage_docs(client, test_agent,
             action="replace_section",
             doc="REVIEW_CI_RUNNER_01",
             section="executive_summary",
@@ -493,7 +417,7 @@ async def test_rehome_doc_same_project_nested_target_remains_canonical_after_reb
 @pytest.mark.asyncio
 @pytest.mark.regression
 async def test_rehome_special_case_preserves_target_and_converges_alias_case_and_index(
-    tmp_path: Path,
+    tmp_path: Path, test_agent: str,
 ) -> None:
     project_root = tmp_path / "cleanup_repo_special_case"
     project = _project_payload(project_root, "active_project")
@@ -517,7 +441,6 @@ async def test_rehome_special_case_preserves_target_and_converges_alias_case_and
 
     state_manager = StateManager(path=tmp_path / "special-case-state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
     backend = getattr(state_manager, "_storage_backend", None)
     assert backend is not None
     await backend.upsert_case_registry_record(
@@ -537,8 +460,9 @@ async def test_rehome_special_case_preserves_target_and_converges_alias_case_and
     security_index = security_root / "INDEX.md"
     assert "2026-09-28_sec_1790614809" in security_index.read_text(encoding="utf-8")
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="rehome_doc",
             doc=target_key,
             metadata={
@@ -571,7 +495,7 @@ async def test_rehome_special_case_preserves_target_and_converges_alias_case_and
 
 
 @pytest.mark.asyncio
-async def test_rehome_doc_target_dir_never_creates_nested_scribe_tree(tmp_path: Path) -> None:
+async def test_rehome_doc_target_dir_never_creates_nested_scribe_tree(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_rehome_no_nested_scribe"
     project = _project_payload(project_root, "active_project")
     docs_dir = Path(project["docs_dir"])
@@ -581,10 +505,10 @@ async def test_rehome_doc_target_dir_never_creates_nested_scribe_tree(tmp_path: 
 
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(project["name"], project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="rehome_doc",
             doc="RESEARCH_NESTED_SCRIBE_GUARD",
             target_dir=".scribe/docs/dev_plans/active_project/research",
@@ -601,16 +525,16 @@ async def test_rehome_doc_target_dir_never_creates_nested_scribe_tree(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_manage_docs_supported_actions_manifest_surfaces_cleanup_actions(tmp_path: Path) -> None:
+async def test_manage_docs_supported_actions_manifest_surfaces_cleanup_actions(tmp_path: Path, test_agent: str) -> None:
     project_root = tmp_path / "cleanup_repo_manifest"
     active_project = _project_payload(project_root, "active_project")
 
     state_manager = StateManager(path=tmp_path / "state.json")
     await state_manager.set_current_project(active_project["name"], active_project)
-    await _seed_runtime_session(state_manager, "cleanup-test-session", active_project["root"])
 
-    with _isolated_server(state_manager, project_root=project_root):
-        result = await manage_docs(
+    async with _isolated_server(state_manager, project_root=project_root,
+                                project_name=active_project["name"], agent=test_agent) as client:
+        result = await _call_manage_docs(client, test_agent,
             action="list_sections",
             doc="architecture",
             dry_run=True,

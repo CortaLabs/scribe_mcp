@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 from typing import Protocol, Sequence
 
 
+def markdown_lines(body: str) -> list[str]:
+    """Split CR/LF Markdown lines, retaining endings and literal separators.
+
+    str.splitlines also splits U+2028/U+2029 and other payload characters that
+    CommonMark does not treat as line endings. Offsets must use the parser's
+    physical line boundaries, without normalizing the original source.
+    """
+    return re.findall(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$", body)
+
+
 @dataclass(frozen=True)
 class DocumentScope:
     kind: str
@@ -32,7 +42,7 @@ class HeuristicFenceScopeProvider:
 
     def collect_scopes(self, body: str) -> Sequence[DocumentScope]:
         scopes: list[DocumentScope] = []
-        lines = body.splitlines(keepends=True)
+        lines = markdown_lines(body)
         line_offsets: list[int] = []
         running_offset = 0
         for raw_line in lines:
@@ -42,8 +52,9 @@ class HeuristicFenceScopeProvider:
         active: tuple[str, int, int] | None = None
         start_line = 1
         for line_no, raw_line in enumerate(lines, start=1):
-            line = raw_line.rstrip("\n")
-            stripped = line.lstrip()
+            line = raw_line.rstrip("\r\n")
+            # Flat fences allow at most three leading ASCII spaces.
+            stripped = line.lstrip(" ")
             indent = len(line) - len(stripped)
             marker = ""
             fence_len = 0
@@ -56,11 +67,19 @@ class HeuristicFenceScopeProvider:
 
             if marker and fence_len >= 3:
                 if active is None:
-                    active = (marker, fence_len, offset)
-                    start_line = line_no
+                    # Backtick fence info strings cannot contain backticks.
+                    if marker != "`" or "`" not in stripped[fence_len:]:
+                        active = (marker, fence_len, offset)
+                        start_line = line_no
                 else:
                     active_marker, active_len, start_offset = active
-                    if marker == active_marker and fence_len >= active_len:
+                    # Fence padding is ASCII space/tab, not Unicode whitespace.
+                    # Raw lines retain the CR in a CRLF line ending.
+                    if (
+                        marker == active_marker
+                        and fence_len >= active_len
+                        and not stripped[fence_len:].strip(" \t\r")
+                    ):
                         end_offset = offset + len(raw_line)
                         scopes.append(
                             DocumentScope(
@@ -81,7 +100,7 @@ class HeuristicFenceScopeProvider:
                 DocumentScope(
                     kind="fenced_code",
                     start_line=start_line,
-                    end_line=max(start_line, body.count("\n") + 1),
+                    end_line=max(start_line, len(lines) + int(body.endswith(("\r", "\n")))),
                     start_offset=start_offset,
                     end_offset=len(body),
                     attributes={"fence_marker": marker, "fence_length": str(fence_len), "unclosed": "true"},
@@ -111,7 +130,7 @@ class HeuristicFenceScopeProvider:
         block_end_line = 0
         block_end_offset = 0
         for idx, raw_line in enumerate(lines, start=1):
-            line = raw_line.rstrip("\n")
+            line = raw_line.rstrip("\r\n")
             is_blank = line.strip() == ""
             is_indented = line.startswith("    ") and not is_blank
             if is_indented and not in_indented:
@@ -159,7 +178,7 @@ class MarkdownItScopeProvider(HeuristicFenceScopeProvider):
 
     def collect_scopes(self, body: str) -> Sequence[DocumentScope]:
         tokens = self._md.parse(body)
-        lines = body.splitlines(keepends=True)
+        lines = markdown_lines(body)
         line_offsets: list[int] = []
         running_offset = 0
         for raw_line in lines:
