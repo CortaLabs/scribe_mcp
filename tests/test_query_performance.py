@@ -1,178 +1,88 @@
-#!/usr/bin/env python3
-"""
-Performance tests for query_entries database backend integration.
-
-Tests verify that DB-backed query_entries performs faster than the old
-flat-file approach and handles pagination efficiently.
-
-Task Package: 2.3 - Performance Validation
-Project: query_enhancement_suite
-Author: CoderAgent-PerfTests
-"""
+"""Warm actual DB-query timing, excluding SDK startup, setup and seeding."""
 
 import time
 
 import pytest
-from scribe_mcp.tools.query_entries import query_entries
-from scribe_mcp.tools.append_entry import append_entry
-from scribe_mcp.tools.set_project import set_project
-from scribe_mcp.config.settings import settings
+
+# The two legacy query modules share one SDK isolation/DB observation fixture.
+from test_db_routing import (
+    _entries,
+    _missing_result_control,
+    anyio_backend,
+    query_project,
+)
 
 
-@pytest.mark.asyncio
-async def test_query_entries_performance():
-    """
-    Test that query_entries completes in under 500ms for typical single-project query.
-
-    This test verifies that DB-backed queries are reasonably fast. The 500ms threshold
-    is generous to account for test environment variability (CI, local, etc.).
-    """
-    # Create test project with entries
-    project_name = f"perf_basic_{int(time.time())}"
-    await set_project(agent="test_agent", name=project_name, root=str(settings.project_root))
-
-    # Add test entries
-    for i in range(20):
-        await append_entry(
-            agent="test_agent",
-            project=project_name,
-            message=f"Test entry {i}",
-            status="info"
-        )
-
-    # Warm up - first query might be slower due to connection setup
-    await query_entries(
-        agent="test_agent",
-        project=project_name,
-        message="warmup",
-        format="structured"
-    )
-
-    # Measure actual query performance
-    start_time = time.time()
-    result = await query_entries(
-        agent="test_agent",
-        project=project_name,
-        message="Test entry",
-        message_mode="substring",
-        format="structured"
-    )
-    elapsed_time = time.time() - start_time
-
-    # Verify query succeeded
-    assert result.get("ok") is not False, "Query should succeed"
-
-    # Verify we got results
-    if isinstance(result, dict) and "entries" in result:
-        assert len(result["entries"]) > 0, "Should find test entries"
-
-    # Verify performance (generous threshold for test environments)
-    assert elapsed_time < 0.5, f"Query took {elapsed_time:.3f}s, expected < 0.5s"
-
-    # Verify result came from database (if available)
-    # Don't fail if flat-file fallback was used (backend might not be available in test env)
-    source = result.get("source", "flat-file")
-    if source == "database":
-        print(f"\n✓ DB query completed in {elapsed_time:.3f}s")
+pytestmark = [pytest.mark.anyio, pytest.mark.regression, pytest.mark.storage]
 
 
-@pytest.mark.asyncio
-async def test_query_entries_pagination_performance():
-    """
-    Test that paginated queries are fast even when total results are large.
-
-    Pagination should limit the amount of data processed, making queries fast
-    regardless of total result count.
-    """
-    # Create test project with many entries
-    project_name = f"perf_pagination_{int(time.time())}"
-    await set_project(agent="test_agent", name=project_name, root=str(settings.project_root))
-
-    # Add many test entries
-    for i in range(100):
-        await append_entry(
-            agent="test_agent",
-            message=f"Pagination test entry {i}",
-            status="info"
-        )
-
-    # Warm up
-    await query_entries(
-        agent="test_agent",
-        page=1,
-        page_size=10,
-        format="structured"
-    )
-
-    # Measure paginated query performance
-    start_time = time.time()
-    result = await query_entries(
-        agent="test_agent",
-        page=1,
-        page_size=10,
-        format="structured"
-    )
-    elapsed_time = time.time() - start_time
-
-    # Verify query succeeded
-    assert result.get("ok") is not False, "Paginated query should succeed"
-
-    # Verify pagination metadata exists
-    if isinstance(result, dict):
-        pagination = result.get("pagination", {})
-        if pagination:
-            assert pagination.get("page") == 1, "Should be page 1"
-            assert pagination.get("page_size") == 10, "Should have page_size 10"
-
-    # Verify paginated query is fast (more generous threshold since it's reading less data)
-    assert elapsed_time < 0.3, f"Paginated query took {elapsed_time:.3f}s, expected < 0.3s"
-
-    # Report performance
-    source = result.get("source", "flat-file")
-    print(f"\n✓ Paginated query completed in {elapsed_time:.3f}s (source: {source})")
+async def _warm_query(call, threshold, **arguments):
+    await call("query_entries", **arguments)
+    start = time.perf_counter()
+    result = await call("query_entries", **arguments)
+    elapsed = time.perf_counter() - start
+    print(f"Warm query: {elapsed:.6f}s; limit {threshold:.1f}s")
+    assert elapsed < threshold, f"Query took {elapsed:.3f}s, expected < {threshold}s"
+    return result
 
 
-@pytest.mark.asyncio
-async def test_query_entries_with_filters_performance():
-    """
-    Test that filtered queries maintain good performance.
-
-    Filters (message, agent, status) should be handled efficiently by the database
-    rather than post-filtering large result sets.
-    """
-    # Create test project with mixed entries
-    project_name = f"perf_filters_{int(time.time())}"
-    await set_project(agent="test_agent", name=project_name, root=str(settings.project_root))
-
-    # Add test entries with different statuses
-    for i in range(50):
-        await append_entry(
-            agent="test_agent",
-            message=f"Filter test entry {i}",
-            status="info" if i % 2 == 0 else "success"
-        )
-
-    # Measure filtered query performance
-    start_time = time.time()
-    result = await query_entries(
-        agent="test_agent",
-        message="entry",
-        message_mode="substring",
-        status=["info"],
-        format="structured"
-    )
-    elapsed_time = time.time() - start_time
-
-    # Verify query succeeded
-    assert result.get("ok") is not False, "Filtered query should succeed"
-
-    # Verify performance
-    assert elapsed_time < 0.5, f"Filtered query took {elapsed_time:.3f}s, expected < 0.5s"
-
-    # Report
-    source = result.get("source", "flat-file")
-    print(f"\n✓ Filtered query completed in {elapsed_time:.3f}s (source: {source})")
+async def test_query_entries_performance(query_project):
+    """The original 20-entry query must return every row within 500ms."""
+    messages = [f"Test entry {i}" for i in range(20)]
+    for message in messages:
+        await query_project("append_entry", message=message, status="info")
+    query_project.database_only(messages)
+    result = await _warm_query(query_project, 0.5, message="Test entry",
+                               message_mode="substring", page_size=50)
+    _entries(result, messages)
+    subset = await query_project("query_entries", message="Test entry 1",
+                                  message_mode="substring", page_size=50)
+    _entries(subset, [message for message in messages if "Test entry 1" in message])
+    with pytest.raises(AssertionError):
+        _entries(subset, messages)
+    await _missing_result_control(query_project, messages)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])
+async def test_query_entries_pagination_performance(query_project):
+    """The original 100-entry corpus has exact, disjoint 10-row pages in 300ms."""
+    messages = [f"Pagination test entry {i}" for i in range(100)]
+    for i, message in enumerate(messages):
+        await query_project("append_entry", message=message, status="info",
+                            timestamp_utc=f"2026-01-03 14:{i // 60:02d}:{i % 60:02d} UTC")
+    query_project.database_only(messages)
+    newest = list(reversed(messages))
+    result = await _warm_query(query_project, 0.3, page=1, page_size=10, limit=100)
+    _entries(result, newest[:10], total=100, ordered=True)
+    for page, current in ((1, result), (2, await query_project(
+            "query_entries", page=2, page_size=10, limit=100)), (10, await query_project(
+            "query_entries", page=10, page_size=10, limit=100))):
+        _entries(current, newest[(page - 1) * 10:page * 10], total=100, ordered=True)
+        pagination = current["pagination"]
+        assert pagination["page"] == page and pagination["page_size"] == 10
+        assert pagination["total_count"] == 100
+        assert pagination["has_next"] is (page < 10)
+        assert pagination["has_prev"] is (page > 1)
+    second = await query_project("query_entries", page=2, page_size=10, limit=100)
+    with pytest.raises(AssertionError):
+        _entries(second, newest[:10], total=100, ordered=True)
+    await _missing_result_control(query_project, newest[:10])
+
+
+async def test_query_entries_with_filters_performance(query_project):
+    """Original 50 mixed statuses: exactly 25 info matches within 500ms."""
+    messages = [f"Filter test entry {i}" for i in range(50)]
+    for i, message in enumerate(messages):
+        await query_project("append_entry", message=message,
+                            status="info" if i % 2 == 0 else "success")
+    query_project.database_only(messages)
+    result = await _warm_query(query_project, 0.5, message="entry",
+                               message_mode="substring", status=["info"], page_size=50)
+    _entries(result, messages[::2])
+    unfiltered = await query_project("query_entries", message="entry", page_size=50)
+    _entries(unfiltered, messages)
+    excluded = await query_project("query_entries", message="entry",
+                                    status=["success"], page_size=50)
+    _entries(excluded, messages[1::2])
+    with pytest.raises(AssertionError):
+        _entries(excluded, messages[::2])
+    await _missing_result_control(query_project, messages[::2])
