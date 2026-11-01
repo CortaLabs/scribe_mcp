@@ -18,7 +18,7 @@
 #   docker compose -f deploy/docker-compose.scribe.yaml config
 #
 # Authenticated clients use the Docker backend network.
-# Clients connect to Scribe via http://scribe:8200/sse (Docker DNS).
+# Clients connect to Scribe via http://scribe:8200/mcp (Docker DNS).
 # No host ports are exposed -- Scribe is internal-only.
 #
 # =============================================================================
@@ -29,9 +29,9 @@ services:
   # Scribe MCP Server
   # ---------------------------------------------------------------------------
   # Documentation governance server providing project logging, managed docs,
-  # and audit trail capabilities over SSE transport.
+  # and audit trail capabilities over Streamable HTTP transport.
   #
-  # Authenticated clients connect via http://scribe:8200/sse on the backend network.
+  # Authenticated clients connect via http://scribe:8200/mcp on the backend network.
   # No host port mapping needed -- internal service only.
   # ---------------------------------------------------------------------------
   scribe:
@@ -45,12 +45,12 @@ services:
 
     # --- Networking ---
     # Shared backend network with clients and Postgres.
-    # Clients reach Scribe via Docker DNS: http://scribe:8200/sse
+    # Clients reach Scribe via Docker DNS: http://scribe:8200/mcp
     networks:
       - backend
 
     # No ports exposed to host -- internal Docker network only.
-    # Authenticated clients connect via http://scribe:8200/sse
+    # Authenticated clients connect via http://scribe:8200/mcp
 
     # --- Persistent storage ---
     # .scribe/ directory contains project logs, managed docs, and state.

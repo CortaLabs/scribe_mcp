@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-10-29**
-Applies to: **v3.3.70 development candidate; default projection, integration and fleet acceptance pending**
+Updated: **2026-11-01**
+Applies to: **v3.3.71 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.71 checkpoint corrects deployment client examples and Compose guidance to use the current `/mcp` Streamable HTTP endpoint. The retained `sse` launch selector remains an alias; transport behavior and authentication are unchanged.
 
 The 3.3.70 checkpoint honors query_entries priority sorting before pagination in database-backed queries, shares priority/newest-UTC ordering with file queries, and replaces conditional filter tests with strict real-SDK cases.
 

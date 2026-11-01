@@ -1,11 +1,11 @@
 # Deploying Scribe MCP
 
-This guide describes the supported public deployment posture for the v2.5 release docs.
+This guide describes the deployment target for the current 3.x development candidate.
 
 The supported story is intentionally narrow:
 
 - local/core is the default
-- authenticated SSE server deployment is optional
+- authenticated Streamable HTTP server deployment is optional
 - casual public internet exposure is unsupported
 
 ## Table of contents
@@ -22,12 +22,12 @@ The supported story is intentionally narrow:
 | Posture | Status | Notes |
 | --- | --- | --- |
 | Local/core stdio or loopback-local usage | **Default / supported** | Primary public posture. |
-| Managed private-mesh or Tailscale-style SSE deployment | **Supported optional posture** | Auth is required for server transport access. |
+| Managed private-mesh or Tailscale-style Streamable HTTP deployment | **Supported optional posture** | Auth is required for server transport access. |
 | Casual public internet exposure | **Unsupported** | Not a supported public recipe. |
 
 If you bind broadly inside a container, keep the host exposure narrow and the auth boundary explicit.
 
-### Canonical env/auth names (v2.5)
+### Canonical environment and authentication names
 
 Use these names in public docs and examples:
 
@@ -73,6 +73,10 @@ curl http://127.0.0.1:8200/health
 
 `SCRIBE_TRANSPORT_AUTH_TOKEN` is the server-side auth setting here. The initial public release excludes remote/client mode (`SCRIBE_RELEASE_PROFILE=public` in release artifacts), so release docs do not publish a remote client bootstrap path.
 
+The retained `sse` launch selector starts the current Streamable HTTP server at
+`/mcp`. It does not enable the retired SSE endpoint. Use a client that supports
+the current MCP protocol; see the [compatibility matrix](../docs/COMPATIBILITY_MATRIX.md).
+
 ## Composable deployment overlay
 
 The overlay can be validated independently:
@@ -91,20 +95,20 @@ The deployment contract remains:
 
 - local integrations use the installed-package `scribe-server` CLI contract
 - local/core remains the default story
-- authenticated SSE server transport is optional
+- authenticated Streamable HTTP server transport is optional
 - casual public internet exposure is unsupported
 
 Use your infrastructure's deployment instructions for service readiness and secret provisioning.
 
 ## Client connection example
 
-Minimal authenticated SSE client configuration:
+Minimal authenticated Streamable HTTP client configuration:
 
 ```json
 {
   "mcpServers": {
     "scribe": {
-      "url": "http://127.0.0.1:8200/sse",
+      "url": "http://127.0.0.1:8200/mcp",
       "headers": {
         "Authorization": "Bearer ${SCRIBE_REMOTE_AUTH_TOKEN}"
       }
