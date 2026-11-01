@@ -14,7 +14,7 @@ from mcp.client.client import Client
 from mcp.client.stdio import stdio_client
 
 
-pytestmark = [pytest.mark.anyio, pytest.mark.regression]
+pytestmark = [pytest.mark.anyio, pytest.mark.regression, pytest.mark.storage]
 
 
 @pytest.fixture
