@@ -389,9 +389,19 @@ def test_sqlite_reliability_rebuild_rolls_back_before_pooled_release(
                     for statement in failing_statements:
                         conn.execute(statement)
 
-                internals._run_with_connection(rebuild_on_connection)
+                # Manufacture the historical split-callback leak explicitly;
+                # production _run_with_connection now rolls back on failure.
+                conn = pool.acquire()
+                try:
+                    rebuild_on_connection(conn)
+                finally:
+                    pool.release(conn)
             except sqlite3.OperationalError:
-                internals._run_with_connection(lambda conn: conn.rollback())
+                conn = pool.acquire()
+                try:
+                    conn.rollback()
+                finally:
+                    pool.release(conn)
                 raise
 
         with pytest.raises(sqlite3.OperationalError, match="scribe_forced_rebuild_failure"):

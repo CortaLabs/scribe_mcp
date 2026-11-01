@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-29**
-Applies to: **v3.3.68 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.69 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.69 checkpoint rolls back failed pooled SQLite operations before connection reuse and discards handles when rollback fails. Real SQLite regressions cover cross-process writer access, failed-batch atomicity, BaseException cleanup and rollback denial.
 
 The 3.3.68 checkpoint serializes SQLite pool connection setup while preserving queued acquisition timeouts and closing handles after setup failures.
 
