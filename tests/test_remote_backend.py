@@ -783,6 +783,84 @@ def test_remote_backend_rejects_explicit_public_release_flag(monkeypatch) -> Non
 class TestProjectRecordDeserialization:
     """Verify _to_project_record handles various input shapes."""
 
+    @pytest.mark.regression
+    @pytest.mark.parametrize(
+        "identity",
+        [
+            {"repo_id": "repo:server-issued", "project_key": "project:server-issued"},
+            {"repo_id": "repo:server-issued"},
+            {"project_key": "project:server-issued"},
+            {"repo_id": "", "project_key": ""},
+            {"repo_id": None, "project_key": None},
+            {},
+        ],
+        ids=["both", "repo-only", "key-only", "empty", "null", "legacy"],
+    )
+    def test_project_identity_mapping(
+        self, backend: RemoteStorageBackend, identity: dict[str, Any]
+    ) -> None:
+        """Keep supplied identity exactly, without deriving missing values."""
+        data = _make_project_dict(**identity)
+        original = dict(data)
+
+        result = backend._to_project_record(data)
+
+        assert isinstance(result, ProjectRecord)
+        assert result.repo_id == identity.get("repo_id")
+        assert result.project_key == identity.get("project_key")
+        assert asdict(result) == asdict(ProjectRecord(**data))
+        assert data == original
+
+    @pytest.mark.regression
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "operation", ["upsert_project", "fetch_project", "list_projects", "list_projects_by_repo"]
+    )
+    @pytest.mark.parametrize("with_identity", [True, False], ids=["identity", "legacy"])
+    async def test_proxy_project_identity_roundtrip(
+        self, auth_live_backend: RemoteStorageBackend, operation: str, with_identity: bool
+    ) -> None:
+        """Exercise real proxy decoding and caching with a controlled HTTP response."""
+        identity = (
+            {"repo_id": "repo:server-issued", "project_key": "project:server-issued"}
+            if with_identity else {}
+        )
+        data = _make_project_dict(**identity)
+        listed = operation in {"list_projects", "list_projects_by_repo"}
+        response = _make_response({"result": [data] if listed else data})
+        auth_live_backend._client.post = AsyncMock(return_value=response)
+        arguments = {
+            "upsert_project": {
+                "name": data["name"],
+                "repo_root": data["repo_root"],
+                "progress_log_path": data["progress_log_path"],
+            },
+            "fetch_project": {"name": data["name"], "repo_root": data["repo_root"]},
+            "list_projects": {},
+            "list_projects_by_repo": {"repo_root": data["repo_root"]},
+        }
+
+        result = await getattr(auth_live_backend, operation)(**arguments[operation])
+
+        if listed:
+            assert len(result) == 1
+            record = result[0]
+            assert auth_live_backend._get_cached_project(data["name"]) is None
+        else:
+            record = result
+            assert auth_live_backend._get_cached_project(data["name"]) is record
+        assert isinstance(record, ProjectRecord)
+        assert record.repo_id == identity.get("repo_id")
+        assert record.project_key == identity.get("project_key")
+        assert asdict(record) == asdict(ProjectRecord(**data))
+        assert response.json()["result"] == ([data] if listed else data)
+        auth_live_backend._client.post.assert_awaited_once()
+        request = auth_live_backend._client.post.call_args
+        assert request.args == (f"/api/v1/backend/{operation}",)
+        assert request.kwargs["headers"] == {
+            "Authorization": "Bearer client-token", "x-scribe-auth": "client-token"
+        }
+
     def test_dict_to_project_record(self, backend: RemoteStorageBackend) -> None:
         """Standard dict from server converts to ProjectRecord with correct types."""
         data = _make_project_dict(id=99, name="my_proj")
@@ -816,7 +894,10 @@ class TestProjectRecordDeserialization:
 
     def test_passthrough_project_record(self, backend: RemoteStorageBackend) -> None:
         """If input is already a ProjectRecord, return as-is."""
-        pr = ProjectRecord(id=1, name="p", repo_root="/r", progress_log_path="l.md")
+        pr = ProjectRecord(
+            id=1, name="p", repo_root="/r", progress_log_path="l.md",
+            repo_id="repo:server-issued", project_key="project:server-issued",
+        )
         assert backend._to_project_record(pr) is pr
 
 

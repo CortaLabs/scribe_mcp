@@ -433,6 +433,8 @@ class RemoteStorageBackend(StorageBackend):
                 name=data.get("name", ""),
                 repo_root=data.get("repo_root", ""),
                 progress_log_path=data.get("progress_log_path", ""),
+                repo_id=data.get("repo_id"),
+                project_key=data.get("project_key"),
                 docs_json=data.get("docs_json"),
                 created_at=data.get("created_at"),
                 updated_at=data.get("updated_at"),

@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-01**
-Applies to: **v3.3.72 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.73 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.73 checkpoint preserves server-issued project and repository identity when decoding remote project records. Upsert, fetch and list operations retain those fields; older responses that omit them keep the existing empty defaults. Transport authentication and public-profile restrictions are unchanged.
 
 The 3.3.72 checkpoint keeps exact token requests retryable after connection or data errors during encoder initialization, preserving the existing ImportError fallback. Its native-encoder recovery tests use a hash-verified, MIT-licensed fixture carried in the source distribution. The fixture is excluded from the runtime wheel; portable offline counting and startup acceptance remain open.
 
