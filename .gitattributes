@@ -1,0 +1,2 @@
+# Preserve authentic tokenizer test data bytes and keep corpus diffs opaque.
+tests/fixtures/tokenizer/*.tiktoken binary
