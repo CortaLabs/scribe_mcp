@@ -1,266 +1,245 @@
 #!/usr/bin/env python3
-"""Tests for priority/category/confidence filters in read_recent and query_entries."""
+"""Exercise entry filters through a real, isolated MCP client session."""
 
+import json
+import os
+import sys
+from collections import Counter
+from pathlib import Path
+
+import anyio
 import pytest
-import pytest_asyncio
-from scribe_mcp.tools.read_recent import read_recent
-from scribe_mcp.tools.query_entries import query_entries
-from scribe_mcp.tools.append_entry import append_entry
-from scribe_mcp.tools.set_project import set_project
-from scribe_mcp.config.settings import settings
+from mcp import StdioServerParameters
+from mcp.client.client import Client
+from mcp.client.stdio import stdio_client
 
 
-@pytest_asyncio.fixture(loop_scope="module")
-async def test_project():
-    """Create a test project for filtering tests."""
-    project_name = f"test_priority_filters"
-    await set_project(agent="test_agent", name=project_name, root=str(settings.project_root))
-    return project_name
+pytestmark = [pytest.mark.anyio, pytest.mark.regression]
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+async def test_project(tmp_path, test_agent):
+    """Let the public SDK establish identity; never inject a project binding."""
+    source = Path(__file__).resolve().parents[1]
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    # A child server keeps production config, shared globals and other tests out.
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("SCRIBE_")
+        and key not in {"DATABASE_URL", "REPO_ROOT"}
+    }
+    env.update({
+        "SCRIBE_DISABLE_DOTENV": "1", "SCRIBE_LOAD_REPO_DOTENV": "0",
+        "SCRIBE_MODE": "standalone", "SCRIBE_STORAGE_BACKEND": "sqlite",
+        "SCRIBE_OBJECT_STORE_PROVIDER": "filesystem",
+        "SCRIBE_ROOT": str(runtime), "SCRIBE_REPO_ROOT": str(repo),
+        "SCRIBE_DB_PATH": str(runtime / "scribe.sqlite3"),
+        "SCRIBE_STATE_PATH": str(runtime / "state.json"),
+        "PYTHONPATH": str(source / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+    })
+    params = StdioServerParameters(command=sys.executable, args=["-m", "scribe_mcp"], env=env)
+    with anyio.fail_after(60):
+        async with Client(stdio_client(params), mode="auto") as client:
+            async def call(tool, **arguments):
+                result = await client.call_tool(
+                    tool, {"agent": test_agent, "format": "structured", **arguments},
+                )
+                text = "\n".join(getattr(block, "text", "") for block in result.content)
+                assert not result.is_error, (tool, text)
+                payload = json.loads(text)
+                assert isinstance(payload, dict) and payload.get("ok") is True, (tool, payload)
+                return payload
+
+            bound = await call("set_project", name="test_priority_filters", root=str(repo))
+            assert bound["project"]["session_id"], bound
+            assert (runtime / "scribe.sqlite3").is_file()
+            # No second bind or global fallback may conceal first-bind failure.
+            initial = await call("read_recent", n=50)
+            assert initial["entries"] == [], initial
+            yield call
+
+
+def _entries(result, expected, *, ordered=False):
+    """Require successful, nonempty exact results, including duplicate detection."""
+    assert result.get("ok") is True, result
+    entries = result.get("entries")
+    assert isinstance(entries, list) and entries, result
+    messages = [entry["message"] for entry in entries]
+    assert Counter(messages) == Counter(expected), messages
+    if ordered:
+        assert messages == expected, messages
+    return entries
+
+
+def _field(entry, name):
+    # Both public readers expose filter metadata under meta, or at top level.
+    return entry[name] if name in entry else entry["meta"][name]
+
+
+async def _seed(call, rows):
+    for message, metadata in rows:
+        await call("append_entry", message=message, **metadata)
+
+
 async def test_read_recent_priority_filter(test_project):
-    """Test filtering by priority in read_recent."""
-    # Create test entries with different priorities
-    await append_entry(
-        agent="test_agent",
-        message="Critical bug discovered",
-        priority="critical",
-    )
-    await append_entry(
-        agent="test_agent",
-        message="High priority task",
-        priority="high",
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Medium priority work",
-        priority="medium",
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Low priority note",
-        priority="low",
-    )
-
-    # Query only critical and high priority entries
-    result = await read_recent(
-        agent="test_agent",
-        priority=["critical", "high"],
-        format="structured",
-    )
-
-    if isinstance(result, dict) and "entries" in result:
-        # Should only get critical and high priority entries
-        for entry in result["entries"]:
-            priority = entry.get("priority", entry.get("meta", {}).get("priority", "medium"))
-            assert priority in ["critical", "high"], f"Expected critical/high, got {priority}"
+    """Critical/high matches must exclude successfully written medium/low rows."""
+    rows = [
+        ("Critical bug discovered", {"priority": "critical"}),
+        ("High priority task", {"priority": "high"}),
+        ("Medium priority work", {"priority": "medium"}),
+        ("Low priority note", {"priority": "low"}),
+    ]
+    await _seed(test_project, rows)
+    _entries(await test_project("read_recent"), [message for message, _ in rows])
+    result = await test_project("read_recent", priority=["critical", "high"])
+    entries = _entries(result, ["Critical bug discovered", "High priority task"])
+    assert {_field(entry, "priority") for entry in entries} == {"critical", "high"}
 
 
-@pytest.mark.asyncio(loop_scope="module")
 async def test_read_recent_category_filter(test_project):
-    """Test filtering by category in read_recent."""
-    # Create test entries with different categories
-    await append_entry(
-        agent="test_agent",
-        message="Bug found in authentication",
-        category="bug",
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Security vulnerability detected",
-        category="security",
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Implementation completed",
-        category="implementation",
-    )
-
-    # Query only bug and security entries
-    result = await read_recent(
-        agent="test_agent",
-        category=["bug", "security"],
-        format="structured",
-    )
-
-    assert result.get("ok") is not False
+    """Bug/security matches must exclude the implementation row."""
+    rows = [
+        ("Bug found in authentication", {"category": "bug"}),
+        ("Security vulnerability detected", {"category": "security"}),
+        ("Implementation completed", {"category": "implementation"}),
+    ]
+    await _seed(test_project, rows)
+    _entries(await test_project("read_recent"), [message for message, _ in rows])
+    result = await test_project("read_recent", category=["bug", "security"])
+    entries = _entries(result, ["Bug found in authentication", "Security vulnerability detected"])
+    assert {_field(entry, "category") for entry in entries} == {"bug", "security"}
 
 
-@pytest.mark.asyncio(loop_scope="module")
 async def test_read_recent_confidence_filter(test_project):
-    """Test filtering by minimum confidence in read_recent."""
-    # Create test entries with different confidence levels
-    await append_entry(
-        agent="test_agent",
-        message="Low confidence entry",
-        confidence=0.3,
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Medium confidence entry",
-        confidence=0.7,
-    )
-    await append_entry(
-        agent="test_agent",
-        message="High confidence entry",
-        confidence=0.95,
-    )
-
-    # Query only high confidence entries
-    result = await read_recent(
-        agent="test_agent",
-        min_confidence=0.8,
-        format="structured",
-    )
-
-    if isinstance(result, dict) and "entries" in result:
-        for entry in result["entries"]:
-            conf = entry.get("confidence", entry.get("meta", {}).get("confidence", 1.0))
-            assert float(conf) >= 0.8, f"Expected confidence >= 0.8, got {conf}"
+    """The threshold is inclusive and excludes even a just-below-threshold row."""
+    rows = [
+        ("Low confidence entry", {"confidence": 0.3}),
+        ("Medium confidence entry", {"confidence": 0.7}),
+        ("High confidence entry", {"confidence": 0.95}),
+        ("Threshold confidence entry", {"confidence": 0.8}),
+        ("Below threshold entry", {"confidence": 0.79}),
+    ]
+    await _seed(test_project, rows)
+    _entries(await test_project("read_recent"), [message for message, _ in rows])
+    result = await test_project("read_recent", min_confidence=0.8)
+    entries = _entries(result, ["High confidence entry", "Threshold confidence entry"])
+    assert {float(_field(entry, "confidence")) for entry in entries} == {0.8, 0.95}
+    assert all(float(_field(entry, "confidence")) >= 0.8 for entry in entries)
 
 
-@pytest.mark.asyncio(loop_scope="module")
 async def test_read_recent_priority_sort(test_project):
-    """Test priority-based sorting in read_recent."""
-    # Create entries in random priority order
-    await append_entry(agent="test_agent", message="Low priority", priority="low")
-    await append_entry(agent="test_agent", message="Critical issue", priority="critical")
-    await append_entry(agent="test_agent", message="High priority", priority="high")
-    await append_entry(agent="test_agent", message="Medium task", priority="medium")
-
-    # Query with priority sorting
-    result = await read_recent(
-        agent="test_agent",
-        n=10,
-        priority_sort=True,
-        format="structured",
-    )
-
-    if isinstance(result, dict) and "entries" in result:
-        entries = result["entries"]
-        if len(entries) >= 4:
-            # Extract priorities
-            priorities = [
-                e.get("priority", e.get("meta", {}).get("priority", "medium"))
-                for e in entries
-            ]
-            # Critical should come before low
-            if "critical" in priorities and "low" in priorities:
-                assert priorities.index("critical") < priorities.index("low"), \
-                    f"Critical should come before low in {priorities}"
+    """Assert the whole priority order, with time order as a negative control."""
+    rows = [
+        ("Low priority", {"priority": "low"}),
+        ("Critical issue", {"priority": "critical"}),
+        ("High priority", {"priority": "high"}),
+        ("Medium task", {"priority": "medium"}),
+    ]
+    await _seed(test_project, rows)
+    _entries(await test_project("read_recent", priority_sort=False),
+             [message for message, _ in reversed(rows)], ordered=True)
+    result = await test_project("read_recent", n=10, priority_sort=True)
+    entries = _entries(result, ["Critical issue", "High priority", "Medium task", "Low priority"],
+                       ordered=True)
+    priorities = [_field(entry, "priority") for entry in entries]
+    assert priorities == ["critical", "high", "medium", "low"]
+    assert priorities.index("critical") < priorities.index("low")
 
 
-@pytest.mark.asyncio(loop_scope="module")
 async def test_query_entries_priority_filter(test_project):
-    """Test priority filter in query_entries."""
-    # Create test entries
-    await append_entry(
-        agent="test_agent",
-        message="Critical database issue",
-        priority="critical",
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Low priority cleanup",
-        priority="low",
-    )
-
-    # Query only critical entries
-    result = await query_entries(
-        agent="test_agent",
-        priority=["critical"],
-        format="structured",
-    )
-
-    assert result.get("ok") is not False
+    """Query must return the critical row and exclude the low priority row."""
+    rows = [
+        ("Critical database issue", {"priority": "critical"}),
+        ("Low priority cleanup", {"priority": "low"}),
+    ]
+    await _seed(test_project, rows)
+    _entries(await test_project("query_entries"), [message for message, _ in rows])
+    result = await test_project("query_entries", priority=["critical"])
+    entries = _entries(result, ["Critical database issue"])
+    assert [_field(entry, "priority") for entry in entries] == ["critical"]
 
 
-@pytest.mark.asyncio(loop_scope="module")
 async def test_query_entries_category_filter(test_project):
-    """Test category filter in query_entries."""
-    # Create test entries
-    await append_entry(
-        agent="test_agent",
-        message="Test results passing",
-        category="test",
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Bug fix committed",
-        category="bug",
-    )
-
-    # Query bug category
-    result = await query_entries(
-        agent="test_agent",
-        category=["bug"],
-        format="structured",
-    )
-
-    assert result.get("ok") is not False
+    """Query must return the bug row and exclude the test category row."""
+    rows = [
+        ("Test results passing", {"category": "test"}),
+        ("Bug fix committed", {"category": "bug"}),
+    ]
+    await _seed(test_project, rows)
+    _entries(await test_project("query_entries"), [message for message, _ in rows])
+    result = await test_project("query_entries", category=["bug"])
+    entries = _entries(result, ["Bug fix committed"])
+    assert [_field(entry, "category") for entry in entries] == ["bug"]
 
 
-@pytest.mark.asyncio(loop_scope="module")
 async def test_combined_filters(test_project):
-    """Test combining multiple filters."""
-    # Create test entries
-    await append_entry(
-        agent="test_agent",
-        message="Critical security bug",
-        priority="critical",
-        category="security",
-        confidence=0.95,
-    )
-    await append_entry(
-        agent="test_agent",
-        message="Low priority note",
-        priority="low",
-        category="documentation",
-        confidence=0.5,
-    )
-
-    # Query with all filters
-    result = await read_recent(
-        agent="test_agent",
-        priority=["critical"],
-        category=["security"],
-        min_confidence=0.9,
-        priority_sort=True,
-        format="structured",
-    )
-
-    assert result.get("ok") is not False
+    """Each predicate independently excludes an otherwise matching row."""
+    rows = [
+        ("Critical security bug", {"priority": "critical", "category": "security", "confidence": 0.95}),
+        ("Low priority note", {"priority": "low", "category": "documentation", "confidence": 0.5}),
+        ("Wrong priority", {"priority": "low", "category": "security", "confidence": 0.95}),
+        ("Wrong category", {"priority": "critical", "category": "documentation", "confidence": 0.95}),
+        ("Wrong confidence", {"priority": "critical", "category": "security", "confidence": 0.89}),
+    ]
+    await _seed(test_project, rows)
+    _entries(await test_project("read_recent"), [message for message, _ in rows])
+    result = await test_project("read_recent", priority=["critical"], category=["security"],
+                                min_confidence=0.9, priority_sort=True)
+    entries = _entries(result, ["Critical security bug"])
+    assert [_field(entry, "priority") for entry in entries] == ["critical"]
+    assert [_field(entry, "category") for entry in entries] == ["security"]
+    assert all(float(_field(entry, "confidence")) >= 0.9 for entry in entries)
+    # Removing any one predicate must expose its specific exclusion control.
+    for filters, expected in [
+        ({"category": ["security"], "min_confidence": 0.9}, "Wrong priority"),
+        ({"priority": ["critical"], "min_confidence": 0.9}, "Wrong category"),
+        ({"priority": ["critical"], "category": ["security"]}, "Wrong confidence"),
+    ]:
+        _entries(await test_project("read_recent", **filters), ["Critical security bug", expected])
 
 
-@pytest.mark.asyncio(loop_scope="module")
 async def test_query_entries_priority_sort(test_project):
-    """Test priority sorting in query_entries."""
-    # Create entries with different priorities
-    await append_entry(agent="test_agent", message="Medium work", priority="medium")
-    await append_entry(agent="test_agent", message="Critical alert", priority="critical")
-    await append_entry(agent="test_agent", message="High priority", priority="high")
-
-    # Query with priority sorting
-    result = await query_entries(
-        agent="test_agent",
-        priority_sort=True,
-        format="structured",
-    )
-
-    if isinstance(result, dict) and "entries" in result:
-        entries = result["entries"]
-        if len(entries) >= 3:
-            # Extract priorities
-            priorities = [
-                e.get("meta", {}).get("priority", "medium")
-                for e in entries
-            ]
-            # Critical should come before medium
-            if "critical" in priorities and "medium" in priorities:
-                assert priorities.index("critical") < priorities.index("medium"), \
-                    f"Critical should come before medium in {priorities}"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    """Sort before pagination, preserving recency and combined-filter totals."""
+    rows = [
+        ("Medium work", {"priority": "medium", "category": "security", "confidence": 0.7}),
+        ("Critical alert", {"priority": "critical", "category": "security", "confidence": 0.95}),
+        ("High priority", {"priority": "high", "category": "documentation", "confidence": 0.95}),
+        ("Critical follow-up", {"priority": "critical", "category": "security", "confidence": 0.95}),
+    ]
+    for index, (message, metadata) in enumerate(rows):
+        await test_project("append_entry", message=message,
+                           timestamp_utc=f"2026-01-03 14:0{index}:00 UTC", **metadata)
+    chronological = [message for message, _ in reversed(rows)]
+    ranked = ["Critical follow-up", "Critical alert", "High priority", "Medium work"]
+    _entries(await test_project("query_entries", priority_sort=False),
+             chronological, ordered=True)
+    result = await test_project("query_entries", priority_sort=True)
+    entries = _entries(result, ranked, ordered=True)
+    priorities = [_field(entry, "priority") for entry in entries]
+    assert priorities == ["critical", "critical", "high", "medium"]
+    assert priorities.index("critical") < priorities.index("medium")
+    for enabled, expected in ((False, chronological), (True, ranked)):
+        # The total cap cuts a partial last page AFTER global sorting.
+        for page in (1, 2):
+            result = await test_project("query_entries", priority_sort=enabled,
+                                        page=page, page_size=2, limit=3)
+            _entries(result, expected[(page - 1) * 2:min(page * 2, 3)], ordered=True)
+            assert result["pagination"]["total_count"] == result["total_found"] == 3
+            assert result["returned"] == len(result["entries"])
+            assert result["pagination"]["has_next"] is (page == 1)
+            assert result["pagination"]["has_prev"] is (page == 2)
+    for page, message in ((1, "Critical follow-up"), (2, "Critical alert")):
+        result = await test_project("query_entries", priority_sort=True,
+                                    category=["security"], min_confidence=0.9,
+                                    page=page, page_size=1)
+        _entries(result, [message], ordered=True)
+        assert result["pagination"]["total_count"] == result["total_found"] == 2
+        assert result["returned"] == 1

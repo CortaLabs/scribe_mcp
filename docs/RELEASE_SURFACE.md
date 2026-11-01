@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-10-29**
-Applies to: **v3.3.69 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.70 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.70 checkpoint honors query_entries priority sorting before pagination in database-backed queries, shares priority/newest-UTC ordering with file queries, and replaces conditional filter tests with strict real-SDK cases.
 
 The 3.3.69 checkpoint rolls back failed pooled SQLite operations before connection reuse and discards handles when rollback fails. Real SQLite regressions cover cross-process writer access, failed-batch atomicity, BaseException cleanup and rollback denial.
 
