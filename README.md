@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.81` · Updated: `2026-11-02`
+Development candidate: `scribe-mcp 3.3.83` · Updated: `2026-11-02`
+
+Exact token counting now uses native encoders built from verified package resources. All seven recipe families, offline source loading, integrity errors, retries and concurrent use passed source review; installed offline verification remains pending.
 
 SQLite reminder-history clearing now works with repository and agent filters and returns accurate deletion counts.
 

@@ -1,6 +1,9 @@
 import json
 import hashlib
-import socket
+import builtins
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,68 +13,160 @@ from scribe_mcp import server as server_module
 import scribe_mcp.tools.read_file as read_file_module
 from scribe_mcp.shared.execution_context import AgentIdentity, ExecutionContext
 from scribe_mcp.tools.read_file import _DEFAULT_MAX_MATCHES, _FULL_MODE_TOKEN_LIMIT, read_file
+import scribe_mcp.utils.tokens as token_utils
+from test_estimator import _deny_upstream, _run_native_oracle, _NATIVE_CORPUS, _resource_streams
+
+pytestmark = pytest.mark.usefixtures("test_agent")
 
 
 @pytest.fixture(scope="module")
-def shared_native_reader_encoder(tmp_path_factory):
-    """Construct one genuine read-only engine from verified fixture data."""
-    import requests
+def shared_native_reader_encoder():
+    """Native expected-value object, never registered or injected into subject."""
     import tiktoken
-    import tiktoken.registry
-
-    data = (Path(__file__).resolve().parent / "fixtures" / "tokenizer" / "cl100k_base.tiktoken").read_bytes()
-    assert len(data) == 1681126
-    assert hashlib.sha256(data).hexdigest() == "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
-    requests_seen = []
-
-    def fixture_get(url):
-        assert url == "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
-        requests_seen.append(url)
-        response = requests.Response()
-        response.status_code = 200
-        response._content = data
-        return response
-
-    def deny_network(*args, **kwargs):
-        pytest.fail("reader tests must never open a network connection")
-
-    cache = tmp_path_factory.mktemp("reader-native-cache")
     with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("TIKTOKEN_CACHE_DIR", str(cache))
-        patch.setenv("DATA_GYM_CACHE_DIR", str(cache))
-        patch.setattr(tiktoken.registry, "ENCODINGS", {})
-        patch.setattr(requests, "get", fixture_get)
-        patch.setattr(socket.socket, "connect", deny_network)
-        patch.setattr(socket, "create_connection", deny_network)
-        encoder = tiktoken.get_encoding("cl100k_base")
+        _deny_upstream(patch)
+        encoder = token_utils._load_packaged_encoder("cl100k_base", tiktoken)
     assert isinstance(encoder, tiktoken.Encoding)
-    assert len(requests_seen) == 1
     return encoder
 
 
 @pytest.fixture(autouse=True)
-def native_reader_encoder(monkeypatch, tmp_path, shared_native_reader_encoder):
-    """Isolate each reader's state while reusing the immutable native engine."""
-    import requests
-    import tiktoken.registry
-
-    def deny_network(*args, **kwargs):
-        pytest.fail("reader tests must never open a network connection")
-
-    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path / "token-cache"))
-    monkeypatch.setenv("DATA_GYM_CACHE_DIR", str(tmp_path / "token-cache"))
-    monkeypatch.setattr(tiktoken.registry, "ENCODINGS", {"cl100k_base": shared_native_reader_encoder})
+def native_reader_encoder(monkeypatch, shared_native_reader_encoder):
+    """Every subject first-use must construct independently from packaged bytes."""
+    _, seen = _deny_upstream(monkeypatch)
     monkeypatch.setattr(read_file_module, "_tiktoken_encoder", None)
-    monkeypatch.setattr(requests, "get", deny_network)
-    monkeypatch.setattr(socket.socket, "connect", deny_network)
-    monkeypatch.setattr(socket, "create_connection", deny_network)
-    return shared_native_reader_encoder
+    yield shared_native_reader_encoder
+    assert seen == []
 
 
 @pytest.mark.regression
 @pytest.mark.parametrize("text", ["ordinary alpha beta", "café 漢字 😀\n", "<|endoftext|>", "<|fim_prefix|>文<|fim_middle|>😀<|fim_suffix|><|endofprompt|>"])
 def test_reader_counts_literal_data_with_native_encoder(native_reader_encoder, text, test_agent):
     assert read_file_module._count_tokens(text) == len(native_reader_encoder.encode_ordinary(text))
+
+
+@pytest.mark.core
+@pytest.mark.regression
+def test_reader_packaged_native_matches_independent_oracle(tmp_path, monkeypatch):
+    import tiktoken
+    oracle = _run_native_oracle(tmp_path / "oracle-cache")["encodings"]["cl100k_base"]
+    original = token_utils._load_packaged_encoder
+    calls = []
+    def construct(name, module):
+        calls.append(name)
+        return original(name, module)
+    monkeypatch.setattr(token_utils, "_load_packaged_encoder", construct)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        counts = list(pool.map(read_file_module._count_tokens, [_NATIVE_CORPUS[1]] * 16))
+    assert counts == [len(oracle["ids"][1])] * 16
+    assert calls == ["cl100k_base"]
+    encoder = read_file_module._get_tiktoken_encoder()
+    assert isinstance(encoder, tiktoken.Encoding)
+    assert read_file_module._get_tiktoken_encoder() is encoder
+    for text, ids in zip(_NATIVE_CORPUS, oracle["ids"]):
+        assert encoder.encode(text, disallowed_special=()) == ids
+        assert read_file_module._count_tokens(text) == len(ids)
+    assert encoder.encode("|".join(oracle["specials"]), disallowed_special=()) == oracle["literal_specials"]
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize("error", [ImportError, KeyError, FileNotFoundError, ValueError])
+def test_reader_adapter_failure_retries_then_publishes_once(monkeypatch, error):
+    import tiktoken
+    original = token_utils._load_packaged_encoder
+    calls = []
+    def transient(name, module):
+        calls.append(name)
+        if len(calls) <= 2:
+            raise error("reader adapter failure")
+        return original(name, module)
+    monkeypatch.setattr(token_utils, "_load_packaged_encoder", transient)
+    for _ in range(2):
+        with pytest.raises(error, match="reader adapter failure"):
+            read_file_module._count_tokens("alpha beta gamma")
+        assert read_file_module._tiktoken_encoder is None
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        counts = list(pool.map(read_file_module._count_tokens, ["alpha beta gamma"] * 16))
+    assert counts == [3] * 16
+    assert len(calls) == 3
+    assert isinstance(read_file_module._tiktoken_encoder, tiktoken.Encoding)
+
+
+@pytest.mark.core
+@pytest.mark.regression
+def test_reader_only_import_unavailable_is_cheap_and_retryable(monkeypatch):
+    original_import = builtins.__import__
+    calls = []
+    def unavailable(name, *args, **kwargs):
+        if name == "tiktoken":
+            calls.append(name)
+            raise ImportError("unavailable")
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", unavailable)
+    assert read_file_module._count_tokens("alpha beta gamma") == 4
+    assert read_file_module._count_tokens("alpha beta gamma") == 4
+    assert calls == ["tiktoken"] * 2
+    assert read_file_module._tiktoken_encoder is None
+    monkeypatch.setattr(builtins, "__import__", original_import)
+    assert read_file_module._count_tokens("alpha beta gamma") == 3
+
+
+@pytest.mark.core
+@pytest.mark.regression
+@pytest.mark.parametrize("damage", ["missing", "flip", "truncate", "append", "crlf"])
+def test_reader_resource_failures_precede_parser_and_recover(monkeypatch, damage):
+    filename = "cl100k_base.tiktoken"
+    data = (Path(token_utils.__file__).parent / "token_data" / filename).read_bytes()
+    changed = {"missing": None, "flip": bytes([data[0] ^ 1]) + data[1:], "truncate": data[:-1], "append": data + b"x", "crlf": data.replace(b"\n", b"\r\n")}[damage]
+    with pytest.MonkeyPatch.context() as patch:
+        _resource_streams(patch, {filename: changed})
+        patch.setattr(token_utils, "_parse_token_ranks", lambda *a: pytest.fail("corrupt resource parsed"))
+        for _ in range(2):
+            with pytest.raises(FileNotFoundError if damage == "missing" else ValueError, match=filename):
+                read_file_module._count_tokens("alpha beta gamma")
+            assert read_file_module._tiktoken_encoder is None
+    assert read_file_module._count_tokens("alpha beta gamma") == 3
+
+
+@pytest.mark.core
+@pytest.mark.regression
+def test_reader_wrong_version_precedes_resource_io(monkeypatch):
+    import tiktoken
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tiktoken, "__version__", "0.14.1")
+        patch.setattr(token_utils, "_read_token_resource", lambda *a: pytest.fail("unsupported version read resources"))
+        with pytest.raises(RuntimeError, match="0.14.0"):
+            read_file_module._count_tokens("alpha beta gamma")
+        assert read_file_module._tiktoken_encoder is None
+    assert read_file_module._count_tokens("alpha beta gamma") == 3
+
+
+@pytest.mark.core
+@pytest.mark.regression
+def test_reader_import_and_estimator_cheap_path_do_not_read_token_resources():
+    script = r'''
+import os, sys
+def audit(event, args):
+    if event == "open" and args and isinstance(args[0], (str, bytes)):
+        path = os.fsdecode(args[0])
+        if "/token_data/" in path or "/.scribe_metrics/" in path:
+            raise RuntimeError("lazy path opened tokenizer resource/metrics")
+    if event.startswith("socket.") and event in {"socket.connect", "socket.getaddrinfo"}:
+        raise RuntimeError("lazy path attempted network")
+sys.addaudithook(audit)
+import scribe_mcp.tools.read_file as reader
+from scribe_mcp.utils.tokens import TokenEstimator
+estimator = TokenEstimator()
+if estimator.estimate_tokens("alpha beta gamma", exact=False) != 4:
+    raise RuntimeError("cheap count changed")
+if "tiktoken" in sys.modules or reader._tiktoken_encoder is not None or estimator._encoder_initialized:
+    raise RuntimeError("lazy path initialized tokenizer")
+print("reader/constructor/cheap: tokenizer and resource lazy")
+'''
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "reader/constructor/cheap: tokenizer and resource lazy"
 
 
 @pytest.mark.regression

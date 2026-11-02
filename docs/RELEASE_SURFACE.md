@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **v3.3.81 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.83 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.83 candidate integrates the reviewed native exact-token component from 3.3.82 while retaining the 3.3.80 WAL and 3.3.81 SQLite repairs. Estimator and reader construct native tiktoken 0.14.0 encoders from six length- and hash-verified packaged resources across all seven supported recipes. Integrity errors remain retryable, literal reader data and concurrency controls are preserved, and the exact upstream Harmony alias is validated. Source behavioral and quality reviews passed; installed offline distribution, final startup/RSS, integration and fleet acceptance remain open.
 
 The 3.3.81 checkpoint restores SQLite reminder-history clearing after a missing asyncio import caused a NameError. Filtering by repository and agent, deletion counts, repeat clears and retained unrelated rows are covered through the real storage API.
 

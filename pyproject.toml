@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-mcp"
-version = "3.3.81"
+version = "3.3.83"
 description = "Scribe MCP server, tooling, and universal CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,7 +29,7 @@ dependencies = [
   "psutil~=7.1",
   "pyyaml~=6.0",
   "rich~=13.7",
-  "tiktoken~=0.5",
+  "tiktoken==0.14.0",
   "watchdog~=3.0",
 ]
 
@@ -75,6 +75,13 @@ include = ["scribe_mcp*"]
 [tool.setuptools.package-data]
 "scribe_mcp" = [
   "py.typed",
+  "utils/token_data/vocab.bpe",
+  "utils/token_data/encoder.json",
+  "utils/token_data/r50k_base.tiktoken",
+  "utils/token_data/p50k_base.tiktoken",
+  "utils/token_data/cl100k_base.tiktoken",
+  "utils/token_data/o200k_base.tiktoken",
+  "utils/token_data/NOTICE.md",
   "config/*.json",
   "config/reminders/*.json",
   "config/*.yaml",

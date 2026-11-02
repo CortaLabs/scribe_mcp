@@ -11,6 +11,7 @@ import re
 from datetime import date, datetime
 from fnmatch import fnmatch
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 import yaml
@@ -47,6 +48,7 @@ _SECTION_ID_PATTERN = re.compile(r"^<!--\s*ID:\s*(?P<section>[^>]+?)\s*-->$")
 
 # Lazy-load tiktoken encoder
 _tiktoken_encoder = None
+_tiktoken_encoder_lock = Lock()
 logger = logging.getLogger(__name__)
 
 
@@ -152,12 +154,18 @@ _READ_FILE_INPUT_SCHEMA: Dict[str, Any] = _build_read_file_input_schema()
 def _get_tiktoken_encoder():
     """Get or create tiktoken encoder (lazy loaded)."""
     global _tiktoken_encoder
-    if _tiktoken_encoder is None:
+    if _tiktoken_encoder is not None:
+        return _tiktoken_encoder
+    with _tiktoken_encoder_lock:
+        if _tiktoken_encoder is not None:
+            return _tiktoken_encoder
         try:
             import tiktoken
-            _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")  # Claude's encoding
         except ImportError:
             return None
+        from scribe_mcp.utils.tokens import _load_packaged_encoder
+
+        _tiktoken_encoder = _load_packaged_encoder("cl100k_base", tiktoken)
     return _tiktoken_encoder
 
 def _count_tokens(text: str) -> int:
