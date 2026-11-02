@@ -1,9 +1,11 @@
 # Compatibility Matrix
 
-Updated: **2026-10-25**
-Release framing: **2.15.34 integrated maintenance candidate, retaining the MCP SDK v2 baseline**
+Updated: **2026-11-01**
+Release framing: **2.15.35 WAL append maintenance candidate, retaining the MCP SDK v2 baseline**
 
 ## Maintenance candidate status
+
+`2.15.35` prepares the WAL append hotfix with a bounded 32-journal POSIX validation cache. Repeated warm scans are eliminated; cold access, external changes, recovery and non-POSIX retain authoritative validation. WAL/ID format, durability, SDK support, APIs, schema and authorization are unchanged. Worker source checks pass 119 cases under MCP SDK 2.3.0; the coordinator reports 55 source checks passing in 8.86s. Independent hotfix reviews, package verification, live adoption and publication remain pending. Earlier component evidence, including `2.15.34`, is preserved below.
 
 Entry insertion and metric counting are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; metric-write failures roll back the entry. SQLite cancellation retains worker and connection ownership through cleanup. Independent behavioral and quality reviews passed against real SQLite and isolated PostgreSQL databases.
 
@@ -36,9 +38,9 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.34` (integrated maintenance candidate)
+- **Core package version:** `scribe-mcp==2.15.35` (WAL append maintenance candidate)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
-- **Isolated candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
+- **Historical SDK migration candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
 - **Affected-row inventory posture:** read-only, public-safe labels/aggregates only, fail-closed, no mutation authority
 - **Default runtime posture:** Postgres-backed runtime contract
@@ -52,6 +54,7 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
+| `2.15.35` | Publication preparation | Bounded WAL warm-scan repair; 119 worker source checks pass, coordinator reports 55 source passes. Independent hotfix reviews, package/live and publication checks pending. |
 | `2.15.34` | Integrated candidate | Combines reviewed binding, startup, identity-test and atomic metrics fixes; combined, installed/native, fleet and publication checks pending. |
 | `2.15.32` | Reviewed component | Assertion-based identity/reconnect tests;15 independent module/neighbor cases pass. |
 | `2.15.31` | Reviewed component | Retains SQLite bootstrap WAL and preserves activation/cancellation errors. Component behavioral review passes; combined-candidate, installed/native, fleet and publication gates remain pending. |
