@@ -215,9 +215,27 @@ def test_lock_unavailable_and_sandbox(tmp_path, monkeypatch):
     with pytest.raises(files.FileLockError, match="no locking mechanism"):
         with files.file_lock(log, timeout=0, repo_root=tmp_path):
             pytest.fail("unlocked entry")
-    with pytest.raises(Exception):
-        with files.file_lock(Path("/etc/passwd"), repo_root=tmp_path):
-            pytest.fail("sandbox escaped")
+    # Verify delegation to validation, rather than certifying sandbox policy.
+    from contextlib import nullcontext
+
+    target = tmp_path / "validation.txt"
+    denial = RuntimeError("sentinel validation denial")
+    for bypass in (False, True):
+        entered = False
+        behavior = {"return_value": target} if bypass else {"side_effect": denial}
+        with patch.object(files, "_ensure_safe_path", **behavior) as validation:
+            with pytest.raises((RuntimeError, files.FileLockError)) as caught:
+                with files.file_lock(target, repo_root=tmp_path):
+                    entered = True
+            validation.assert_called_once_with(target, operation="lock", repo_root=tmp_path)
+            assert not entered
+            if bypass:
+                assert isinstance(caught.value, files.FileLockError)
+            # The same identity assertion must fail when validation is bypassed;
+            # the unavailable-lock error is not accepted as a validation denial.
+            with (pytest.raises(AssertionError, match="validation denial changed")
+                  if bypass else nullcontext()):
+                assert caught.value is denial, "validation denial changed"
 
 
 @pytest.mark.skipif(not files.HAS_FCNTL or not files.HAS_PORTALOCKER,
