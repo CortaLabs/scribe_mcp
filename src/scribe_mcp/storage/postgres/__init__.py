@@ -214,6 +214,8 @@ class PostgresStorage(StorageBackend):
         self._internals = PostgresInternals(dsn, config=pool_config)
         self._schema_lock = asyncio.Lock()
         self._schema_ready = False
+        self._project_identity_lock = asyncio.Lock()
+        self._project_identity_ready = False
         self._completed_migrations: set[str] = set()
 
     @property
@@ -225,9 +227,11 @@ class PostgresStorage(StorageBackend):
         await self._ensure_repo_scoped_project_identity()
 
     async def close(self) -> None:
-        await self._internals.close()
-        self._schema_ready = False
-        self._completed_migrations.clear()
+        async with self._project_identity_lock:
+            await self._internals.close()
+            self._schema_ready = False
+            self._project_identity_ready = False
+            self._completed_migrations.clear()
 
     async def issue_apply_preview_receipt(
         self, record: ApplyPreviewReceiptRecord
@@ -456,6 +460,7 @@ class PostgresStorage(StorageBackend):
         except asyncpg.UniqueViolationError as exc:
             if not _is_legacy_project_name_unique_violation(exc):
                 raise
+            self._project_identity_ready = False
             await self._ensure_repo_scoped_project_identity()
             raise RuntimeError(
                 "Postgres project identity setup did not remove the legacy "
@@ -2888,6 +2893,16 @@ class PostgresStorage(StorageBackend):
         )
 
     async def _ensure_repo_scoped_project_identity(self) -> None:
+        if self._project_identity_ready:
+            return
+        async with self._project_identity_lock:
+            if self._project_identity_ready:
+                return
+            await self._initialize_repo_scoped_project_identity()
+            # Publish only after every DDL, backfill and index step succeeds.
+            self._project_identity_ready = True
+
+    async def _initialize_repo_scoped_project_identity(self) -> None:
         await self._ensure_column("scribe_projects", "repo_id", "TEXT")
         await self._ensure_column("scribe_projects", "project_key", "TEXT")
         await self._execute(

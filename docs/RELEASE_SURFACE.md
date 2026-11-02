@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **v3.3.78 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.79 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.79 checkpoint carries the reviewed 2.15.36 PostgreSQL initialization repair. Successful identity setup is reused per storage lifecycle; concurrent first use is serialized, failures remain retryable, and close/reopen repeats setup. Existing scoped lookup, legacy backfill and explicit repair behavior remain intact. The storage regression module is selectable with its registered subsystem marker. This integration preserves the separate 3.x storage work; package and serving verification remain separate from component review.
 
 The 3.3.78 checkpoint integrates the reviewed full-file reader repair: literal reserved-token text remains readable, oversized first lines respect the existing 12,000-content-token limit, and UTF-8 scan boundaries preserve complete characters. Explicit full-content reads retain all decoded content. The source and regression tests match the reviewed 3.3.77 component; repository-discovery changes remain separate. Six verified tokenizer resources and their complete notices are tracked for forthcoming offline integration, but are not yet included in built distributions. Package, offline and live verification remain open.
 

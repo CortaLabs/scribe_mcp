@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.78` · Updated: `2026-11-02`
+Development candidate: `scribe-mcp 3.3.79` · Updated: `2026-11-02`
+
+PostgreSQL project reads now reuse successful identity initialization instead of repeatedly running migration work. Concurrent first use, failure and cancellation retry, and close/reopen retain their existing behavior.
 
 Full-file reads now handle literal reserved-token text, respect the existing content-token limit for oversized first lines, and preserve UTF-8 characters across scan boundaries. Explicit full-content reads remain available.
 
