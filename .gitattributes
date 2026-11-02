@@ -1,2 +1,8 @@
 # Preserve authentic tokenizer test data bytes and keep corpus diffs opaque.
 tests/fixtures/tokenizer/*.tiktoken binary
+
+# Preserve official production rank bytes without text or merge normalization.
+src/scribe_mcp/utils/token_data/r50k_base.tiktoken binary
+src/scribe_mcp/utils/token_data/p50k_base.tiktoken binary
+src/scribe_mcp/utils/token_data/cl100k_base.tiktoken binary
+src/scribe_mcp/utils/token_data/o200k_base.tiktoken binary
