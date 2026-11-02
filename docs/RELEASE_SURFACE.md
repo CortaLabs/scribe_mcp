@@ -1,7 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **2.15.38 document-quality parsing maintenance candidate**
+Applies to: **2.15.39 file-lock correctness maintenance candidate**
+
+## 2.15.39 source candidate
+
+The existing file-lock boundary defines Windows fallback capabilities independently, uses one monotonic acquisition deadline and releases owned resources despite unlock, target-close and replacement-open faults. A failed replacement open cannot close an unrelated descriptor that reused the released slot. Sibling locks, mechanism order, 250ms portalocker/100ms fcntl polling cadence, sandbox checks and three-fsync WAL durability remain intact. Sixty scoped WAL checks pass with simulated Windows coverage; native Windows is not certified. A historical faster-polling experiment was rejected after CPU/retry and retained-history median regressions, with workload confounders recorded; no final speedup, SLO or exactly-once claim follows. Independent review, package verification, live adoption and publication remain pending.
 
 ## 2.15.38 source candidate
 
