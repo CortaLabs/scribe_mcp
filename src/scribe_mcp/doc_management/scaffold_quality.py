@@ -268,10 +268,9 @@ def _apply_quality_overrides(
 def analyze_scaffold_quality(*, text: str, metadata: Optional[Mapping[str, Any]] = None, doc_name: Optional[str] = None) -> List[Dict[str, Any]]:
     metadata = dict(metadata or {})
     warnings: List[Dict[str, Any]] = []
-    parsed = parse_frontmatter(text)
-    body = parsed.body
     context = DocumentContextBuilder().build(text=text, doc_name=doc_name, metadata=metadata)
-    frontmatter_status = str(parsed.frontmatter_data.get("status", "")).strip().lower()
+    body = context.body_text
+    frontmatter_status = str(context.frontmatter_data.get("status", "")).strip().lower()
     readiness_claim = frontmatter_status in _READINESS_VALUES
 
     warnings.extend(

@@ -154,8 +154,21 @@ class MarkdownItScopeProvider(HeuristicFenceScopeProvider):
 
     def __init__(self) -> None:
         from markdown_it import MarkdownIt
+        from markdown_it.rules_core.state_core import StateCore
 
         self._md = MarkdownIt("commonmark")
+
+        def code_bearing_inlines(state: StateCore) -> None:
+            # Only code_inline children are consumed below. Raw inline content
+            # without a backtick cannot create one, even through entities or
+            # escapes. Keep block parsing and code-bearing inline parsing native.
+            for token in state.tokens:
+                if token.type == "inline" and "`" in token.content:
+                    if token.children is None:
+                        token.children = []
+                    state.md.inline.parse(token.content, state.md, state.env, token.children)
+
+        self._md.core.ruler.at("inline", code_bearing_inlines)
 
     def collect_scopes(self, body: str) -> Sequence[DocumentScope]:
         tokens = self._md.parse(body)
