@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 import os
@@ -163,7 +164,8 @@ def _count_tokens(text: str) -> int:
     """Count tokens in text using tiktoken, fallback to char estimate."""
     encoder = _get_tiktoken_encoder()
     if encoder:
-        return len(encoder.encode(text))
+        # File content is literal data, including reserved-token spellings.
+        return len(encoder.encode(text, disallowed_special=()))
     # Fallback: ~4 chars per token
     return len(text) // 4
 
@@ -319,7 +321,9 @@ def _scan_file(path: Path) -> Dict[str, Any]:
 
     encoding = "utf-8"
     try:
-        sample.decode("utf-8")
+        # A bounded sample may end inside a valid UTF-8 sequence. Only flush
+        # the decoder at actual EOF, where an incomplete sequence is invalid.
+        codecs.getincrementaldecoder("utf-8")().decode(sample, final=size <= len(sample))
         encoding = "utf-8"
     except UnicodeDecodeError:
         encoding = "latin-1"
@@ -2875,7 +2879,8 @@ async def read_file(
             # File exceeds token limit - truncate to fit
             # Binary search to find how many lines fit in token limit
             low, high = 1, line_count
-            best_lines = 100  # Minimum
+            # The empty prefix is valid even when the first line exceeds the cap.
+            best_lines = 0
             while low <= high:
                 mid = (low + high) // 2
                 test_chunk = _extract_line_range(target, encoding, 1, mid)

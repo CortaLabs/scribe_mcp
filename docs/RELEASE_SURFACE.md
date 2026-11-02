@@ -1,9 +1,11 @@
 # Release Surface
 
-Updated: **2026-11-01**
-Applies to: **v3.3.74 development candidate; default projection, integration and fleet acceptance pending**
+Updated: **2026-11-02**
+Applies to: **v3.3.78 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.78 checkpoint integrates the reviewed full-file reader repair: literal reserved-token text remains readable, oversized first lines respect the existing 12,000-content-token limit, and UTF-8 scan boundaries preserve complete characters. Explicit full-content reads retain all decoded content. The source and regression tests match the reviewed 3.3.77 component; repository-discovery changes remain separate. Six verified tokenizer resources and their complete notices are tracked for forthcoming offline integration, but are not yet included in built distributions. Package, offline and live verification remain open.
 
 The 3.3.74 checkpoint integrates the reviewed 2.15.35 WAL performance repair. Warm WAL appends now reuse a bounded 32-journal POSIX validation cache instead of parsing retained history twice. Cold access, external changes, recovery and non-POSIX platforms retain authoritative validation; locking, permissions, journal format and intent/log/commit fsync ordering are preserved. Integration, package and serving verification remain separate from the component review.
 

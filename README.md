@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.74` · Updated: `2026-11-01`
+Development candidate: `scribe-mcp 3.3.78` · Updated: `2026-11-02`
+
+Full-file reads now handle literal reserved-token text, respect the existing content-token limit for oversized first lines, and preserve UTF-8 characters across scan boundaries. Explicit full-content reads remain available.
 
 This branch prepares the next major Scribe release. Warm WAL appends now reuse a bounded 32-journal POSIX validation cache instead of parsing retained history twice. Cold access, external changes, recovery and non-POSIX platforms retain authoritative validation; locking, permissions, journal format and intent/log/commit fsync ordering are preserved. It carries the maintenance fixes for durable project bindings, SQLite startup and cleanup, atomic entry/metric writes, literal document content and genuine regression checks. Agent/session tests now assert isolation, rejected sessions, heartbeat and expiry cleanup instead of printing success.
 
