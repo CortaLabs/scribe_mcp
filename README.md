@@ -45,9 +45,11 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Maintenance candidate: `scribe-mcp 2.15.34` · Updated: `2026-10-25`
+Maintenance candidate: `scribe-mcp 2.15.35` · Updated: `2026-11-01`
 
-This candidate combines the reviewed maintenance fixes:
+The WAL append hotfix uses a bounded cache for 32 journals on POSIX to eliminate repeated warm history scans. Cold access, external changes, recovery and non-POSIX platforms retain authoritative validation. WAL format, durability ordering, SDK support, public APIs, schemas and authorization are unchanged. Worker source checks pass 119 cases; the coordinator reports 55 source checks passing in 8.86s. Independent hotfix reviews, package verification, live adoption and publication remain pending.
+
+This candidate carries the historical `2.15.34` maintenance fixes:
 
 - Entry and metric writes are atomic on SQLite and PostgreSQL. Duplicate IDs preserve rows, counters and metric timestamps; failed metric writes roll back the entry. Cancellation retains SQLite worker and connection ownership through cleanup.
 - Project bindings survive identity and activity heartbeats; first binding and cross-repository rebinding support immediate reads without a configured default repository.
