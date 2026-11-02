@@ -45,7 +45,11 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Maintenance candidate: `scribe-mcp 2.15.36` · Updated: `2026-11-02`
+Maintenance candidate: `scribe-mcp 2.15.37` · Updated: `2026-11-02`
+
+WAL validation now preserves bounded proof across cooperative same-process intent/commit interleaving. A separate commit bound prevents an already committed intent from being committed again. Uncertain, out-of-order, external, evicted and non-POSIX cases retain authoritative history validation. The existing 32-journal limit, journal format, locks, permissions and intent/file/commit fsync ordering are preserved. Source review, package verification, live adoption and publication remain pending. Independent lock contention and external-process scan costs remain performance limits; this candidate makes no fleet latency or exactly-once claim.
+
+### Retained 2.15.36 evidence
 
 PostgreSQL project identity setup now runs once after successful initialization per storage lifecycle. Concurrent first use shares initialization; failures and cancellation remain retryable, and close/reopen repeats setup. Warm scoped reads retain a single lookup without repeated migration DDL. Legacy backfill and explicit identity repair behavior are preserved. This is a source candidate; independent review, package verification, live adoption and publication remain pending. Append lock contention remains a separate performance limitation.
 
