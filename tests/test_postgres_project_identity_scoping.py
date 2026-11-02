@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import asyncio
 import hashlib
 
 import pytest
@@ -642,3 +643,185 @@ async def test_session_binding_reconstructs_structured_postgres_row(monkeypatch,
         project_key="durable-key", project_name="durable", canonical_repo_root="/repo/durable",
         binding_generation=7, updated_at=updated,
     )
+
+
+@pytest.fixture
+def identity_io(monkeypatch, test_agent):
+    """Exercise real migration control flow over a deterministic SQL boundary."""
+    storage = PostgresStorage("postgresql://example.invalid/scribe")
+    calls = []
+    control = {"fail_at": None, "block_at": None, "legacy": False}
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def record(query, *params):
+        calls.append((" ".join(query.split()), params))
+        step = len(calls)
+        if step == control["block_at"]:
+            entered.set()
+            await release.wait()
+        if step == control["fail_at"]:
+            raise RuntimeError("identity phase failed")
+
+    async def column(table, column, definition):
+        await record(f"column:{column}")
+
+    async def execute(query, *params):
+        await record(query, *params)
+        return "OK"
+
+    async def fetch(query, *params):
+        await record(query, *params)
+        if control["legacy"] and "SELECT id, name, repo_root" in query:
+            return [{"id": 7, "name": test_agent, "repo_root": "/repo/identity"}]
+        return []
+
+    async def fetchrow(query, *params):
+        await record(query, *params)
+        return None
+
+    monkeypatch.setattr(storage, "_ensure_column", column)
+    monkeypatch.setattr(storage, "_execute", execute)
+    monkeypatch.setattr(storage, "_fetch", fetch)
+    monkeypatch.setattr(storage, "_fetchrow", fetchrow)
+    return storage, calls, control, entered, release
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_identity_warm_scoped_fetch_is_only_one_lookup(identity_io, test_agent):
+    storage, calls, *_ = identity_io
+    await storage._ensure_repo_scoped_project_identity()
+    calls.clear()
+    for _ in range(10):
+        assert await storage.fetch_project(test_agent, repo_root="/repo/identity") is None
+    assert len(calls) == 10
+    assert all("WHERE project_key = $1" in query for query, _ in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_identity_concurrent_first_use_initializes_once(identity_io, test_agent):
+    storage, calls, control, entered, release = identity_io
+    control["block_at"] = 1
+    first = asyncio.create_task(storage.fetch_project(test_agent, repo_root="/repo/identity"))
+    await asyncio.wait_for(entered.wait(), 2)
+    others = [asyncio.create_task(storage.fetch_project(test_agent, repo_root="/repo/identity"))
+              for _ in range(19)]
+    await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.gather(first, *others) == [None] * 20
+    assert sum(query == "column:repo_id" for query, _ in calls) == 1
+    assert sum("WHERE project_key = $1" in query for query, _ in calls) == 20
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize("phase", range(1, 13))
+async def test_identity_failure_at_each_phase_retries_before_readiness(identity_io, test_agent, phase):
+    storage, calls, control, *_ = identity_io
+    control["legacy"] = True
+    control["fail_at"] = phase
+    with pytest.raises(RuntimeError, match="identity phase failed"):
+        await storage._ensure_repo_scoped_project_identity()
+    assert not any("WHERE project_key = $1" in query for query, _ in calls)
+    calls.clear()
+    control["fail_at"] = None
+    await storage._ensure_repo_scoped_project_identity()
+    assert len(calls) == 12
+    calls.clear()
+    await storage.fetch_project(test_agent, repo_root="/repo/identity")
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+@pytest.mark.parametrize("cancel_owner", [True, False])
+async def test_identity_cancellation_leaves_initialization_retryable(identity_io, test_agent, cancel_owner):
+    storage, calls, control, entered, release = identity_io
+    control["block_at"] = 1
+    owner = asyncio.create_task(storage._ensure_repo_scoped_project_identity())
+    await asyncio.wait_for(entered.wait(), 2)
+    waiter = asyncio.create_task(storage._ensure_repo_scoped_project_identity())
+    await asyncio.sleep(0)
+    cancelled = owner if cancel_owner else waiter
+    cancelled.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+    finally:
+        release.set()
+        await asyncio.gather(owner, waiter, return_exceptions=True)
+    calls.clear()
+    await storage.fetch_project(test_agent, repo_root="/repo/identity")
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_identity_close_waits_for_initialization_and_reopen_repairs(identity_io, monkeypatch, test_agent):
+    storage, calls, control, entered, release = identity_io
+    closed = []
+
+    async def close_pool():
+        closed.append(True)
+
+    monkeypatch.setattr(storage._internals, "close", close_pool)
+    control["block_at"] = 1
+    owner = asyncio.create_task(storage._ensure_repo_scoped_project_identity())
+    await asyncio.wait_for(entered.wait(), 2)
+    closing = asyncio.create_task(storage.close())
+    await asyncio.sleep(0)
+    try:
+        assert not closed
+    finally:
+        release.set()
+        await asyncio.gather(owner, closing)
+    calls.clear()
+    await storage.fetch_project(test_agent, repo_root="/repo/identity")
+    assert sum(query == "column:repo_id" for query, _ in calls) == 1
+    calls.clear()
+    await storage.fetch_project(test_agent, repo_root="/repo/identity")
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_identity_waiter_retries_after_owner_failure(identity_io, test_agent):
+    storage, calls, control, entered, release = identity_io
+    control.update(block_at=1, fail_at=1)
+    owner = asyncio.create_task(storage._ensure_repo_scoped_project_identity())
+    await asyncio.wait_for(entered.wait(), 2)
+    waiter = asyncio.create_task(storage._ensure_repo_scoped_project_identity())
+    await asyncio.sleep(0)
+    release.set()
+    outcomes = await asyncio.gather(owner, waiter, return_exceptions=True)
+    assert isinstance(outcomes[0], RuntimeError)
+    assert outcomes[1] is None
+    assert sum(query == "column:repo_id" for query, _ in calls) == 2
+    control.update(block_at=None, fail_at=None)
+    calls.clear()
+    await storage.fetch_project(test_agent, repo_root="/repo/identity")
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.regression
+async def test_identity_legacy_constraint_reappearance_retains_repair_and_refusal(
+    identity_io, monkeypatch, test_agent,
+):
+    storage, calls, *_ = identity_io
+    await storage._ensure_repo_scoped_project_identity()
+    calls.clear()
+
+    async def insert(query, *params):
+        raise postgres_module.asyncpg.UniqueViolationError(
+            'duplicate key value violates unique constraint "scribe_projects_name_key"'
+        )
+
+    monkeypatch.setattr(storage, "_fetchrow", insert)
+    with pytest.raises(RuntimeError, match="refusing to change an existing project's repo_root"):
+        await storage.upsert_project(
+            name=test_agent, repo_root="/repo/identity", progress_log_path="/repo/identity/PROGRESS_LOG.md",
+        )
+    assert sum("DROP CONSTRAINT IF EXISTS scribe_projects_name_key" in query for query, _ in calls) == 1
+    assert not any(query.startswith("UPDATE scribe_projects") for query, _ in calls)

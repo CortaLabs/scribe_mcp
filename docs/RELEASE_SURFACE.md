@@ -1,7 +1,11 @@
 # Release Surface
 
-Updated: **2026-11-01**
-Applies to: **2.15.35 WAL append maintenance candidate**
+Updated: **2026-11-02**
+Applies to: **2.15.36 PostgreSQL initialization maintenance candidate**
+
+## 2.15.36 source candidate
+
+PostgreSQL project identity migration completes once per successful storage lifecycle, with serialized concurrent first use and retry after failure or cancellation. Close/reopen resets initialization. Warm scoped project reads avoid repeated migration DDL and retain their scoped lookup; legacy backfill, uniqueness and explicit identity repair remain intact. SDK support, public APIs, schemas and durability are unchanged. Independent review, distribution verification, live adoption and publication remain pending. Append lock contention is a separate performance limitation. Earlier maintenance evidence follows unchanged.
 
 ## 2.15.35 publication preparation
 

@@ -1,7 +1,9 @@
 # Compatibility Matrix
 
 Updated: **2026-11-01**
-Release framing: **2.15.35 WAL append maintenance candidate, retaining the MCP SDK v2 baseline**
+Release framing: **2.15.36 PostgreSQL initialization maintenance candidate, retaining the MCP SDK v2 baseline**
+
+`2.15.36` avoids repeated PostgreSQL identity migration after successful initialization. Concurrent first use, failure/cancellation retry and close/reopen preserve lifecycle safety; scoped identity, legacy backfill, explicit repair, APIs, schema, durability and SDK support are retained. This source candidate awaits independent review, package verification, live adoption and publication. Append lock contention remains separate; earlier evidence follows.
 
 ## Maintenance candidate status
 
@@ -38,7 +40,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.35` (WAL append maintenance candidate)
+- **Core package version:** `scribe-mcp==2.15.36` (PostgreSQL initialization maintenance candidate)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Historical SDK migration candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only

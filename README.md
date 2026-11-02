@@ -45,7 +45,11 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Maintenance candidate: `scribe-mcp 2.15.35` · Updated: `2026-11-01`
+Maintenance candidate: `scribe-mcp 2.15.36` · Updated: `2026-11-02`
+
+PostgreSQL project identity setup now runs once after successful initialization per storage lifecycle. Concurrent first use shares initialization; failures and cancellation remain retryable, and close/reopen repeats setup. Warm scoped reads retain a single lookup without repeated migration DDL. Legacy backfill and explicit identity repair behavior are preserved. This is a source candidate; independent review, package verification, live adoption and publication remain pending. Append lock contention remains a separate performance limitation.
+
+### Retained 2.15.35 evidence
 
 The WAL append hotfix uses a bounded cache for 32 journals on POSIX to eliminate repeated warm history scans. Cold access, external changes, recovery and non-POSIX platforms retain authoritative validation. WAL format, durability ordering, SDK support, public APIs, schemas and authorization are unchanged. Worker source checks pass 119 cases; the coordinator reports 55 source checks passing in 8.86s. Independent hotfix reviews, package verification, live adoption and publication remain pending.
 
