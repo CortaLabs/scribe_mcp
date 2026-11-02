@@ -5,6 +5,9 @@ from scribe_mcp.doc_management.quality.context import DocumentContextBuilder
 from scribe_mcp.doc_management.quality.scopes import MarkdownItScopeProvider
 
 
+pytestmark = pytest.mark.usefixtures("test_agent")
+
+
 COMMONMARK_CASES = [
     "# Plain *heading*\n\nParagraph with [link][ref] &amp; <em>HTML</em>.\n\n[ref]: /target\n",
     "# `heading`\n\n| a | b |\n| - | - |\n| `x` | text |\n",

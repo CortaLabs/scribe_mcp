@@ -9,6 +9,9 @@ from scribe_mcp.doc_management.quality.scopes import MarkdownItScopeProvider
 from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality, collect_managed_doc_quality_warnings
 
 
+pytestmark = pytest.mark.usefixtures("test_agent")
+
+
 def _codes(warnings):
     return {w["code"] for w in warnings}
 
