@@ -7,6 +7,7 @@ import multiprocessing
 import os
 import re
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
@@ -315,7 +316,7 @@ def test_cache_is_bounded_and_eviction_revalidates(tmp_path, monkeypatch):
     files._write_line_with_wal(first, "after eviction", repo_root=tmp_path)
     assert scans == [first.with_suffix(".md.journal")]
     assert all(len(signature) == 5 and isinstance(highwater, str)
-               for signature, highwater in cache.values())
+               for signature, highwater, _lineage, _commit_bound in cache.values())
 
 
 def test_unavailable_change_time_retains_full_validation(tmp_path, monkeypatch):
@@ -340,3 +341,306 @@ def test_contradictory_historical_rows_remain_corrupt(tmp_path, contradiction):
         handle.write(json.dumps(row) + "\n")
     with pytest.raises(files.WalJournalCorruptError, match="contradictory"):
         wal.write_entry({"op": "append", "content": "must not append"})
+
+
+@pytest.mark.storage
+@pytest.mark.skipif(os.name != "posix", reason="fast path requires POSIX change time")
+@pytest.mark.parametrize("history", [10, 3000])
+def test_interleaved_pending_commits_do_not_rescan_history(tmp_path, test_agent, history):
+    log = tmp_path / "interleaved.md"
+    _seed(log, history)
+    files._write_line_with_wal(log, "warm", repo_root=tmp_path)
+    writers = [files.WriteAheadLog(log, repo_root=tmp_path, context={"agent": test_agent})
+               for _ in range(2)]
+    scans = []
+    original = files.WriteAheadLog._read_journal_locked
+
+    def counted(self, handle):
+        scans.append(os.fstat(handle.fileno()).st_size)
+        return original(self, handle)
+
+    with patch.object(files.WriteAheadLog, "_read_journal_locked", counted):
+        ids = [wal.write_entry({"op": "append", "content": f"{index}\n"})
+               for index, wal in enumerate(writers)]
+        for index, (wal, entry_id) in enumerate(zip(writers, ids)):
+            wal._apply_append(f"{index}\n")
+            wal.commit_entry(entry_id)
+    assert scans == [], f"interleaved commits rescanned {sum(scans)} retained bytes"
+    assert log.read_text().splitlines() == ["warm", "0", "1"]
+    assert writers[0].read_uncommitted() == ()
+
+
+@pytest.mark.storage
+@pytest.mark.skipif(os.name != "posix", reason="fast path requires POSIX change time")
+@pytest.mark.parametrize("log_count", [1, 4])
+def test_many_ordered_pending_writers_reuse_bounded_proof(tmp_path, test_agent, log_count):
+    logs = [tmp_path / f"ordered-{index}.md" for index in range(log_count)]
+    for log in logs:
+        _seed(log, 50)
+        files._write_line_with_wal(log, "warm", repo_root=tmp_path)
+    writers = [files.WriteAheadLog(logs[index % log_count], repo_root=tmp_path,
+                                  context={"agent": test_agent}) for index in range(16)]
+    with patch.object(files.WriteAheadLog, "_read_journal_locked",
+                      side_effect=AssertionError("cooperative history rescan")):
+        ids = [wal.write_entry({"op": "append", "content": f"writer:{index}\n"})
+               for index, wal in enumerate(writers)]
+        for index, (wal, entry_id) in enumerate(zip(writers, ids)):
+            wal._apply_append(f"writer:{index}\n")
+            wal.commit_entry(entry_id)
+    for index, log in enumerate(logs):
+        assert log.read_text().splitlines() == ["warm"] + [
+            f"writer:{i}" for i in range(index, 16, log_count)]
+        assert files.WriteAheadLog(log, repo_root=tmp_path).read_uncommitted() == ()
+
+
+@pytest.mark.storage
+def test_other_instance_commit_does_not_duplicate_original_commit(tmp_path, test_agent):
+    log = tmp_path / "duplicate.md"
+    _seed(log, 10)
+    original = files.WriteAheadLog(log, repo_root=tmp_path, context={"agent": test_agent})
+    other = files.WriteAheadLog(log, repo_root=tmp_path, context={"agent": test_agent})
+    entry_id = original.write_entry({"op": "append", "content": "original"})
+    newer = other.write_entry({"op": "append", "content": "newer"})
+    other.commit_entry(entry_id)
+    other.commit_entry(newer)
+    before = original.journal_path.read_bytes()
+    original.commit_entry(entry_id)
+    original.commit_entry(entry_id)
+    assert original.journal_path.read_bytes() == before
+    rows = [json.loads(line) for line in before.splitlines()]
+    assert sum(row.get("ref_id") == entry_id for row in rows) == 1
+    assert original.read_uncommitted() == ()
+    with pytest.raises(files.WalJournalCorruptError, match="unknown"):
+        original.commit_entry("unknown-id")
+
+
+@pytest.mark.storage
+def test_reverse_commit_order_retains_authoritative_fallback(tmp_path, test_agent):
+    log = tmp_path / "reverse.md"
+    _seed(log, 10)
+    writers = [files.WriteAheadLog(log, repo_root=tmp_path, context={"agent": test_agent})
+               for _ in range(3)]
+    ids = [wal.write_entry({"op": "append", "content": str(index)})
+           for index, wal in enumerate(writers)]
+    for wal, entry_id in reversed(list(zip(writers, ids))):
+        wal.commit_entry(entry_id)
+    before = writers[0].journal_path.read_bytes()
+    for wal, entry_id in zip(writers, ids):
+        wal.commit_entry(entry_id)
+    assert writers[0].journal_path.read_bytes() == before
+    assert writers[0].read_uncommitted() == ()
+    assert sum(json.loads(line).get("op") == "commit" for line in before.splitlines()) == 13
+
+
+@pytest.mark.storage
+@pytest.mark.skipif(os.name != "posix", reason="fast path requires POSIX change time")
+@pytest.mark.parametrize("reset", ["evict", "rescan", "valid_rewrite"])
+def test_pending_lineage_is_lost_after_validation_reset(tmp_path, test_agent, reset):
+    wal = _seed(tmp_path / "pending.md", 10)
+    wal.context = {"agent": test_agent}
+    entry_id = wal.write_entry({"op": "append", "content": "pending"})
+    if reset == "evict":
+        for index in range(wal._VALIDATION_CACHE_LIMIT):
+            files._write_line_with_wal(tmp_path / f"evict-{index}.md", "x", repo_root=tmp_path)
+    elif reset == "rescan":
+        assert len(wal.read_uncommitted()) == 1
+    else:
+        wal.journal_path.write_bytes(wal.journal_path.read_bytes())
+        # Another reader certifies the new bytes, which must not revive the
+        # original instance's stale pending proof merely by matching an ID.
+        assert len(files.WriteAheadLog(wal.log_path, repo_root=tmp_path).read_uncommitted()) == 1
+    scans = []
+    original = files.WriteAheadLog._read_journal_locked
+
+    def counted(self, handle):
+        scans.append(self.journal_path)
+        return original(self, handle)
+
+    with patch.object(files.WriteAheadLog, "_read_journal_locked", counted):
+        wal.commit_entry(entry_id)
+    assert scans == [wal.journal_path]
+    assert wal.read_uncommitted() == ()
+
+
+@pytest.mark.storage
+def test_simulated_nonposix_interleaving_scans_every_boundary(tmp_path, test_agent, monkeypatch):
+    wal = _seed(tmp_path / "nonposix.md", 10)
+    other = files.WriteAheadLog(wal.log_path, repo_root=tmp_path, context={"agent": test_agent})
+    monkeypatch.setattr(files.WriteAheadLog, "_journal_signature", staticmethod(lambda _: None))
+    scans = []
+    original = files.WriteAheadLog._read_journal_locked
+
+    def counted(self, handle):
+        scans.append(self.journal_path)
+        return original(self, handle)
+
+    with patch.object(files.WriteAheadLog, "_read_journal_locked", counted):
+        a = wal.write_entry({"op": "append", "content": "a"})
+        b = other.write_entry({"op": "append", "content": "b"})
+        wal.commit_entry(a)
+        other.commit_entry(b)
+    assert scans == [wal.journal_path] * 4
+    assert wal.read_uncommitted() == ()
+
+
+@pytest.mark.storage
+@pytest.mark.parametrize("operation", ["intent", "commit"])
+@pytest.mark.parametrize("fault", ["write", "flush", "fsync"])
+def test_failed_cooperative_mutation_invalidates_pending_proof(
+    tmp_path, test_agent, monkeypatch, operation, fault,
+):
+    wal = _seed(tmp_path / "fault.md", 10)
+    wal.context = {"agent": test_agent}
+    entry_id = wal.write_entry({"op": "append", "content": "pending"})
+    original_lock = files.file_lock
+    original_fsync = files.os.fsync
+
+    class FaultHandle:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def write(self, value):
+            result = self.handle.write(value)
+            if fault == "write":
+                raise OSError("ambiguous journal write")
+            return result
+
+        def flush(self):
+            self.handle.flush()
+            if fault == "flush":
+                raise OSError("ambiguous journal flush")
+
+    @contextmanager
+    def failed_lock(*args, **kwargs):
+        with original_lock(*args, **kwargs) as handle:
+            yield FaultHandle(handle)
+
+    def failed_fsync(fd):
+        original_fsync(fd)
+        raise OSError("ambiguous journal fsync")
+
+    with monkeypatch.context() as injected:
+        injected.setattr(files, "file_lock", failed_lock)
+        if fault == "fsync":
+            injected.setattr(files.os, "fsync", failed_fsync)
+        with pytest.raises(OSError, match="ambiguous journal"):
+            if operation == "intent":
+                files.WriteAheadLog(wal.log_path, repo_root=tmp_path).write_entry(
+                    {"op": "append", "content": "other"})
+            else:
+                wal.commit_entry(entry_id)
+    assert wal.journal_path not in wal._validated_journals
+    scans = []
+    original = files.WriteAheadLog._read_journal_locked
+
+    def counted(self, handle):
+        scans.append(self.journal_path)
+        return original(self, handle)
+
+    before = wal.journal_path.read_bytes()
+    with patch.object(files.WriteAheadLog, "_read_journal_locked", counted):
+        wal.commit_entry(entry_id)
+    assert scans == [wal.journal_path]
+    if operation == "commit":
+        assert wal.journal_path.read_bytes() == before
+
+
+@pytest.mark.storage
+def test_ambiguous_materialized_fsync_replay_behavior_is_retained(tmp_path, test_agent, monkeypatch):
+    log = tmp_path / "ambiguous.md"
+    original_fsync = files.os.fsync
+    synced = 0
+
+    def fail_log_fsync(fd):
+        nonlocal synced
+        original_fsync(fd)
+        synced += 1
+        if synced == 2:
+            raise OSError("ambiguous materialized fsync")
+
+    with monkeypatch.context() as injected:
+        injected.setattr(files.os, "fsync", fail_log_fsync)
+        with pytest.raises(OSError, match="ambiguous materialized"):
+            files._write_line_with_wal(log, "pending", repo_root=tmp_path,
+                                       context={"agent": test_agent})
+    assert log.read_text() == "pending\n"
+    wal = files.WriteAheadLog(log, repo_root=tmp_path)
+    assert len(wal.read_uncommitted()) == 1
+    assert wal.replay_uncommitted() == 1
+    assert log.read_text() == "pending\npending\n"
+    assert wal.read_uncommitted() == ()
+
+
+@pytest.mark.storage
+def test_real_interleaved_threads_and_processes_on_different_logs(tmp_path, test_agent, monkeypatch):
+    logs = [tmp_path / f"concurrent-{index}.md" for index in range(2)]
+    for log in logs:
+        _seed(log, 50)
+    barrier = threading.Barrier(8)
+    original = files.WriteAheadLog._apply_append
+
+    def synchronized_append(self, content):
+        barrier.wait(timeout=30)
+        return original(self, content)
+
+    context = multiprocessing.get_context("spawn")
+    processes = [context.Process(target=_append_worker, args=(str(log), str(tmp_path), 3))
+                 for log in logs]
+    for process in processes:
+        process.start()
+    monkeypatch.setattr(files.WriteAheadLog, "_apply_append", synchronized_append)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(files._write_line_with_wal, logs[index % 2], f"thread:{index}",
+                               tmp_path, {"agent": test_agent}) for index in range(8)]
+        for future in futures:
+            future.result(timeout=30)
+    for process in processes:
+        process.join(30)
+        assert process.exitcode == 0
+    for index, log in enumerate(logs):
+        lines = log.read_text().splitlines()
+        assert len(lines) == len(set(lines)) == 7
+        assert {line for line in lines if line.startswith("thread:")} == {
+            f"thread:{i}" for i in range(index, 8, 2)}
+        assert files.WriteAheadLog(log, repo_root=tmp_path).read_uncommitted() == ()
+
+
+@pytest.mark.storage
+def test_arbitrary_explicit_ids_do_not_enlarge_validation_metadata(tmp_path, test_agent):
+    wal = _seed(tmp_path / "explicit.md", 10)
+    wal.context = {"agent": test_agent}
+    explicit_id = "z" * 10000
+    wal.write_entry({"op": "append", "content": "explicit"}, entry_id=explicit_id)
+    wal.commit_entry(explicit_id)
+    before = wal.journal_path.read_bytes()
+    wal.commit_entry(explicit_id)
+    assert wal.journal_path.read_bytes() == before
+    assert wal.read_uncommitted() == ()
+    for validation in wal._validated_journals.values():
+        assert len(validation) == 4
+        assert len(validation[0]) == 5
+        assert len(validation[1]) <= 41
+        assert type(validation[2]) is object
+        assert len(validation[3]) <= 41
+
+
+@pytest.mark.storage
+@pytest.mark.skipif(os.name != "posix", reason="fast path requires POSIX change time")
+def test_unchanged_pending_signature_still_proves_commit_after_clock_rollback(tmp_path, test_agent):
+    wal = _seed(tmp_path / "rollback-pending.md", 10)
+    wal.context = {"agent": test_agent}
+    future = "2099-01-01T00:00:00.000001+00:00_00000000"
+    wal.write_entry({"op": "append", "content": "future"}, entry_id=future)
+    wal.commit_entry(future)
+    # The new generated ID is below the retained future highwater. Intent
+    # creation must scan, but the unchanged post-intent signature still proves
+    # this new intent has not been committed: preserve the original shortcut.
+    entry_id = wal.write_entry({"op": "append", "content": "present"})
+    assert entry_id < future
+    with patch.object(files.WriteAheadLog, "_read_journal_locked",
+                      side_effect=AssertionError("lost unchanged-signature proof")):
+        wal.commit_entry(entry_id)
+    assert wal.read_uncommitted() == ()

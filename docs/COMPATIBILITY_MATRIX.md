@@ -1,7 +1,11 @@
 # Compatibility Matrix
 
 Updated: **2026-11-02**
-Release framing: **2.15.36 PostgreSQL initialization maintenance candidate, retaining the MCP SDK v2 baseline**
+Release framing: **2.15.37 WAL interleaved validation maintenance candidate, retaining the MCP SDK v2 baseline**
+
+`2.15.37` preserves bounded validation proof across cooperative same-process WAL interleaving. The 32-journal limit and POSIX signatures remain; unproven pending status, external changes, eviction, failed durability operations and non-POSIX platforms retain authoritative validation. Journal format, locks, permissions, fsync ordering and SDK support are unchanged. This source candidate awaits independent review, package verification, live adoption and publication. Lock contention and external-process costs remain separate limits; no fleet latency or exactly-once claim follows.
+
+## Retained 2.15.36 evidence
 
 `2.15.36` avoids repeated PostgreSQL identity migration after successful initialization. Concurrent first use, failure/cancellation retry and close/reopen preserve lifecycle safety; scoped identity, legacy backfill, explicit repair, APIs, schema, durability and SDK support are retained. This source candidate awaits independent review, package verification, live adoption and publication. Append lock contention remains separate; earlier evidence follows.
 
@@ -40,7 +44,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.36` (PostgreSQL initialization maintenance candidate)
+- **Core package version:** `scribe-mcp==2.15.37` (WAL interleaved validation maintenance candidate)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Historical SDK migration candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -56,6 +60,8 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
+| `2.15.37` | Source candidate | Bounded cooperative WAL interleaving proof; independent review, package/live and publication checks pending. |
+| `2.15.36` | Retained maintenance | Successful PostgreSQL identity initialization reused per lifecycle; scoped identity, retry and reopen retained. |
 | `2.15.35` | Publication preparation | Bounded WAL warm-scan repair; 119 worker source checks pass, coordinator reports 55 source passes. Independent hotfix reviews, package/live and publication checks pending. |
 | `2.15.34` | Integrated candidate | Combines reviewed binding, startup, identity-test and atomic metrics fixes; combined, installed/native, fleet and publication checks pending. |
 | `2.15.32` | Reviewed component | Assertion-based identity/reconnect tests;15 independent module/neighbor cases pass. |
