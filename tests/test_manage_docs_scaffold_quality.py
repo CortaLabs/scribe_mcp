@@ -1,10 +1,56 @@
 from pathlib import Path
 
+import pytest
+from markdown_it import MarkdownIt
+
+from scribe_mcp.doc_management import scaffold_quality
+from scribe_mcp.doc_management.quality import context as quality_context
+from scribe_mcp.doc_management.quality.scopes import MarkdownItScopeProvider
 from scribe_mcp.doc_management.scaffold_quality import analyze_scaffold_quality, collect_managed_doc_quality_warnings
+
+
+pytestmark = pytest.mark.usefixtures("test_agent")
 
 
 def _codes(warnings):
     return {w["code"] for w in warnings}
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("header", ["", "---\nstatus: ready\n---\n", "---\nstatus: [broken\n---\n"])
+@pytest.mark.parametrize("body", [
+    "# Ready\n\n[fill this section]\nfailed write residue\n",
+    "> [fill this section]\n\n`[fill this section]`\n\n~~~\nfailed write residue\n~~~\n",
+    "# Complete\n\n- [ ] Pending\n\n    [fill this section]\n",
+])
+def test_quality_reuses_single_frontmatter_parse_with_exact_warning_parity(monkeypatch, header, body):
+    text = header + body
+    metadata = {"quality": {"severity_overrides": {"SCF_FAILED_WRITE_RESIDUE": "info"}}}
+    original_builder = scaffold_quality.DocumentContextBuilder
+    native = MarkdownItScopeProvider()
+    native._md = MarkdownIt("commonmark")
+
+    def outcome():
+        try:
+            return scaffold_quality.analyze_scaffold_quality(text=text, metadata=metadata, doc_name="CHECKLIST")
+        except ValueError as exc:
+            return type(exc), str(exc)
+
+    with monkeypatch.context() as oracle:
+        oracle.setattr(scaffold_quality, "DocumentContextBuilder", lambda: original_builder(native))
+        expected = outcome()
+    original = quality_context.parse_frontmatter
+    calls = []
+
+    def observed(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(quality_context, "parse_frontmatter", observed)
+    monkeypatch.setattr(scaffold_quality, "parse_frontmatter", observed)
+    actual = outcome()
+    assert actual == expected
+    assert calls == [text]
 
 
 def test_scaffold_quality_emits_authoritative_codes_and_payload_shape():

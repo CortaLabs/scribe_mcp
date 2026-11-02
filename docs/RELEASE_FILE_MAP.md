@@ -1,7 +1,11 @@
 # Release File Map
 
 Updated: **2026-11-02**
-Coverage: **2.15.37 WAL interleaved validation maintenance candidate**
+Coverage: **2.15.38 document-quality parsing maintenance candidate**
+
+The current delta is confined to `src/scribe_mcp/doc_management/scaffold_quality.py`, `src/scribe_mcp/doc_management/quality/scopes.py`, their two regression modules and six package/runtime/release metadata surfaces. Full scope, context and warning parity and component CPU benefit are verified. Independent review, package verification, live adoption and publication remain pending; no reminder deadline or fleet latency guarantee follows.
+
+### Retained 2.15.37 evidence
 
 The current delta is confined to existing WAL validation metadata, its regression coverage and six release surfaces. Bounded lineage and commit evidence avoid proven cooperative interleaving rescans while retaining authoritative fallbacks and the 32-journal limit. Journal format, locks, permissions, durability and SDK support are retained. Independent review, package verification, live adoption and publication remain pending. Lock contention and external-process scan costs remain limitations.
 
@@ -34,7 +38,7 @@ The maintenance delta is confined to PostgreSQL identity initialization and its 
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines candidate `scribe-mcp==2.15.37`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The historical SDK migration candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines candidate `scribe-mcp==2.15.38`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The historical SDK migration candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
