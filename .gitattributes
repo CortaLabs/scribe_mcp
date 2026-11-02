@@ -6,3 +6,5 @@ src/scribe_mcp/utils/token_data/r50k_base.tiktoken binary
 src/scribe_mcp/utils/token_data/p50k_base.tiktoken binary
 src/scribe_mcp/utils/token_data/cl100k_base.tiktoken binary
 src/scribe_mcp/utils/token_data/o200k_base.tiktoken binary
+src/scribe_mcp/utils/token_data/vocab.bpe binary
+src/scribe_mcp/utils/token_data/encoder.json binary
