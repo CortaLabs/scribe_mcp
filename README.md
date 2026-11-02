@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.79` · Updated: `2026-11-02`
+Development candidate: `scribe-mcp 3.3.80` · Updated: `2026-11-02`
+
+WAL appends now retain bounded validation proof across cooperative interleaving, preserving authoritative fallbacks and durability. Independent lock contention remains a performance limit.
 
 PostgreSQL project reads now reuse successful identity initialization instead of repeatedly running migration work. Concurrent first use, failure and cancellation retry, and close/reopen retain their existing behavior.
 

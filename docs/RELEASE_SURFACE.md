@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **v3.3.79 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.80 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.80 checkpoint integrates the reviewed 2.15.37 WAL interleaving repair. Bounded lineage and committed-ID evidence preserve validation across cooperative same-process writers while retaining authoritative fallbacks, the 32-journal bound, real file locks, permissions and all three durability flushes. Controlled interleaving avoids both redundant history scans; lock contention and conservative scans remain. This source integration does not certify fleet tail latency or exactly-once behavior.
 
 The 3.3.79 checkpoint carries the reviewed 2.15.36 PostgreSQL initialization repair. Successful identity setup is reused per storage lifecycle; concurrent first use is serialized, failures remain retryable, and close/reopen repeats setup. Existing scoped lookup, legacy backfill and explicit repair behavior remain intact. The storage regression module is selectable with its registered subsystem marker. This integration preserves the separate 3.x storage work; package and serving verification remain separate from component review.
 
