@@ -10,6 +10,8 @@ import scribe_mcp.storage.postgres as postgres_module
 from scribe_mcp.storage.models import SessionBindingRecordV2, compute_project_key
 from scribe_mcp.storage.postgres import PostgresStorage
 
+pytestmark = pytest.mark.storage
+
 
 @pytest.mark.asyncio
 async def test_setup_repairs_repo_scoped_project_identity(

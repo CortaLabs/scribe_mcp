@@ -1,6 +1,6 @@
 # Release File Map
 
-Updated: **2026-11-01**
+Updated: **2026-11-02**
 Coverage: **2.15.36 PostgreSQL initialization maintenance candidate**
 
 The maintenance delta is confined to PostgreSQL identity initialization and its regression coverage. Successful setup is reused per storage lifecycle; concurrent first use, retry and reopen remain safe. Public APIs, schemas, SDK support and durability are unchanged. Independent review, package verification, live adoption and publication remain pending. Historical `2.15.35` evidence below remains attributed to that release; append lock contention is a separate limitation.

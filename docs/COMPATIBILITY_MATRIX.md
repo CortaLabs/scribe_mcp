@@ -1,6 +1,6 @@
 # Compatibility Matrix
 
-Updated: **2026-11-01**
+Updated: **2026-11-02**
 Release framing: **2.15.36 PostgreSQL initialization maintenance candidate, retaining the MCP SDK v2 baseline**
 
 `2.15.36` avoids repeated PostgreSQL identity migration after successful initialization. Concurrent first use, failure/cancellation retry and close/reopen preserve lifecycle safety; scoped identity, legacy backfill, explicit repair, APIs, schema, durability and SDK support are retained. This source candidate awaits independent review, package verification, live adoption and publication. Append lock contention remains separate; earlier evidence follows.
