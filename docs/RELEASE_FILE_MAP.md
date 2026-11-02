@@ -1,7 +1,9 @@
 # Release File Map
 
-Updated: **2026-11-01**
-Coverage: **2.15.35 WAL append maintenance candidate**
+Updated: **2026-11-02**
+Coverage: **2.15.36 PostgreSQL initialization maintenance candidate**
+
+The maintenance delta is confined to PostgreSQL identity initialization and its regression coverage. Successful setup is reused per storage lifecycle; concurrent first use, retry and reopen remain safe. Public APIs, schemas, SDK support and durability are unchanged. Independent review, package verification, live adoption and publication remain pending. Historical `2.15.35` evidence below remains attributed to that release; append lock contention is a separate limitation.
 
 ## Table of contents
 
@@ -28,7 +30,7 @@ Coverage: **2.15.35 WAL append maintenance candidate**
 | Path | Classification | Notes |
 | --- | --- | --- |
 | `README.md` | Public contract | Primary public overview. |
-| `pyproject.toml` | Public contract / shipped manifest | Defines candidate `scribe-mcp==2.15.35`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The historical SDK migration candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
+| `pyproject.toml` | Public contract / shipped manifest | Defines candidate `scribe-mcp==2.15.36`, Python `>=3.11`, MCP SDK support `>=2.0.0,<3.0`, and CLI scripts. It carries the 2.11.1 hollow-`append_entry` rejection. The historical SDK migration candidate is `mcp==2.0.0` with `mcp-types==2.0.0` and `httpx2==2.5.0`; the modern wire default is `2026-07-28`. Named legacy compatibility is limited to `mcp==1.26.0`, protocol `2025-11-25`, handshake stdio, and retained `/sse` plus `/messages/`, with no automatic downgrade. |
 | `MANIFEST.in` | Public contract / shipped manifest | Controls packaged data. |
 | `LICENSE` | Public contract | License terms. |
 | `docs/COMPATIBILITY_MATRIX.md` | Public contract | Baseline compatibility decision for this wave. |
