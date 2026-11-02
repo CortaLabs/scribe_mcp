@@ -1,4 +1,4 @@
-"""Scribe MCP server package."""
+"""Scribe MCP server package, 2.15.35 maintenance candidate."""
 
 __all__ = [
     "config",

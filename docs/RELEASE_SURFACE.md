@@ -1,7 +1,13 @@
 # Release Surface
 
-Updated: **2026-10-25**
-Applies to: **2.15.34 integrated maintenance candidate**
+Updated: **2026-11-01**
+Applies to: **2.15.35 WAL append maintenance candidate**
+
+## 2.15.35 publication preparation
+
+The WAL append hotfix bounds POSIX validation metadata to 32 journals and eliminates repeated warm history scans. Cold access, external changes, recovery and non-POSIX platforms retain authoritative validation. WAL/ID format, locking, permissions and intent/file/commit fsync ordering are preserved; SDK support, public APIs, schemas and authorization are unchanged.
+
+Worker source checks pass 119 cases. The coordinator reports its 55-check source rerun passing in 8.86s. These are source-only results: independent hotfix reviews, distribution verification, installed/native checks, live adoption and publication remain pending. The `2.15.34` component history below is retained as earlier evidence.
 
 ## 2.15.34 candidate status
 
