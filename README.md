@@ -45,7 +45,11 @@ Scribe turns that into a tighter loop:
 
 ## Maintenance candidate
 
-Maintenance candidate: `scribe-mcp 2.15.39` · Updated: `2026-11-02`
+Maintenance candidate: `scribe-mcp 2.15.40` · Updated: `2026-11-02`
+
+The intermediate lock fallback now relinquishes descriptor ownership before closing, so a close that releases and then raises cannot cause cleanup to close a reused descriptor. Coordinated POSIX subprocess guards verify held-lock timeout and exclusion, acquisition after release, and lock-bypass sensitivity for portalocker and fcntl. The WAL tests now participate in storage selection. Targeted guards pass; lock order, deadlines, polling cadence and durability are unchanged. Independent review, package, publication and live acceptance remain pending.
+
+### Retained 2.15.39 evidence
 
 File locking now initializes optional Windows fallback capabilities, shares one monotonic timeout across mechanisms, and closes owned descriptors safely after unlock, target-close or replacement-open failures. The sibling lock, mechanism order, polling cadence and three-fsync WAL durability are preserved. Faster polling was measured and rejected because CPU, retries and retained-history medians regressed; this correctness repair makes no throughput or SLO claim. Windows branches have simulated coverage, not native Windows certification. Source checks pass; independent review, package, publication and live acceptance remain pending.
 

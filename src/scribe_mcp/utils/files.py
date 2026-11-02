@@ -151,8 +151,9 @@ def file_lock(
         # Final fallback to POSIX fcntl
         if not lock_acquired and HAS_FCNTL:
             if lock_fd is not None:
-                os.close(lock_fd)
+                released_fd = lock_fd
                 lock_fd = None
+                os.close(released_fd)
             lock_fd = os.open(lock_file, os.O_RDWR | os.O_CREAT)
             while True:
                 try:

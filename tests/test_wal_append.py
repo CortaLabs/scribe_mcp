@@ -40,6 +40,35 @@ def _append_worker(log: str, root: str, count: int) -> None:
         files._write_line_with_wal(Path(log), f"{os.getpid()}:{index}", repo_root=Path(root))
 
 
+def _lock_exclusion_worker(log, root, connection, parent_active, backend, bypass):
+    """Attempt the parent's sibling lock before and after its release."""
+    files.HAS_WINDOWS_LOCK = False
+    files.HAS_PORTALOCKER = backend == "portalocker"
+    files.HAS_FCNTL = backend == "fcntl"
+
+    @contextmanager
+    def unlocked(path, mode, **kwargs):
+        with open(path, mode, encoding="utf-8") as handle:
+            yield handle
+
+    acquire = unlocked if bypass else files.file_lock
+    try:
+        connection.send("ready")
+        if not connection.poll(10) or connection.recv() != "attempt-held":
+            raise AssertionError("missing held-phase command")
+        try:
+            with acquire(log, "a", timeout=.05, repo_root=Path(root)):
+                connection.send(("entered-held", parent_active.is_set()))
+        except files.FileLockError:
+            connection.send(("blocked", False))
+        if not connection.poll(10) or connection.recv() != "attempt-released":
+            raise AssertionError("missing released-phase command")
+        with acquire(log, "a", timeout=2, repo_root=Path(root)):
+            connection.send(("entered-released", parent_active.is_set()))
+    finally:
+        connection.close()
+
+
 def _assert_warm_append_does_not_rescan(tmp_path: Path, history: int) -> None:
     log = tmp_path / "progress.md"
     _seed(log, history)
@@ -69,7 +98,8 @@ if __name__ == "__main__":
 
 import pytest
 
-pytestmark = [pytest.mark.core, pytest.mark.regression, pytest.mark.usefixtures("test_agent")]
+pytestmark = [pytest.mark.core, pytest.mark.regression, pytest.mark.storage,
+              pytest.mark.usefixtures("test_agent")]
 
 
 @pytest.mark.parametrize("native_ok", [True, False])
@@ -194,6 +224,100 @@ def test_fcntl_open_failure_does_not_close_a_reused_descriptor(tmp_path):
                 os.close(fd)
             except OSError:
                 pass
+
+
+def test_fcntl_close_then_raise_does_not_close_a_reused_descriptor(tmp_path):
+    native_fds, unrelated_fds, close_calls = [], [], []
+    failure = OSError("close released descriptor then failed")
+
+    def native_open(path, flags):
+        fd = os.open(path, flags)
+        native_fds.append(fd)
+        return fd
+
+    def close_then_raise(fd):
+        close_calls.append(fd)
+        os.close(fd)
+        if len(close_calls) == 1:
+            unrelated_fds.append(os.open(tmp_path / "unrelated-close", os.O_RDWR | os.O_CREAT))
+            raise failure
+
+    def native_contended(*args):
+        raise OSError("native lock contended")
+
+    fake_os = SimpleNamespace(name="nt", open=native_open, close=close_then_raise,
+                              O_RDWR=os.O_RDWR, O_CREAT=os.O_CREAT)
+    native = SimpleNamespace(locking=native_contended, LK_NBLCK=1, LK_UNLCK=2)
+    log = tmp_path / "close-raise.txt"
+    log.touch()
+    try:
+        with patch.dict(files.file_lock.__wrapped__.__globals__, {
+            "os": fake_os, "msvcrt": native, "HAS_WINDOWS_LOCK": True,
+            "HAS_PORTALOCKER": False, "HAS_FCNTL": True,
+        }):
+            with pytest.raises(OSError) as caught:
+                with files.file_lock(log, repo_root=tmp_path):
+                    pytest.fail("failed close entered body")
+        assert caught.value is failure
+        assert unrelated_fds == native_fds, "OS must reuse the released slot"
+        os.fstat(unrelated_fds[0])
+        assert close_calls == native_fds
+    finally:
+        for fd in set(native_fds + unrelated_fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+@pytest.mark.skipif(os.name != "posix" or not files.HAS_FCNTL or not files.HAS_PORTALOCKER,
+                    reason="requires actual POSIX fcntl and installed portalocker")
+@pytest.mark.parametrize("backend", ["portalocker", "fcntl"])
+@pytest.mark.parametrize("bypass", [False, True], ids=["real-lock", "bypass-sensitivity"])
+def test_coordinated_process_lock_exclusion(tmp_path, monkeypatch, backend, bypass):
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(files, "HAS_WINDOWS_LOCK", False)
+    monkeypatch.setattr(files, "HAS_PORTALOCKER", backend == "portalocker")
+    monkeypatch.setattr(files, "HAS_FCNTL", backend == "fcntl")
+    context = multiprocessing.get_context("spawn")
+    parent_connection, child_connection = context.Pipe()
+    parent_active = context.Event()
+    log = tmp_path / "process-held.txt"
+    process = context.Process(target=_lock_exclusion_worker, args=(
+        str(log), str(tmp_path), child_connection, parent_active, backend, bypass))
+    try:
+        with files.file_lock(log, "a", repo_root=tmp_path):
+            parent_active.set()
+            process.start()
+            child_connection.close()
+            assert parent_connection.poll(30), "child did not become ready"
+            assert parent_connection.recv() == "ready"
+            parent_connection.send("attempt-held")
+            assert parent_connection.poll(10), "child did not finish held attempt"
+            held_result = parent_connection.recv()
+            if bypass:
+                assert held_result == ("entered-held", True)
+            with (pytest.raises(AssertionError, match="child entered held critical section")
+                  if bypass else nullcontext()):
+                assert held_result == ("blocked", False), "child entered held critical section"
+        parent_active.clear()
+        parent_connection.send("attempt-released")
+        assert parent_connection.poll(10), "child did not acquire after release"
+        assert parent_connection.recv() == ("entered-released", False)
+        process.join(10)
+        assert not process.is_alive()
+        assert process.exitcode == 0
+    finally:
+        parent_active.clear()
+        parent_connection.close()
+        child_connection.close()
+        if process.pid is not None:
+            process.join(2)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+            assert not process.is_alive(), "owned child failed to terminate"
 
 
 @pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
