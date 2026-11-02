@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
+import builtins
 
 from scribe_mcp.utils import files
 
@@ -36,6 +38,35 @@ def _seed(log: Path, count: int) -> files.WriteAheadLog:
 def _append_worker(log: str, root: str, count: int) -> None:
     for index in range(count):
         files._write_line_with_wal(Path(log), f"{os.getpid()}:{index}", repo_root=Path(root))
+
+
+def _lock_exclusion_worker(log, root, connection, parent_active, backend, bypass):
+    """Attempt the parent's sibling lock before and after its release."""
+    files.HAS_WINDOWS_LOCK = False
+    files.HAS_PORTALOCKER = backend == "portalocker"
+    files.HAS_FCNTL = backend == "fcntl"
+
+    @contextmanager
+    def unlocked(path, mode, **kwargs):
+        with open(path, mode, encoding="utf-8") as handle:
+            yield handle
+
+    acquire = unlocked if bypass else files.file_lock
+    try:
+        connection.send("ready")
+        if not connection.poll(10) or connection.recv() != "attempt-held":
+            raise AssertionError("missing held-phase command")
+        try:
+            with acquire(log, "a", timeout=.05, repo_root=Path(root)):
+                connection.send(("entered-held", parent_active.is_set()))
+        except files.FileLockError:
+            connection.send(("blocked", False))
+        if not connection.poll(10) or connection.recv() != "attempt-released":
+            raise AssertionError("missing released-phase command")
+        with acquire(log, "a", timeout=2, repo_root=Path(root)):
+            connection.send(("entered-released", parent_active.is_set()))
+    finally:
+        connection.close()
 
 
 def _assert_warm_append_does_not_rescan(tmp_path: Path, history: int) -> None:
@@ -67,7 +98,376 @@ if __name__ == "__main__":
 
 import pytest
 
-pytestmark = [pytest.mark.core, pytest.mark.regression]
+pytestmark = [pytest.mark.core, pytest.mark.regression, pytest.mark.storage,
+              pytest.mark.usefixtures("test_agent")]
+
+
+@pytest.mark.parametrize("native_ok", [True, False])
+@pytest.mark.parametrize("fallback", [True, False])
+def test_windows_import_and_native_fallback(tmp_path, native_ok, fallback):
+    """Execute the actual capability imports with a simulated Windows module."""
+    calls = []
+    native = SimpleNamespace(LK_NBLCK=1, LK_UNLCK=2)
+
+    def locking(fd, operation, size):
+        calls.append(operation)
+        if operation == native.LK_NBLCK and not native_ok:
+            raise OSError("contended")
+
+    native.locking = locking
+    original_import = builtins.__import__
+
+    def controlled_import(name, *args, **kwargs):
+        if name == "msvcrt":
+            return native
+        if name == "fcntl" or (name == "portalocker" and not fallback):
+            raise ImportError(name)
+        return original_import(name, *args, **kwargs)
+
+    namespace = {}
+    source = Path(files.__file__).read_text().split("def _ensure_safe_path", 1)[0]
+    with patch("builtins.__import__", controlled_import):
+        exec(compile(source, files.__file__, "exec"), namespace)
+    assert namespace["HAS_PORTALOCKER"] is fallback
+    fake_os = SimpleNamespace(name="nt", open=os.open, close=os.close,
+                              O_RDWR=os.O_RDWR, O_CREAT=os.O_CREAT)
+    log = tmp_path / "windows.txt"
+    log.touch()
+    with patch.dict(files.file_lock.__wrapped__.__globals__, {
+        "os": fake_os, "msvcrt": native,
+        "HAS_WINDOWS_LOCK": True, "HAS_FCNTL": False,
+        "HAS_PORTALOCKER": namespace["HAS_PORTALOCKER"],
+    }):
+        if native_ok or fallback:
+            with files.file_lock(log, repo_root=tmp_path) as handle:
+                handle.write("ok")
+            assert log.read_text() == "ok"
+        else:
+            with pytest.raises(files.FileLockError):
+                with files.file_lock(log, timeout=0, repo_root=tmp_path):
+                    pytest.fail("unlocked entry")
+    assert calls == ([native.LK_NBLCK, native.LK_UNLCK] if native_ok
+                     else [native.LK_NBLCK])
+
+
+def test_native_unlock_error_always_closes_descriptor(tmp_path):
+    descriptors = []
+    native = SimpleNamespace(LK_NBLCK=1, LK_UNLCK=2)
+
+    def locking(fd, operation, size):
+        if operation == native.LK_UNLCK:
+            raise OSError("unlock failure")
+
+    def tracked_open(*args):
+        fd = os.open(*args)
+        descriptors.append(fd)
+        return fd
+
+    native.locking = locking
+    fake_os = SimpleNamespace(name="nt", open=tracked_open, close=os.close,
+                              O_RDWR=os.O_RDWR, O_CREAT=os.O_CREAT)
+    log = tmp_path / "unlock.txt"
+    log.touch()
+    try:
+        with patch.dict(files.file_lock.__wrapped__.__globals__, {
+            "os": fake_os, "msvcrt": native, "HAS_WINDOWS_LOCK": True,
+            "HAS_PORTALOCKER": False, "HAS_FCNTL": False,
+        }):
+            with files.file_lock(log, repo_root=tmp_path):
+                pass
+        for fd in descriptors:
+            with pytest.raises(OSError):
+                os.fstat(fd)
+    finally:
+        for fd in descriptors:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def test_fcntl_open_failure_does_not_close_a_reused_descriptor(tmp_path):
+    """A failed replacement open must not clean up the released descriptor."""
+    native_fds = []
+    unrelated_fds = []
+
+    def replacement_open(path, flags):
+        if not native_fds:
+            fd = os.open(path, flags)
+            native_fds.append(fd)
+            return fd
+        # The released slot is reused by another resource before open fails.
+        unrelated_fds.append(os.open(tmp_path / "unrelated", flags))
+        raise OSError("replacement open failed")
+
+    def native_contended(*args):
+        raise OSError("native lock contended")
+
+    fake_os = SimpleNamespace(name="nt", open=replacement_open, close=os.close,
+                              O_RDWR=os.O_RDWR, O_CREAT=os.O_CREAT)
+    native = SimpleNamespace(locking=native_contended, LK_NBLCK=1, LK_UNLCK=2)
+    log = tmp_path / "replacement.txt"
+    log.touch()
+    try:
+        with patch.dict(files.file_lock.__wrapped__.__globals__, {
+            "os": fake_os, "msvcrt": native, "HAS_WINDOWS_LOCK": True,
+            "HAS_PORTALOCKER": False, "HAS_FCNTL": True,
+        }):
+            with pytest.raises(OSError, match="replacement open failed"):
+                with files.file_lock(log, repo_root=tmp_path):
+                    pytest.fail("failed acquisition entered body")
+        assert unrelated_fds == native_fds, "OS must reuse the released slot"
+        os.fstat(unrelated_fds[0])
+    finally:
+        for fd in set(native_fds + unrelated_fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def test_fcntl_close_then_raise_does_not_close_a_reused_descriptor(tmp_path):
+    native_fds, unrelated_fds, close_calls = [], [], []
+    failure = OSError("close released descriptor then failed")
+
+    def native_open(path, flags):
+        fd = os.open(path, flags)
+        native_fds.append(fd)
+        return fd
+
+    def close_then_raise(fd):
+        close_calls.append(fd)
+        os.close(fd)
+        if len(close_calls) == 1:
+            unrelated_fds.append(os.open(tmp_path / "unrelated-close", os.O_RDWR | os.O_CREAT))
+            raise failure
+
+    def native_contended(*args):
+        raise OSError("native lock contended")
+
+    fake_os = SimpleNamespace(name="nt", open=native_open, close=close_then_raise,
+                              O_RDWR=os.O_RDWR, O_CREAT=os.O_CREAT)
+    native = SimpleNamespace(locking=native_contended, LK_NBLCK=1, LK_UNLCK=2)
+    log = tmp_path / "close-raise.txt"
+    log.touch()
+    try:
+        with patch.dict(files.file_lock.__wrapped__.__globals__, {
+            "os": fake_os, "msvcrt": native, "HAS_WINDOWS_LOCK": True,
+            "HAS_PORTALOCKER": False, "HAS_FCNTL": True,
+        }):
+            with pytest.raises(OSError) as caught:
+                with files.file_lock(log, repo_root=tmp_path):
+                    pytest.fail("failed close entered body")
+        assert caught.value is failure
+        assert unrelated_fds == native_fds, "OS must reuse the released slot"
+        os.fstat(unrelated_fds[0])
+        assert close_calls == native_fds
+    finally:
+        for fd in set(native_fds + unrelated_fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+@pytest.mark.skipif(os.name != "posix" or not files.HAS_FCNTL or not files.HAS_PORTALOCKER,
+                    reason="requires actual POSIX fcntl and installed portalocker")
+@pytest.mark.parametrize("backend", ["portalocker", "fcntl"])
+@pytest.mark.parametrize("bypass", [False, True], ids=["real-lock", "bypass-sensitivity"])
+def test_coordinated_process_lock_exclusion(tmp_path, monkeypatch, backend, bypass):
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(files, "HAS_WINDOWS_LOCK", False)
+    monkeypatch.setattr(files, "HAS_PORTALOCKER", backend == "portalocker")
+    monkeypatch.setattr(files, "HAS_FCNTL", backend == "fcntl")
+    context = multiprocessing.get_context("spawn")
+    parent_connection, child_connection = context.Pipe()
+    parent_active = context.Event()
+    log = tmp_path / "process-held.txt"
+    process = context.Process(target=_lock_exclusion_worker, args=(
+        str(log), str(tmp_path), child_connection, parent_active, backend, bypass))
+    try:
+        with files.file_lock(log, "a", repo_root=tmp_path):
+            parent_active.set()
+            process.start()
+            child_connection.close()
+            assert parent_connection.poll(30), "child did not become ready"
+            assert parent_connection.recv() == "ready"
+            parent_connection.send("attempt-held")
+            assert parent_connection.poll(10), "child did not finish held attempt"
+            held_result = parent_connection.recv()
+            if bypass:
+                assert held_result == ("entered-held", True)
+            with (pytest.raises(AssertionError, match="child entered held critical section")
+                  if bypass else nullcontext()):
+                assert held_result == ("blocked", False), "child entered held critical section"
+        parent_active.clear()
+        parent_connection.send("attempt-released")
+        assert parent_connection.poll(10), "child did not acquire after release"
+        assert parent_connection.recv() == ("entered-released", False)
+        process.join(10)
+        assert not process.is_alive()
+        assert process.exitcode == 0
+    finally:
+        parent_active.clear()
+        parent_connection.close()
+        child_connection.close()
+        if process.pid is not None:
+            process.join(2)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+            assert not process.is_alive(), "owned child failed to terminate"
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_lock_body_failure_releases_target_and_sibling(tmp_path, failure):
+    log = tmp_path / "body.txt"
+    log.touch()
+    with pytest.raises(failure):
+        with files.file_lock(log, repo_root=tmp_path) as handle:
+            raise failure("body")
+    assert handle.closed
+    with files.file_lock(log, timeout=0, repo_root=tmp_path):
+        pass
+
+
+def test_lock_unavailable_and_sandbox(tmp_path, monkeypatch):
+    for name in ("HAS_WINDOWS_LOCK", "HAS_PORTALOCKER", "HAS_FCNTL"):
+        monkeypatch.setattr(files, name, False)
+    log = tmp_path / "unavailable"
+    with pytest.raises(files.FileLockError, match="no locking mechanism"):
+        with files.file_lock(log, timeout=0, repo_root=tmp_path):
+            pytest.fail("unlocked entry")
+    # Verify delegation to validation, rather than certifying sandbox policy.
+    from contextlib import nullcontext
+
+    target = tmp_path / "validation.txt"
+    denial = RuntimeError("sentinel validation denial")
+    for bypass in (False, True):
+        entered = False
+        behavior = {"return_value": target} if bypass else {"side_effect": denial}
+        with patch.object(files, "_ensure_safe_path", **behavior) as validation:
+            with pytest.raises((RuntimeError, files.FileLockError)) as caught:
+                with files.file_lock(target, repo_root=tmp_path):
+                    entered = True
+            validation.assert_called_once_with(target, operation="lock", repo_root=tmp_path)
+            assert not entered
+            if bypass:
+                assert isinstance(caught.value, files.FileLockError)
+            # The same identity assertion must fail when validation is bypassed;
+            # the unavailable-lock error is not accepted as a validation denial.
+            with (pytest.raises(AssertionError, match="validation denial changed")
+                  if bypass else nullcontext()):
+                assert caught.value is denial, "validation denial changed"
+
+
+@pytest.mark.skipif(not files.HAS_FCNTL or not files.HAS_PORTALOCKER,
+                    reason="requires both cooperative POSIX implementations")
+def test_portalocker_and_fcntl_exclude_each_other(tmp_path, monkeypatch):
+    log = tmp_path / "interop.txt"
+    log.touch()
+    sibling = log.with_suffix(".txt.lock")
+    with files.portalocker.Lock(sibling, "a", timeout=0):
+        with monkeypatch.context() as selected:
+            selected.setattr(files, "HAS_PORTALOCKER", False)
+            with pytest.raises(files.FileLockError):
+                with files.file_lock(log, timeout=0, repo_root=tmp_path):
+                    pytest.fail("fcntl ignored portalocker")
+    with sibling.open("r+") as native:
+        files.fcntl.flock(native, files.fcntl.LOCK_EX | files.fcntl.LOCK_NB)
+        with monkeypatch.context() as selected:
+            selected.setattr(files, "HAS_FCNTL", False)
+            with pytest.raises(files.FileLockError):
+                with files.file_lock(log, timeout=0, repo_root=tmp_path):
+                    pytest.fail("portalocker ignored fcntl")
+    with files.file_lock(log, timeout=0, repo_root=tmp_path):
+        pass
+
+
+def test_fallback_uses_one_monotonic_deadline(tmp_path, monkeypatch):
+    clock = [10.0]
+    attempts = []
+    log = tmp_path / "deadline.txt"
+    log.touch()
+    real_portalocker = files.portalocker
+
+    class Exhausted:
+        def __init__(self, *args, **kwargs):
+            self.timeout = kwargs["timeout"]
+        def acquire(self):
+            clock[0] += self.timeout
+            raise real_portalocker.LockException("held")
+        def release(self):
+            pass
+
+    def contended(fd, flags):
+        attempts.append(clock[0])
+        raise OSError("held")
+
+    monkeypatch.setattr(files, "HAS_WINDOWS_LOCK", False)
+    monkeypatch.setattr(files, "HAS_PORTALOCKER", True)
+    monkeypatch.setattr(files, "HAS_FCNTL", True)
+    monkeypatch.setattr(files, "portalocker", SimpleNamespace(
+        Lock=Exhausted, LockException=real_portalocker.LockException))
+    monkeypatch.setattr(files, "fcntl", SimpleNamespace(
+        flock=contended, LOCK_EX=1, LOCK_NB=2))
+    monkeypatch.setattr(files, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], time=lambda: clock[0],
+        sleep=lambda delay: clock.__setitem__(0, clock[0]+delay)))
+    with pytest.raises(files.FileLockError):
+        with files.file_lock(log, timeout=.2, repo_root=tmp_path):
+            pytest.fail("unlocked entry")
+    assert clock[0] == pytest.approx(10.2)
+    assert len(attempts) == 1
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_lock_acquisition_error_releases_resources(tmp_path, monkeypatch, failure):
+    released = []
+    class BrokenLock:
+        def __init__(self, *args, **kwargs):
+            pass
+        def acquire(self):
+            raise failure("acquire")
+        def release(self):
+            released.append(True)
+    monkeypatch.setattr(files.portalocker, "Lock", BrokenLock)
+    log = tmp_path / "acquire.txt"
+    log.touch()
+    with pytest.raises(failure):
+        with files.file_lock(log, repo_root=tmp_path):
+            pytest.fail("unlocked entry")
+    assert released == [True]
+
+
+def test_target_open_and_close_errors_release_sibling(tmp_path):
+    log = tmp_path / "target.txt"
+    with pytest.raises(FileNotFoundError):
+        with files.file_lock(log, "r", timeout=0, repo_root=tmp_path):
+            pytest.fail("missing target opened")
+    log.touch()
+    actual_open = builtins.open
+    handles = []
+    class BrokenClose:
+        def __init__(self, handle):
+            self.handle = handle
+        def close(self):
+            self.handle.close()
+            raise OSError("target close")
+    def target_open(path, *args, **kwargs):
+        handle = actual_open(path, *args, **kwargs)
+        if Path(path) == log:
+            handles.append(handle)
+            return BrokenClose(handle)
+        return handle
+    with patch.object(files, "open", target_open, create=True):
+        with pytest.raises(OSError, match="target close"):
+            with files.file_lock(log, repo_root=tmp_path):
+                pass
+    assert all(h.closed for h in handles)
+    with files.file_lock(log, timeout=0, repo_root=tmp_path):
+        pass
 
 
 @pytest.mark.skipif(os.name != "posix", reason="fast path requires POSIX change time")

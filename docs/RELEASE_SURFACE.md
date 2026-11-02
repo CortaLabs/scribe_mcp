@@ -1,7 +1,15 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **2.15.38 document-quality parsing maintenance candidate**
+Applies to: **2.15.40 file-lock ownership maintenance candidate**
+
+## 2.15.40 source candidate
+
+Intermediate fallback descriptor ownership is cleared before close, preventing a close-then-raise error from triggering cleanup against a reused descriptor. A real-descriptor regression preserves the original error and unrelated handle. Coordinated POSIX subprocess guards cover both portalocker and fcntl: held-lock timeout without entry, successful acquisition after release, no overlapping critical sections, and a bypass control that must fail the exclusion assertion. Storage collection includes the existing WAL module and all added guards. Targeted checks pass; deadlines, mechanism order, cadence, WAL format and durability remain unchanged. Windows remains simulated. Independent delta review, package, publication and live gates remain pending; the historical rejected polling experiment supplies no final performance claim.
+
+## 2.15.39 source candidate
+
+The existing file-lock boundary defines Windows fallback capabilities independently, uses one monotonic acquisition deadline and releases owned resources despite unlock, target-close and replacement-open faults. A failed replacement open cannot close an unrelated descriptor that reused the released slot. Sibling locks, mechanism order, 250ms portalocker/100ms fcntl polling cadence, sandbox checks and three-fsync WAL durability remain intact. Sixty scoped WAL checks pass with simulated Windows coverage; native Windows is not certified. A historical faster-polling experiment was rejected after CPU/retry and retained-history median regressions, with workload confounders recorded; no final speedup, SLO or exactly-once claim follows. Independent review, package verification, live adoption and publication remain pending.
 
 ## 2.15.38 source candidate
 

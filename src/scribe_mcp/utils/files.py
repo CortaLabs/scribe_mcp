@@ -29,12 +29,13 @@ try:
     HAS_WINDOWS_LOCK = True
 except ImportError:
     HAS_WINDOWS_LOCK = False
-    # Try to import portalocker as fallback
-    try:
-        import portalocker
-        HAS_PORTALOCKER = True
-    except ImportError:
-        HAS_PORTALOCKER = False
+
+# This fallback is also needed when native Windows locking is contended.
+try:
+    import portalocker
+    HAS_PORTALOCKER = True
+except ImportError:
+    HAS_PORTALOCKER = False
 
 # POSIX fcntl - conditional import to prevent Windows crashes
 try:
@@ -113,6 +114,8 @@ def file_lock(
     file_handle = None
     lock_acquired = False
     portalocker_lock = None
+    windows_acquired = False
+    deadline = time.monotonic() + timeout
 
     try:
         # Try Windows locking first if available
@@ -121,13 +124,20 @@ def file_lock(
             try:
                 msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
                 lock_acquired = True
+                windows_acquired = True
             except OSError:
                 pass
 
         # Fallback to portalocker if Windows lock failed or not available
         if not lock_acquired and HAS_PORTALOCKER:
             try:
-                portalocker_lock = portalocker.Lock(lock_file, 'r+', timeout=timeout)
+                remaining = max(0.0, deadline - time.monotonic())
+                # Preserve the library's retry cadence, capped by the remaining
+                # shared deadline so fallback cannot start a second timeout.
+                portalocker_lock = portalocker.Lock(
+                    lock_file, 'r+', timeout=remaining,
+                    check_interval=min(0.25, remaining) if remaining else 0.25,
+                )
                 portalocker_lock.acquire()  # Acquire and hold across yield
                 lock_acquired = True
             except portalocker.LockException:
@@ -140,17 +150,21 @@ def file_lock(
 
         # Final fallback to POSIX fcntl
         if not lock_acquired and HAS_FCNTL:
+            if lock_fd is not None:
+                released_fd = lock_fd
+                lock_fd = None
+                os.close(released_fd)
             lock_fd = os.open(lock_file, os.O_RDWR | os.O_CREAT)
-            start_time = time.time()
             while True:
                 try:
                     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     lock_acquired = True
                     break
                 except (IOError, OSError):
-                    if time.time() - start_time > timeout:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
                         raise FileLockError(f"Could not acquire lock on {file_path} within {timeout}s")
-                    time.sleep(0.1)
+                    time.sleep(min(0.1, remaining))
 
         if not lock_acquired:
             raise FileLockError(f"Could not acquire lock on {file_path} within {timeout}s - no locking mechanism available")
@@ -161,23 +175,28 @@ def file_lock(
 
     finally:
         # Release lock based on what we acquired
-        if file_handle:
-            file_handle.close()
-
-        # Release portalocker lock last
-        if portalocker_lock:
+        try:
+            if file_handle:
+                file_handle.close()
+        finally:
             try:
-                portalocker_lock.release()
-            except Exception:
-                pass
-
-        if lock_fd is not None:
-            try:
-                if HAS_WINDOWS_LOCK and os.name == 'nt':
-                    msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
-                os.close(lock_fd)
-            except OSError:
-                pass
+                if portalocker_lock:
+                    try:
+                        portalocker_lock.release()
+                    except Exception:
+                        pass
+            finally:
+                if lock_fd is not None:
+                    try:
+                        if windows_acquired:
+                            msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+                    except OSError:
+                        pass
+                    finally:
+                        try:
+                            os.close(lock_fd)
+                        except OSError:
+                            pass
 
 
 class WriteAheadLog:
