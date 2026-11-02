@@ -45,9 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.73` · Updated: `2026-11-01`
+Development candidate: `scribe-mcp 3.3.74` · Updated: `2026-11-01`
 
-This branch prepares the next major Scribe release. It carries the maintenance fixes for durable project bindings, SQLite startup and cleanup, atomic entry/metric writes, literal document content and genuine regression checks. Agent/session tests now assert isolation, rejected sessions, heartbeat and expiry cleanup instead of printing success.
+This branch prepares the next major Scribe release. Warm WAL appends now reuse a bounded 32-journal POSIX validation cache instead of parsing retained history twice. Cold access, external changes, recovery and non-POSIX platforms retain authoritative validation; locking, permissions, journal format and intent/log/commit fsync ordering are preserved. It carries the maintenance fixes for durable project bindings, SQLite startup and cleanup, atomic entry/metric writes, literal document content and genuine regression checks. Agent/session tests now assert isolation, rejected sessions, heartbeat and expiry cleanup instead of printing success.
 
 The development candidate still needs binding-context, default-output, schema and background integration. The pure preview/full projector is not yet active, and the global 2 KiB default-response limit is not yet certified. See [release status and history](docs/RELEASE_SURFACE.md) and the [compatibility matrix](docs/COMPATIBILITY_MATRIX.md) for verification and migration limits.
 

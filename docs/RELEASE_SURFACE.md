@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-01**
-Applies to: **v3.3.73 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.74 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.74 checkpoint integrates the reviewed 2.15.35 WAL performance repair. Warm WAL appends now reuse a bounded 32-journal POSIX validation cache instead of parsing retained history twice. Cold access, external changes, recovery and non-POSIX platforms retain authoritative validation; locking, permissions, journal format and intent/log/commit fsync ordering are preserved. Integration, package and serving verification remain separate from the component review.
 
 The 3.3.73 checkpoint preserves server-issued project and repository identity when decoding remote project records. Upsert, fetch and list operations retain those fields; older responses that omit them keep the existing empty defaults. Transport authentication and public-profile restrictions are unchanged.
 
