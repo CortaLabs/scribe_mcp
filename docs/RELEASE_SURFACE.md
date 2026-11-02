@@ -1,7 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **2.15.37 WAL interleaved validation maintenance candidate**
+Applies to: **2.15.38 document-quality parsing maintenance candidate**
+
+## 2.15.38 source candidate
+
+Document quality analysis reuses its existing parsed frontmatter and avoids unrelated inline parsing when raw inline text cannot contain a code span. Native parsing remains active for code-bearing text; complete scopes, warnings, locations and ordering are preserved. Seven paired component measurements on representative project documents reduced median CPU by 20.93%; 154 scoped checks pass. These are component results: independent review, package verification, publication and live acceptance remain pending. No reminder deadline or fleet latency guarantee follows.
 
 ## 2.15.37 source candidate
 
