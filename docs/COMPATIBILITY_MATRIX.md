@@ -1,7 +1,11 @@
 # Compatibility Matrix
 
 Updated: **2026-11-02**
-Release framing: **2.15.38 document-quality parsing maintenance candidate, retaining the MCP SDK v2 baseline**
+Release framing: **2.15.40 file-lock ownership maintenance candidate, retaining the MCP SDK v2 baseline**
+
+`2.15.40` relinquishes intermediate descriptor ownership before close, including close-then-raise/reuse failures. Coordinated POSIX portalocker/fcntl subprocess guards verify held timeout/exclusion, acquisition after release and bypass sensitivity; all added guards are selected by storage collection. Targeted checks pass. Deadline, cadence, WAL/durability and SDK contracts remain; native Windows, independent delta review, package and live/publication acceptance remain unverified.
+
+`2.15.39` restores Windows fallback capability detection, a shared monotonic lock timeout and descriptor cleanup, including failed replacement-open reuse. Mechanism order, sibling exclusion, polling cadence, sandbox and three-fsync WAL durability remain unchanged. Sixty scoped source checks pass; Windows paths are simulated, not native certification. Faster polling was rejected after CPU/retry and retained-history median regressions; no final performance/SLO guarantee is claimed. Independent review, package, live and publication gates remain pending.
 
 `2.15.38` reduces redundant document-quality parsing while preserving complete native code scopes and quality warnings. Source checks and paired CPU measurements pass; package, review and live gates remain pending.
 
@@ -46,7 +50,7 @@ The carried maintenance line rejects hollow `append_entry` payloads before any w
 
 It adds one new governed repair-planning capability and continues to carry the prior in-line capabilities: fast same-binding `set_project` reuse, queryable tool runtime telemetry, append/read timing surfaces, physical/logical reconciliation diagnostics, managed-doc case-report path repairs, unified create contract with anchored sections payload, structured error remediation envelopes, session write-authority contract, logging-never-blocked healing, agent-ready quality-check output, bulk quality checks, and Scribe write-barrier safety:
 
-- **Core package version:** `scribe-mcp==2.15.38` (document-quality parsing maintenance candidate)
+- **Core package version:** `scribe-mcp==2.15.40` (file-lock ownership maintenance candidate)
 - **Python / SDK support:** Python `>=3.11`; `mcp>=2.0.0,<3.0`
 - **Historical SDK migration candidate closure:** `mcp==2.0.0`, `mcp-types==2.0.0`, `httpx2==2.5.0`
 - **Wire policy:** modern `2026-07-28` by default; named legacy `mcp==1.26.0` / `2025-11-25` only
@@ -62,6 +66,8 @@ It adds one new governed repair-planning capability and continues to carry the p
 
 | Core (`scribe-mcp`) | Status | Intended use |
 | --- | --- | --- |
+| `2.15.40` | Source candidate | Relinquishes descriptor ownership before close; coordinated POSIX process exclusion and storage guards pass; delta review/package/live/publication pending. |
+| `2.15.39` | Source candidate | File-lock capability/deadline/cleanup and descriptor-reuse repair; polling unchanged, native Windows and review/package/live/publication unverified. |
 | `2.15.38` | Source candidate | Removes redundant quality parsing; component parity and CPU checks pass; review/package/live/publication pending. |
 | `2.15.37` | Source candidate | Bounded cooperative WAL interleaving proof; independent review, package/live and publication checks pending. |
 | `2.15.36` | Retained maintenance | Successful PostgreSQL identity initialization reused per lifecycle; scoped identity, retry and reopen retained. |
