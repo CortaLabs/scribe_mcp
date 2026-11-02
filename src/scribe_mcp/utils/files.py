@@ -192,7 +192,9 @@ class WriteAheadLog:
     # digest maps. Ordinary append creates a fresh WAL object each time.
     _VALIDATION_CACHE_LIMIT = 32
     _validation_lock = threading.Lock()
-    _validated_journals: OrderedDict[Path, tuple[tuple[int, ...], str]] = OrderedDict()
+    # Signature, generated-ID highwater, lineage, committed generated-ID bound.
+    # Generated-ID highwater proves absence, never uncommitted status.
+    _validated_journals: OrderedDict[Path, tuple[tuple[int, ...], str, object, str]] = OrderedDict()
     _GENERATED_ID = re.compile(
         r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{6})?\+00:00_[0-9a-f]{8}"
     )
@@ -218,7 +220,7 @@ class WriteAheadLog:
             context={**self.context, "type": "journal"},
             repo_root=self.repo_root,
         )
-        self._pending_entry: Optional[tuple[str, tuple[int, ...], str]] = None
+        self._pending_entry: Optional[tuple[str, tuple[int, ...], object]] = None
 
     _LEGACY_OPERATIONS = frozenset({"append", "rotate"})
 
@@ -264,24 +266,31 @@ class WriteAheadLog:
         stat = os.fstat(file_handle.fileno())
         return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
-    def _validated_highwater(self, signature: Optional[tuple[int, ...]]) -> Optional[str]:
+    def _validated_journal(
+        self, signature: Optional[tuple[int, ...]],
+    ) -> Optional[tuple[tuple[int, ...], str, object, str]]:
         with self._validation_lock:
             prior = self._validated_journals.get(self.journal_path)
             if signature is None or prior is None or prior[0] != signature:
                 self._validated_journals.pop(self.journal_path, None)
                 return None
             self._validated_journals.move_to_end(self.journal_path)
-            return prior[1]
+            return prior
 
     def _forget_validation(self) -> None:
         with self._validation_lock:
             self._validated_journals.pop(self.journal_path, None)
 
-    def _remember_validation(self, signature: Optional[tuple[int, ...]], highwater: str) -> None:
+    def _remember_validation(
+        self, signature: Optional[tuple[int, ...]], highwater: str,
+        lineage: object, committed_highwater: str,
+    ) -> None:
         if signature is None:
             return
         with self._validation_lock:
-            self._validated_journals[self.journal_path] = (signature, highwater)
+            self._validated_journals[self.journal_path] = (
+                signature, highwater, lineage, committed_highwater,
+            )
             self._validated_journals.move_to_end(self.journal_path)
             while len(self._validated_journals) > self._VALIDATION_CACHE_LIMIT:
                 self._validated_journals.popitem(last=False)
@@ -379,7 +388,12 @@ class WriteAheadLog:
         # directly to it can join JSON rows. Never certify that result as valid.
         if (not raw_line or raw_line.endswith("\n")) and signature == self._journal_signature(file_handle):
             highwater = max((key for key in digests if self._GENERATED_ID.fullmatch(key)), default="")
-            self._remember_validation(signature, highwater)
+            # Scans start a new lineage; stale pending proofs cannot survive
+            # external changes, eviction or an earlier failed write.
+            committed_highwater = max(
+                (key for key in committed if self._GENERATED_ID.fullmatch(key)), default="",
+            )
+            self._remember_validation(signature, highwater, object(), committed_highwater)
         return entries, digests, committed
 
     def write_entry(
@@ -418,7 +432,8 @@ class WriteAheadLog:
         })
 
         with file_lock(self.journal_path, 'a+', repo_root=self.repo_root) as f:
-            highwater = self._validated_highwater(self._journal_signature(f))
+            validation = self._validated_journal(self._journal_signature(f))
+            highwater = validation[1] if validation is not None else None
             # A generated ID above every validated ID in the same format is
             # provably absent. Explicit IDs and clock rollback still consult
             # the complete retained history for idempotence and conflicts.
@@ -431,7 +446,8 @@ class WriteAheadLog:
                     raise WalEntryConflictError(
                         f"WAL entry ID {entry_id!r} is already bound to another payload"
                     )
-                highwater = self._validated_highwater(self._journal_signature(f))
+                validation = self._validated_journal(self._journal_signature(f))
+                highwater = validation[1] if validation is not None else None
 
             self._pending_entry = None
             self._forget_validation()
@@ -442,13 +458,14 @@ class WriteAheadLog:
             os.fsync(f.fileno())
             # The original reader rejects ref_id on intent rows. Preserve
             # that validation on commit instead of certifying such a write.
-            if highwater is not None and "ref_id" not in payload:
+            if validation is not None and "ref_id" not in payload:
+                highwater = validation[1]
                 if self._GENERATED_ID.fullmatch(entry_id):
                     highwater = max(highwater, entry_id)
                 signature = self._journal_signature(f)
-                self._remember_validation(signature, highwater)
-                if signature is not None:
-                    self._pending_entry = (entry_id, signature, highwater)
+                self._remember_validation(signature, highwater, validation[2], validation[3])
+                if signature is not None and self._GENERATED_ID.fullmatch(entry_id):
+                    self._pending_entry = (entry_id, signature, validation[2])
 
         return entry_id
 
@@ -463,11 +480,14 @@ class WriteAheadLog:
         }
 
         with file_lock(self.journal_path, 'a+', repo_root=self.repo_root) as f:
-            signature = self._journal_signature(f)
+            validation = self._validated_journal(self._journal_signature(f))
             pending = self._pending_entry
-            if pending is not None and pending[0] == entry_id and pending[1] == signature:
-                highwater = pending[2]
-            else:
+            # Keep the original unchanged-signature proof, including rollback.
+            # Cooperative appends may also preserve proof within one lineage
+            # when the fixed-size ID is above every committed generated ID.
+            if not (validation is not None and pending is not None
+                    and pending[0] == entry_id and pending[2] is validation[2]
+                    and (pending[1] == validation[0] or entry_id > validation[3])):
                 _, digests, committed = self._read_journal_locked(f)
                 if entry_id not in digests:
                     raise WalJournalCorruptError(
@@ -475,7 +495,7 @@ class WriteAheadLog:
                     )
                 if entry_id in committed:
                     return
-                highwater = self._validated_highwater(self._journal_signature(f))
+                validation = self._validated_journal(self._journal_signature(f))
 
             self._pending_entry = None
             self._forget_validation()
@@ -484,8 +504,14 @@ class WriteAheadLog:
             f.write(json.dumps(commit_entry, sort_keys=True, separators=(",", ":")) + '\n')
             f.flush()
             os.fsync(f.fileno())
-            if highwater is not None:
-                self._remember_validation(self._journal_signature(f), highwater)
+            if validation is not None:
+                committed_highwater = validation[3]
+                if self._GENERATED_ID.fullmatch(entry_id):
+                    committed_highwater = max(committed_highwater, entry_id)
+                self._remember_validation(
+                    self._journal_signature(f), validation[1], validation[2],
+                    committed_highwater,
+                )
 
     def read_uncommitted(
         self,

@@ -1,7 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **2.15.36 PostgreSQL initialization maintenance candidate**
+Applies to: **2.15.37 WAL interleaved validation maintenance candidate**
+
+## 2.15.37 source candidate
+
+WAL validation reuses bounded proof across successful cooperative same-process intent/commit interleaving. A validation lineage and committed-ID bound keep duplicate commits, external changes, eviction and failed writes on the authoritative fallback path when proof is insufficient. The existing 32-journal limit, journal/ID format, locks, permissions and three-fsync ordering are preserved. Independent lock contention, external-process scans and ambiguous materialized-fsync replay semantics remain limits. Independent review, distribution verification, live adoption and publication remain pending; no fleet latency or exactly-once guarantee is claimed.
 
 ## 2.15.36 source candidate
 
