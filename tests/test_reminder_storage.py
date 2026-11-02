@@ -56,6 +56,35 @@ def session_id(storage):
     return session_id
 
 
+@pytest.mark.storage
+@pytest.mark.regression
+def test_clear_reminder_history_filters_and_counts(storage, tmp_path, test_agent):
+    roots = [str(tmp_path / "alpha"), str(tmp_path / "beta")]
+    for index, (root, agent) in enumerate(
+        (root, agent) for root in roots for agent in (test_agent, f"{test_agent}_peer")
+    ):
+        session = f"reminder-{test_agent}-{index}"
+        run(storage.upsert_session(
+            session_id=session, agent_id=agent, repo_root=root, mode="project",
+        ))
+        run(storage.record_reminder_shown(
+            session_id=session, reminder_hash=f"hash-{index}",
+            project_root=root, agent_id=agent,
+        ))
+
+    assert run(storage.clear_reminder_history(project_root=roots[0], agent_id=test_agent)) == 1
+    assert {row["reminder_hash"] for row in run(storage.get_reminder_history())} == {
+        "hash-1", "hash-2", "hash-3",
+    }
+    assert run(storage.clear_reminder_history(project_root=roots[0], agent_id=test_agent)) == 0
+    assert run(storage.clear_reminder_history(project_root=roots[0])) == 1
+    assert run(storage.clear_reminder_history(agent_id=test_agent)) == 1
+    assert {row["reminder_hash"] for row in run(storage.get_reminder_history())} == {"hash-3"}
+    assert run(storage.clear_reminder_history()) == 1
+    assert run(storage.get_reminder_history()) == []
+    assert run(storage.clear_reminder_history()) == 0
+
+
 class TestReminderStorage:
     """Test suite for reminder storage methods."""
 

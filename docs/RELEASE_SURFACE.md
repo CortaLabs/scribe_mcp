@@ -1,9 +1,11 @@
 # Release Surface
 
 Updated: **2026-11-02**
-Applies to: **v3.3.80 development candidate; default projection, integration and fleet acceptance pending**
+Applies to: **v3.3.81 development candidate; default projection, integration and fleet acceptance pending**
 
 ## Development candidate
+
+The 3.3.81 checkpoint restores SQLite reminder-history clearing after a missing asyncio import caused a NameError. Filtering by repository and agent, deletion counts, repeat clears and retained unrelated rows are covered through the real storage API.
 
 The 3.3.80 checkpoint integrates the reviewed 2.15.37 WAL interleaving repair. Bounded lineage and committed-ID evidence preserve validation across cooperative same-process writers while retaining authoritative fallbacks, the 32-journal bound, real file locks, permissions and all three durability flushes. Controlled interleaving avoids both redundant history scans; lock contention and conservative scans remain. This source integration does not certify fleet tail latency or exactly-once behavior.
 

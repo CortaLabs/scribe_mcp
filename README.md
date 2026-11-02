@@ -45,7 +45,9 @@ Scribe turns that into a tighter loop:
 
 ## Current release highlights
 
-Development candidate: `scribe-mcp 3.3.80` · Updated: `2026-11-02`
+Development candidate: `scribe-mcp 3.3.81` · Updated: `2026-11-02`
+
+SQLite reminder-history clearing now works with repository and agent filters and returns accurate deletion counts.
 
 WAL appends now retain bounded validation proof across cooperative interleaving, preserving authoritative fallbacks and durability. Independent lock contention remains a performance limit.
 
